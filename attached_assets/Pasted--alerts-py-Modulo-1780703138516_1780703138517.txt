@@ -1,0 +1,497 @@
+# alerts.py
+# -----------------------------------------------------------------------------
+# Modulo de alertas de mercado para o agente de monitoramento (NASDAQ).
+# Encaixa no projeto existente: usa yfinance e aceita as manchetes do get_news.
+#
+# Dependencias (ja no seu projeto, mas garanta no requirements/Replit):
+#     yfinance, pandas
+#     feedparser  (opcional, so para o fetcher de RSS de exemplo)
+#
+# Cada funcao retorna uma lista de objetos Alert (estruturados), prontos para
+# serem salvos via save_observation ou injetados no system prompt do Claude.
+#
+# IMPORTANTE: isto e' uma ferramenta de MONITORAMENTO/observacao, nao um
+# sistema de recomendacao ou execucao de ordens. Nada aqui e' conselho
+# financeiro.
+# -----------------------------------------------------------------------------
+
+from __future__ import annotations
+
+import datetime as dt
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from typing import Optional
+
+import pandas as pd
+import yfinance as yf
+
+
+# =============================================================================
+# CONFIGURACAO (ajuste os limiares aqui)
+# =============================================================================
+
+# Termometros de setor: se um deles afunda, costuma arrastar os seus ativos.
+BELLWETHERS = ["AVGO", "NVDA", "TSM", "SOXX", "SMH", "^IXIC"]
+
+# Pares de memoria no pregao asiatico (abrem ANTES dos EUA -> sinal antecedente).
+# SK Hynix e Samsung. Uteis principalmente para MU.
+INTL_MEMORY_PEERS = ["000660.KS", "005930.KS"]
+
+# Yield do Treasury de 10 anos (Yahoo: ^TNX). Sobe -> pressao em multiplo alto.
+YIELD_TICKER = "^TNX"
+
+# Datas macro criticas conhecidas (EDITE conforme o calendario oficial sair).
+# Payroll e' detectado automaticamente (1a sexta do mes); aqui ficam CPI/FOMC.
+MACRO_EVENTS: dict[str, list[str]] = {
+    "CPI": ["2026-06-10", "2026-07-15"],
+    "FOMC": ["2026-06-17", "2026-07-29"],
+}
+
+# Limiares (thresholds)
+PEER_DROP_PCT = -4.0        # queda diaria de um bellwether que liga o alerta
+INTL_DROP_PCT = -4.0        # queda dos pares asiaticos
+YIELD_LEVEL = 4.5           # nivel do 10y (em %) que liga o alerta
+RSI_OVERBOUGHT = 75.0       # RSI acima disso = esticado
+ABOVE_200DMA_PCT = 25.0     # preco X% acima da media de 200 dias = esticado
+NEAR_52W_HIGH_PCT = 3.0     # a menos de X% da maxima de 52 semanas
+EARNINGS_WINDOW_DAYS = 7    # dias ate o resultado para ligar cautela
+VOLUME_SPIKE_MULT = 2.0     # volume do dia / media de 30d
+GAP_PCT = 5.0               # gap de abertura (open vs fechamento anterior)
+MACRO_WINDOW_DAYS = 1       # quantos dias antes de um evento macro avisar
+
+# Palavras-chave de noticias
+DOWNGRADE_KW = [
+    "downgrade", "cuts price target", "lowers price target", "lowered to",
+    "underperform", "sell rating", "initiates sell", "rebaixa", "corta preco-alvo",
+]
+POSITIVE_KW = [
+    "approval", "qualified", "supplier", "wins", "deal", "contract", "record",
+    "beats", "raises guidance", "raised guidance", "upgrade", "qualificada",
+]
+
+
+# =============================================================================
+# ESTRUTURA DO ALERTA
+# =============================================================================
+
+class Severity(str, Enum):
+    INFO = "info"
+    ATENCAO = "atencao"
+    CRITICO = "critico"
+
+
+class Category(str, Enum):
+    SETOR = "setor"
+    MACRO = "macro"
+    TECNICO = "tecnico"
+    EMPRESA = "empresa"
+    NOTICIA = "noticia"
+
+
+@dataclass
+class Alert:
+    ticker: str
+    category: Category
+    severity: Severity
+    title: str
+    detail: str
+    value: Optional[float] = None
+    timestamp: str = field(default_factory=lambda: dt.datetime.now().isoformat(timespec="seconds"))
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["category"] = self.category.value
+        d["severity"] = self.severity.value
+        return d
+
+    def __str__(self) -> str:
+        return f"[{self.severity.value.upper():8}] {self.ticker:7} | {self.title} :: {self.detail}"
+
+
+# =============================================================================
+# HELPERS DE DADOS (com cache simples por execucao)
+# =============================================================================
+
+_HIST_CACHE: dict[str, pd.DataFrame] = {}
+
+
+def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
+    """Baixa historico via yfinance com cache e tratamento de erro."""
+    key = f"{ticker}:{period}"
+    if key in _HIST_CACHE:
+        return _HIST_CACHE[key]
+    try:
+        df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+        if df is None or df.empty:
+            return None
+        _HIST_CACHE[key] = df
+        return df
+    except Exception as e:  # noqa: BLE001
+        print(f"[alerts] erro ao baixar {ticker}: {e}")
+        return None
+
+
+def _day_change_pct(ticker: str) -> Optional[float]:
+    df = _history(ticker, period="5d")
+    if df is None or len(df) < 2:
+        return None
+    prev, last = df["Close"].iloc[-2], df["Close"].iloc[-1]
+    return round((last / prev - 1) * 100, 2)
+
+
+def _gap_pct(ticker: str) -> Optional[float]:
+    df = _history(ticker, period="5d")
+    if df is None or len(df) < 2:
+        return None
+    prev_close, today_open = df["Close"].iloc[-2], df["Open"].iloc[-1]
+    return round((today_open / prev_close - 1) * 100, 2)
+
+
+def _rsi(ticker: str, period: int = 14) -> Optional[float]:
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < period + 1:
+        return None
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / loss.replace(0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    val = rsi.iloc[-1]
+    return None if pd.isna(val) else round(float(val), 1)
+
+
+def _dist_from_200dma_pct(ticker: str) -> Optional[float]:
+    df = _history(ticker, period="1y")
+    if df is None or len(df) < 200:
+        return None
+    ma200 = df["Close"].rolling(200).mean().iloc[-1]
+    last = df["Close"].iloc[-1]
+    if pd.isna(ma200) or ma200 == 0:
+        return None
+    return round((last / ma200 - 1) * 100, 1)
+
+
+def _dist_from_52w_high_pct(ticker: str) -> Optional[float]:
+    df = _history(ticker, period="1y")
+    if df is None or df.empty:
+        return None
+    high = df["High"].max()
+    last = df["Close"].iloc[-1]
+    if high == 0:
+        return None
+    return round((last / high - 1) * 100, 1)  # negativo = abaixo da maxima
+
+
+def _volume_spike(ticker: str) -> Optional[float]:
+    df = _history(ticker, period="2mo")
+    if df is None or len(df) < 31:
+        return None
+    today_vol = df["Volume"].iloc[-1]
+    avg_vol = df["Volume"].iloc[-31:-1].mean()
+    if avg_vol == 0:
+        return None
+    return round(today_vol / avg_vol, 2)
+
+
+def _next_earnings_date(ticker: str) -> Optional[dt.date]:
+    """Tenta varias APIs do yfinance (mudam entre versoes)."""
+    tk = yf.Ticker(ticker)
+    # Tentativa 1: get_earnings_dates
+    try:
+        ed = tk.get_earnings_dates(limit=12)
+        if ed is not None and not ed.empty:
+            today = pd.Timestamp.now(tz=ed.index.tz)
+            future = ed.index[ed.index >= today]
+            if len(future) > 0:
+                return future.min().date()
+    except Exception:  # noqa: BLE001
+        pass
+    # Tentativa 2: calendar (dict)
+    try:
+        cal = tk.calendar
+        if isinstance(cal, dict):
+            val = cal.get("Earnings Date")
+            if val:
+                d = val[0] if isinstance(val, (list, tuple)) else val
+                if isinstance(d, dt.datetime):
+                    return d.date()
+                if isinstance(d, dt.date):
+                    return d
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+# =============================================================================
+# CHECKS DE ALERTA
+# =============================================================================
+
+def check_peer_contagion() -> list[Alert]:
+    """Setor: bellwether caindo forte arrasta os ativos sob cobertura."""
+    alerts: list[Alert] = []
+    for t in BELLWETHERS:
+        chg = _day_change_pct(t)
+        if chg is None:
+            continue
+        if chg <= PEER_DROP_PCT:
+            alerts.append(Alert(
+                ticker=t, category=Category.SETOR, severity=Severity.CRITICO,
+                title="Contagio de setor",
+                detail=f"{t} caiu {chg}% hoje. Risco sistemico para os ativos de chips/IA.",
+                value=chg,
+            ))
+    return alerts
+
+
+def check_intl_peers() -> list[Alert]:
+    """Setor: pares de memoria na Asia abrem antes -> sinal antecedente p/ MU."""
+    alerts: list[Alert] = []
+    for t in INTL_MEMORY_PEERS:
+        chg = _day_change_pct(t)
+        if chg is None:
+            continue
+        if chg <= INTL_DROP_PCT:
+            alerts.append(Alert(
+                ticker=t, category=Category.SETOR, severity=Severity.ATENCAO,
+                title="Pressao no pregao asiatico (memoria)",
+                detail=f"{t} caiu {chg}%. Possivel pressao em MU no pre-mercado dos EUA.",
+                value=chg,
+            ))
+    return alerts
+
+
+def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
+    """Macro: payroll, CPI, FOMC e nivel do juro de 10 anos."""
+    today = today or dt.date.today()
+    alerts: list[Alert] = []
+
+    # Payroll = 1a sexta-feira do mes
+    if today.weekday() == 4 and today.day <= 7:
+        alerts.append(Alert(
+            ticker="MACRO", category=Category.MACRO, severity=Severity.ATENCAO,
+            title="Dia de Payroll",
+            detail="Relatorio de empregos dos EUA hoje. Surpresa positiva -> juros sobem "
+                   "-> nomes de multiplo alto (SMCI, etc.) sob maior risco.",
+        ))
+
+    # CPI / FOMC a partir da lista configurada
+    for nome, datas in MACRO_EVENTS.items():
+        for ds in datas:
+            try:
+                d = dt.date.fromisoformat(ds)
+            except ValueError:
+                continue
+            delta = (d - today).days
+            if 0 <= delta <= MACRO_WINDOW_DAYS:
+                quando = "hoje" if delta == 0 else f"em {delta} dia(s)"
+                alerts.append(Alert(
+                    ticker="MACRO", category=Category.MACRO, severity=Severity.ATENCAO,
+                    title=f"Evento macro: {nome}",
+                    detail=f"{nome} {quando} ({ds}). Esperar volatilidade; rebaixar confianca "
+                           f"de sinais fortes.",
+                ))
+
+    # Nivel do juro de 10 anos
+    df = _history(YIELD_TICKER, period="5d")
+    if df is not None and not df.empty:
+        y = float(df["Close"].iloc[-1])
+        if y > 20:  # algumas fontes mostram 45.0 em vez de 4.5
+            y = y / 10
+        if y >= YIELD_LEVEL:
+            alerts.append(Alert(
+                ticker=YIELD_TICKER, category=Category.MACRO, severity=Severity.ATENCAO,
+                title="Juro de 10 anos elevado",
+                detail=f"10y em ~{y:.2f}% (limiar {YIELD_LEVEL}%). Pressiona valuation de "
+                       f"acoes de crescimento/multiplo alto.",
+                value=round(y, 2),
+            ))
+    return alerts
+
+
+def check_overbought(ticker: str) -> list[Alert]:
+    """Tecnico: RSI, distancia da media de 200d e proximidade da maxima 52s."""
+    alerts: list[Alert] = []
+
+    rsi = _rsi(ticker)
+    if rsi is not None and rsi >= RSI_OVERBOUGHT:
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+            title="Sobrecomprado (RSI)",
+            detail=f"RSI(14) = {rsi}. Esticado; risco de realizacao de lucro.",
+            value=rsi,
+        ))
+
+    dist200 = _dist_from_200dma_pct(ticker)
+    if dist200 is not None and dist200 >= ABOVE_200DMA_PCT:
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.INFO,
+            title="Muito acima da media de 200d",
+            detail=f"Preco {dist200}% acima da MM200. Distancia historicamente insustentavel.",
+            value=dist200,
+        ))
+
+    dist52 = _dist_from_52w_high_pct(ticker)
+    if dist52 is not None and dist52 >= -NEAR_52W_HIGH_PCT:
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.INFO,
+            title="Proximo da maxima de 52 semanas",
+            detail=f"A {abs(dist52)}% da maxima de 52s. Pouca margem; sensivel a noticia ruim.",
+            value=dist52,
+        ))
+    return alerts
+
+
+def check_volume_gap(ticker: str) -> list[Alert]:
+    """Tecnico: spike de volume ou gap de abertura = 'algo aconteceu'."""
+    alerts: list[Alert] = []
+
+    vmult = _volume_spike(ticker)
+    if vmult is not None and vmult >= VOLUME_SPIKE_MULT:
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+            title="Volume anomalo",
+            detail=f"Volume {vmult}x a media de 30d. Investigar noticia/filing.",
+            value=vmult,
+        ))
+
+    gap = _gap_pct(ticker)
+    if gap is not None and abs(gap) >= GAP_PCT:
+        sev = Severity.CRITICO if abs(gap) >= GAP_PCT * 1.5 else Severity.ATENCAO
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=sev,
+            title="Gap de abertura",
+            detail=f"Abriu {gap:+}% vs fechamento anterior. Reacao a evento.",
+            value=gap,
+        ))
+    return alerts
+
+
+def check_earnings_proximity(ticker: str, today: Optional[dt.date] = None) -> list[Alert]:
+    """Empresa: cautela quando o resultado esta proximo."""
+    today = today or dt.date.today()
+    d = _next_earnings_date(ticker)
+    if d is None:
+        return []
+    delta = (d - today).days
+    if 0 <= delta <= EARNINGS_WINDOW_DAYS:
+        return [Alert(
+            ticker=ticker, category=Category.EMPRESA, severity=Severity.ATENCAO,
+            title="Resultado proximo",
+            detail=f"Earnings em {delta} dia(s) ({d.isoformat()}). Volatilidade alta; "
+                   f"evitar conclusoes fortes ate o report.",
+            value=float(delta),
+        )]
+    return []
+
+
+def check_analyst_changes(ticker: str, headlines: list[str]) -> list[Alert]:
+    """Noticia: downgrade / corte de preco-alvo move o preco sem mudar fundamento."""
+    alerts: list[Alert] = []
+    for h in headlines or []:
+        low = h.lower()
+        if any(kw in low for kw in DOWNGRADE_KW):
+            alerts.append(Alert(
+                ticker=ticker, category=Category.NOTICIA, severity=Severity.CRITICO,
+                title="Mudanca de rating (negativa)",
+                detail=f"Manchete: \"{h.strip()[:120]}\"",
+            ))
+    return alerts
+
+
+def check_sell_the_news(ticker: str, headlines: list[str],
+                        day_change_pct: Optional[float] = None) -> list[Alert]:
+    """Noticia: manchete positiva + preco caindo = 'priced in' / exaustao.
+
+    Foi exatamente o caso da MU (qualificada como fornecedora da Nvidia e mesmo
+    assim caindo).
+    """
+    if day_change_pct is None:
+        day_change_pct = _day_change_pct(ticker)
+    if day_change_pct is None or day_change_pct >= 0:
+        return []
+    for h in headlines or []:
+        low = h.lower()
+        if any(kw in low for kw in POSITIVE_KW):
+            return [Alert(
+                ticker=ticker, category=Category.NOTICIA, severity=Severity.ATENCAO,
+                title="Sell-the-news (noticia boa, preco caindo)",
+                detail=f"Preco {day_change_pct}% apesar de manchete positiva: "
+                       f"\"{h.strip()[:100]}\". Possivel exaustao / ja precificado.",
+                value=day_change_pct,
+            )]
+    return []
+
+
+# =============================================================================
+# ORQUESTRADOR
+# =============================================================================
+
+def run_all_alerts(tickers: list[str],
+                   headlines_by_ticker: Optional[dict[str, list[str]]] = None,
+                   today: Optional[dt.date] = None) -> list[Alert]:
+    """Roda todos os checks e devolve a lista ordenada por severidade.
+
+    headlines_by_ticker: dict {ticker: [manchetes...]} vindo do seu get_news.
+    """
+    headlines_by_ticker = headlines_by_ticker or {}
+    today = today or dt.date.today()
+    alerts: list[Alert] = []
+
+    # Alertas de escopo global (uma vez por execucao)
+    alerts += check_peer_contagion()
+    alerts += check_intl_peers()
+    alerts += check_macro_triggers(today)
+
+    # Alertas por ativo
+    for t in tickers:
+        heads = headlines_by_ticker.get(t, [])
+        alerts += check_overbought(t)
+        alerts += check_volume_gap(t)
+        alerts += check_earnings_proximity(t, today)
+        alerts += check_analyst_changes(t, heads)
+        alerts += check_sell_the_news(t, heads)
+
+    order = {Severity.CRITICO: 0, Severity.ATENCAO: 1, Severity.INFO: 2}
+    alerts.sort(key=lambda a: order[a.severity])
+    return alerts
+
+
+def alerts_to_prompt_block(alerts: list[Alert]) -> str:
+    """Formata os alertas como texto para injetar no system prompt do Claude."""
+    if not alerts:
+        return "ALERTAS DE MERCADO: nenhum gatilho ativo no momento."
+    linhas = ["ALERTAS DE MERCADO ATIVOS (considere ao analisar cada ativo):"]
+    for a in alerts:
+        linhas.append(f"- [{a.severity.value}/{a.category.value}] {a.ticker}: "
+                      f"{a.title} -- {a.detail}")
+    return "\n".join(linhas)
+
+
+# =============================================================================
+# TESTE LOCAL
+# =============================================================================
+
+if __name__ == "__main__":
+    TICKERS = ["MU", "SMCI"]
+
+    # Exemplo: no projeto real, troque por self.get_news(t) do seu agente.
+    headlines_demo = {
+        "MU": [
+            "Micron Gets Memory-Chip Approval From Nvidia. Why the Stock Is Falling.",
+            "Analyst downgrades Micron, cuts price target on HBM pricing concerns",
+        ],
+        "SMCI": [
+            "Super Micro shares fall as strong jobs report lifts yields",
+        ],
+    }
+
+    resultado = run_all_alerts(TICKERS, headlines_by_ticker=headlines_demo)
+
+    print("=" * 70)
+    print(f"Alertas em {dt.date.today().isoformat()}: {len(resultado)}")
+    print("=" * 70)
+    for a in resultado:
+        print(a)
+
+    print("\n--- Bloco para o system prompt ---\n")
+    print(alerts_to_prompt_block(resultado))

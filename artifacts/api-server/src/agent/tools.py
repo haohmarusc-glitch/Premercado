@@ -8,6 +8,8 @@ import os
 import requests
 import yfinance as yf
 
+from . import market_alerts as _ma
+
 # ── Cotações ──────────────────────────────────────────────────────────────────
 
 def get_stock_data(ticker: str) -> dict:
@@ -226,6 +228,35 @@ def delete_alert(alert_id: int, reason: str) -> dict:
         return {"deleted": False, "error": str(e)}
 
 
+# ── Análise de mercado (market_alerts) ───────────────────────────────────────
+
+def check_market_alerts(
+    tickers: list[str] | None = None,
+    headlines_by_ticker: dict[str, list[str]] | None = None,
+) -> dict:
+    """
+    Roda todos os checks do módulo market_alerts e retorna um relatório
+    estruturado com alertas de setor, macro, técnicos, earnings e notícias.
+
+    tickers: lista de símbolos a checar individualmente (default: MU, SMCI)
+    headlines_by_ticker: manchetes já coletadas por ticker, para checks de notícia.
+        Ex: {"MU": ["Micron downgraded...", ...], "SMCI": [...]}
+    """
+    from . import config
+    tickers = tickers or config.TICKERS
+    headlines_by_ticker = headlines_by_ticker or {}
+
+    try:
+        alerts = _ma.run_all_alerts(tickers, headlines_by_ticker=headlines_by_ticker)
+        return {
+            "total": len(alerts),
+            "prompt_block": _ma.alerts_to_prompt_block(alerts),
+            "alerts": [a.to_dict() for a in alerts],
+        }
+    except Exception as e:
+        return {"error": str(e), "total": 0, "alerts": []}
+
+
 # ── Definição das ferramentas para a API da Anthropic ────────────────────────
 
 TOOLS = [
@@ -367,6 +398,44 @@ TOOLS = [
             "required": ["alert_id", "reason"],
         },
     },
+    {
+        "name": "check_market_alerts",
+        "description": (
+            "Analisa o estado atual do mercado e retorna uma lista estruturada de sinais "
+            "categorizados por severidade (critico / atencao / info). Inclui: "
+            "(1) contágio de setor — bellwethers como NVDA, AVGO, TSM, SOXX caindo mais de 4%; "
+            "(2) pares asiáticos de memória — SK Hynix e Samsung (sinal antecedente para MU); "
+            "(3) gatilhos macro — Payroll, CPI, FOMC, nível do juro de 10 anos; "
+            "(4) técnico por ativo — RSI sobrecomprado, distância da MM200, proximidade da máxima de 52 semanas, "
+            "spike de volume, gap de abertura; "
+            "(5) earnings — alerta se resultado estiver em até 7 dias; "
+            "(6) análise de manchetes — downgrade/corte de alvo, padrão sell-the-news. "
+            "Chame DEPOIS de coletar as manchetes com get_news, passando-as em headlines_by_ticker "
+            "para ativar os checks de notícia."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista de tickers a analisar individualmente. Default: MU e SMCI.",
+                },
+                "headlines_by_ticker": {
+                    "type": "object",
+                    "description": (
+                        "Manchetes já coletadas por ticker (do get_news), para ativar checks de notícia. "
+                        'Ex: {"MU": ["Micron downgraded...", "Analyst cuts..."], "SMCI": [...]}'
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 DISPATCH = {
@@ -378,4 +447,5 @@ DISPATCH = {
     "list_alerts": list_alerts,
     "create_alert": create_alert,
     "delete_alert": delete_alert,
+    "check_market_alerts": check_market_alerts,
 }

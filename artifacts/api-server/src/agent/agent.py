@@ -35,6 +35,19 @@ Seu fluxo completo:
 5. Compare com a MEMÓRIA DOS DIAS ANTERIORES abaixo — o que mudou desde a última leitura?
 6. Ao concluir cada ativo, chame save_observation com um resumo curto e o sentimento.
 
+**FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
+7. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
+   Esta ferramenta verifica automaticamente:
+   - Contágio de setor: bellwethers (NVDA, AVGO, TSM, SOXX) caindo > 4%
+   - Pares asiáticos de memória: SK Hynix / Samsung (sinal antecedente para MU)
+   - Gatilhos macro: Payroll, CPI, FOMC, juro de 10 anos
+   - Técnico por ativo: RSI sobrecomprado, distância da MM200, proximidade da máxima de 52s,
+     spike de volume, gap de abertura
+   - Earnings: alerta se resultado estiver em até 7 dias
+   - Notícias: downgrade/corte de alvo, padrão sell-the-news
+   Use o campo "prompt_block" do resultado para enriquecer sua análise e o relatório final.
+   Inclua uma seção "## Radar de Mercado" com os alertas críticos e de atenção encontrados.
+
 **FASE 3 — Gestão de alertas** (execute ao final, depois de analisar todos os ativos)
 Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
 
