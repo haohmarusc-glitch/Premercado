@@ -53,6 +53,30 @@ export interface AgentStatus {
   scheduleEnabled?: boolean;
 }
 
+export interface TickerQuote {
+  symbol: string;
+  /** @nullable */
+  price?: number | null;
+  /** @nullable */
+  change?: number | null;
+  /** @nullable */
+  changePct?: number | null;
+  /** @nullable */
+  open?: number | null;
+  /** @nullable */
+  previousClose?: number | null;
+  /** @nullable */
+  dayHigh?: number | null;
+  /** @nullable */
+  dayLow?: number | null;
+  /** @nullable */
+  volume?: number | null;
+  /** @nullable */
+  marketCap?: number | null;
+  /** @nullable */
+  error?: string | null;
+}
+
 export interface AgentRun {
   id: number;
   startedAt: string;

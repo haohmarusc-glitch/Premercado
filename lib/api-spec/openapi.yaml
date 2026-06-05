@@ -137,6 +137,21 @@ paths:
         "409":
           description: Agent already running
 
+  /tickers/quotes:
+    get:
+      operationId: getTickerQuotes
+      tags: [agent]
+      summary: Get real-time quotes for monitored tickers
+      responses:
+        "200":
+          description: Ticker quotes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TickerQuote"
+
   /agent/status:
     get:
       operationId: getAgentStatus
@@ -288,6 +303,33 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+
+    TickerQuote:
+      type: object
+      required: [symbol]
+      properties:
+        symbol:
+          type: string
+        price:
+          type: ["number", "null"]
+        change:
+          type: ["number", "null"]
+        changePct:
+          type: ["number", "null"]
+        open:
+          type: ["number", "null"]
+        previousClose:
+          type: ["number", "null"]
+        dayHigh:
+          type: ["number", "null"]
+        dayLow:
+          type: ["number", "null"]
+        volume:
+          type: ["integer", "null"]
+        marketCap:
+          type: ["integer", "null"]
+        error:
+          type: ["string", "null"]
 
     AgentRun:
       type: object

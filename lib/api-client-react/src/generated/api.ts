@@ -30,7 +30,8 @@ import type {
   Report,
   SentimentSummary,
   Settings,
-  SettingsUpdate
+  SettingsUpdate,
+  TickerQuote
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -583,6 +584,83 @@ export const useRunAgent = <TError = ErrorType<void>,
       > => {
       return useMutation(getRunAgentMutationOptions(options));
     }
+
+export const getGetTickerQuotesUrl = () => {
+
+
+
+
+  return `/api/tickers/quotes`
+}
+
+/**
+ * @summary Get real-time quotes for monitored tickers
+ */
+export const getTickerQuotes = async ( options?: RequestInit): Promise<TickerQuote[]> => {
+
+  return customFetch<TickerQuote[]>(getGetTickerQuotesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTickerQuotesQueryKey = () => {
+    return [
+    `/api/tickers/quotes`
+    ] as const;
+    }
+
+
+export const getGetTickerQuotesQueryOptions = <TData = Awaited<ReturnType<typeof getTickerQuotes>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTickerQuotes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTickerQuotesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTickerQuotes>>> = ({ signal }) => getTickerQuotes({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTickerQuotes>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTickerQuotesQueryResult = NonNullable<Awaited<ReturnType<typeof getTickerQuotes>>>
+export type GetTickerQuotesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get real-time quotes for monitored tickers
+ */
+
+export function useGetTickerQuotes<TData = Awaited<ReturnType<typeof getTickerQuotes>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTickerQuotes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTickerQuotesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getGetAgentStatusUrl = () => {
 

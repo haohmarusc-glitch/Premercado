@@ -5,6 +5,7 @@ import observationsRouter from "./observations";
 import agentRouter from "./agent";
 import settingsRouter from "./settings";
 import runsRouter from "./runs";
+import quotesRouter from "./quotes";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(observationsRouter);
 router.use(agentRouter);
 router.use(settingsRouter);
 router.use(runsRouter);
+router.use(quotesRouter);
 
 export default router;

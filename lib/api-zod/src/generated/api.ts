@@ -101,6 +101,25 @@ export const RunAgentResponse = zod.object({
 
 
 /**
+ * @summary Get real-time quotes for monitored tickers
+ */
+export const GetTickerQuotesResponseItem = zod.object({
+  "symbol": zod.string(),
+  "price": zod.number().nullish(),
+  "change": zod.number().nullish(),
+  "changePct": zod.number().nullish(),
+  "open": zod.number().nullish(),
+  "previousClose": zod.number().nullish(),
+  "dayHigh": zod.number().nullish(),
+  "dayLow": zod.number().nullish(),
+  "volume": zod.number().nullish(),
+  "marketCap": zod.number().nullish(),
+  "error": zod.string().nullish()
+})
+export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)
+
+
+/**
  * @summary Get current agent run status
  */
 export const GetAgentStatusResponse = zod.object({
