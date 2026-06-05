@@ -1,0 +1,27 @@
+O que você está vendo é um selloff generalizado no setor de semicondutores/IA acontecendo hoje, e não algo específico de uma empresa. Todas as ações da sua lista estão caindo junto justamente porque o gatilho é setorial.
+
+O estopim foi a Broadcom (AVGO) : a empresa apresentou uma projeção mais fraca que o esperado para chips de IA e decidiu reiterar — em vez de elevar — o guidance de 2026, o que derrubou suas ações em até 15% na sessão Yahoo Finance . Isso pressionou todo o setor, com investidores correndo para a saída depois de uma forte alta que tinha levado muitas ações de chips a recordes históricos Yahoo! .
+
+Por que isso contamina todo mundo na sua lista:
+
+• O mercado vinha esticado. Os semicondutores lideraram a alta do mercado até as máximas históricas, com vários nomes acumulando ganhos enormes nas últimas semanas Yahoo Finance — a Micron, inclusive, passou de US$ 1 trilhão de valor de mercado pela primeira vez no mês passado Yahoo Finance . Quando algo vinha subindo muito rápido, qualquer susto vira realização de lucro agressiva.
+• A Broadcom funcionou como termômetro da demanda de IA. Se a maior fornecedora de chips customizados de IA não consegue elevar projeções, o mercado questiona se o ciclo todo de gastos com data centers está esfriando — e reprecifica NVDA, AMD, ARM, MU, INTC, SMCI de uma vez.
+• SMCI e MU caem mais (–11% e –10%) porque são os nomes mais "alavancados" ao tema de IA/memória — sobem mais na euforia e apanham mais no medo. A queda da sua lista bate exatamente com o padrão dos relatos: Marvell, Super Micro, Arm e Micron caindo cerca de 5% ou mais, com Nvidia, T Yahoo! SMC, AMD e Intel também no vermelho.
+
+Em resumo: não é falência nem notícia ruim individual de cada uma — é uma correção de setor depois de uma corrida muito forte, disparada por um sinal de desaceleração na demanda de chips de IA. A pergunta que o próprio mercado está fazendo: se isso fica só num ajuste pontual pós-resultado da Broadcom ou se vira uma reversão mais ampla do setor de chips Yahoo! .
+
+Olhei as duas. Além do tombo de setor, cada uma tem componentes próprios — e o curioso é que parte da notícia de hoje é até boa, mas a ação caiu mesmo assim.
+
+MU (Micron) — caindo ~6% a 10%, segundo pregão seguido de queda
+
+O detalhe irônico: a Micron caiu mesmo depois de confirmar que foi qualificada para fornecer a memória de alta largura de banda (HBM) mais recente para a Nvidia StockAnalysis — o Jensen Huang chegou a citá-la publicamente como fornecedora-chave. Normalmente isso seria gatilho de alta. O que está pesando mais:
+
+• Downgrade de analista. A rebaixada citou mudança na dinâmica de oferta e demanda, aumento da concorrência no mercado de memória e arquiteturas de IA em evolução que poderiam corroer o poder de precificação da HBM Tradingkey . Também apontaram que os indicadores técnicos estavam esticados e que boa parte do potencial de alta já podia estar precificada, levando à realização de lucros, com métricas de valuation sinalizadas como particularmente elevadas Tradingkey .
+• Cautela antes do resultado. A cautela do investidor antes da própria teleconferência de resultados do terceiro trimestre fiscal da Micron, marcada para o fim de junho, também pode estar contribuindo para a volatilidade Tradingkey (o report é dia 24/06).
+• Contexto. A MU vinha numa corrida absurda — US  30 mil hoje The Motley Fool , e ela passou de US$ 1 trilhão de market cap pela primeira vez no mês passado Yahoo Finance . Quanto maior a subida, mais violenta a realização.
+
+SMCI (Supermicro) — caindo ~8% a 11%
+
+Aqui entrou um fator macro além da Broadcom: várias ações caí StockStory ram na sessão da manhã depois que o relatório de empregos de maio (payroll) veio bem mais forte que o esperado, alimentando o temor de que o Fed mantenha os juros elevados por mais tempo. O payroll veio em 172 mil, mais que o dobro do consenso de 80 mil, jogando o juro de 10 anos acima de 4,5% e recolocando expectativas de alta de juros na mesa StockStory . E o ponto-chave para a SMCI: nomes de hardware com múltiplos altos carregam o maior risco de valuation quando a taxa de desconto sobe inesperadamente StockStory . Somado a isso, o overhang da Broadcom, que recalibrou as expectativas para o ritmo de aceleração da receita de chips de IA, se estendeu para o dia StockStory . A SMCI também vinha de uma alta enorme — subiu 37,8% na semana anterior The Motley Fool — então está devolvendo parte disso.
+
+O fio condutor das duas: ações que subiram muito e rápido + valuations esticados + um gatilho de setor (Broadcom) + um gatilho macro (juros). Quando isso se combina, os nomes mais "alavancados" ao tema de IA (MU e SMCI exatamente) apanham mais. Repare que nenhuma das quedas vem de um problema operacional da empresa — é repricing de expectativa, não deterioração de fundamento.
