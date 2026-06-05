@@ -10,5 +10,6 @@ export interface SettingsUpdate {
   notifyEmail?: string;
   scheduleEnabled?: boolean;
   scheduleHour?: number;
+  scheduleMinute?: number;
   tickers?: string[];
 }

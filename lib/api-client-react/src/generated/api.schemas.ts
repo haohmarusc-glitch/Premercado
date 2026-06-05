@@ -151,6 +151,7 @@ export interface Settings {
   notifyEmail: string;
   scheduleEnabled: boolean;
   scheduleHour: number;
+  scheduleMinute: number;
   tickers: string[];
   updatedAt: string;
 }
@@ -159,6 +160,7 @@ export interface SettingsUpdate {
   notifyEmail?: string;
   scheduleEnabled?: boolean;
   scheduleHour?: number;
+  scheduleMinute?: number;
   tickers?: string[];
 }
 

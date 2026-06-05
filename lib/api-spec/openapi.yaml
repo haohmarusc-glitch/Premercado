@@ -561,7 +561,7 @@ components:
 
     Settings:
       type: object
-      required: [id, notifyEmail, scheduleEnabled, scheduleHour, tickers, updatedAt]
+      required: [id, notifyEmail, scheduleEnabled, scheduleHour, scheduleMinute, tickers, updatedAt]
       properties:
         id:
           type: integer
@@ -570,6 +570,8 @@ components:
         scheduleEnabled:
           type: boolean
         scheduleHour:
+          type: integer
+        scheduleMinute:
           type: integer
         tickers:
           type: array
@@ -586,6 +588,8 @@ components:
         scheduleEnabled:
           type: boolean
         scheduleHour:
+          type: integer
+        scheduleMinute:
           type: integer
         tickers:
           type: array

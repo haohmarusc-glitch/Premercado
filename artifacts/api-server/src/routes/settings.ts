@@ -12,7 +12,7 @@ async function getOrCreateSettings() {
   const notifyEmail = process.env.NOTIFY_EMAIL ?? "";
   const [created] = await db
     .insert(settingsTable)
-    .values({ notifyEmail, scheduleEnabled: true, scheduleHour: 8, tickers: ["MU", "SMCI"] })
+    .values({ notifyEmail, scheduleEnabled: true, scheduleHour: 8, scheduleMinute: 30, tickers: ["MU", "SMCI"] })
     .returning();
   return created;
 }

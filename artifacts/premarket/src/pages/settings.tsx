@@ -59,6 +59,7 @@ const schema = z.object({
   notifyEmail: z.string().email("E-mail inválido"),
   scheduleEnabled: z.boolean(),
   scheduleHour: z.coerce.number().int().min(0).max(23),
+  scheduleMinute: z.coerce.number().int().min(0).max(59),
   tickers: z.array(z.string().min(1)).min(1, "Adicione pelo menos um ticker"),
 });
 
@@ -224,6 +225,7 @@ export default function Settings() {
       notifyEmail: "",
       scheduleEnabled: true,
       scheduleHour: 8,
+      scheduleMinute: 30,
       tickers: ["MU", "SMCI"],
     },
   });
@@ -234,6 +236,7 @@ export default function Settings() {
         notifyEmail: settings.notifyEmail,
         scheduleEnabled: settings.scheduleEnabled,
         scheduleHour: settings.scheduleHour,
+        scheduleMinute: settings.scheduleMinute,
         tickers: settings.tickers,
       });
     }
@@ -326,32 +329,55 @@ export default function Settings() {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="scheduleHour"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="font-mono text-xs uppercase text-muted-foreground">
-                    Horário de disparo (hora local — Brasília)
-                  </FormLabel>
-                  <div className="flex items-center gap-3">
-                    <Input
-                      {...field}
-                      type="number"
-                      min={0}
-                      max={23}
-                      className="font-mono bg-secondary border-border w-24"
-                      data-testid="input-schedule-hour"
-                    />
-                    <span className="text-sm font-mono text-muted-foreground">:00 BRT</span>
-                  </div>
-                  <FormDescription className="text-xs text-muted-foreground">
-                    Valor entre 0 e 23. Recomendado: 8 (antes do mercado abrir).
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div>
+              <p className="font-mono text-xs uppercase text-muted-foreground mb-2">
+                Horário de disparo (Brasília — BRT)
+              </p>
+              <div className="flex items-center gap-2">
+                <FormField
+                  control={form.control}
+                  name="scheduleHour"
+                  render={({ field }) => (
+                    <FormItem className="flex-none">
+                      <Input
+                        {...field}
+                        type="number"
+                        min={0}
+                        max={23}
+                        className="font-mono bg-secondary border-border w-20 text-center"
+                        data-testid="input-schedule-hour"
+                      />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <span className="text-lg font-mono text-muted-foreground font-bold">:</span>
+                <FormField
+                  control={form.control}
+                  name="scheduleMinute"
+                  render={({ field }) => (
+                    <FormItem className="flex-none">
+                      <Input
+                        {...field}
+                        type="number"
+                        min={0}
+                        max={59}
+                        className="font-mono bg-secondary border-border w-20 text-center"
+                        data-testid="input-schedule-minute"
+                      />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <span className="text-sm font-mono text-muted-foreground">BRT</span>
+                <span className="text-xs font-mono text-primary bg-primary/10 border border-primary/30 rounded px-2 py-1">
+                  {String(form.watch("scheduleHour") ?? 8).padStart(2, "0")}:{String(form.watch("scheduleMinute") ?? 30).padStart(2, "0")} BRT
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Recomendado: <strong>08:30 BRT</strong> — relatório pronto antes da abertura do mercado americano.
+              </p>
+            </div>
           </div>
 
           {/* Tickers */}

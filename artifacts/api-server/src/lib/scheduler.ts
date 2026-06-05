@@ -7,17 +7,18 @@ const TIMEZONE = "America/Sao_Paulo";
 
 let currentTask: ScheduledTask | null = null;
 let currentHour = 8;
+let currentMinute = 30;
 let scheduleEnabled = true;
 
-function cronExpr(hour: number): string {
-  return `0 ${hour} * * 1-5`;
+function cronExpr(hour: number, minute: number): string {
+  return `${minute} ${hour} * * 1-5`;
 }
 
-function nextOccurrence(hour: number): Date {
+function nextOccurrence(hour: number, minute: number): Date {
   const now = new Date();
   const spNow = new Date(now.toLocaleString("en-US", { timeZone: TIMEZONE }));
   const candidate = new Date(spNow);
-  candidate.setHours(hour, 0, 0, 0);
+  candidate.setHours(hour, minute, 0, 0);
   if (candidate <= spNow) candidate.setDate(candidate.getDate() + 1);
   while (candidate.getDay() === 0 || candidate.getDay() === 6) {
     candidate.setDate(candidate.getDate() + 1);
@@ -26,24 +27,25 @@ function nextOccurrence(hour: number): Date {
   return new Date(candidate.getTime() + 3 * 60 * 60 * 1000);
 }
 
-function scheduleTask(hour: number): void {
+function scheduleTask(hour: number, minute: number): void {
   if (currentTask) {
     currentTask.stop();
     currentTask = null;
   }
   currentHour = hour;
+  currentMinute = minute;
   currentTask = cron.schedule(
-    cronExpr(hour),
+    cronExpr(hour, minute),
     () => {
       logger.info("Scheduled pre-market agent run triggered");
       runAgent("scheduled");
-      state.nextRunAt = nextOccurrence(currentHour).toISOString();
+      state.nextRunAt = nextOccurrence(currentHour, currentMinute).toISOString();
     },
     { timezone: TIMEZONE },
   );
 }
 
-export function applySettings(settings: Pick<Settings, "scheduleEnabled" | "scheduleHour">): void {
+export function applySettings(settings: Pick<Settings, "scheduleEnabled" | "scheduleHour" | "scheduleMinute">): void {
   scheduleEnabled = settings.scheduleEnabled;
   if (!scheduleEnabled) {
     if (currentTask) { currentTask.stop(); currentTask = null; }
@@ -52,14 +54,16 @@ export function applySettings(settings: Pick<Settings, "scheduleEnabled" | "sche
     logger.info("Scheduler disabled via settings");
     return;
   }
-  scheduleTask(settings.scheduleHour);
+  scheduleTask(settings.scheduleHour, settings.scheduleMinute);
   state.scheduleEnabled = true;
-  state.nextRunAt = nextOccurrence(settings.scheduleHour).toISOString();
-  logger.info({ nextRunAt: state.nextRunAt, hour: settings.scheduleHour }, "Scheduler updated");
+  state.nextRunAt = nextOccurrence(settings.scheduleHour, settings.scheduleMinute).toISOString();
+  logger.info(
+    { nextRunAt: state.nextRunAt, hour: settings.scheduleHour, minute: settings.scheduleMinute },
+    "Scheduler updated",
+  );
 }
 
 export async function startScheduler(): Promise<void> {
-  // Load settings from DB at startup, with env fallback
   try {
     const { db, settingsTable } = await import("@workspace/db");
     const [row] = await db.select().from(settingsTable).limit(1);
@@ -70,9 +74,12 @@ export async function startScheduler(): Promise<void> {
   } catch (_) {
     // DB not ready yet, fall back to defaults
   }
-  // Defaults
-  scheduleTask(8);
+  // Defaults: 8:30 BRT
+  scheduleTask(8, 30);
   state.scheduleEnabled = true;
-  state.nextRunAt = nextOccurrence(8).toISOString();
-  logger.info({ nextRunAt: state.nextRunAt, cron: cronExpr(8), tz: TIMEZONE }, "Pre-market scheduler started (defaults)");
+  state.nextRunAt = nextOccurrence(8, 30).toISOString();
+  logger.info(
+    { nextRunAt: state.nextRunAt, cron: cronExpr(8, 30), tz: TIMEZONE },
+    "Pre-market scheduler started (defaults 08:30 BRT)",
+  );
 }

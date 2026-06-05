@@ -45,6 +45,7 @@ export const settingsTable = pgTable("settings", {
   notifyEmail: text("notify_email").notNull(),
   scheduleEnabled: boolean("schedule_enabled").notNull().default(true),
   scheduleHour: integer("schedule_hour").notNull().default(8),
+  scheduleMinute: integer("schedule_minute").notNull().default(30),
   tickers: text("tickers").array().notNull().default(["MU", "SMCI"]),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

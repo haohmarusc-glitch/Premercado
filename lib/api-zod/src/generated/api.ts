@@ -266,6 +266,7 @@ export const GetSettingsResponse = zod.object({
   "notifyEmail": zod.string(),
   "scheduleEnabled": zod.boolean(),
   "scheduleHour": zod.number(),
+  "scheduleMinute": zod.number(),
   "tickers": zod.array(zod.string()),
   "updatedAt": zod.string()
 })
@@ -278,6 +279,7 @@ export const UpdateSettingsBody = zod.object({
   "notifyEmail": zod.string().optional(),
   "scheduleEnabled": zod.boolean().optional(),
   "scheduleHour": zod.number().optional(),
+  "scheduleMinute": zod.number().optional(),
   "tickers": zod.array(zod.string()).optional()
 })
 
@@ -286,6 +288,7 @@ export const UpdateSettingsResponse = zod.object({
   "notifyEmail": zod.string(),
   "scheduleEnabled": zod.boolean(),
   "scheduleHour": zod.number(),
+  "scheduleMinute": zod.number(),
   "tickers": zod.array(zod.string()),
   "updatedAt": zod.string()
 })
