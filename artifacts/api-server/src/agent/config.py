@@ -1,0 +1,4 @@
+TICKERS = ["MU", "SMCI"]
+MODEL = "claude-opus-4-5"
+MAX_TOKENS = 4096
+MAX_AGENT_TURNS = 20

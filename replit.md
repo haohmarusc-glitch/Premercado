@@ -1,36 +1,52 @@
-# [Project name]
+# Pré-Mercado — Agente de Análise
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+App de monitoramento pré-mercado com loop agêntico Claude para MU (Micron) e SMCI (Super Micro Computer).
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/api-server run dev` — API server (porta 5000)
+- `pnpm --filter @workspace/premarket run dev` — Frontend React (porta 19156)
+- `pnpm run typecheck` — typecheck completo
+- `pnpm --filter @workspace/api-spec run codegen` — regenerar hooks e schemas do OpenAPI
+- `pnpm --filter @workspace/db run push` — aplicar schema no banco (dev only)
+- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
+- Validation: Zod, drizzle-zod
 - API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React + Vite + shadcn/ui + Tailwind
+- Agent: Python 3 + Anthropic SDK + yfinance + requests (SEC EDGAR)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `lib/api-spec/openapi.yaml` — contrato único da API
+- `lib/db/src/schema/premarket.ts` — tabelas `reports` e `observations`
+- `artifacts/api-server/src/routes/` — rotas Express (reports, observations, agent)
+- `artifacts/api-server/src/agent/` — código Python do loop agêntico
+  - `agent.py` — loop principal (chama Claude com ferramentas)
+  - `tools.py` — ferramentas: get_stock_data, get_news, search_edgar_filings, read_filing, save_observation
+  - `memory.py` — lê observações anteriores para injetar no system prompt
+  - `run_agent.py` — entry point chamado como subprocess pelo Node
+  - `config.py` — TICKERS, MODEL, MAX_TOKENS, MAX_AGENT_TURNS
+- `artifacts/premarket/src/` — frontend React
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Agent roda como subprocess Python lançado pelo Express; progress via stdout "STEP:" lines
+- Relatório final começa com "REPORT:" no stdout e é salvo no banco pelo Node após o processo terminar
+- Observações salvas via chamada HTTP interna do Python para `POST /api/observations/internal`
+- Memória dos dias anteriores injetada no system prompt via `GET /api/observations/internal`
+- Frontend polling do status do agente a cada 3s enquanto `running: true`
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Dashboard com relatório do dia em Markdown, indicador de status do agente, botão "RUN AGENT"
+- Histórico de todos os relatórios passados com badges de sentimento
+- Feed de observações (memória do agente) filtrável por ticker
 
 ## User preferences
 
@@ -38,8 +54,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- O agente Python usa `python3 -m agent.run_agent` com `cwd = artifacts/api-server/src`
+- `INTERNAL_API_URL` precisa apontar para o servidor Express correto em runtime
+- Para o agente rodar, `ANTHROPIC_API_KEY` deve estar disponível como variável de ambiente

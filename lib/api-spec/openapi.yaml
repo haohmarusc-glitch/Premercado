@@ -1,22 +1,27 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Pre-market agent API for MU and SMCI monitoring
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: reports
+    description: Pre-market analysis reports
+  - name: observations
+    description: Agent memory observations
+  - name: agent
+    description: Agent execution
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +29,205 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /reports:
+    get:
+      operationId: listReports
+      tags: [reports]
+      summary: List all pre-market reports
+      responses:
+        "200":
+          description: List of reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Report"
+
+  /reports/{id}:
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Get a specific report
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: Not found
+
+  /reports/latest:
+    get:
+      operationId: getLatestReport
+      tags: [reports]
+      summary: Get today's latest report
+      responses:
+        "200":
+          description: Latest report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: No report yet today
+
+  /observations:
+    get:
+      operationId: listObservations
+      tags: [observations]
+      summary: List recent observations (agent memory)
+      parameters:
+        - name: ticker
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Observation"
+
+  /observations/summary:
+    get:
+      operationId: getObservationsSummary
+      tags: [observations]
+      summary: Summary of sentiment per ticker over last 7 days
+      responses:
+        "200":
+          description: Sentiment summary
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SentimentSummary"
+
+  /agent/run:
+    post:
+      operationId: runAgent
+      tags: [agent]
+      summary: Trigger the pre-market agent run
+      responses:
+        "200":
+          description: Agent completed, returns report id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRunResult"
+        "409":
+          description: Agent already running
+
+  /agent/status:
+    get:
+      operationId: getAgentStatus
+      tags: [agent]
+      summary: Get current agent run status
+      responses:
+        "200":
+          description: Agent status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentStatus"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    Report:
+      type: object
+      required: [id, date, content, tickers, createdAt]
+      properties:
+        id:
+          type: integer
+        date:
+          type: string
+        content:
+          type: string
+        tickers:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+
+    Observation:
+      type: object
+      required: [id, ticker, date, summary, sentiment, createdAt]
+      properties:
+        id:
+          type: integer
+        ticker:
+          type: string
+        date:
+          type: string
+        summary:
+          type: string
+        sentiment:
+          type: string
+        priceAtObservation:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+
+    SentimentSummary:
+      type: object
+      required: [ticker, bullish, bearish, neutral, lastSentiment, lastDate]
+      properties:
+        ticker:
+          type: string
+        bullish:
+          type: integer
+        bearish:
+          type: integer
+        neutral:
+          type: integer
+        lastSentiment:
+          type: string
+        lastDate:
+          type: string
+
+    AgentRunResult:
+      type: object
+      required: [reportId, message]
+      properties:
+        reportId:
+          type: integer
+        message:
+          type: string
+
+    AgentStatus:
+      type: object
+      required: [running, lastRunAt]
+      properties:
+        running:
+          type: boolean
+        lastRunAt:
+          type: ["string", "null"]
+        currentStep:
+          type: ["string", "null"]
