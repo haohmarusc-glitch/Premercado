@@ -11,6 +11,50 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Save, Mail, Clock, Tag, Plus, X } from "lucide-react";
 
+const POPULAR_TICKERS: { symbol: string; name: string }[] = [
+  { symbol: "AAPL", name: "Apple" },
+  { symbol: "MSFT", name: "Microsoft" },
+  { symbol: "NVDA", name: "Nvidia" },
+  { symbol: "GOOGL", name: "Alphabet" },
+  { symbol: "AMZN", name: "Amazon" },
+  { symbol: "META", name: "Meta Platforms" },
+  { symbol: "TSLA", name: "Tesla" },
+  { symbol: "AMD", name: "AMD" },
+  { symbol: "MU", name: "Micron Technology" },
+  { symbol: "SMCI", name: "Super Micro Computer" },
+  { symbol: "INTC", name: "Intel" },
+  { symbol: "QCOM", name: "Qualcomm" },
+  { symbol: "AVGO", name: "Broadcom" },
+  { symbol: "TSM", name: "TSMC" },
+  { symbol: "ASML", name: "ASML Holding" },
+  { symbol: "ARM", name: "Arm Holdings" },
+  { symbol: "AMAT", name: "Applied Materials" },
+  { symbol: "KLAC", name: "KLA Corporation" },
+  { symbol: "LRCX", name: "Lam Research" },
+  { symbol: "MRVL", name: "Marvell Technology" },
+  { symbol: "ORCL", name: "Oracle" },
+  { symbol: "CRM", name: "Salesforce" },
+  { symbol: "NOW", name: "ServiceNow" },
+  { symbol: "ADBE", name: "Adobe" },
+  { symbol: "SNOW", name: "Snowflake" },
+  { symbol: "PLTR", name: "Palantir" },
+  { symbol: "UBER", name: "Uber" },
+  { symbol: "NET", name: "Cloudflare" },
+  { symbol: "SHOP", name: "Shopify" },
+  { symbol: "PYPL", name: "PayPal" },
+  { symbol: "SQ", name: "Block" },
+  { symbol: "COIN", name: "Coinbase" },
+  { symbol: "MSTR", name: "MicroStrategy" },
+  { symbol: "JPM", name: "JPMorgan Chase" },
+  { symbol: "GS", name: "Goldman Sachs" },
+  { symbol: "BAC", name: "Bank of America" },
+  { symbol: "V", name: "Visa" },
+  { symbol: "MA", name: "Mastercard" },
+  { symbol: "BRK.B", name: "Berkshire Hathaway" },
+  { symbol: "SPY", name: "S&P 500 ETF" },
+  { symbol: "QQQ", name: "Nasdaq ETF" },
+];
+
 const schema = z.object({
   notifyEmail: z.string().email("E-mail inválido"),
   scheduleEnabled: z.boolean(),
@@ -28,17 +72,28 @@ function TickerEditor({
   onChange: (v: string[]) => void;
 }) {
   const [input, setInput] = useState("");
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  function add() {
-    const ticker = input.trim().toUpperCase();
-    if (!ticker) return;
-    if (value.includes(ticker)) {
-      setInput("");
-      return;
-    }
+  const suggestions = input.trim()
+    ? POPULAR_TICKERS.filter(
+        (t) =>
+          !value.includes(t.symbol) &&
+          (t.symbol.startsWith(input.trim().toUpperCase()) ||
+            t.name.toLowerCase().includes(input.trim().toLowerCase())),
+      ).slice(0, 8)
+    : [];
+
+  function addTicker(symbol: string) {
+    const ticker = symbol.trim().toUpperCase();
+    if (!ticker || value.includes(ticker)) return;
     onChange([...value, ticker]);
     setInput("");
+    setOpen(false);
+    setActiveIdx(-1);
+    inputRef.current?.focus();
   }
 
   function remove(t: string) {
@@ -46,59 +101,113 @@ function TickerEditor({
   }
 
   function onKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" || e.key === ",") {
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      add();
+      setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, -1));
+    } else if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      if (activeIdx >= 0 && suggestions[activeIdx]) {
+        addTicker(suggestions[activeIdx].symbol);
+      } else {
+        addTicker(input);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setActiveIdx(-1);
     } else if (e.key === "Backspace" && input === "" && value.length > 0) {
       onChange(value.slice(0, -1));
     }
   }
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setActiveIdx(-1);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   return (
-    <div
-      className="min-h-[44px] flex flex-wrap gap-2 items-center p-2 rounded-md border border-border bg-secondary cursor-text"
-      onClick={() => inputRef.current?.focus()}
-    >
-      {value.map((t) => (
-        <span
-          key={t}
-          className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 border border-primary/40 text-primary font-mono text-xs font-bold"
-          data-testid={`ticker-tag-${t}`}
-        >
-          {t}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); remove(t); }}
-            className="hover:text-red-400 transition-colors ml-0.5"
-            data-testid={`remove-ticker-${t}`}
-            aria-label={`Remover ${t}`}
+    <div ref={containerRef} className="relative">
+      <div
+        className="min-h-[44px] flex flex-wrap gap-2 items-center p-2 rounded-md border border-border bg-secondary cursor-text"
+        onClick={() => inputRef.current?.focus()}
+      >
+        {value.map((t) => (
+          <span
+            key={t}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 border border-primary/40 text-primary font-mono text-xs font-bold"
+            data-testid={`ticker-tag-${t}`}
           >
-            <X className="h-3 w-3" />
-          </button>
-        </span>
-      ))}
-      <div className="flex items-center gap-1 flex-1 min-w-[100px]">
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value.toUpperCase())}
-          onKeyDown={onKey}
-          placeholder={value.length === 0 ? "NVDA, AAPL…" : "Adicionar…"}
-          className="flex-1 bg-transparent outline-none font-mono text-sm text-foreground placeholder:text-muted-foreground min-w-[80px]"
-          data-testid="input-ticker-new"
-        />
-        {input.trim() && (
-          <button
-            type="button"
-            onClick={add}
-            className="text-primary hover:text-primary/80 transition-colors"
-            data-testid="btn-add-ticker"
-            aria-label="Adicionar ticker"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        )}
+            {t}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); remove(t); }}
+              className="hover:text-red-400 transition-colors ml-0.5"
+              data-testid={`remove-ticker-${t}`}
+              aria-label={`Remover ${t}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        <div className="flex items-center gap-1 flex-1 min-w-[100px]">
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value.toUpperCase());
+              setOpen(true);
+              setActiveIdx(-1);
+            }}
+            onFocus={() => input.trim() && setOpen(true)}
+            onKeyDown={onKey}
+            placeholder={value.length === 0 ? "NVDA, AAPL…" : "Adicionar…"}
+            className="flex-1 bg-transparent outline-none font-mono text-sm text-foreground placeholder:text-muted-foreground min-w-[80px]"
+            data-testid="input-ticker-new"
+            autoComplete="off"
+          />
+          {input.trim() && (
+            <button
+              type="button"
+              onClick={() => addTicker(input)}
+              className="text-primary hover:text-primary/80 transition-colors"
+              data-testid="btn-add-ticker"
+              aria-label="Adicionar ticker"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Autocomplete dropdown */}
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-50 left-0 right-0 mt-1 border border-border rounded-md bg-card shadow-lg overflow-hidden">
+          {suggestions.map((s, idx) => (
+            <button
+              key={s.symbol}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); addTicker(s.symbol); }}
+              onMouseEnter={() => setActiveIdx(idx)}
+              className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors font-mono text-sm ${
+                idx === activeIdx ? "bg-primary/20 text-primary" : "hover:bg-secondary text-foreground"
+              }`}
+              data-testid={`suggestion-${s.symbol}`}
+            >
+              <span className="font-bold text-xs">{s.symbol}</span>
+              <span className="text-xs text-muted-foreground truncate ml-3">{s.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
