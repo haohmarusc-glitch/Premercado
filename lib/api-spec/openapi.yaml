@@ -231,3 +231,7 @@ components:
           type: ["string", "null"]
         currentStep:
           type: ["string", "null"]
+        nextRunAt:
+          type: ["string", "null"]
+        scheduleEnabled:
+          type: boolean

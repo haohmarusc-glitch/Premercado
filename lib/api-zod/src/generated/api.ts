@@ -106,7 +106,9 @@ export const RunAgentResponse = zod.object({
 export const GetAgentStatusResponse = zod.object({
   "running": zod.boolean(),
   "lastRunAt": zod.string().nullable(),
-  "currentStep": zod.string().nullish()
+  "currentStep": zod.string().nullish(),
+  "nextRunAt": zod.string().nullish(),
+  "scheduleEnabled": zod.boolean().optional()
 })
 
 

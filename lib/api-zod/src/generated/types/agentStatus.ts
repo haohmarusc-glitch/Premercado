@@ -12,4 +12,7 @@ export interface AgentStatus {
   lastRunAt: string | null;
   /** @nullable */
   currentStep?: string | null;
+  /** @nullable */
+  nextRunAt?: string | null;
+  scheduleEnabled?: boolean;
 }

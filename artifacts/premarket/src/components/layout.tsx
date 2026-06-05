@@ -18,10 +18,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: status } = useGetAgentStatus({
     query: {
       queryKey: getGetAgentStatusQueryKey(),
-      refetchInterval: (query) => {
-        // query is a UseQueryResult, data is in query.state.data
-        return query.state.data?.running ? 3000 : false;
-      }
+      refetchInterval: 30000,
     }
   });
 
@@ -90,6 +87,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {!isRunning && status?.lastRunAt && (
               <div className="text-xs text-muted-foreground font-mono">
                 Last run: {new Date(status.lastRunAt).toLocaleTimeString()}
+              </div>
+            )}
+            {!isRunning && status?.nextRunAt && (
+              <div className="text-xs font-mono mt-1 flex items-center gap-1.5">
+                <span className="text-muted-foreground">Next:</span>
+                <span className="text-primary" data-testid="text-next-run">
+                  {new Date(status.nextRunAt).toLocaleString("pt-BR", {
+                    weekday: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    timeZone: "America/Sao_Paulo",
+                  })}
+                </span>
               </div>
             )}
           </div>
