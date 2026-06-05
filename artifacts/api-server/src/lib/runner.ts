@@ -1,11 +1,12 @@
 /**
  * Shared agent runner — used by both the HTTP route and the scheduler.
- * Spawns the Python subprocess and saves the report to the DB when done.
+ * Spawns the Python subprocess, saves the report to the DB, and sends e-mail.
  */
 import { spawn } from "child_process";
 import path from "path";
 import { db, reportsTable } from "@workspace/db";
 import { logger } from "./logger";
+import { sendReportEmail } from "./mailer";
 
 const workspaceRoot = process.cwd().endsWith(
   path.join("artifacts", "api-server"),
@@ -72,24 +73,35 @@ export function runAgent(): void {
   py.on("close", async (code) => {
     state.running = false;
     state.currentStep = null;
+
     if (code !== 0) {
       logger.error({ code, errorOutput }, "Agent process exited with error");
       return;
     }
+
     const reportMatch = output.match(/REPORT:([\s\S]+)/);
     const content = reportMatch ? reportMatch[1].trim() : output.trim();
-    if (content) {
-      try {
-        const today = new Date().toISOString().split("T")[0];
-        await db.insert(reportsTable).values({
-          date: today,
-          content,
-          tickers: ["MU", "SMCI"],
-        });
-        logger.info("Report saved to database");
-      } catch (err) {
-        logger.error({ err }, "Failed to save report to database");
-      }
+
+    if (!content) {
+      logger.warn("Agent produced no report content");
+      return;
     }
+
+    const today = new Date().toISOString().split("T")[0];
+
+    // Save to DB
+    try {
+      await db.insert(reportsTable).values({
+        date: today,
+        content,
+        tickers: ["MU", "SMCI"],
+      });
+      logger.info("Report saved to database");
+    } catch (err) {
+      logger.error({ err }, "Failed to save report to database");
+    }
+
+    // Send e-mail notification
+    await sendReportEmail(content, today);
   });
 }
