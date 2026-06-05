@@ -7,6 +7,7 @@ import settingsRouter from "./settings";
 import runsRouter from "./runs";
 import quotesRouter from "./quotes";
 import chartRouter from "./chart";
+import alertsRouter from "./alerts";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(settingsRouter);
 router.use(runsRouter);
 router.use(quotesRouter);
 router.use(chartRouter);
+router.use(alertsRouter);
 
 export default router;

@@ -50,3 +50,15 @@ export const settingsTable = pgTable("settings", {
 });
 
 export type Settings = typeof settingsTable.$inferSelect;
+
+export const alertsTable = pgTable("alerts", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  condition: text("condition").notNull(), // 'above' | 'below'
+  thresholdPct: doublePrecision("threshold_pct").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  lastTriggeredAt: timestamp("last_triggered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type Alert = typeof alertsTable.$inferSelect;

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell } from "lucide-react";
 import { 
   useGetAgentStatus, 
   getGetAgentStatusQueryKey,
@@ -64,6 +64,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Link href="/runs" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/runs" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
             <ListChecks className="h-4 w-4" />
             Runs
+          </Link>
+          <Link href="/alerts" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/alerts" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
+            <Bell className="h-4 w-4" />
+            Alerts
           </Link>
           <Link href="/settings" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/settings" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
             <Settings className="h-4 w-4" />

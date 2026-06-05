@@ -137,6 +137,82 @@ paths:
         "409":
           description: Agent already running
 
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [agent]
+      summary: List all price alerts
+      responses:
+        "200":
+          description: Alerts list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceAlert"
+    post:
+      operationId: createAlert
+      tags: [agent]
+      summary: Create a new price alert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertCreateInput"
+      responses:
+        "201":
+          description: Created alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceAlert"
+        "400":
+          description: Invalid input
+
+  /alerts/{id}:
+    delete:
+      operationId: deleteAlert
+      tags: [agent]
+      summary: Delete a price alert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+    patch:
+      operationId: toggleAlert
+      tags: [agent]
+      summary: Toggle alert enabled/disabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertToggleInput"
+      responses:
+        "200":
+          description: Updated alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceAlert"
+        "404":
+          description: Not found
+
   /tickers/chart:
     get:
       operationId: getTickerChart
@@ -329,6 +405,32 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+
+    PriceAlert:
+      type: object
+      required: [id, symbol, condition, thresholdPct, enabled, createdAt]
+      properties:
+        id: { type: integer }
+        symbol: { type: string }
+        condition: { type: string }
+        thresholdPct: { type: number }
+        enabled: { type: boolean }
+        lastTriggeredAt: { type: ["string", "null"] }
+        createdAt: { type: string }
+
+    AlertCreateInput:
+      type: object
+      required: [symbol, condition, thresholdPct]
+      properties:
+        symbol: { type: string }
+        condition: { type: string }
+        thresholdPct: { type: number }
+
+    AlertToggleInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
 
     Candle:
       type: object

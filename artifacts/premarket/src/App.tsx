@@ -9,6 +9,7 @@ import History from "@/pages/history";
 import Observations from "@/pages/observations";
 import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
+import AlertsPage from "@/pages/alerts";
 import { Layout } from "@/components/layout";
 
 const queryClient = new QueryClient({
@@ -29,6 +30,7 @@ function Router() {
         <Route path="/observations" component={Observations} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/runs" component={RunsPage} />
+        <Route path="/alerts" component={AlertsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

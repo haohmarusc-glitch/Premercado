@@ -101,6 +101,61 @@ export const RunAgentResponse = zod.object({
 
 
 /**
+ * @summary List all price alerts
+ */
+export const ListAlertsResponseItem = zod.object({
+  "id": zod.number(),
+  "symbol": zod.string(),
+  "condition": zod.string(),
+  "thresholdPct": zod.number(),
+  "enabled": zod.boolean(),
+  "lastTriggeredAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
+
+
+/**
+ * @summary Create a new price alert
+ */
+export const CreateAlertBody = zod.object({
+  "symbol": zod.string(),
+  "condition": zod.string(),
+  "thresholdPct": zod.number()
+})
+
+
+/**
+ * @summary Delete a price alert
+ */
+export const DeleteAlertParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Toggle alert enabled/disabled
+ */
+export const ToggleAlertParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ToggleAlertBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const ToggleAlertResponse = zod.object({
+  "id": zod.number(),
+  "symbol": zod.string(),
+  "condition": zod.string(),
+  "thresholdPct": zod.number(),
+  "enabled": zod.boolean(),
+  "lastTriggeredAt": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
  * @summary Get OHLCV chart data for a ticker
  */
 export const GetTickerChartQueryParams = zod.object({

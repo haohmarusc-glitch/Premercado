@@ -53,6 +53,27 @@ export interface AgentStatus {
   scheduleEnabled?: boolean;
 }
 
+export interface PriceAlert {
+  id: number;
+  symbol: string;
+  condition: string;
+  thresholdPct: number;
+  enabled: boolean;
+  /** @nullable */
+  lastTriggeredAt?: string | null;
+  createdAt: string;
+}
+
+export interface AlertCreateInput {
+  symbol: string;
+  condition: string;
+  thresholdPct: number;
+}
+
+export interface AlertToggleInput {
+  enabled: boolean;
+}
+
 export interface Candle {
   t: number;
   o: number;
