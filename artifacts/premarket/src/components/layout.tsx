@@ -6,14 +6,39 @@ import {
   useRunAgent,
   getGetLatestReportQueryKey,
   getListObservationsQueryKey,
-  getGetObservationsSummaryQueryKey
+  getGetObservationsSummaryQueryKey,
+  useListAlerts,
+  getListAlertsQueryKey,
+  useGetTickerQuotes,
+  getGetTickerQuotesQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 
+function useFiringCount(): number {
+  const { data: alerts } = useListAlerts({
+    query: { queryKey: getListAlertsQueryKey(), refetchInterval: 60_000, staleTime: 55_000 },
+  });
+  const { data: quotes } = useGetTickerQuotes({
+    query: { queryKey: getGetTickerQuotesQueryKey(), refetchInterval: 60_000, staleTime: 55_000 },
+  });
+
+  if (!alerts || !quotes) return 0;
+
+  const quoteMap = new Map(quotes.map((q) => [q.symbol, q.changePct ?? null]));
+
+  return alerts.filter((a) => {
+    if (!a.enabled) return false;
+    const pct = quoteMap.get(a.symbol);
+    if (pct == null) return false;
+    return a.condition === "above" ? pct >= a.thresholdPct : pct <= a.thresholdPct;
+  }).length;
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const queryClient = useQueryClient();
+  const firingCount = useFiringCount();
 
   const { data: status } = useGetAgentStatus({
     query: {
@@ -23,7 +48,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
 
   const isRunning = status?.running;
-
   const runAgent = useRunAgent();
 
   const handleRun = () => {
@@ -35,6 +59,35 @@ export function Layout({ children }: { children: React.ReactNode }) {
         queryClient.invalidateQueries({ queryKey: getGetObservationsSummaryQueryKey() });
       }
     });
+  };
+
+  const navLink = (href: string, icon: React.ReactNode, label: string, badge?: number) => {
+    const active = location === href;
+    return (
+      <Link
+        href={href}
+        className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${
+          active
+            ? "bg-primary text-primary-foreground"
+            : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+        }`}
+      >
+        {icon}
+        <span className="flex-1">{label}</span>
+        {badge != null && badge > 0 && (
+          <span
+            className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold font-mono animate-pulse ${
+              active
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-red-500 text-white"
+            }`}
+            data-testid="alerts-firing-badge"
+          >
+            {badge}
+          </span>
+        )}
+      </Link>
+    );
   };
 
   return (
@@ -49,30 +102,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
         
         <nav className="flex-1 p-4 space-y-2">
-          <Link href="/" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <LayoutDashboard className="h-4 w-4" />
-            Dashboard
-          </Link>
-          <Link href="/history" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/history" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <History className="h-4 w-4" />
-            History
-          </Link>
-          <Link href="/observations" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/observations" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <Database className="h-4 w-4" />
-            Observations
-          </Link>
-          <Link href="/runs" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/runs" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <ListChecks className="h-4 w-4" />
-            Runs
-          </Link>
-          <Link href="/alerts" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/alerts" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <Bell className="h-4 w-4" />
-            Alerts
-          </Link>
-          <Link href="/settings" className={`flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors ${location === "/settings" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}>
-            <Settings className="h-4 w-4" />
-            Settings
-          </Link>
+          {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
+          {navLink("/history", <History className="h-4 w-4" />, "History")}
+          {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
+          {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
+          {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
+          {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
 
         <div className="p-4 border-t border-border">
