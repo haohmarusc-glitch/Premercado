@@ -9,6 +9,8 @@
 export * from './agentRun';
 export * from './agentRunResult';
 export * from './agentStatus';
+export * from './candle';
+export * from './getTickerChartParams';
 export * from './healthStatus';
 export * from './listAgentRunsParams';
 export * from './listObservationsParams';
@@ -17,4 +19,5 @@ export * from './report';
 export * from './sentimentSummary';
 export * from './settings';
 export * from './settingsUpdate';
+export * from './tickerChart';
 export * from './tickerQuote';

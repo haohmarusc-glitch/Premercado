@@ -53,6 +53,23 @@ export interface AgentStatus {
   scheduleEnabled?: boolean;
 }
 
+export interface Candle {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface TickerChart {
+  symbol: string;
+  period: string;
+  candles: Candle[];
+  /** @nullable */
+  error?: string | null;
+}
+
 export interface TickerQuote {
   symbol: string;
   /** @nullable */
@@ -109,6 +126,11 @@ export interface SettingsUpdate {
 export type ListObservationsParams = {
 ticker?: string;
 limit?: number;
+};
+
+export type GetTickerChartParams = {
+symbol: string;
+period?: string;
 };
 
 export type ListAgentRunsParams = {

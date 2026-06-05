@@ -23,6 +23,7 @@ import type {
   AgentRun,
   AgentRunResult,
   AgentStatus,
+  GetTickerChartParams,
   HealthStatus,
   ListAgentRunsParams,
   ListObservationsParams,
@@ -31,6 +32,7 @@ import type {
   SentimentSummary,
   Settings,
   SettingsUpdate,
+  TickerChart,
   TickerQuote
 } from './api.schemas';
 
@@ -584,6 +586,90 @@ export const useRunAgent = <TError = ErrorType<void>,
       > => {
       return useMutation(getRunAgentMutationOptions(options));
     }
+
+export const getGetTickerChartUrl = (params: GetTickerChartParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/tickers/chart?${stringifiedParams}` : `/api/tickers/chart`
+}
+
+/**
+ * @summary Get OHLCV chart data for a ticker
+ */
+export const getTickerChart = async (params: GetTickerChartParams, options?: RequestInit): Promise<TickerChart> => {
+
+  return customFetch<TickerChart>(getGetTickerChartUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTickerChartQueryKey = (params?: GetTickerChartParams,) => {
+    return [
+    `/api/tickers/chart`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetTickerChartQueryOptions = <TData = Awaited<ReturnType<typeof getTickerChart>>, TError = ErrorType<void>>(params: GetTickerChartParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTickerChart>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTickerChartQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTickerChart>>> = ({ signal }) => getTickerChart(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTickerChart>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTickerChartQueryResult = NonNullable<Awaited<ReturnType<typeof getTickerChart>>>
+export type GetTickerChartQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get OHLCV chart data for a ticker
+ */
+
+export function useGetTickerChart<TData = Awaited<ReturnType<typeof getTickerChart>>, TError = ErrorType<void>>(
+ params: GetTickerChartParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTickerChart>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTickerChartQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getGetTickerQuotesUrl = () => {
 

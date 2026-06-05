@@ -101,6 +101,29 @@ export const RunAgentResponse = zod.object({
 
 
 /**
+ * @summary Get OHLCV chart data for a ticker
+ */
+export const GetTickerChartQueryParams = zod.object({
+  "symbol": zod.coerce.string(),
+  "period": zod.coerce.string().optional()
+})
+
+export const GetTickerChartResponse = zod.object({
+  "symbol": zod.string(),
+  "period": zod.string(),
+  "candles": zod.array(zod.object({
+  "t": zod.number(),
+  "o": zod.number(),
+  "h": zod.number(),
+  "l": zod.number(),
+  "c": zod.number(),
+  "v": zod.number()
+})),
+  "error": zod.string().nullish()
+})
+
+
+/**
  * @summary Get real-time quotes for monitored tickers
  */
 export const GetTickerQuotesResponseItem = zod.object({

@@ -137,6 +137,32 @@ paths:
         "409":
           description: Agent already running
 
+  /tickers/chart:
+    get:
+      operationId: getTickerChart
+      tags: [agent]
+      summary: Get OHLCV chart data for a ticker
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Chart data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TickerChart"
+        "400":
+          description: Missing symbol
+
   /tickers/quotes:
     get:
       operationId: getTickerQuotes
@@ -303,6 +329,30 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+
+    Candle:
+      type: object
+      required: [t, o, h, l, c, v]
+      properties:
+        t: { type: integer }
+        o: { type: number }
+        h: { type: number }
+        l: { type: number }
+        c: { type: number }
+        v: { type: integer }
+
+    TickerChart:
+      type: object
+      required: [symbol, period, candles]
+      properties:
+        symbol: { type: string }
+        period: { type: string }
+        candles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candle"
+        error:
+          type: ["string", "null"]
 
     TickerQuote:
       type: object

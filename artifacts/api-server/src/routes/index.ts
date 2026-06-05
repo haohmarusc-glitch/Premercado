@@ -6,6 +6,7 @@ import agentRouter from "./agent";
 import settingsRouter from "./settings";
 import runsRouter from "./runs";
 import quotesRouter from "./quotes";
+import chartRouter from "./chart";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(agentRouter);
 router.use(settingsRouter);
 router.use(runsRouter);
 router.use(quotesRouter);
+router.use(chartRouter);
 
 export default router;
