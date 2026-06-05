@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- full bleed background for maskable -->
+  <rect width="512" height="512" fill="#09090b"/>
+  <!-- safe zone: 80px padding each side → 352x352 content area starting at 80,80 -->
+  <polyline
+    points="96,256 160,256 202,172 250,340 298,196 346,276 376,256 416,256"
+    fill="none"
+    stroke="#f97316"
+    stroke-width="26"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <text
+    x="256"
+    y="408"
+    text-anchor="middle"
+    font-family="monospace"
+    font-size="64"
+    font-weight="bold"
+    letter-spacing="8"
+    fill="#f97316"
+    opacity="0.9"
+  >PM</text>
+</svg>

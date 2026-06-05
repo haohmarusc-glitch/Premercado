@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="32" fill="#09090b"/>
+  <polyline
+    points="18,90 50,90 66,54 84,126 102,66 118,102 130,90 162,90"
+    fill="none"
+    stroke="#f97316"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <text
+    x="90"
+    y="156"
+    text-anchor="middle"
+    font-family="monospace"
+    font-size="28"
+    font-weight="bold"
+    letter-spacing="3"
+    fill="#f97316"
+  >PM</text>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#09090b"/>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#18181b"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+  </defs>
+  <!-- Activity / pulse line icon -->
+  <polyline
+    points="64,256 144,256 192,160 240,352 288,192 336,288 368,256 448,256"
+    fill="none"
+    stroke="#f97316"
+    stroke-width="28"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- PM label -->
+  <text
+    x="256"
+    y="430"
+    text-anchor="middle"
+    font-family="monospace"
+    font-size="72"
+    font-weight="bold"
+    letter-spacing="8"
+    fill="#f97316"
+    opacity="0.9"
+  >PM</text>
+</svg>
