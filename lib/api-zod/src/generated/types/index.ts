@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './agentRun';
 export * from './agentRunResult';
 export * from './agentStatus';
 export * from './healthStatus';
+export * from './listAgentRunsParams';
 export * from './listObservationsParams';
 export * from './observation';
 export * from './report';

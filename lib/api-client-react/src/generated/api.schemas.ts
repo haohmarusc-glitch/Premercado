@@ -53,6 +53,19 @@ export interface AgentStatus {
   scheduleEnabled?: boolean;
 }
 
+export interface AgentRun {
+  id: number;
+  startedAt: string;
+  /** @nullable */
+  finishedAt?: string | null;
+  status: string;
+  trigger: string;
+  /** @nullable */
+  durationMs?: number | null;
+  /** @nullable */
+  errorMessage?: string | null;
+}
+
 export interface Settings {
   id: number;
   notifyEmail: string;
@@ -71,6 +84,10 @@ export interface SettingsUpdate {
 
 export type ListObservationsParams = {
 ticker?: string;
+limit?: number;
+};
+
+export type ListAgentRunsParams = {
 limit?: number;
 };
 

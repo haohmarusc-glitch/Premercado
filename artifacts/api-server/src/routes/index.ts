@@ -4,6 +4,7 @@ import reportsRouter from "./reports";
 import observationsRouter from "./observations";
 import agentRouter from "./agent";
 import settingsRouter from "./settings";
+import runsRouter from "./runs";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(reportsRouter);
 router.use(observationsRouter);
 router.use(agentRouter);
 router.use(settingsRouter);
+router.use(runsRouter);
 
 export default router;

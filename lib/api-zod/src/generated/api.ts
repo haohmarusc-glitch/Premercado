@@ -113,6 +113,25 @@ export const GetAgentStatusResponse = zod.object({
 
 
 /**
+ * @summary List agent execution history
+ */
+export const ListAgentRunsQueryParams = zod.object({
+  "limit": zod.coerce.number().optional()
+})
+
+export const ListAgentRunsResponseItem = zod.object({
+  "id": zod.number(),
+  "startedAt": zod.string(),
+  "finishedAt": zod.string().nullish(),
+  "status": zod.string(),
+  "trigger": zod.string(),
+  "durationMs": zod.number().nullish(),
+  "errorMessage": zod.string().nullish()
+})
+export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
+
+
+/**
  * @summary Get current app settings
  */
 export const GetSettingsResponse = zod.object({

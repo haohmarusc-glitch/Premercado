@@ -20,9 +20,11 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AgentRun,
   AgentRunResult,
   AgentStatus,
   HealthStatus,
+  ListAgentRunsParams,
   ListObservationsParams,
   Observation,
   Report,
@@ -647,6 +649,90 @@ export function useGetAgentStatus<TData = Awaited<ReturnType<typeof getAgentStat
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAgentStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListAgentRunsUrl = (params?: ListAgentRunsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/agent/runs?${stringifiedParams}` : `/api/agent/runs`
+}
+
+/**
+ * @summary List agent execution history
+ */
+export const listAgentRuns = async (params?: ListAgentRunsParams, options?: RequestInit): Promise<AgentRun[]> => {
+
+  return customFetch<AgentRun[]>(getListAgentRunsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAgentRunsQueryKey = (params?: ListAgentRunsParams,) => {
+    return [
+    `/api/agent/runs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAgentRunsQueryOptions = <TData = Awaited<ReturnType<typeof listAgentRuns>>, TError = ErrorType<unknown>>(params?: ListAgentRunsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAgentRuns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAgentRunsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgentRuns>>> = ({ signal }) => listAgentRuns(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAgentRuns>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAgentRunsQueryResult = NonNullable<Awaited<ReturnType<typeof listAgentRuns>>>
+export type ListAgentRunsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List agent execution history
+ */
+
+export function useListAgentRuns<TData = Awaited<ReturnType<typeof listAgentRuns>>, TError = ErrorType<unknown>>(
+ params?: ListAgentRunsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAgentRuns>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAgentRunsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -1,10 +1,11 @@
 /**
  * Shared agent runner — used by both the HTTP route and the scheduler.
- * Spawns the Python subprocess, saves the report to the DB, and sends e-mail.
+ * Spawns the Python subprocess, records the run in DB, saves the report, and sends e-mail.
  */
 import { spawn } from "child_process";
 import path from "path";
-import { db, reportsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { db, reportsTable, agentRunsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 
@@ -32,7 +33,7 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(): void {
+export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
@@ -41,6 +42,16 @@ export function runAgent(): void {
   state.running = true;
   state.currentStep = "Iniciando agente...";
   state.lastRunAt = new Date().toISOString();
+
+  const startedAt = new Date();
+  let runId: number | null = null;
+
+  // Insert run record immediately
+  db.insert(agentRunsTable)
+    .values({ status: "running", trigger, startedAt })
+    .returning()
+    .then(([row]) => { runId = row.id; })
+    .catch((err) => logger.error({ err }, "Failed to insert agent run record"));
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
 
@@ -74,8 +85,18 @@ export function runAgent(): void {
     state.running = false;
     state.currentStep = null;
 
+    const finishedAt = new Date();
+    const durationMs = finishedAt.getTime() - startedAt.getTime();
+
     if (code !== 0) {
       logger.error({ code, errorOutput }, "Agent process exited with error");
+      if (runId !== null) {
+        await db
+          .update(agentRunsTable)
+          .set({ status: "failed", finishedAt, durationMs, errorMessage: errorOutput.slice(0, 2000) })
+          .where(eq(agentRunsTable.id, runId))
+          .catch((err) => logger.error({ err }, "Failed to update failed run record"));
+      }
       return;
     }
 
@@ -84,12 +105,19 @@ export function runAgent(): void {
 
     if (!content) {
       logger.warn("Agent produced no report content");
+      if (runId !== null) {
+        await db
+          .update(agentRunsTable)
+          .set({ status: "failed", finishedAt, durationMs, errorMessage: "No report content produced" })
+          .where(eq(agentRunsTable.id, runId))
+          .catch((err) => logger.error({ err }, "Failed to update empty run record"));
+      }
       return;
     }
 
     const today = new Date().toISOString().split("T")[0];
 
-    // Save to DB
+    // Save report to DB
     try {
       await db.insert(reportsTable).values({
         date: today,
@@ -101,7 +129,17 @@ export function runAgent(): void {
       logger.error({ err }, "Failed to save report to database");
     }
 
+    // Mark run as success
+    if (runId !== null) {
+      await db
+        .update(agentRunsTable)
+        .set({ status: "success", finishedAt, durationMs })
+        .where(eq(agentRunsTable.id, runId))
+        .catch((err) => logger.error({ err }, "Failed to update success run record"));
+    }
+
     // Send e-mail notification
     await sendReportEmail(content, today);
   });
 }
+

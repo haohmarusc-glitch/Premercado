@@ -36,7 +36,7 @@ function scheduleTask(hour: number): void {
     cronExpr(hour),
     () => {
       logger.info("Scheduled pre-market agent run triggered");
-      runAgent();
+      runAgent("scheduled");
       state.nextRunAt = nextOccurrence(currentHour).toISOString();
     },
     { timezone: TIMEZONE },

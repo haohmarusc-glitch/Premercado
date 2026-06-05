@@ -28,6 +28,18 @@ export const insertObservationSchema = createInsertSchema(observationsTable).omi
 export type InsertObservation = z.infer<typeof insertObservationSchema>;
 export type Observation = typeof observationsTable.$inferSelect;
 
+export const agentRunsTable = pgTable("agent_runs", {
+  id: serial("id").primaryKey(),
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  finishedAt: timestamp("finished_at"),
+  status: text("status").notNull().default("running"), // running | success | failed
+  trigger: text("trigger").notNull().default("manual"), // manual | scheduled
+  durationMs: integer("duration_ms"),
+  errorMessage: text("error_message"),
+});
+
+export type AgentRun = typeof agentRunsTable.$inferSelect;
+
 export const settingsTable = pgTable("settings", {
   id: serial("id").primaryKey(),
   notifyEmail: text("notify_email").notNull(),

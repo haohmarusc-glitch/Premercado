@@ -150,6 +150,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/AgentStatus"
 
+  /agent/runs:
+    get:
+      operationId: listAgentRuns
+      tags: [agent]
+      summary: List agent execution history
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of agent runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentRun"
+
   /settings:
     get:
       operationId: getSettings
@@ -267,6 +288,25 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+
+    AgentRun:
+      type: object
+      required: [id, startedAt, status, trigger]
+      properties:
+        id:
+          type: integer
+        startedAt:
+          type: string
+        finishedAt:
+          type: ["string", "null"]
+        status:
+          type: string
+        trigger:
+          type: string
+        durationMs:
+          type: ["integer", "null"]
+        errorMessage:
+          type: ["string", "null"]
 
     Settings:
       type: object

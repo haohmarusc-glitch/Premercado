@@ -8,6 +8,7 @@ import Dashboard from "@/pages/dashboard";
 import History from "@/pages/history";
 import Observations from "@/pages/observations";
 import SettingsPage from "@/pages/settings";
+import RunsPage from "@/pages/runs";
 import { Layout } from "@/components/layout";
 
 const queryClient = new QueryClient({
@@ -27,6 +28,7 @@ function Router() {
         <Route path="/history" component={History} />
         <Route path="/observations" component={Observations} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/runs" component={RunsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
