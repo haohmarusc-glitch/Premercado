@@ -74,6 +74,18 @@ export interface AlertToggleInput {
   enabled: boolean;
 }
 
+export interface AlertFiring {
+  id: number;
+  alertId: number;
+  symbol: string;
+  condition: string;
+  thresholdPct: number;
+  changePctAtFiring: number;
+  /** @nullable */
+  priceAtFiring?: number | null;
+  firedAt: string;
+}
+
 export interface Candle {
   t: number;
   o: number;

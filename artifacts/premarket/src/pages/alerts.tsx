@@ -5,6 +5,8 @@ import {
   useCreateAlert,
   useDeleteAlert,
   useToggleAlert,
+  useListAlertFirings,
+  getListAlertFiringsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -12,7 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Bell, BellOff, Plus, Trash2, TrendingUp, TrendingDown, Clock } from "lucide-react";
+import {
+  Bell, BellOff, Plus, Trash2, TrendingUp, TrendingDown,
+  Clock, ChevronDown, ChevronUp, History,
+} from "lucide-react";
 import { useGetTickerQuotes, getGetTickerQuotesQueryKey } from "@workspace/api-client-react";
 
 const CONDITIONS = [
@@ -20,13 +25,75 @@ const CONDITIONS = [
   { key: "below", label: "Cai abaixo de", icon: TrendingDown, color: "text-red-400" },
 ];
 
-function fmtTime(iso: string | null | undefined) {
+function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return null;
   return new Date(iso).toLocaleString("pt-BR", {
-    day: "2-digit", month: "2-digit",
+    day: "2-digit", month: "2-digit", year: "2-digit",
     hour: "2-digit", minute: "2-digit",
     timeZone: "America/Sao_Paulo",
   });
+}
+
+function fmtPct(n: number) {
+  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+function FiringHistory({ alertId }: { alertId: number }) {
+  const { data: firings, isLoading } = useListAlertFirings(alertId, {
+    query: {
+      queryKey: getListAlertFiringsQueryKey(alertId),
+      staleTime: 30_000,
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pb-3 pt-1">
+        <span className="font-mono text-xs text-muted-foreground animate-pulse">Carregando histórico...</span>
+      </div>
+    );
+  }
+
+  if (!firings || firings.length === 0) {
+    return (
+      <div className="px-4 pb-3 pt-1 flex items-center gap-2 text-xs font-mono text-muted-foreground">
+        <History className="h-3 w-3" />
+        Nenhum disparo registrado ainda.
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-4 pt-1">
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="border-b border-border/50 bg-secondary/30">
+              <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Data/Hora</th>
+              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Variação</th>
+              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Preço</th>
+            </tr>
+          </thead>
+          <tbody>
+            {firings.map((f, i) => (
+              <tr
+                key={f.id}
+                className={`border-b border-border/30 last:border-0 ${i % 2 === 0 ? "" : "bg-secondary/10"}`}
+              >
+                <td className="px-3 py-1.5 text-muted-foreground">{fmtDateTime(f.firedAt)}</td>
+                <td className={`px-3 py-1.5 text-right font-bold ${f.changePctAtFiring >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {fmtPct(f.changePctAtFiring)}
+                </td>
+                <td className="px-3 py-1.5 text-right text-foreground">
+                  {f.priceAtFiring != null ? `$${f.priceAtFiring.toFixed(2)}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export default function Alerts() {
@@ -46,10 +113,10 @@ export default function Alerts() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: getListAlertsQueryKey() });
 
-  // Form state
   const [symbol, setSymbol] = useState("");
   const [condition, setCondition] = useState<"above" | "below">("below");
   const [thresholdPct, setThresholdPct] = useState("");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const availableSymbols = quotes?.map((q) => q.symbol) ?? [];
 
@@ -76,17 +143,18 @@ export default function Alerts() {
     deleteAlert.mutate(
       { id },
       {
-        onSuccess: () => { invalidate(); toast({ title: "Alerta removido" }); },
+        onSuccess: () => {
+          if (expandedId === id) setExpandedId(null);
+          invalidate();
+          toast({ title: "Alerta removido" });
+        },
         onError: () => toast({ title: "Erro ao remover", variant: "destructive" }),
       },
     );
   }
 
   function handleToggle(id: number, enabled: boolean) {
-    toggleAlert.mutate(
-      { id, data: { enabled } },
-      { onSuccess: () => invalidate() },
-    );
+    toggleAlert.mutate({ id, data: { enabled } }, { onSuccess: () => invalidate() });
   }
 
   const activeCount = alerts?.filter((a) => a.enabled).length ?? 0;
@@ -102,7 +170,6 @@ export default function Alerts() {
         </p>
       </div>
 
-      {/* Stats */}
       {alerts && alerts.length > 0 && (
         <div className="grid grid-cols-2 gap-4 mb-8">
           <div className="border border-border rounded-lg p-4 bg-card">
@@ -124,7 +191,6 @@ export default function Alerts() {
         </div>
 
         <form onSubmit={handleCreate} className="space-y-4">
-          {/* Ticker selector */}
           <div>
             <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Ticker</label>
             {availableSymbols.length > 0 ? (
@@ -163,7 +229,6 @@ export default function Alerts() {
             )}
           </div>
 
-          {/* Condition + threshold */}
           <div className="flex flex-wrap items-end gap-4">
             <div>
               <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Condição</label>
@@ -188,9 +253,7 @@ export default function Alerts() {
             </div>
 
             <div>
-              <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">
-                Variação (%)
-              </label>
+              <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Variação (%)</label>
               <div className="flex items-center gap-2">
                 <Input
                   value={thresholdPct}
@@ -216,7 +279,6 @@ export default function Alerts() {
             </Button>
           </div>
 
-          {/* Preview */}
           {symbol && thresholdPct && !isNaN(parseFloat(thresholdPct)) && (
             <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-2">
               Enviar e-mail quando <span className="text-primary font-bold">{symbol}</span>{" "}
@@ -248,67 +310,94 @@ export default function Alerts() {
       )}
 
       {alerts && alerts.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {alerts.map((alert) => {
             const cond = CONDITIONS.find((c) => c.key === alert.condition);
             const Icon = cond?.icon ?? Bell;
-            const lastFired = fmtTime(alert.lastTriggeredAt);
+            const lastFired = fmtDateTime(alert.lastTriggeredAt);
+            const isExpanded = expandedId === alert.id;
 
             return (
               <div
                 key={alert.id}
-                className={`border rounded-lg p-4 flex items-center gap-4 transition-colors ${
+                className={`border rounded-lg transition-colors ${
                   alert.enabled ? "border-border bg-card" : "border-border/40 bg-secondary/10 opacity-60"
                 }`}
                 data-testid={`alert-row-${alert.id}`}
               >
-                <Icon className={`h-5 w-5 flex-shrink-0 ${cond?.color ?? "text-muted-foreground"}`} />
+                {/* Alert header row */}
+                <div className="flex items-center gap-4 px-4 py-3">
+                  <Icon className={`h-4 w-4 flex-shrink-0 ${cond?.color ?? "text-muted-foreground"}`} />
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-bold text-primary">{alert.symbol}</span>
-                    <Badge
-                      variant="outline"
-                      className={`font-mono text-xs ${
-                        alert.condition === "above"
-                          ? "border-green-500/30 text-green-400 bg-green-500/5"
-                          : "border-red-500/30 text-red-400 bg-red-500/5"
-                      }`}
-                    >
-                      {alert.condition === "above" ? "↑ acima de" : "↓ abaixo de"}{" "}
-                      {alert.thresholdPct > 0 ? "+" : ""}{alert.thresholdPct}%
-                    </Badge>
-                    {!alert.enabled && (
-                      <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border">
-                        pausado
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono font-bold text-primary">{alert.symbol}</span>
+                      <Badge
+                        variant="outline"
+                        className={`font-mono text-xs ${
+                          alert.condition === "above"
+                            ? "border-green-500/30 text-green-400 bg-green-500/5"
+                            : "border-red-500/30 text-red-400 bg-red-500/5"
+                        }`}
+                      >
+                        {alert.condition === "above" ? "↑ acima de" : "↓ abaixo de"}{" "}
+                        {alert.thresholdPct > 0 ? "+" : ""}{alert.thresholdPct}%
                       </Badge>
+                      {!alert.enabled && (
+                        <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border">
+                          pausado
+                        </Badge>
+                      )}
+                    </div>
+                    {lastFired && (
+                      <div className="flex items-center gap-1 mt-0.5 text-[11px] font-mono text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        Último disparo: {lastFired}
+                      </div>
                     )}
                   </div>
-                  {lastFired && (
-                    <div className="flex items-center gap-1 mt-1 text-[11px] font-mono text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      Disparado em {lastFired}
-                    </div>
-                  )}
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* History toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isExpanded ? null : alert.id)}
+                      className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-secondary"
+                      data-testid={`history-toggle-${alert.id}`}
+                      title="Ver histórico de disparos"
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </button>
+
+                    <Switch
+                      checked={alert.enabled}
+                      onCheckedChange={(v) => handleToggle(alert.id, v)}
+                      data-testid={`toggle-alert-${alert.id}`}
+                      aria-label="Ativar/desativar alerta"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(alert.id)}
+                      className="text-muted-foreground hover:text-red-400 transition-colors p-1"
+                      data-testid={`delete-alert-${alert.id}`}
+                      aria-label="Remover alerta"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <Switch
-                    checked={alert.enabled}
-                    onCheckedChange={(v) => handleToggle(alert.id, v)}
-                    data-testid={`toggle-alert-${alert.id}`}
-                    aria-label="Ativar/desativar alerta"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(alert.id)}
-                    className="text-muted-foreground hover:text-red-400 transition-colors p-1"
-                    data-testid={`delete-alert-${alert.id}`}
-                    aria-label="Remover alerta"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+                {/* Expandable firing history */}
+                {isExpanded && (
+                  <div className="border-t border-border/50">
+                    <div className="px-4 pt-2 pb-1 flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground uppercase tracking-wide">
+                      <History className="h-3 w-3" />
+                      Histórico de disparos (últimos 20)
+                    </div>
+                    <FiringHistory alertId={alert.id} />
+                  </div>
+                )}
               </div>
             );
           })}

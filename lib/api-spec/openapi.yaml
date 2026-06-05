@@ -213,6 +213,29 @@ paths:
         "404":
           description: Not found
 
+  /alerts/{id}/firings:
+    get:
+      operationId: listAlertFirings
+      tags: [agent]
+      summary: List firing history for a price alert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Firing history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlertFiring"
+        "404":
+          description: Not found
+
   /tickers/chart:
     get:
       operationId: getTickerChart
@@ -431,6 +454,19 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
+
+    AlertFiring:
+      type: object
+      required: [id, alertId, symbol, condition, thresholdPct, changePctAtFiring, firedAt]
+      properties:
+        id: { type: integer }
+        alertId: { type: integer }
+        symbol: { type: string }
+        condition: { type: string }
+        thresholdPct: { type: number }
+        changePctAtFiring: { type: number }
+        priceAtFiring: { type: ["number", "null"] }
+        firedAt: { type: string }
 
     Candle:
       type: object

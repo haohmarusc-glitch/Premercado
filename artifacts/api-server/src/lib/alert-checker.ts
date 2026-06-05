@@ -5,7 +5,7 @@
  */
 import { spawn } from "child_process";
 import { eq, and } from "drizzle-orm";
-import { db, alertsTable, settingsTable } from "@workspace/db";
+import { db, alertsTable, alertFiringsTable, settingsTable } from "@workspace/db";
 import { agentDir } from "./runner";
 import { sendAlertEmail } from "./mailer";
 import { logger } from "./logger";
@@ -90,6 +90,16 @@ async function checkAlerts(): Promise<void> {
         .update(alertsTable)
         .set({ lastTriggeredAt: now })
         .where(eq(alertsTable.id, alert.id));
+
+      await db.insert(alertFiringsTable).values({
+        alertId: alert.id,
+        symbol: alert.symbol,
+        condition: alert.condition,
+        thresholdPct: alert.thresholdPct,
+        changePctAtFiring: quote.changePct,
+        priceAtFiring: quote.price,
+        firedAt: now,
+      });
 
       logger.info(
         { symbol: alert.symbol, changePct: quote.changePct, threshold: alert.thresholdPct },

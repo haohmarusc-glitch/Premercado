@@ -62,3 +62,16 @@ export const alertsTable = pgTable("alerts", {
 });
 
 export type Alert = typeof alertsTable.$inferSelect;
+
+export const alertFiringsTable = pgTable("alert_firings", {
+  id: serial("id").primaryKey(),
+  alertId: integer("alert_id").notNull(),
+  symbol: text("symbol").notNull(),
+  condition: text("condition").notNull(),
+  thresholdPct: doublePrecision("threshold_pct").notNull(),
+  changePctAtFiring: doublePrecision("change_pct_at_firing").notNull(),
+  priceAtFiring: doublePrecision("price_at_firing"),
+  firedAt: timestamp("fired_at").defaultNow().notNull(),
+});
+
+export type AlertFiring = typeof alertFiringsTable.$inferSelect;

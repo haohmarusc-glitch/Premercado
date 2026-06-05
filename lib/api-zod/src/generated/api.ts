@@ -156,6 +156,26 @@ export const ToggleAlertResponse = zod.object({
 
 
 /**
+ * @summary List firing history for a price alert
+ */
+export const ListAlertFiringsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListAlertFiringsResponseItem = zod.object({
+  "id": zod.number(),
+  "alertId": zod.number(),
+  "symbol": zod.string(),
+  "condition": zod.string(),
+  "thresholdPct": zod.number(),
+  "changePctAtFiring": zod.number(),
+  "priceAtFiring": zod.number().nullish(),
+  "firedAt": zod.string()
+})
+export const ListAlertFiringsResponse = zod.array(ListAlertFiringsResponseItem)
+
+
+/**
  * @summary Get OHLCV chart data for a ticker
  */
 export const GetTickerChartQueryParams = zod.object({
