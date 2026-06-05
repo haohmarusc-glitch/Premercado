@@ -112,3 +112,36 @@ export const GetAgentStatusResponse = zod.object({
 })
 
 
+/**
+ * @summary Get current app settings
+ */
+export const GetSettingsResponse = zod.object({
+  "id": zod.number(),
+  "notifyEmail": zod.string(),
+  "scheduleEnabled": zod.boolean(),
+  "scheduleHour": zod.number(),
+  "tickers": zod.array(zod.string()),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Update app settings
+ */
+export const UpdateSettingsBody = zod.object({
+  "notifyEmail": zod.string().optional(),
+  "scheduleEnabled": zod.boolean().optional(),
+  "scheduleHour": zod.number().optional(),
+  "tickers": zod.array(zod.string()).optional()
+})
+
+export const UpdateSettingsResponse = zod.object({
+  "id": zod.number(),
+  "notifyEmail": zod.string(),
+  "scheduleEnabled": zod.boolean(),
+  "scheduleHour": zod.number(),
+  "tickers": zod.array(zod.string()),
+  "updatedAt": zod.string()
+})
+
+

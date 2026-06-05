@@ -13,3 +13,5 @@ export * from './listObservationsParams';
 export * from './observation';
 export * from './report';
 export * from './sentimentSummary';
+export * from './settings';
+export * from './settingsUpdate';

@@ -1,0 +1,2 @@
+- [Zod version in db schema](zod-drizzle-schema.md) — drizzle-zod creates v4 types; use `"zod/v4"` in lib/db schemas, plain `"zod"` only in api-server routes that have their own zod dep.
+- [DB Date serialization](db-date-serialization.md) — Drizzle returns timestamp columns as JS Date objects; Zod OpenAPI schemas expect strings. Always call `.toISOString()` before `.parse()` in route handlers.

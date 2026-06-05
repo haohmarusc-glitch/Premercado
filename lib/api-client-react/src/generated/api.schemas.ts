@@ -53,6 +53,22 @@ export interface AgentStatus {
   scheduleEnabled?: boolean;
 }
 
+export interface Settings {
+  id: number;
+  notifyEmail: string;
+  scheduleEnabled: boolean;
+  scheduleHour: number;
+  tickers: string[];
+  updatedAt: string;
+}
+
+export interface SettingsUpdate {
+  notifyEmail?: string;
+  scheduleEnabled?: boolean;
+  scheduleHour?: number;
+  tickers?: string[];
+}
+
 export type ListObservationsParams = {
 ticker?: string;
 limit?: number;

@@ -150,6 +150,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/AgentStatus"
 
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [agent]
+      summary: Get current app settings
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+    patch:
+      operationId: updateSettings
+      tags: [agent]
+      summary: Update app settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdate"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "400":
+          description: Invalid input
+
 components:
   schemas:
     HealthStatus:
@@ -235,3 +267,36 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+
+    Settings:
+      type: object
+      required: [id, notifyEmail, scheduleEnabled, scheduleHour, tickers, updatedAt]
+      properties:
+        id:
+          type: integer
+        notifyEmail:
+          type: string
+        scheduleEnabled:
+          type: boolean
+        scheduleHour:
+          type: integer
+        tickers:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+
+    SettingsUpdate:
+      type: object
+      properties:
+        notifyEmail:
+          type: string
+        scheduleEnabled:
+          type: boolean
+        scheduleHour:
+          type: integer
+        tickers:
+          type: array
+          items:
+            type: string
