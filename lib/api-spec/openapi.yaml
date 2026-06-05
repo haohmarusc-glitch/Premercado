@@ -213,6 +213,19 @@ paths:
         "404":
           description: Not found
 
+  /alerts/firings/summary:
+    get:
+      operationId: getAlertFiringsSummary
+      tags: [agent]
+      summary: Summary counts for alerts and today's firings
+      responses:
+        "200":
+          description: Alerts summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertsSummary"
+
   /alerts/{id}/firings:
     get:
       operationId: listAlertFirings
@@ -454,6 +467,14 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
+
+    AlertsSummary:
+      type: object
+      required: [total, active, firingToday]
+      properties:
+        total: { type: integer }
+        active: { type: integer }
+        firingToday: { type: integer }
 
     AlertFiring:
       type: object

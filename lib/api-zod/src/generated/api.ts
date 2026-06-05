@@ -156,6 +156,16 @@ export const ToggleAlertResponse = zod.object({
 
 
 /**
+ * @summary Summary counts for alerts and today's firings
+ */
+export const GetAlertFiringsSummaryResponse = zod.object({
+  "total": zod.number(),
+  "active": zod.number(),
+  "firingToday": zod.number()
+})
+
+
+/**
  * @summary List firing history for a price alert
  */
 export const ListAlertFiringsParams = zod.object({

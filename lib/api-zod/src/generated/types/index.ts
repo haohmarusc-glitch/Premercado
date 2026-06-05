@@ -11,6 +11,7 @@ export * from './agentRunResult';
 export * from './agentStatus';
 export * from './alertCreateInput';
 export * from './alertFiring';
+export * from './alertsSummary';
 export * from './alertToggleInput';
 export * from './candle';
 export * from './getTickerChartParams';

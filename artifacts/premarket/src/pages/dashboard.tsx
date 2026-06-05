@@ -8,6 +8,8 @@ import {
   getGetTickerQuotesQueryKey,
   useGetTickerChart,
   getGetTickerChartQueryKey,
+  useGetAlertFiringsSummary,
+  getGetAlertFiringsSummaryQueryKey,
 } from "@workspace/api-client-react";
 import {
   AreaChart,
@@ -22,7 +24,8 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap } from "lucide-react";
+import { Link } from "wouter";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -254,6 +257,14 @@ export default function Dashboard() {
     query: { queryKey: getGetObservationsSummaryQueryKey() },
   });
 
+  const { data: alertsSummary } = useGetAlertFiringsSummary({
+    query: {
+      queryKey: getGetAlertFiringsSummaryQueryKey(),
+      refetchInterval: 60_000,
+      staleTime: 55_000,
+    },
+  });
+
   const { data: quotes, isLoading: loadingQuotes, dataUpdatedAt } = useGetTickerQuotes({
     query: {
       queryKey: getGetTickerQuotesQueryKey(),
@@ -328,6 +339,47 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* ── Alerts summary ── */}
+      {alertsSummary && alertsSummary.total > 0 && (
+        <Link href="/alerts">
+          <div className="border border-border rounded-lg bg-card hover:border-primary/40 transition-colors cursor-pointer">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50">
+              <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground uppercase tracking-widest">
+                <Bell className="h-3.5 w-3.5" />
+                Alertas de Preço
+              </div>
+              {alertsSummary.firingToday > 0 && (
+                <div className="flex items-center gap-1.5 text-[11px] font-mono text-red-400 animate-pulse">
+                  <BellRing className="h-3.5 w-3.5" />
+                  {alertsSummary.firingToday} disparado{alertsSummary.firingToday > 1 ? "s" : ""} hoje
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-3 divide-x divide-border/50">
+              <div className="px-4 py-3 text-center">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">Total</div>
+                <div className="text-xl font-bold font-mono">{alertsSummary.total}</div>
+              </div>
+              <div className="px-4 py-3 text-center">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">Ativos</div>
+                <div className={`text-xl font-bold font-mono ${alertsSummary.active > 0 ? "text-primary" : "text-muted-foreground"}`}>
+                  {alertsSummary.active}
+                </div>
+              </div>
+              <div className="px-4 py-3 text-center">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1 flex items-center justify-center gap-1">
+                  <Zap className="h-2.5 w-2.5" />
+                  Hoje
+                </div>
+                <div className={`text-xl font-bold font-mono ${alertsSummary.firingToday > 0 ? "text-red-400" : "text-muted-foreground"}`}>
+                  {alertsSummary.firingToday}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Link>
+      )}
 
       {/* ── Chart ── */}
       {activeSymbol && (

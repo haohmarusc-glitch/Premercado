@@ -74,6 +74,12 @@ export interface AlertToggleInput {
   enabled: boolean;
 }
 
+export interface AlertsSummary {
+  total: number;
+  active: number;
+  firingToday: number;
+}
+
 export interface AlertFiring {
   id: number;
   alertId: number;

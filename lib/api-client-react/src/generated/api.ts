@@ -26,6 +26,7 @@ import type {
   AlertCreateInput,
   AlertFiring,
   AlertToggleInput,
+  AlertsSummary,
   GetTickerChartParams,
   HealthStatus,
   ListAgentRunsParams,
@@ -880,6 +881,83 @@ export const useToggleAlert = <TError = ErrorType<void>,
       > => {
       return useMutation(getToggleAlertMutationOptions(options));
     }
+
+export const getGetAlertFiringsSummaryUrl = () => {
+
+
+
+
+  return `/api/alerts/firings/summary`
+}
+
+/**
+ * @summary Summary counts for alerts and today's firings
+ */
+export const getAlertFiringsSummary = async ( options?: RequestInit): Promise<AlertsSummary> => {
+
+  return customFetch<AlertsSummary>(getGetAlertFiringsSummaryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAlertFiringsSummaryQueryKey = () => {
+    return [
+    `/api/alerts/firings/summary`
+    ] as const;
+    }
+
+
+export const getGetAlertFiringsSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getAlertFiringsSummary>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlertFiringsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAlertFiringsSummaryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlertFiringsSummary>>> = ({ signal }) => getAlertFiringsSummary({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAlertFiringsSummary>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAlertFiringsSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getAlertFiringsSummary>>>
+export type GetAlertFiringsSummaryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Summary counts for alerts and today's firings
+ */
+
+export function useGetAlertFiringsSummary<TData = Awaited<ReturnType<typeof getAlertFiringsSummary>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAlertFiringsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAlertFiringsSummaryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getListAlertFiringsUrl = (id: number,) => {
 

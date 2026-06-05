@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db, alertsTable, alertFiringsTable } from "@workspace/db";
 import {
   ListAlertsResponse,
@@ -8,6 +8,7 @@ import {
   ToggleAlertBody,
   ToggleAlertResponse,
   ListAlertFiringsResponse,
+  GetAlertFiringsSummaryResponse,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 
@@ -20,6 +21,24 @@ function serializeAlert(a: typeof alertsTable.$inferSelect) {
     lastTriggeredAt: a.lastTriggeredAt?.toISOString() ?? null,
   };
 }
+
+router.get("/alerts/firings/summary", async (_req, res): Promise<void> => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [allAlerts, todayFirings] = await Promise.all([
+    db.select({ id: alertsTable.id, enabled: alertsTable.enabled }).from(alertsTable),
+    db.select({ id: alertFiringsTable.id })
+      .from(alertFiringsTable)
+      .where(sql`${alertFiringsTable.firedAt} >= ${today}`),
+  ]);
+
+  res.json(GetAlertFiringsSummaryResponse.parse({
+    total: allAlerts.length,
+    active: allAlerts.filter((a) => a.enabled).length,
+    firingToday: todayFirings.length,
+  }));
+});
 
 router.get("/alerts", async (_req, res): Promise<void> => {
   const rows = await db.select().from(alertsTable).orderBy(desc(alertsTable.createdAt));
