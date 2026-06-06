@@ -232,22 +232,36 @@ def delete_alert(alert_id: int, reason: str) -> dict:
 
 def check_market_alerts(
     tickers: list[str] | None = None,
-    headlines_by_ticker: dict[str, list[str]] | None = None,
+    headlines_by_ticker: dict[str, list] | None = None,
+    filings_by_ticker: dict[str, list] | None = None,
+    check_edgar: bool = True,
+    check_halts: bool = True,
 ) -> dict:
     """
     Roda todos os checks do módulo market_alerts e retorna um relatório
-    estruturado com alertas de setor, macro, técnicos, earnings e notícias.
+    estruturado com alertas de setor, macro, técnicos, earnings, geopolítico,
+    insider trading (Form 4) e circuit breakers.
 
-    tickers: lista de símbolos a checar individualmente (default: MU, SMCI)
-    headlines_by_ticker: manchetes já coletadas por ticker, para checks de notícia.
-        Ex: {"MU": ["Micron downgraded...", ...], "SMCI": [...]}
+    tickers: lista de símbolos (default: MU, SMCI)
+    headlines_by_ticker: manchetes coletadas por ticker (do get_news)
+    filings_by_ticker: filings coletados por ticker (do search_edgar_filings);
+        se omitido e check_edgar=True, busca direto na API da SEC
+    check_edgar: habilita check de 8-K + Form 4 (padrão True)
+    check_halts: habilita circuit breaker S&P + halt intraday (padrão True)
     """
     from . import config
     tickers = tickers or config.TICKERS
     headlines_by_ticker = headlines_by_ticker or {}
+    filings_by_ticker   = filings_by_ticker   or {}
 
     try:
-        alerts = _ma.run_all_alerts(tickers, headlines_by_ticker=headlines_by_ticker)
+        alerts = _ma.run_all_alerts(
+            tickers,
+            headlines_by_ticker=headlines_by_ticker,
+            filings_by_ticker=filings_by_ticker,
+            check_edgar=check_edgar,
+            check_halts=check_halts,
+        )
         return {
             "total": len(alerts),
             "prompt_block": _ma.alerts_to_prompt_block(alerts),
@@ -403,15 +417,19 @@ TOOLS = [
         "description": (
             "Analisa o estado atual do mercado e retorna uma lista estruturada de sinais "
             "categorizados por severidade (critico / atencao / info). Inclui: "
-            "(1) contágio de setor — bellwethers como NVDA, AVGO, TSM, SOXX caindo mais de 4%; "
+            "(1) contágio de setor — bellwethers NVDA, AVGO, TSM, SOXX, SMH caindo >4%; "
             "(2) pares asiáticos de memória — SK Hynix e Samsung (sinal antecedente para MU); "
-            "(3) gatilhos macro — Payroll, CPI, FOMC, nível do juro de 10 anos; "
-            "(4) técnico por ativo — RSI sobrecomprado, distância da MM200, proximidade da máxima de 52 semanas, "
+            "(3) gatilhos macro — FOMC, CPI, PPI, JOBS (Payroll), juro de 10 anos, calendário 2026 completo; "
+            "(4) técnico por ativo — RSI sobrecomprado, distância da MM200, proximidade da máxima de 52s, "
             "spike de volume, gap de abertura; "
             "(5) earnings — alerta se resultado estiver em até 7 dias; "
-            "(6) análise de manchetes — downgrade/corte de alvo, padrão sell-the-news. "
-            "Chame DEPOIS de coletar as manchetes com get_news, passando-as em headlines_by_ticker "
-            "para ativar os checks de notícia."
+            "(6) risco geopolítico/regulatório — controle de exportação/China, antitruste, tarifas; "
+            "(7) circuit breaker de mercado — S&P 500 perto de -5/-7/-13/-20% + halt intraday da ação; "
+            "(8) EDGAR — 8-K recente (evento material) + Form 4 com parse de compra/venda de insider "
+            "em mercado aberto (valor em USD, nome do dirigente). "
+            "Passe headlines_by_ticker com as manchetes do get_news para ativar checks (6), e "
+            "filings_by_ticker com filings do search_edgar_filings para enriquecer o check (8); "
+            "se filings_by_ticker for omitido, busca diretamente na API da SEC."
         ),
         "input_schema": {
             "type": "object",
@@ -424,13 +442,34 @@ TOOLS = [
                 "headlines_by_ticker": {
                     "type": "object",
                     "description": (
-                        "Manchetes já coletadas por ticker (do get_news), para ativar checks de notícia. "
-                        'Ex: {"MU": ["Micron downgraded...", "Analyst cuts..."], "SMCI": [...]}'
+                        "Manchetes coletadas por ticker (do get_news). Ativa checks geopolítico, "
+                        "downgrade e sell-the-news. "
+                        'Ex: {"MU": ["Micron downgraded...", "Export controls..."], "SMCI": [...]}'
                     ),
                     "additionalProperties": {
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                },
+                "filings_by_ticker": {
+                    "type": "object",
+                    "description": (
+                        "Filings coletados por ticker (do search_edgar_filings). Enriquece o check de EDGAR. "
+                        "Se omitido, busca direto na API da SEC. "
+                        'Ex: {"MU": [{"form": "8-K", "date": "2026-06-01", ...}]}'
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                },
+                "check_edgar": {
+                    "type": "boolean",
+                    "description": "Habilitar check de 8-K e Form 4 via EDGAR. Default: true.",
+                },
+                "check_halts": {
+                    "type": "boolean",
+                    "description": "Habilitar circuit breaker do S&P 500 e halt intraday. Default: true.",
                 },
             },
             "required": [],
