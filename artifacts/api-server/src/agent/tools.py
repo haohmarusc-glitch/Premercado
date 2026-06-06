@@ -98,11 +98,12 @@ def search_edgar_filings(ticker: str, form_type: str = "8-K", count: int = 5) ->
             if form_type and form != form_type:
                 continue
             acc_clean = acc.replace("-", "")
+            doc_name = doc.split("/")[-1]  # strip XSLT viewer prefix (ex: xslF345X06/) p/ XML bruto
             results.append({
                 "form": form,
                 "date": date,
                 "accession": acc,
-                "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc}",
+                "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc_name}",
             })
             if len(results) >= count:
                 break

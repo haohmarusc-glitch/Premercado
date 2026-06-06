@@ -34,7 +34,11 @@ router.get("/observations", async (req, res): Promise<void> => {
     .orderBy(desc(observationsTable.createdAt))
     .limit(limit ?? 50);
 
-  res.json(ListObservationsResponse.parse(rows));
+  res.json(
+    ListObservationsResponse.parse(
+      rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+    ),
+  );
 });
 
 router.get("/observations/summary", async (_req, res): Promise<void> => {

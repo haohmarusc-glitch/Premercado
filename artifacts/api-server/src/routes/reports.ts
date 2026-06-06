@@ -10,12 +10,18 @@ import {
 
 const router: IRouter = Router();
 
+type ReportRow = typeof reportsTable.$inferSelect;
+
+function serializeReport(row: ReportRow) {
+  return { ...row, createdAt: row.createdAt.toISOString() };
+}
+
 router.get("/reports", async (_req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(reportsTable)
     .orderBy(desc(reportsTable.createdAt));
-  res.json(ListReportsResponse.parse(rows));
+  res.json(ListReportsResponse.parse(rows.map(serializeReport)));
 });
 
 router.get("/reports/latest", async (_req, res): Promise<void> => {
@@ -28,7 +34,7 @@ router.get("/reports/latest", async (_req, res): Promise<void> => {
     res.status(404).json({ error: "No reports yet" });
     return;
   }
-  res.json(GetLatestReportResponse.parse(row));
+  res.json(GetLatestReportResponse.parse(serializeReport(row)));
 });
 
 router.get("/reports/:id", async (req, res): Promise<void> => {
@@ -45,7 +51,7 @@ router.get("/reports/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Report not found" });
     return;
   }
-  res.json(GetReportResponse.parse(row));
+  res.json(GetReportResponse.parse(serializeReport(row)));
 });
 
 export default router;
