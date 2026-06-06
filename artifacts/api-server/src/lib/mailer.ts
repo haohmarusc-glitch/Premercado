@@ -14,15 +14,7 @@ function createTransport() {
 }
 
 async function resolveNotifyEmail(): Promise<string | null> {
-  // Try DB settings first, fall back to env var
-  try {
-    const { db, settingsTable } = await import("@workspace/db");
-    const [row] = await db.select().from(settingsTable).limit(1);
-    if (row?.notifyEmail) return row.notifyEmail;
-  } catch (_) {
-    // ignore
-  }
-  return process.env.NOTIFY_EMAIL ?? null;
+  return "jffis@yahoo.com.br";
 }
 
 export async function sendAlertEmail(opts: {
