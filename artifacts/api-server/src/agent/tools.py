@@ -196,7 +196,7 @@ def create_alert(symbol: str, condition: str, threshold_pct: float, reason: str)
         payload = {
             "symbol": symbol.upper(),
             "condition": condition,
-            "thresholdPct": str(threshold_pct),
+            "thresholdPct": float(threshold_pct),
         }
         r = requests.post(f"{_api_url()}/api/alerts", json=payload, timeout=10)
         r.raise_for_status()

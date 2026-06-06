@@ -343,12 +343,18 @@ def _first_value(elem) -> Optional[str]:
 
 
 def _form4_doc_url(cik: str, accession: str, primary_doc: str) -> Optional[str]:
+    """Monta a URL do XML bruto do Form 4 no EDGAR.
+
+    O campo primaryDocument às vezes vem com prefixo XSLT do viewer da SEC
+    (ex: 'xslF345X06/primarydocument.xml'). Removemos para chegar ao XML puro.
+    """
     if not (accession and primary_doc):
         return None
+    doc_name   = primary_doc.split("/")[-1]   # strip XSLT/subdir prefix
     cik_int    = str(int(cik))
     acc_nodash = accession.replace("-", "")
     return (f"https://www.sec.gov/Archives/edgar/data/{cik_int}/"
-            f"{acc_nodash}/{primary_doc}")
+            f"{acc_nodash}/{doc_name}")
 
 
 def _parse_form4(url: str, user_agent: str = SEC_USER_AGENT) -> Optional[dict]:
