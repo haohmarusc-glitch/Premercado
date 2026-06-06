@@ -12,7 +12,7 @@ async function getOrCreateSettings() {
   const notifyEmail = process.env.NOTIFY_EMAIL ?? "";
   const [created] = await db
     .insert(settingsTable)
-    .values({ notifyEmail, scheduleEnabled: true, scheduleHour: 8, scheduleMinute: 30, tickers: ["MU", "SMCI"] })
+    .values({ notifyEmail, scheduleEnabled: true, scheduleHour: 8, scheduleMinute: 30, tickers: ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"] })
     .returning();
   return created;
 }
@@ -33,9 +33,13 @@ router.patch("/settings", async (req, res): Promise<void> => {
     return;
   }
   const existing = await getOrCreateSettings();
+  const data = { ...parsed.data };
+  if (data.tickers) {
+    data.tickers = [...new Set(data.tickers.map((t) => t.trim().toUpperCase()).filter(Boolean))];
+  }
   const [updated] = await db
     .update(settingsTable)
-    .set({ ...parsed.data, updatedAt: new Date() })
+    .set({ ...data, updatedAt: new Date() })
     .where(eq(settingsTable.id, existing.id))
     .returning();
   applySettings(updated);

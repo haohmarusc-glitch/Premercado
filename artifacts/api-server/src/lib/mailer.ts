@@ -77,7 +77,7 @@ export async function sendAlertEmail(opts: {
   }
 }
 
-export async function sendReportEmail(reportContent: string, date: string): Promise<void> {
+export async function sendReportEmail(reportContent: string, date: string, tickers?: string[]): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) {
     logger.warn("No notify email configured — skipping e-mail notification");
@@ -88,7 +88,7 @@ export async function sendReportEmail(reportContent: string, date: string): Prom
     return;
   }
 
-  const subject = `Pré-Mercado ${date} — MU & SMCI`;
+  const subject = `Pré-Mercado ${date}${tickers && tickers.length ? ` — ${tickers.join(", ")}` : ""}`;
 
   const htmlBody = reportContent
     .replace(/&/g, "&amp;")

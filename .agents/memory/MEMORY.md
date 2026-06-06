@@ -1,1 +1,2 @@
 - [Drizzle Date → Zod](drizzle-zod-dates.md) — convert timestamp columns with .toISOString() before *Response.parse() in Express routes, else HTTP 500
+- [Tickers source of truth](ticker-source-of-truth.md) — settings.tickers (DB) é a fonte; runner passa via env AGENT_TICKERS p/ Python; EDGAR exige CIK oficial em TICKER_TO_CIK

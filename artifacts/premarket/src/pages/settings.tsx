@@ -226,7 +226,7 @@ export default function Settings() {
       scheduleEnabled: true,
       scheduleHour: 8,
       scheduleMinute: 30,
-      tickers: ["MU", "SMCI"],
+      tickers: ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"],
     },
   });
 

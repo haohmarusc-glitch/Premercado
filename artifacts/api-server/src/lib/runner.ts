@@ -5,9 +5,21 @@
 import { spawn } from "child_process";
 import path from "path";
 import { eq } from "drizzle-orm";
-import { db, reportsTable, agentRunsTable } from "@workspace/db";
+import { db, reportsTable, agentRunsTable, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
+
+const DEFAULT_TICKERS = ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"];
+
+async function getMonitoredTickers(): Promise<string[]> {
+  try {
+    const [settings] = await db.select().from(settingsTable).limit(1);
+    if (settings && settings.tickers.length > 0) return settings.tickers;
+  } catch (err) {
+    logger.error({ err }, "Failed to read tickers from settings; using defaults");
+  }
+  return DEFAULT_TICKERS;
+}
 
 const workspaceRoot = process.cwd().endsWith(
   path.join("artifacts", "api-server"),
@@ -46,12 +58,20 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
   const startedAt = new Date();
   let runId: number | null = null;
 
-  // Insert run record immediately
-  db.insert(agentRunsTable)
-    .values({ status: "running", trigger, startedAt })
-    .returning()
-    .then(([row]) => { runId = row.id; })
-    .catch((err) => logger.error({ err }, "Failed to insert agent run record"));
+  void (async () => {
+  try {
+  const tickers = await getMonitoredTickers();
+
+  // Insert run record (awaited so runId is set deterministically before the process can close)
+  try {
+    const [row] = await db
+      .insert(agentRunsTable)
+      .values({ status: "running", trigger, startedAt })
+      .returning();
+    runId = row.id;
+  } catch (err) {
+    logger.error({ err }, "Failed to insert agent run record");
+  }
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
 
@@ -61,6 +81,7 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
       ...process.env,
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
+      AGENT_TICKERS: tickers.join(","),
     },
   });
 
@@ -79,6 +100,12 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
   py.stderr.on("data", (data: Buffer) => {
     errorOutput += data.toString();
     logger.warn({ stderr: data.toString() }, "Agent stderr");
+  });
+
+  py.on("error", (err) => {
+    logger.error({ err }, "Failed to spawn agent process");
+    state.running = false;
+    state.currentStep = null;
   });
 
   py.on("close", async (code) => {
@@ -122,7 +149,7 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
       await db.insert(reportsTable).values({
         date: today,
         content,
-        tickers: ["MU", "SMCI"],
+        tickers,
       });
       logger.info("Report saved to database");
     } catch (err) {
@@ -139,7 +166,13 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
     }
 
     // Send e-mail notification
-    await sendReportEmail(content, today);
+    await sendReportEmail(content, today, tickers);
   });
+  } catch (err) {
+    logger.error({ err }, "Unexpected error while running agent");
+    state.running = false;
+    state.currentStep = null;
+  }
+  })();
 }
 

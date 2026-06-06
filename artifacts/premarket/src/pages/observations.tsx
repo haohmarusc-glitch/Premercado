@@ -1,6 +1,8 @@
 import { 
   useListObservations, 
-  getListObservationsQueryKey 
+  getListObservationsQueryKey,
+  useGetSettings,
+  getGetSettingsQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
@@ -12,6 +14,9 @@ import { Button } from "@/components/ui/button";
 
 export default function Observations() {
   const [tickerFilter, setTickerFilter] = useState<string | undefined>(undefined);
+
+  const { data: settings } = useGetSettings({ query: { queryKey: getGetSettingsQueryKey() } });
+  const tickers = settings?.tickers ?? [];
 
   const { data: observations, isLoading } = useListObservations({ ticker: tickerFilter, limit: 100 }, {
     query: {
@@ -34,20 +39,16 @@ export default function Observations() {
           >
             ALL
           </Button>
-          <Button 
-            variant={tickerFilter === "MU" ? "default" : "outline"} 
-            className="font-mono text-xs rounded-sm h-8"
-            onClick={() => setTickerFilter("MU")}
-          >
-            MU
-          </Button>
-          <Button 
-            variant={tickerFilter === "SMCI" ? "default" : "outline"} 
-            className="font-mono text-xs rounded-sm h-8"
-            onClick={() => setTickerFilter("SMCI")}
-          >
-            SMCI
-          </Button>
+          {tickers.map((t) => (
+            <Button
+              key={t}
+              variant={tickerFilter === t ? "default" : "outline"}
+              className="font-mono text-xs rounded-sm h-8"
+              onClick={() => setTickerFilter(t)}
+            >
+              {t}
+            </Button>
+          ))}
         </div>
       </div>
 
