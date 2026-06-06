@@ -131,6 +131,18 @@ def read_filing(url: str, max_chars: int = 4000) -> str:
         return f"[erro ao ler filing: {e}]"
 
 
+# ── Autenticação interna ───────────────────────────────────────────────────────
+
+def _internal_headers() -> dict:
+    """Retorna os headers de autenticação para chamadas internas à API."""
+    key = os.environ.get("OPERATOR_API_KEY", "")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def _api_url() -> str:
+    return os.environ.get("INTERNAL_API_URL", "http://localhost:5000")
+
+
 # ── Memória / observações ─────────────────────────────────────────────────────
 
 def save_observation(ticker: str, summary: str, sentiment: str, price: float | None = None) -> dict:
@@ -139,7 +151,6 @@ def save_observation(ticker: str, summary: str, sentiment: str, price: float | N
     Retorna o resultado da gravação.
     """
     try:
-        api_url = os.environ.get("INTERNAL_API_URL", "http://localhost:5000")
         today = datetime.date.today().isoformat()
         payload = {
             "ticker": ticker.upper(),
@@ -149,8 +160,9 @@ def save_observation(ticker: str, summary: str, sentiment: str, price: float | N
             "priceAtObservation": price,
         }
         r = requests.post(
-            f"{api_url}/api/observations/internal",
+            f"{_api_url()}/api/observations/internal",
             json=payload,
+            headers=_internal_headers(),
             timeout=10,
         )
         r.raise_for_status()
@@ -161,17 +173,17 @@ def save_observation(ticker: str, summary: str, sentiment: str, price: float | N
 
 # ── Gerenciamento de alertas ──────────────────────────────────────────────────
 
-def _api_url() -> str:
-    return os.environ.get("INTERNAL_API_URL", "http://localhost:5000")
-
-
 def list_alerts(symbol: str | None = None) -> list[dict]:
     """
     Lista os alertas de preço ativos no sistema.
     Filtra por símbolo se informado.
     """
     try:
-        r = requests.get(f"{_api_url()}/api/alerts", timeout=10)
+        r = requests.get(
+            f"{_api_url()}/api/alerts",
+            headers=_internal_headers(),
+            timeout=10,
+        )
         r.raise_for_status()
         alerts = r.json()
         if symbol:
@@ -204,7 +216,12 @@ def create_alert(symbol: str, condition: str, threshold_pct: float, reason: str)
             "condition": condition,
             "thresholdPct": float(threshold_pct),
         }
-        r = requests.post(f"{_api_url()}/api/alerts", json=payload, timeout=10)
+        r = requests.post(
+            f"{_api_url()}/api/alerts",
+            json=payload,
+            headers=_internal_headers(),
+            timeout=10,
+        )
         r.raise_for_status()
         created = r.json()
         return {
@@ -226,7 +243,11 @@ def delete_alert(alert_id: int, reason: str) -> dict:
     reason: motivo pelo qual o alerta foi removido
     """
     try:
-        r = requests.delete(f"{_api_url()}/api/alerts/{alert_id}", timeout=10)
+        r = requests.delete(
+            f"{_api_url()}/api/alerts/{alert_id}",
+            headers=_internal_headers(),
+            timeout=10,
+        )
         if r.status_code == 204:
             return {"deleted": True, "id": alert_id, "reason": reason}
         return {"deleted": False, "id": alert_id, "status": r.status_code}

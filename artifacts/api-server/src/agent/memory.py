@@ -7,6 +7,12 @@ import os
 import requests
 
 
+def _internal_headers() -> dict:
+    """Retorna os headers de autenticação interna."""
+    key = os.environ.get("OPERATOR_API_KEY", "")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def recent_context(days: int = 7) -> str:
     """
     Recupera as observações dos últimos N dias da API interna
@@ -17,6 +23,7 @@ def recent_context(days: int = 7) -> str:
         r = requests.get(
             f"{api_url}/api/observations/internal",
             params={"limit": 30},
+            headers=_internal_headers(),
             timeout=5,
         )
         r.raise_for_status()

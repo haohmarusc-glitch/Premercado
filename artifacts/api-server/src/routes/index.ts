@@ -8,17 +8,21 @@ import runsRouter from "./runs";
 import quotesRouter from "./quotes";
 import chartRouter from "./chart";
 import alertsRouter from "./alerts";
+import authRouter from "./auth";
+import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(reportsRouter);
-router.use(observationsRouter);
-router.use(agentRouter);
-router.use(settingsRouter);
-router.use(runsRouter);
 router.use(quotesRouter);
 router.use(chartRouter);
-router.use(alertsRouter);
+router.use(authRouter);
+
+router.use(requireAuth, observationsRouter);
+router.use(requireAuth, agentRouter);
+router.use(requireAuth, settingsRouter);
+router.use(requireAuth, alertsRouter);
+router.use(requireAuth, runsRouter);
 
 export default router;

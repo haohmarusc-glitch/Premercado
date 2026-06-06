@@ -82,6 +82,7 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
+      OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });
 
