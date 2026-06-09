@@ -183,3 +183,13 @@ export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
 ]);
 
 export type PortfolioPurchase = typeof portfolioPurchasesTable.$inferSelect;
+
+export const portfolioAlertFiringsTable = pgTable("portfolio_alert_firings", {
+  id: serial("id").primaryKey(),
+  alertKey: text("alert_key").notNull().unique(),
+  firedAt: timestamp("fired_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_portfolio_alert_firings_key").on(t.alertKey),
+]);
+
+export type PortfolioAlertFiring = typeof portfolioAlertFiringsTable.$inferSelect;
