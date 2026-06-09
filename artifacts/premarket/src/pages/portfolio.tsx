@@ -21,7 +21,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { useGetTickerChart } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -91,9 +93,88 @@ function parseAlertPcts(s: string): number[] {
     .filter((n) => !isNaN(n) && n > 0);
 }
 
+// ── Mini sparkline ────────────────────────────────────────────────────────────
+
+function MiniChart({ ticker }: { ticker: string }) {
+  const { data, isLoading } = useGetTickerChart(
+    { symbol: ticker, period: "5d" },
+    { query: { staleTime: 5 * 60_000 } },
+  );
+
+  if (isLoading) return (
+    <div className="h-14 flex items-center justify-center text-[10px] text-muted-foreground font-mono">carregando...</div>
+  );
+  if (!data?.candles?.length) return null;
+
+  const candles = data.candles;
+  const chartData = candles.map((c) => ({ t: c.t, v: c.c }));
+  const isUp = (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0);
+  const color = isUp ? "#4ade80" : "#f87171";
+  const min = Math.min(...chartData.map((d) => d.v)) * 0.998;
+  const max = Math.max(...chartData.map((d) => d.v)) * 1.002;
+
+  return (
+    <div className="w-full max-w-xs">
+      <div className="text-[10px] font-mono text-muted-foreground mb-1 uppercase tracking-widest">
+        {ticker} — 5d
+      </div>
+      <ResponsiveContainer width="100%" height={56}>
+        <LineChart data={chartData}>
+          <XAxis dataKey="t" hide />
+          <YAxis domain={[min, max]} hide />
+          <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ── Allocation donut chart ────────────────────────────────────────────────────
+
+const ALLOC_COLORS = ["#6366f1", "#8b5cf6", "#a78bfa", "#818cf8", "#4f46e5", "#4338ca", "#7c3aed"];
+
+interface AllocEntry { name: string; value: number }
+
+function AllocationChart({ data }: { data: AllocEntry[] }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (!total) return null;
+
+  return (
+    <Card className="border-border bg-card">
+      <CardContent className="p-4">
+        <div className="text-xs font-mono text-muted-foreground uppercase tracking-wide mb-3">Alocação atual</div>
+        <div className="flex items-center gap-6">
+          <ResponsiveContainer width={120} height={120}>
+            <PieChart>
+              <Pie data={data} cx="50%" cy="50%" innerRadius={36} outerRadius={56} dataKey="value" strokeWidth={0}>
+                {data.map((_, i) => <Cell key={i} fill={ALLOC_COLORS[i % ALLOC_COLORS.length]} />)}
+              </Pie>
+              <RechartsTooltip
+                formatter={(value) => [fmt$(value as number), ""]}
+                contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex flex-col gap-1.5 min-w-0">
+            {data.map((d, i) => (
+              <div key={d.name} className="flex items-center gap-2 text-[11px] font-mono">
+                <div className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
+                <span className="text-foreground font-semibold">{d.name}</span>
+                <span className="text-muted-foreground ml-auto pl-4 tabular-nums">
+                  {((d.value / total) * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Purchases sub-table ───────────────────────────────────────────────────────
 
-function PurchasesRow({ positionId }: { positionId: number }) {
+function PurchasesRow({ positionId, ticker }: { positionId: number; ticker: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: purchases = [], isLoading } = useListPortfolioPurchases(positionId);
@@ -132,7 +213,7 @@ function PurchasesRow({ positionId }: { positionId: number }) {
   return (
     <>
       <tr>
-        <td colSpan={11} className="px-6 py-3 bg-muted/20 border-b border-border/50">
+        <td colSpan={13} className="px-6 py-3 bg-muted/20 border-b border-border/50">
           <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-2 uppercase tracking-widest">
             Histórico de compras
           </div>
@@ -182,6 +263,9 @@ function PurchasesRow({ positionId }: { positionId: number }) {
             <Plus className="h-3 w-3 mr-1" />
             Adicionar compra
           </Button>
+          <div className="mt-3">
+            <MiniChart ticker={ticker} />
+          </div>
         </td>
       </tr>
 
@@ -406,32 +490,58 @@ export default function PortfolioPage() {
   const [dialogTarget, setDialogTarget] = useState<PortfolioPosition | null | undefined>(undefined);
   const deletePos = useDeletePortfolioPosition();
 
-  const priceMap = useMemo(() => new Map(quotes.map((q) => [q.symbol, q.price ?? 0]), ), [quotes]);
+  const priceMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const q of quotes as Array<{ symbol: string; price?: number | null }>) {
+      m.set(q.symbol, q.price ?? 0);
+    }
+    return m;
+  }, [quotes]);
+  const changeMap = useMemo(() => {
+    const m = new Map<string, { change: number | null; changePct: number | null }>();
+    for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null }>) {
+      m.set(q.symbol, { change: q.change ?? null, changePct: q.changePct ?? null });
+    }
+    return m;
+  }, [quotes]);
 
   const rows = useMemo(() => {
     const totalInvested = positions.reduce((s, p) => s + p.investedAmount, 0);
     return positions.map((p) => {
       const price = priceMap.get(p.ticker) ?? 0;
+      const entry = changeMap.get(p.ticker);
+      const qChange = entry?.change ?? null;
+      const qChangePct = entry?.changePct ?? null;
       const currentValue = price > 0 ? p.quantity * price : 0;
       const pnlDollar = price > 0 ? currentValue - p.investedAmount : 0;
       const pnlPct = price > 0 && p.investedAmount > 0 ? (pnlDollar / p.investedAmount) * 100 : 0;
+      const dailyChange = price > 0 && qChange != null ? p.quantity * qChange : null;
+      const dailyChangePct = qChangePct;
       const weight = totalInvested > 0 ? (p.investedAmount / totalInvested) * 100 : 0;
       const downAlert = price > 0 ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
       const upAlert = price > 0 ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
-      return { pos: p, price, currentValue, pnlDollar, pnlPct, weight, downAlert, upAlert, is30d };
+      return { pos: p, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d };
     });
-  }, [positions, priceMap]);
+  }, [positions, priceMap, changeMap]);
 
   const totals = useMemo(() => {
     const invested = rows.reduce((s, r) => s + r.pos.investedAmount, 0);
     const current = rows.reduce((s, r) => s + r.currentValue, 0);
     const pnl = current - invested;
     const pnlPct = invested > 0 && current > 0 ? (pnl / invested) * 100 : 0;
-    return { invested, current, pnl, pnlPct };
+    const dailyChange = rows.some((r) => r.dailyChange != null)
+      ? rows.reduce((s, r) => s + (r.dailyChange ?? 0), 0)
+      : null;
+    return { invested, current, pnl, pnlPct, dailyChange };
   }, [rows]);
 
   const hasPrices = quotes.length > 0;
+
+  const allocData = useMemo(
+    () => rows.filter((r) => r.currentValue > 0).map((r) => ({ name: r.pos.ticker, value: r.currentValue })),
+    [rows],
+  );
 
   const toggleExpand = (id: number) =>
     setExpandedIds((prev) => {
@@ -469,7 +579,7 @@ export default function PortfolioPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
@@ -520,7 +630,27 @@ export default function PortfolioPage() {
             </div>
           </CardContent>
         </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Var. hoje</span>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className={cn("text-xl font-bold font-mono tabular-nums",
+              hasPrices && totals.dailyChange != null
+                ? totals.dailyChange >= 0 ? "text-green-400" : "text-red-400"
+                : ""
+            )}>
+              {hasPrices && totals.dailyChange != null
+                ? `${totals.dailyChange >= 0 ? "+" : "-"}${fmt$(totals.dailyChange)}`
+                : "—"}
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Allocation chart */}
+      {allocData.length > 0 && <AllocationChart data={allocData} />}
 
       {/* Positions table */}
       <Card className="border-border bg-card overflow-hidden">
@@ -534,6 +664,8 @@ export default function PortfolioPage() {
                 <th className="text-right pr-3">Custo médio</th>
                 <th className="text-right pr-3">Investido</th>
                 <th className="text-right pr-3">Atual</th>
+                <th className="text-right pr-3">Var. $</th>
+                <th className="text-right pr-3">Var. %</th>
                 <th className="text-right pr-3">P&amp;L $</th>
                 <th className="text-right pr-3">P&amp;L %</th>
                 <th className="text-right pr-3">Peso</th>
@@ -544,22 +676,23 @@ export default function PortfolioPage() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={11} className="py-10 text-center text-muted-foreground">
+                  <td colSpan={13} className="py-10 text-center text-muted-foreground">
                     Carregando...
                   </td>
                 </tr>
               )}
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-10 text-center text-muted-foreground">
+                  <td colSpan={13} className="py-10 text-center text-muted-foreground">
                     Nenhuma posição cadastrada.
                   </td>
                 </tr>
               )}
-              {rows.map(({ pos, price, currentValue, pnlDollar, pnlPct, weight, downAlert, upAlert, is30d }) => {
+              {rows.map(({ pos, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d }) => {
                 const expanded = expandedIds.has(pos.id);
                 const hasPrice = price > 0;
                 const pnlPos = pnlPct >= 0;
+                const dayPos = (dailyChangePct ?? 0) >= 0;
                 return (
                   <Fragment key={pos.id}>
                   <tr
@@ -596,6 +729,16 @@ export default function PortfolioPage() {
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.investedAmount)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">
                       {hasPrice ? fmt$(currentValue) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice && dailyChange != null ? (dayPos ? "text-green-400" : "text-red-400") : "text-muted-foreground")}>
+                      {hasPrice && dailyChange != null
+                        ? `${dailyChange >= 0 ? "+" : "-"}${fmt$(dailyChange)}`
+                        : "—"}
+                    </td>
+                    <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold", hasPrice && dailyChangePct != null ? (dayPos ? "text-green-400" : "text-red-400") : "text-muted-foreground")}>
+                      {hasPrice && dailyChangePct != null
+                        ? fmtPct(dailyChangePct)
+                        : "—"}
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
                       {hasPrice
@@ -644,7 +787,7 @@ export default function PortfolioPage() {
                       </div>
                     </td>
                   </tr>
-                  {expanded && <PurchasesRow positionId={pos.id} />}
+                  {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} />}
                   </Fragment>
                 );
               })}
