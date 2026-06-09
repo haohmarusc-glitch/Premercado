@@ -6,6 +6,7 @@ import {
   doublePrecision,
   boolean,
   integer,
+  index,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -18,7 +19,10 @@ export const reportsTable = pgTable("reports", {
   mode: text("mode").notNull().default("daily"), // daily | premarket
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_reports_date").on(t.date),
+  index("idx_reports_mode").on(t.mode),
+]);
 
 export const insertReportSchema = createInsertSchema(reportsTable).omit({
   id: true,
@@ -37,7 +41,10 @@ export const observationsTable = pgTable("observations", {
   priceAtObservation: doublePrecision("price_at_observation"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_observations_ticker").on(t.ticker),
+  index("idx_observations_ticker_created").on(t.ticker, t.createdAt),
+]);
 
 export const insertObservationSchema = createInsertSchema(observationsTable).omit(
   {
@@ -59,7 +66,10 @@ export const agentRunsTable = pgTable("agent_runs", {
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_agent_runs_status").on(t.status),
+  index("idx_agent_runs_started_at").on(t.startedAt),
+]);
 
 export type AgentRun = typeof agentRunsTable.$inferSelect;
 
@@ -93,7 +103,10 @@ export const alertsTable = pgTable("alerts", {
   lastTriggeredAt: timestamp("last_triggered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_alerts_symbol").on(t.symbol),
+  index("idx_alerts_enabled").on(t.enabled),
+]);
 
 export type Alert = typeof alertsTable.$inferSelect;
 
@@ -108,7 +121,11 @@ export const alertFiringsTable = pgTable("alert_firings", {
   changePctAtFiring: doublePrecision("change_pct_at_firing").notNull(),
   priceAtFiring: doublePrecision("price_at_firing"),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_alert_firings_alert_id").on(t.alertId),
+  index("idx_alert_firings_symbol").on(t.symbol),
+  index("idx_alert_firings_fired_at").on(t.firedAt),
+]);
 
 export type AlertFiring = typeof alertFiringsTable.$inferSelect;
 
@@ -129,7 +146,9 @@ export const chatMessagesTable = pgTable("chat_messages", {
   role: text("role").notNull(),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_chat_messages_session_id").on(t.sessionId, t.createdAt),
+]);
 
 export type ChatMessage = typeof chatMessagesTable.$inferSelect;
 
@@ -145,7 +164,9 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   upAlertPcts: integer("up_alert_pcts").array().notNull().default([15, 20, 30, 40]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_portfolio_positions_ticker").on(t.ticker),
+]);
 
 export type PortfolioPosition = typeof portfolioPositionsTable.$inferSelect;
 
@@ -157,6 +178,8 @@ export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
   purchaseDate: text("purchase_date").notNull(),
   amount: doublePrecision("amount").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_portfolio_purchases_position_id").on(t.positionId),
+]);
 
 export type PortfolioPurchase = typeof portfolioPurchasesTable.$inferSelect;

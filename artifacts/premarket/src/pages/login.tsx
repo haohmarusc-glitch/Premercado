@@ -2,12 +2,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Activity, Lock } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface LoginProps {
   onSuccess: () => void;
 }
 
 export default function LoginPage({ onSuccess }: LoginProps) {
+  const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,10 +28,10 @@ export default function LoginPage({ onSuccess }: LoginProps) {
       if (res.ok) {
         onSuccess();
       } else {
-        setError("Senha incorreta.");
+        setError(t("login.errors.wrongPassword"));
       }
     } catch {
-      setError("Erro ao conectar ao servidor.");
+      setError(t("login.errors.connectionError"));
     } finally {
       setLoading(false);
     }
@@ -41,16 +43,16 @@ export default function LoginPage({ onSuccess }: LoginProps) {
         <div className="flex flex-col items-center gap-2">
           <div className="flex items-center gap-2">
             <Activity className="h-7 w-7 text-primary" />
-            <span className="text-2xl font-bold tracking-tight text-primary">PRÉ-MERCADO</span>
+            <span className="text-2xl font-bold tracking-tight text-primary">{t("login.title")}</span>
           </div>
-          <p className="text-sm text-muted-foreground">Agent Command Center</p>
+          <p className="text-sm text-muted-foreground">{t("login.subtitle")}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground flex items-center gap-1">
               <Lock className="h-3.5 w-3.5" />
-              Senha de acesso
+              {t("login.passwordLabel")}
             </label>
             <Input
               type="password"
@@ -67,7 +69,7 @@ export default function LoginPage({ onSuccess }: LoginProps) {
           )}
 
           <Button type="submit" className="w-full" disabled={loading || !password}>
-            {loading ? "Entrando..." : "Entrar"}
+            {loading ? t("login.submitting") : t("login.submit")}
           </Button>
         </form>
       </div>

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import History from "@/pages/history";
@@ -44,13 +45,8 @@ function Router() {
 
 type AuthState = "loading" | "authenticated" | "unauthenticated";
 
-// Constantes para internacionalização (preparação para i18n futuro)
-const i18n = {
-  loading: "Carregando...",
-  errorChecking: "Erro ao verificar autenticação",
-};
-
 function App() {
+  const { t } = useTranslation();
   const [authState, setAuthState] = useState<AuthState>("loading");
 
   useEffect(() => {
@@ -68,9 +64,8 @@ function App() {
         setAuthState(data.authenticated ? "authenticated" : "unauthenticated");
       })
       .catch((err) => {
-        // Logar erro para debug, exceto para AbortError (timeout)
         if (err instanceof Error && err.name !== "AbortError") {
-          console.error(i18n.errorChecking, err);
+          console.error(t("common.errorCheckingAuth"), err);
         }
         setAuthState("unauthenticated");
       })
@@ -82,7 +77,7 @@ function App() {
   if (authState === "loading") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground text-sm">{i18n.loading}</div>
+        <div className="text-muted-foreground text-sm">{t("common.loading")}</div>
       </div>
     );
   }

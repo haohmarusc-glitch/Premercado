@@ -1,0 +1,17 @@
+{
+  "common": {
+    "loading": "Carregando...",
+    "errorCheckingAuth": "Erro ao verificar autenticação"
+  },
+  "login": {
+    "title": "PRÉ-MERCADO",
+    "subtitle": "Agent Command Center",
+    "passwordLabel": "Senha de acesso",
+    "submit": "Entrar",
+    "submitting": "Entrando...",
+    "errors": {
+      "wrongPassword": "Senha incorreta.",
+      "connectionError": "Erro ao conectar ao servidor."
+    }
+  }
+}
