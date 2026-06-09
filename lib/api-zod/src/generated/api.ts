@@ -24,6 +24,7 @@ export const ListReportsResponseItem = zod.object({
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
+  "mode": zod.string(),
   "createdAt": zod.string()
 })
 export const ListReportsResponse = zod.array(ListReportsResponseItem)
@@ -41,6 +42,7 @@ export const GetReportResponse = zod.object({
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
+  "mode": zod.string(),
   "createdAt": zod.string()
 })
 
@@ -53,6 +55,7 @@ export const GetLatestReportResponse = zod.object({
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
+  "mode": zod.string(),
   "createdAt": zod.string()
 })
 

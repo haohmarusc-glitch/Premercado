@@ -157,6 +157,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
         date: today,
         content,
         tickers,
+        mode,
       });
       logger.info("Report saved to database");
     } catch (err) {

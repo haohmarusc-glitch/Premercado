@@ -10,6 +10,8 @@ import {
   getGetTickerChartQueryKey,
   useGetAlertFiringsSummary,
   getGetAlertFiringsSummaryQueryKey,
+  useListReports,
+  getListReportsQueryKey,
 } from "@workspace/api-client-react";
 import {
   AreaChart,
@@ -24,7 +26,7 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -248,10 +250,23 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
 export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
+  const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
 
   const { data: report, isLoading: loadingReport } = useGetLatestReport({
     query: { queryKey: getGetLatestReportQueryKey(), retry: false },
   });
+
+  const today = new Date().toISOString().split("T")[0];
+  const { data: allReports } = useListReports({
+    query: {
+      queryKey: getListReportsQueryKey(),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    },
+  });
+  const flashToday = allReports
+    ?.filter((r) => r.mode === "premarket" && r.date === today)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) ?? [];
 
   const { data: summary, isLoading: loadingSummary } = useGetObservationsSummary({
     query: { queryKey: getGetObservationsSummaryQueryKey() },
@@ -467,6 +482,59 @@ export default function Dashboard() {
           ))
         )}
       </div>
+
+      {/* ── Flash Scans de Hoje ── */}
+      {flashToday.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="h-3.5 w-3.5 text-primary" />
+            <h2 className="text-sm font-mono text-muted-foreground uppercase tracking-widest">
+              Flash Scans de Hoje
+            </h2>
+            <span className="px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono text-[10px]">
+              {flashToday.length}
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {flashToday.map((scan) => {
+              const isOpen = expandedFlashId === scan.id;
+              const time = new Date(scan.createdAt).toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "America/Sao_Paulo",
+              });
+              return (
+                <div
+                  key={scan.id}
+                  className="border border-primary/20 rounded-lg overflow-hidden bg-card"
+                >
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-primary/5 transition-colors text-left"
+                    onClick={() => setExpandedFlashId(isOpen ? null : scan.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      {isOpen
+                        ? <ChevronDown className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                        : <ChevronRight className="h-3.5 w-3.5 text-primary flex-shrink-0" />}
+                      <span className="font-mono text-primary font-bold text-sm">⚡ {time} BRT</span>
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      Flash Scan
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="border-t border-primary/10 px-5 py-4 bg-background">
+                      <MarkdownContent content={scan.content} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Latest report ── */}
       <div>

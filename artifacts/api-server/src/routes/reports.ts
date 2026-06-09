@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, reportsTable } from "@workspace/db";
 import {
   GetReportParams,
@@ -24,10 +24,12 @@ router.get("/reports", async (_req, res): Promise<void> => {
   res.json(ListReportsResponse.parse(rows.map(serializeReport)));
 });
 
+// Returns the latest DAILY report (mode=daily) for the dashboard main view.
 router.get("/reports/latest", async (_req, res): Promise<void> => {
   const [row] = await db
     .select()
     .from(reportsTable)
+    .where(eq(reportsTable.mode, "daily"))
     .orderBy(desc(reportsTable.createdAt))
     .limit(1);
   if (!row) {

@@ -14,6 +14,7 @@ export interface Report {
   date: string;
   content: string;
   tickers: string[];
+  mode: string;
   createdAt: string;
 }
 
@@ -140,6 +141,7 @@ export interface AgentRun {
   finishedAt?: string | null;
   status: string;
   trigger: string;
+  mode: string;
   /** @nullable */
   durationMs?: number | null;
   /** @nullable */

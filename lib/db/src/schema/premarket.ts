@@ -15,6 +15,7 @@ export const reportsTable = pgTable("reports", {
   date: text("date").notNull(),
   content: text("content").notNull(),
   tickers: text("tickers").array().notNull().default([]),
+  mode: text("mode").notNull().default("daily"), // daily | premarket
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
