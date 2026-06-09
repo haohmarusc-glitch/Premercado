@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   useGetLatestReport,
   getGetLatestReportQueryKey,
@@ -62,6 +62,76 @@ const PERIODS = [
   { key: "6mo", label: "6M" },
   { key: "1y",  label: "1Y" },
 ];
+
+// ─── Sector groups (mirrors sector_contagion.py + observations.tsx) ─────────
+
+const SECTOR_GROUPS = [
+  { key: "memory",       label: "Memória",      tickers: ["MU", "SNDK", "WDC"] },
+  { key: "interconnect", label: "Interconexão", tickers: ["SMCI", "ALAB", "CRDO", "ANET"] },
+  { key: "power",        label: "Energia",      tickers: ["VRT"] },
+  { key: "foundry",      label: "Fundição",     tickers: ["TSM", "ASML"] },
+  { key: "other",        label: "Outros",       tickers: ["NVDA", "INTC", "GOOGL", "ARM", "TSLA"] },
+];
+
+// ─── Compact sentiment card ───────────────────────────────────────────────────
+
+interface SentimentItem {
+  ticker: string;
+  bullish: number;
+  bearish: number;
+  neutral: number;
+  lastSentiment: string;
+  lastDate: string;
+}
+
+function SentimentDot({ sentiment }: { sentiment: string }) {
+  const cls =
+    sentiment === "bullish" ? "bg-green-500" :
+    sentiment === "bearish" ? "bg-red-500" : "bg-slate-500";
+  return <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cls}`} />;
+}
+
+function SentimentMiniCard({ s }: { s: SentimentItem }) {
+  const total = s.bullish + s.bearish + s.neutral || 1;
+  const bullPct  = Math.round((s.bullish  / total) * 100);
+  const bearPct  = Math.round((s.bearish  / total) * 100);
+  const neutralPct = Math.round((s.neutral / total) * 100);
+
+  return (
+    <div className="border border-border rounded-lg p-3 bg-card font-mono hover:border-border/80 transition-colors">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="font-bold text-primary text-sm tracking-widest">{s.ticker}</span>
+        <SentimentDot sentiment={s.lastSentiment} />
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-green-500 w-7 font-bold">BULL</span>
+          <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full bg-green-500 rounded-full" style={{ width: `${bullPct}%` }} />
+          </div>
+          <span className="text-[10px] text-green-500 w-4 text-right font-bold">{s.bullish}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-red-500 w-7 font-bold">BEAR</span>
+          <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full bg-red-500 rounded-full" style={{ width: `${bearPct}%` }} />
+          </div>
+          <span className="text-[10px] text-red-500 w-4 text-right font-bold">{s.bearish}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-slate-400 w-7">NEU</span>
+          <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full bg-slate-500 rounded-full" style={{ width: `${neutralPct}%` }} />
+          </div>
+          <span className="text-[10px] text-slate-400 w-4 text-right">{s.neutral}</span>
+        </div>
+      </div>
+      <div className="text-[9px] text-muted-foreground mt-2 border-t border-border/40 pt-1.5 truncate">
+        {s.lastDate}
+      </div>
+    </div>
+  );
+}
 
 // ─── QuoteCard ───────────────────────────────────────────────────────────────
 
@@ -251,6 +321,7 @@ export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
+  const [sectorTab, setSectorTab] = useState<string>("all");
 
   const { data: report, isLoading: loadingReport } = useGetLatestReport({
     query: { queryKey: getGetLatestReportQueryKey(), retry: false },
@@ -271,6 +342,21 @@ export default function Dashboard() {
   const { data: summary, isLoading: loadingSummary } = useGetObservationsSummary({
     query: { queryKey: getGetObservationsSummaryQueryKey() },
   });
+
+  const filteredSummary = useMemo(() => {
+    if (!summary) return [];
+    if (sectorTab === "all") return summary;
+    const group = SECTOR_GROUPS.find((g) => g.key === sectorTab);
+    return group ? summary.filter((s) => group.tickers.includes(s.ticker)) : summary;
+  }, [summary, sectorTab]);
+
+  const sectorAggregate = useMemo(() => {
+    if (!filteredSummary.length) return null;
+    return filteredSummary.reduce(
+      (acc, s) => ({ bull: acc.bull + s.bullish, bear: acc.bear + s.bearish, neutral: acc.neutral + s.neutral }),
+      { bull: 0, bear: 0, neutral: 0 },
+    );
+  }, [filteredSummary]);
 
   const { data: alertsSummary } = useGetAlertFiringsSummary({
     query: {
@@ -433,53 +519,88 @@ export default function Dashboard() {
       )}
 
       {/* ── Sentiment summary ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <h2 className="text-sm font-mono text-muted-foreground uppercase tracking-widest">
+            Sentimento por Ativo
+          </h2>
+          {summary && (
+            <span className="text-[10px] font-mono text-muted-foreground border border-border px-1.5 py-0.5 rounded">
+              {filteredSummary.length}/{summary.length}
+            </span>
+          )}
+        </div>
+
+        {/* Sector filter */}
+        {!loadingSummary && summary && summary.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            <button
+              type="button"
+              onClick={() => setSectorTab("all")}
+              className={`px-2.5 py-1 rounded-md font-mono text-xs font-bold transition-colors border ${
+                sectorTab === "all"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-border/80"
+              }`}
+            >
+              Todos
+              <span className="ml-1 opacity-70">({summary.length})</span>
+            </button>
+            {SECTOR_GROUPS.map((g) => {
+              const count = summary.filter((s) => g.tickers.includes(s.ticker)).length;
+              if (count === 0) return null;
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => setSectorTab(g.key)}
+                  className={`px-2.5 py-1 rounded-md font-mono text-xs font-bold transition-colors border ${
+                    sectorTab === g.key
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-border/80"
+                  }`}
+                >
+                  {g.label}
+                  <span className="ml-1 opacity-70">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Sector aggregate row */}
+        {sectorTab !== "all" && sectorAggregate && filteredSummary.length > 0 && (
+          <div className="flex items-center gap-4 mb-3 px-3 py-2 border border-border/40 rounded-lg bg-secondary/20 font-mono text-xs">
+            <span className="text-muted-foreground uppercase tracking-widest text-[10px]">Setor</span>
+            <span className="text-green-500 font-bold">BULL {sectorAggregate.bull}</span>
+            <span className="text-red-500 font-bold">BEAR {sectorAggregate.bear}</span>
+            <span className="text-slate-400">NEU {sectorAggregate.neutral}</span>
+            <span className={`ml-auto font-bold text-[11px] ${
+              sectorAggregate.bull > sectorAggregate.bear ? "text-green-500" :
+              sectorAggregate.bear > sectorAggregate.bull ? "text-red-500" : "text-slate-400"
+            }`}>
+              {sectorAggregate.bull > sectorAggregate.bear ? "↑ BULLISH" :
+               sectorAggregate.bear > sectorAggregate.bull ? "↓ BEARISH" : "→ NEUTRO"}
+            </span>
+          </div>
+        )}
+
         {loadingSummary ? (
-          <>
-            <Skeleton className="h-32 w-full" />
-            <Skeleton className="h-32 w-full" />
-          </>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-28 w-full" />
+            ))}
+          </div>
+        ) : filteredSummary.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {filteredSummary.map((s) => (
+              <SentimentMiniCard key={s.ticker} s={s} />
+            ))}
+          </div>
         ) : (
-          summary?.map((s) => (
-            <Card key={s.ticker} className="bg-card border-border shadow-none rounded-sm">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-2xl font-mono text-primary">{s.ticker}</CardTitle>
-                  {s.lastSentiment === "bullish" && (
-                    <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20 font-mono">
-                      <TrendingUp className="w-3 h-3 mr-1" /> BULLISH
-                    </Badge>
-                  )}
-                  {s.lastSentiment === "bearish" && (
-                    <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20 font-mono">
-                      <TrendingDown className="w-3 h-3 mr-1" /> BEARISH
-                    </Badge>
-                  )}
-                  {s.lastSentiment === "neutral" && (
-                    <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/20 font-mono">
-                      <Minus className="w-3 h-3 mr-1" /> NEUTRAL
-                    </Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-3 gap-2 mt-4 text-center">
-                  <div className="bg-secondary/50 p-2 rounded-sm border border-border">
-                    <div className="text-xs text-muted-foreground font-mono mb-1">BULL</div>
-                    <div className="text-lg font-mono font-bold text-green-500">{s.bullish}</div>
-                  </div>
-                  <div className="bg-secondary/50 p-2 rounded-sm border border-border">
-                    <div className="text-xs text-muted-foreground font-mono mb-1">BEAR</div>
-                    <div className="text-lg font-mono font-bold text-red-500">{s.bearish}</div>
-                  </div>
-                  <div className="bg-secondary/50 p-2 rounded-sm border border-border">
-                    <div className="text-xs text-muted-foreground font-mono mb-1">NEUTRAL</div>
-                    <div className="text-lg font-mono font-bold text-slate-400">{s.neutral}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
+          <div className="p-8 text-center border border-dashed border-border rounded-sm text-muted-foreground font-mono text-sm">
+            Sem dados de sentimento.
+          </div>
         )}
       </div>
 
