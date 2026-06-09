@@ -13,7 +13,11 @@ from . import memory
 from . import tools as t
 
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    timeout=60.0,
+    max_retries=2,
+)
 
 
 def build_system_prompt() -> str:
