@@ -40,6 +40,12 @@ function Router() {
 
 type AuthState = "loading" | "authenticated" | "unauthenticated";
 
+// Constantes para internacionalização (preparação para i18n futuro)
+const i18n = {
+  loading: "Carregando...",
+  errorChecking: "Erro ao verificar autenticação",
+};
+
 function App() {
   const [authState, setAuthState] = useState<AuthState>("loading");
 
@@ -48,20 +54,31 @@ function App() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth/me", { credentials: "include" })
+    // Criar controller com timeout de 5 segundos
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    fetch("/api/auth/me", { credentials: "include", signal: controller.signal })
       .then((r) => r.json())
       .then((data: { authenticated: boolean }) => {
         setAuthState(data.authenticated ? "authenticated" : "unauthenticated");
       })
-      .catch(() => {
+      .catch((err) => {
+        // Logar erro para debug, exceto para AbortError (timeout)
+        if (err instanceof Error && err.name !== "AbortError") {
+          console.error(i18n.errorChecking, err);
+        }
         setAuthState("unauthenticated");
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
       });
   }, []);
 
   if (authState === "loading") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground text-sm">Carregando...</div>
+        <div className="text-muted-foreground text-sm">{i18n.loading}</div>
       </div>
     );
   }
