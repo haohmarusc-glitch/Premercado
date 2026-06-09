@@ -161,7 +161,7 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   firstPurchaseDate: text("first_purchase_date").notNull(),
   notes: text("notes"),
   downAlertPcts: integer("down_alert_pcts").array().notNull().default([10, 15, 20, 30]),
-  upAlertPcts: integer("up_alert_pcts").array().notNull().default([15, 20, 30, 40]),
+  upAlertPcts: integer("up_alert_pcts").array().notNull().default([10, 15, 20, 30, 40, 50]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
