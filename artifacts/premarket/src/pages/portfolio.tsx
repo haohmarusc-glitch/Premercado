@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -148,6 +148,11 @@ function PurchasesRow({ positionId }: { positionId: number }) {
                 </tr>
               </thead>
               <tbody>
+                {purchases.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="py-1 text-muted-foreground italic">Nenhuma compra registrada.</td>
+                  </tr>
+                )}
                 {purchases.map((p) => (
                   <tr key={p.id} className="border-t border-border/20">
                     <td className="py-0.5 pr-8">{p.purchaseDate}</td>
@@ -261,7 +266,7 @@ function PositionDialog({ open, onClose, editing, onSaved }: PositionDialogProps
       upAlertPcts: parseAlertPcts(form.upAlertPcts),
     };
 
-    if (!payload.ticker || isNaN(payload.quantity) || isNaN(payload.avgCost) || isNaN(payload.investedAmount)) {
+    if (!payload.ticker || isNaN(payload.quantity) || isNaN(payload.avgCost) || isNaN(payload.investedAmount) || !payload.firstPurchaseDate) {
       toast({ variant: "destructive", title: "Preencha todos os campos obrigatórios" });
       return;
     }
@@ -469,7 +474,7 @@ export default function PortfolioPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Investido</span>
-              <TrendingDown className="h-4 w-4 text-muted-foreground" />
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="text-xl font-bold font-mono tabular-nums">{fmt$(totals.invested)}</div>
           </CardContent>
