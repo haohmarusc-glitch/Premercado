@@ -18,6 +18,12 @@ _DEFAULT_TICKERS = [
 _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
 
-MODEL = "claude-opus-4-5"
+MODEL_FULL  = "claude-sonnet-4-6"          # run diária completa
+MODEL_FLASH = "claude-haiku-4-5-20251001"  # varredura intradiária
+MODEL_CHAT  = "claude-haiku-4-5-20251001"  # chat conversacional
+
 MAX_TOKENS = 4096
 MAX_AGENT_TURNS = 20
+
+# Tickers com posição na carteira — recebem análise completa na FASE 2
+PORTFOLIO_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]

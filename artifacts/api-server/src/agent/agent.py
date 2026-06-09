@@ -158,7 +158,7 @@ def run_premarket(progress_callback=None) -> str:
             progress_callback(f"[Flash] Turno {turn + 1}...")
 
         resp = client.messages.create(
-            model=config.MODEL,
+            model=config.MODEL_FLASH,
             max_tokens=1024,
             system=system,
             tools=t.TOOLS,
@@ -236,7 +236,7 @@ def run_chat_stream(message: str, history: list) -> None:
         print(f"STEP:Turno {turn + 1}...", flush=True)
 
         resp = client.messages.create(
-            model=config.MODEL,
+            model=config.MODEL_CHAT,
             max_tokens=2048,
             system=system,
             tools=CHAT_TOOLS,
@@ -319,7 +319,7 @@ def run(progress_callback=None) -> str:
             progress_callback(f"Turno {turn + 1} — consultando Claude...")
 
         resp = client.messages.create(
-            model=config.MODEL,
+            model=config.MODEL_FULL,
             max_tokens=config.MAX_TOKENS,
             system=system,
             tools=t.TOOLS,
