@@ -1,14 +1,76 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
+import { asc, desc, eq, sql } from "drizzle-orm";
+import { db, chatSessionsTable, chatMessagesTable } from "@workspace/db";
+import {
+  ListChatSessionsResponse,
+  GetChatSessionParams,
+  GetChatMessagesResponse,
+  DeleteChatSessionParams,
+} from "@workspace/api-zod";
 import { agentDir } from "../lib/runner";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
-router.post("/chat/message", (req, res): void => {
-  const { message, history = [] } = req.body as {
+// GET /chat/sessions
+router.get("/chat/sessions", async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      id: chatSessionsTable.id,
+      title: chatSessionsTable.title,
+      createdAt: chatSessionsTable.createdAt,
+      updatedAt: chatSessionsTable.updatedAt,
+      messageCount: sql<number>`count(${chatMessagesTable.id})::int`,
+    })
+    .from(chatSessionsTable)
+    .leftJoin(chatMessagesTable, eq(chatMessagesTable.sessionId, chatSessionsTable.id))
+    .groupBy(chatSessionsTable.id)
+    .orderBy(desc(chatSessionsTable.updatedAt));
+
+  res.json(
+    ListChatSessionsResponse.parse(
+      rows.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    ),
+  );
+});
+
+// GET /chat/sessions/:id/messages
+router.get("/chat/sessions/:id/messages", async (req, res): Promise<void> => {
+  const parsed = GetChatSessionParams.safeParse(req.params);
+  if (!parsed.success) { res.status(400).json({ error: "invalid id" }); return; }
+
+  const messages = await db
+    .select()
+    .from(chatMessagesTable)
+    .where(eq(chatMessagesTable.sessionId, parsed.data.id))
+    .orderBy(asc(chatMessagesTable.createdAt));
+
+  res.json(
+    GetChatMessagesResponse.parse(
+      messages.map((m) => ({ ...m, createdAt: m.createdAt.toISOString() })),
+    ),
+  );
+});
+
+// DELETE /chat/sessions/:id
+router.delete("/chat/sessions/:id", async (req, res): Promise<void> => {
+  const parsed = DeleteChatSessionParams.safeParse(req.params);
+  if (!parsed.success) { res.status(400).json({ error: "invalid id" }); return; }
+  await db.delete(chatSessionsTable).where(eq(chatSessionsTable.id, parsed.data.id));
+  res.status(204).send();
+});
+
+// POST /chat/message — persists user + assistant messages, streams via SSE
+router.post("/chat/message", async (req, res): Promise<void> => {
+  const { message, history = [], sessionId } = req.body as {
     message?: string;
     history?: Array<{ role: string; content: string }>;
+    sessionId?: number;
   };
 
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -16,14 +78,44 @@ router.post("/chat/message", (req, res): void => {
     return;
   }
 
+  // Persist: create or reuse session, save user message
+  let currentSessionId: number;
+  try {
+    if (sessionId) {
+      currentSessionId = sessionId;
+      await db
+        .update(chatSessionsTable)
+        .set({ updatedAt: new Date() })
+        .where(eq(chatSessionsTable.id, sessionId));
+    } else {
+      const [session] = await db
+        .insert(chatSessionsTable)
+        .values({ title: message.trim().slice(0, 80) })
+        .returning();
+      currentSessionId = session.id;
+    }
+    await db.insert(chatMessagesTable).values({
+      sessionId: currentSessionId,
+      role: "user",
+      content: message.trim(),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to persist chat session/user message");
+    res.status(500).json({ error: "Database error" });
+    return;
+  }
+
+  // SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const send = (event: string, data: string) => {
+  const send = (event: string, data: unknown) =>
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
+
+  // Notify frontend of the session ID immediately
+  send("session", { sessionId: currentSessionId });
 
   const safeHistory = Array.isArray(history)
     ? history.filter((m) => m.role && typeof m.content === "string").slice(-20)
@@ -42,22 +134,19 @@ router.post("/chat/message", (req, res): void => {
   });
 
   let buf = "";
+  let responseText = "";
 
   py.stdout.on("data", (chunk: Buffer) => {
     buf += chunk.toString();
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
-
     for (const line of lines) {
       if (line.startsWith("STEP:")) {
         send("step", line.slice(5).trim());
       } else if (line.startsWith("RESULT:")) {
-        try {
-          const text = JSON.parse(line.slice(7)) as string;
-          send("done", text);
-        } catch {
-          send("done", line.slice(7));
-        }
+        try { responseText = JSON.parse(line.slice(7)) as string; }
+        catch { responseText = line.slice(7); }
+        send("done", responseText);
       }
     }
   });
@@ -72,16 +161,29 @@ router.post("/chat/message", (req, res): void => {
     res.end();
   });
 
-  py.on("close", (code) => {
-    if (code !== 0) {
+  py.on("close", async (code) => {
+    if (code !== 0 && !responseText) {
       send("error", "Agente encerrou com erro.");
+    }
+    if (responseText) {
+      try {
+        await db.insert(chatMessagesTable).values({
+          sessionId: currentSessionId,
+          role: "assistant",
+          content: responseText,
+        });
+        await db
+          .update(chatSessionsTable)
+          .set({ updatedAt: new Date() })
+          .where(eq(chatSessionsTable.id, currentSessionId));
+      } catch (err) {
+        logger.error({ err }, "Failed to persist assistant message");
+      }
     }
     res.end();
   });
 
-  req.on("close", () => {
-    py.kill();
-  });
+  req.on("close", () => { py.kill(); });
 });
 
 export default router;

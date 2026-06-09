@@ -166,9 +166,20 @@ export interface SettingsUpdate {
   tickers?: string[];
 }
 
+export interface ChatSession {
+  id: number;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
-  role: "user" | "assistant";
+  id: number;
+  sessionId: number;
+  role: string;
   content: string;
+  createdAt: string;
 }
 
 export type ListObservationsParams = {

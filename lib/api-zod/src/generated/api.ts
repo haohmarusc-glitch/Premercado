@@ -310,3 +310,33 @@ export const UpdateSettingsResponse = zod.object({
 })
 
 
+/**
+ * @summary Chat sessions
+ */
+export const ListChatSessionsResponseItem = zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "messageCount": zod.number(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+})
+export const ListChatSessionsResponse = zod.array(ListChatSessionsResponseItem)
+
+export const GetChatSessionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const DeleteChatSessionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetChatMessagesResponseItem = zod.object({
+  "id": zod.number(),
+  "sessionId": zod.number(),
+  "role": zod.string(),
+  "content": zod.string(),
+  "createdAt": zod.string(),
+})
+export const GetChatMessagesResponse = zod.array(GetChatMessagesResponseItem)
+
+

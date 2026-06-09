@@ -111,3 +111,24 @@ export const alertFiringsTable = pgTable("alert_firings", {
 });
 
 export type AlertFiring = typeof alertFiringsTable.$inferSelect;
+
+export const chatSessionsTable = pgTable("chat_sessions", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull().default("Nova conversa"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type ChatSession = typeof chatSessionsTable.$inferSelect;
+
+export const chatMessagesTable = pgTable("chat_messages", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => chatSessionsTable.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ChatMessage = typeof chatMessagesTable.$inferSelect;

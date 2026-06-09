@@ -27,6 +27,7 @@ import type {
   AlertFiring,
   AlertToggleInput,
   AlertsSummary,
+  ChatSession,
   GetTickerChartParams,
   HealthStatus,
   ListAgentRunsParams,
@@ -1505,4 +1506,61 @@ export const useUpdateSettings = <TError = ErrorType<void>,
       > => {
       return useMutation(getUpdateSettingsMutationOptions(options));
     }
+
+
+// ── Chat sessions ────────────────────────────────────────────────────────────
+
+export const getListChatSessionsUrl = () => `/api/chat/sessions`;
+
+export const listChatSessions = async (options?: RequestInit): Promise<ChatSession[]> =>
+  customFetch<ChatSession[]>(getListChatSessionsUrl(), { ...options, method: 'GET' });
+
+export const getListChatSessionsQueryKey = () => [`/api/chat/sessions`] as const;
+
+export const getListChatSessionsQueryOptions = <TData = Awaited<ReturnType<typeof listChatSessions>>, TError = ErrorType<unknown>>(
+  options?: { query?: UseQueryOptions<Awaited<ReturnType<typeof listChatSessions>>, TError, TData>; request?: SecondParameter<typeof customFetch> }
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListChatSessionsQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listChatSessions>>> = ({ signal }) =>
+    listChatSessions({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<Awaited<ReturnType<typeof listChatSessions>>, TError, TData> & { queryKey: QueryKey };
+};
+
+export type ListChatSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof listChatSessions>>>;
+export type ListChatSessionsQueryError = ErrorType<unknown>;
+
+export function useListChatSessions<TData = Awaited<ReturnType<typeof listChatSessions>>, TError = ErrorType<unknown>>(
+  options?: { query?: UseQueryOptions<Awaited<ReturnType<typeof listChatSessions>>, TError, TData>; request?: SecondParameter<typeof customFetch> }
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListChatSessionsQueryOptions(options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getDeleteChatSessionUrl = (id: number) => `/api/chat/sessions/${id}`;
+
+export const deleteChatSession = async (id: number, options?: RequestInit): Promise<void> =>
+  customFetch<void>(getDeleteChatSessionUrl(id), { ...options, method: 'DELETE' });
+
+export const getDeleteChatSessionMutationOptions = <TError = ErrorType<void>, TContext = unknown>(
+  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof deleteChatSession>>, TError, { id: number }, TContext>; request?: SecondParameter<typeof customFetch> }
+): UseMutationOptions<Awaited<ReturnType<typeof deleteChatSession>>, TError, { id: number }, TContext> => {
+  const mutationKey = ['deleteChatSession'];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+  const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteChatSession>>, { id: number }> = ({ id }) =>
+    deleteChatSession(id, requestOptions);
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteChatSessionMutationError = ErrorType<void>;
+
+export const useDeleteChatSession = <TError = ErrorType<void>, TContext = unknown>(
+  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof deleteChatSession>>, TError, { id: number }, TContext>; request?: SecondParameter<typeof customFetch> }
+): UseMutationResult<Awaited<ReturnType<typeof deleteChatSession>>, TError, { id: number }, TContext> =>
+  useMutation(getDeleteChatSessionMutationOptions(options));
 
