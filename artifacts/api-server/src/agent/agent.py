@@ -55,17 +55,25 @@ Seu fluxo completo:
    Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
    Para captura intradiária: period='1d', interval='5m'.
 
-**FASE 2 — Análise por ativo** (repita para cada ativo em cobertura)
-5. Puxe a cotação/pré-mercado com get_stock_data.
-6. Veja as manchetes com get_news.
-7. Chame get_technical_indicators para avaliar RSI, MACD, Bollinger e médias móveis.
-8. Chame get_short_interest para verificar exposição short e risco de squeeze.
-9. Chame get_analyst_ratings para ver consenso, preço-alvo e upgrades/downgrades recentes.
-10. Chame get_options_data para ver put/call ratio e IV — sinais de posicionamento do mercado.
-11. Se houver sinal de catalisador (resultados, guidance, contratos), procure documentos
-    recentes com search_edgar_filings e leia o relevante com read_filing.
-12. Compare com a MEMÓRIA DOS DIAS ANTERIORES abaixo — o que mudou desde a última leitura?
-13. Ao concluir cada ativo, chame save_observation com um resumo curto e o sentimento.
+**FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
+
+*Grupo A — análise COMPLETA* (ferramentas 5–12):
+  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
+  • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
+Para cada ativo do Grupo A, nesta ordem:
+5. get_stock_data — cotação e pré-mercado
+6. get_news — manchetes
+7. get_technical_indicators — RSI, MACD, Bollinger, médias móveis
+8. get_short_interest — exposição short e risco de squeeze
+9. get_analyst_ratings — consenso, preço-alvo, upgrades/downgrades
+10. get_options_data — put/call ratio e IV
+11. Se catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
+12. Compare com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
+13. Chame save_observation com resumo curto e sentimento.
+
+*Grupo B — cotação RÁPIDA* (só get_stock_data):
+  • Todos os demais tickers em cobertura não incluídos no Grupo A
+  Registre preço e variação no relatório; não chame outras ferramentas para eles.
 
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
