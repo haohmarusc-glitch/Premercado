@@ -147,6 +147,16 @@ router.post("/chat/message", async (req, res): Promise<void> => {
         try { responseText = JSON.parse(line.slice(7)) as string; }
         catch { responseText = line.slice(7); }
         send("done", responseText);
+      } else if (line.startsWith("TITLE:")) {
+        try {
+          const title = JSON.parse(line.slice(6)) as string;
+          void db
+            .update(chatSessionsTable)
+            .set({ title })
+            .where(eq(chatSessionsTable.id, currentSessionId))
+            .then(() => { send("title", title); })
+            .catch((err: unknown) => { logger.error({ err }, "Failed to update session title"); });
+        } catch { /* ignore */ }
       }
     }
   });

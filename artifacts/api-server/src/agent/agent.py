@@ -261,6 +261,26 @@ def run_chat_stream(message: str, history: list) -> None:
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
+    # Generate a concise session title for new conversations (no prior history)
+    if not history:
+        try:
+            title_resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=20,
+                system=(
+                    "Generate a concise title for this chat conversation. "
+                    "Max 6 words. Same language as the user message. "
+                    "No quotes, no trailing punctuation."
+                ),
+                messages=[{"role": "user", "content": f"First message: {message[:300]}"}],
+            )
+            for block in title_resp.content:
+                if block.type == "text" and block.text.strip():
+                    print(f"TITLE:{_json.dumps(block.text.strip(), ensure_ascii=False)}", flush=True)
+                    break
+        except Exception:
+            pass  # title stays as truncated first message — no crash
+
 
 def run_tool(name: str, args: dict) -> str:
     fn = t.DISPATCH.get(name)

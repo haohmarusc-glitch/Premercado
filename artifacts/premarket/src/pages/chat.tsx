@@ -8,6 +8,7 @@ import {
   getListChatSessionsQueryKey,
   useDeleteChatSession,
 } from "@workspace/api-client-react";
+import type { ChatSession } from "@workspace/api-client-react";
 import { Send, Trash2, MessageSquare, Plus, Clock } from "lucide-react";
 
 interface LocalMsg {
@@ -39,6 +40,7 @@ export default function Chat() {
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<LocalMsg[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const sessionIdRef = useRef<number | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export default function Chat() {
     const data = (await res.json()) as Array<{ id: number; role: string; content: string }>;
     setMessages(data.map((m) => ({ localId: lid(), role: m.role as "user" | "assistant", content: m.content })));
     setSessionId(id);
+    sessionIdRef.current = id;
     setStep(null);
     setLoading(false);
   }
@@ -68,6 +71,7 @@ export default function Chat() {
   function newConversation() {
     setMessages([]);
     setSessionId(null);
+    sessionIdRef.current = null;
     setStep(null);
     setLoading(false);
     textareaRef.current?.focus();
@@ -131,6 +135,7 @@ export default function Chat() {
           if (eventType === "session") {
             const s = payload as { sessionId: number };
             setSessionId(s.sessionId);
+            sessionIdRef.current = s.sessionId;
             queryClient.invalidateQueries({ queryKey: getListChatSessionsQueryKey() });
           } else if (eventType === "step") {
             setStep(payload as string);
@@ -139,6 +144,16 @@ export default function Chat() {
             setStep(null);
             setLoading(false);
             queryClient.invalidateQueries({ queryKey: getListChatSessionsQueryKey() });
+          } else if (eventType === "title") {
+            const newTitle = payload as string;
+            const sid = sessionIdRef.current;
+            if (sid !== null) {
+              queryClient.setQueryData(
+                getListChatSessionsQueryKey(),
+                (old: ChatSession[] | undefined) =>
+                  old?.map((s) => (s.id === sid ? { ...s, title: newTitle } : s)),
+              );
+            }
           } else if (eventType === "error") {
             setMessages((prev) => [...prev, { localId: lid(), role: "assistant", content: `⚠️ ${payload as string}` }]);
             setStep(null);
