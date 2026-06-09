@@ -70,7 +70,7 @@ const EMPTY_FORM: PosForm = {
   firstPurchaseDate: "",
   notes: "",
   downAlertPcts: "10,15,20,30",
-  upAlertPcts: "15,20,30,40",
+  upAlertPcts: "10,15,20,30,40,50",
 };
 
 function posToForm(p: PortfolioPosition): PosForm {
