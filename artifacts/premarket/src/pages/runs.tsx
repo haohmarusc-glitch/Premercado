@@ -47,10 +47,33 @@ function TriggerBadge({ trigger }: { trigger: string }) {
       </span>
     );
   }
+  if (trigger === "premarket") {
+    return (
+      <span className="flex items-center gap-1 text-primary font-mono text-xs">
+        <Zap className="h-3 w-3" />
+        premarket
+      </span>
+    );
+  }
   return (
     <span className="flex items-center gap-1 text-muted-foreground font-mono text-xs">
       <Zap className="h-3 w-3" />
       manual
+    </span>
+  );
+}
+
+function ModeBadge({ mode }: { mode?: string }) {
+  if (mode === "premarket") {
+    return (
+      <span className="px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono text-[10px] uppercase">
+        flash
+      </span>
+    );
+  }
+  return (
+    <span className="px-1.5 py-0.5 rounded bg-secondary border border-border text-muted-foreground font-mono text-[10px] uppercase">
+      daily
     </span>
   );
 }
@@ -123,6 +146,7 @@ export default function Runs() {
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Início</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Duração</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Gatilho</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Modo</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Erro</th>
               </tr>
             </thead>
@@ -151,6 +175,9 @@ export default function Runs() {
                   </td>
                   <td className="px-4 py-3">
                     <TriggerBadge trigger={run.trigger} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <ModeBadge mode={run.mode} />
                   </td>
                   <td className="px-4 py-3 text-red-400 text-xs max-w-xs truncate" title={run.errorMessage ?? ""}>
                     {run.errorMessage ? run.errorMessage.slice(0, 80) + (run.errorMessage.length > 80 ? "…" : "") : "—"}

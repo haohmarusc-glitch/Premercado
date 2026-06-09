@@ -8,8 +8,9 @@ import { Form, FormDescription, FormField, FormItem, FormLabel, FormMessage } fr
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Mail, Clock, Tag, Plus, X } from "lucide-react";
+import { Save, Mail, Clock, Tag, Plus, X, Zap } from "lucide-react";
 
 const POPULAR_TICKERS: { symbol: string; name: string }[] = [
   { symbol: "AAPL", name: "Apple" },
@@ -61,9 +62,26 @@ const schema = z.object({
   scheduleHour: z.coerce.number().int().min(0).max(23),
   scheduleMinute: z.coerce.number().int().min(0).max(59),
   tickers: z.array(z.string().min(1)).min(1, "Adicione pelo menos um ticker"),
-});
+  premarketEnabled: z.boolean(),
+  premarketIntervalMin: z.coerce.number().int().min(5).max(60),
+  premarketWindowStartHour: z.coerce.number().int().min(0).max(23),
+  premarketWindowEndHour: z.coerce.number().int().min(0).max(23),
+}).refine(
+  (d) => !d.premarketEnabled || d.premarketWindowStartHour < d.premarketWindowEndHour,
+  { message: "Horário de início deve ser antes do horário de fim", path: ["premarketWindowEndHour"] },
+);
 
 type FormValues = z.infer<typeof schema>;
+
+function buildPremarketTimes(start: number, end: number, interval: number): string[] {
+  const times: string[] = [];
+  for (let h = start; h < end; h++) {
+    for (let m = 0; m < 60; m += interval) {
+      times.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    }
+  }
+  return times;
+}
 
 function TickerEditor({
   value,
@@ -227,6 +245,10 @@ export default function Settings() {
       scheduleHour: 8,
       scheduleMinute: 30,
       tickers: ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"],
+      premarketEnabled: false,
+      premarketIntervalMin: 30,
+      premarketWindowStartHour: 6,
+      premarketWindowEndHour: 9,
     },
   });
 
@@ -238,6 +260,10 @@ export default function Settings() {
         scheduleHour: settings.scheduleHour,
         scheduleMinute: settings.scheduleMinute,
         tickers: settings.tickers,
+        premarketEnabled: settings.premarketEnabled,
+        premarketIntervalMin: settings.premarketIntervalMin,
+        premarketWindowStartHour: settings.premarketWindowStartHour,
+        premarketWindowEndHour: settings.premarketWindowEndHour,
       });
     }
   }, [settings, form]);
@@ -378,6 +404,140 @@ export default function Settings() {
                 Recomendado: <strong>08:30 BRT</strong> — relatório pronto antes da abertura do mercado americano.
               </p>
             </div>
+          </div>
+
+          {/* Pré-mercado intradiário */}
+          <div className="border border-border rounded-lg p-6 space-y-4">
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-widest mb-4">
+              <Zap className="h-3.5 w-3.5" />
+              Flash Scan — Pré-mercado Intradiário
+            </div>
+
+            <FormField
+              control={form.control}
+              name="premarketEnabled"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between">
+                  <div>
+                    <FormLabel className="font-mono text-xs uppercase text-muted-foreground">Ativar varredura intradiária</FormLabel>
+                    <FormDescription className="text-xs text-muted-foreground mt-0.5">
+                      Dispara scans rápidos durante a janela pré-mercado (seg–sex).
+                    </FormDescription>
+                  </div>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    data-testid="switch-premarket-enabled"
+                  />
+                </FormItem>
+              )}
+            />
+
+            {form.watch("premarketEnabled") && (
+              <div className="space-y-4 pt-2 border-t border-border/50">
+                {/* Interval */}
+                <FormField
+                  control={form.control}
+                  name="premarketIntervalMin"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="font-mono text-xs uppercase text-muted-foreground">Intervalo entre scans</FormLabel>
+                      <Select
+                        value={String(field.value)}
+                        onValueChange={(v) => field.onChange(Number(v))}
+                      >
+                        <SelectTrigger className="w-40 font-mono bg-secondary border-border" data-testid="select-premarket-interval">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="15" className="font-mono">15 minutos</SelectItem>
+                          <SelectItem value="20" className="font-mono">20 minutos</SelectItem>
+                          <SelectItem value="30" className="font-mono">30 minutos</SelectItem>
+                          <SelectItem value="60" className="font-mono">60 minutos</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Window */}
+                <div>
+                  <p className="font-mono text-xs uppercase text-muted-foreground mb-2">
+                    Janela de execução (BRT)
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <FormField
+                      control={form.control}
+                      name="premarketWindowStartHour"
+                      render={({ field }) => (
+                        <FormItem className="flex-none">
+                          <Input
+                            {...field}
+                            type="number"
+                            min={0}
+                            max={23}
+                            className="font-mono bg-secondary border-border w-20 text-center"
+                            data-testid="input-premarket-start"
+                          />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <span className="text-sm font-mono text-muted-foreground">até</span>
+                    <FormField
+                      control={form.control}
+                      name="premarketWindowEndHour"
+                      render={({ field }) => (
+                        <FormItem className="flex-none">
+                          <Input
+                            {...field}
+                            type="number"
+                            min={0}
+                            max={23}
+                            className="font-mono bg-secondary border-border w-20 text-center"
+                            data-testid="input-premarket-end"
+                          />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <span className="text-sm font-mono text-muted-foreground">BRT</span>
+                  </div>
+                </div>
+
+                {/* Live schedule preview */}
+                {(() => {
+                  const start = form.watch("premarketWindowStartHour") ?? 6;
+                  const end = form.watch("premarketWindowEndHour") ?? 9;
+                  const interval = form.watch("premarketIntervalMin") ?? 30;
+                  const times = start < end ? buildPremarketTimes(start, end, interval) : [];
+                  if (times.length === 0) return null;
+                  return (
+                    <div className="rounded-md bg-primary/5 border border-primary/20 p-3">
+                      <p className="text-xs font-mono text-muted-foreground uppercase mb-2">
+                        Horários de disparo (dias úteis)
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {times.map((t) => (
+                          <span
+                            key={t}
+                            className="px-2 py-0.5 rounded bg-primary/15 border border-primary/30 text-primary font-mono text-xs"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {times.length} scan{times.length !== 1 ? "s" : ""} por dia útil
+                        {" · "}modo <span className="text-primary font-mono">flash</span>{" "}
+                        (intradiário, sem relatório completo)
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Tickers */}
