@@ -20,6 +20,20 @@ client = anthropic.Anthropic(
 )
 
 
+def _cached_system(text: str) -> list:
+    """Wrap system prompt for prompt caching (read at 10% cost after 1st turn)."""
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
+def _cached_tools(tools: list) -> list:
+    """Return tools list with cache_control on the last item."""
+    if not tools:
+        return tools
+    cached = list(tools)
+    cached[-1] = {**cached[-1], "cache_control": {"type": "ephemeral"}}
+    return cached
+
+
 def build_system_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     return f"""Você é um analista de ações sênior fazendo a leitura pré-mercado do dia {today}.
@@ -160,8 +174,8 @@ def run_premarket(progress_callback=None) -> str:
         resp = client.messages.create(
             model=config.MODEL_FLASH,
             max_tokens=1024,
-            system=system,
-            tools=t.TOOLS,
+            system=_cached_system(system),
+            tools=_cached_tools(t.TOOLS),
             messages=messages,
         )
         messages.append({"role": "assistant", "content": resp.content})
@@ -238,8 +252,8 @@ def run_chat_stream(message: str, history: list) -> None:
         resp = client.messages.create(
             model=config.MODEL_CHAT,
             max_tokens=2048,
-            system=system,
-            tools=CHAT_TOOLS,
+            system=_cached_system(system),
+            tools=_cached_tools(CHAT_TOOLS),
             messages=messages,
         )
         messages.append({"role": "assistant", "content": resp.content})
@@ -321,8 +335,8 @@ def run(progress_callback=None) -> str:
         resp = client.messages.create(
             model=config.MODEL_FULL,
             max_tokens=config.MAX_TOKENS,
-            system=system,
-            tools=t.TOOLS,
+            system=_cached_system(system),
+            tools=_cached_tools(t.TOOLS),
             messages=messages,
         )
         messages.append({"role": "assistant", "content": resp.content})
