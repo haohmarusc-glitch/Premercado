@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startScheduler } from "./lib/scheduler";
 import { startAlertChecker } from "./lib/alert-checker";
+import { startPortfolioAlertChecker } from "./lib/portfolio-alerts";
 import { seedPortfolioIfEmpty } from "./routes/portfolio";
 
 const rawPort = process.env["PORT"];
@@ -23,5 +24,6 @@ app.listen(port, async (err) => {
   logger.info({ port }, "Server listening");
   await startScheduler();
   startAlertChecker();
+  startPortfolioAlertChecker();
   await seedPortfolioIfEmpty();
 });
