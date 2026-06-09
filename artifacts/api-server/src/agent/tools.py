@@ -255,6 +255,388 @@ def delete_alert(alert_id: int, reason: str) -> dict:
         return {"deleted": False, "error": str(e)}
 
 
+# ── Opções ────────────────────────────────────────────────────────────────────
+
+def get_options_data(ticker: str, expiry: str | None = None) -> dict:
+    """Retorna put/call ratio, IV ATM e as opções mais negociadas do ticker."""
+    try:
+        t = yf.Ticker(ticker)
+        expirations = t.options
+        if not expirations:
+            return {"ticker": ticker, "error": "Sem dados de opções disponíveis"}
+
+        exp = expiry if expiry in expirations else expirations[0]
+        chain = t.option_chain(exp)
+        calls = chain.calls
+        puts = chain.puts
+
+        total_call_vol = int(calls["volume"].sum()) if not calls.empty else 0
+        total_put_vol = int(puts["volume"].sum()) if not puts.empty else 0
+        pc_ratio = round(total_put_vol / total_call_vol, 3) if total_call_vol > 0 else None
+
+        def _top(df, n=5):
+            cols = ["strike", "lastPrice", "volume", "openInterest", "impliedVolatility"]
+            return (
+                df.nlargest(n, "volume")[cols]
+                .fillna(0)
+                .round(4)
+                .to_dict("records")
+            ) if not df.empty else []
+
+        spot = getattr(t.fast_info, "last_price", None)
+        atm_iv = None
+        if spot is not None and not calls.empty:
+            near = calls.iloc[(calls["strike"] - spot).abs().argsort()[:3]]
+            atm_iv = round(float(near["impliedVolatility"].mean()) * 100, 2)
+
+        return {
+            "ticker": ticker,
+            "expiry_used": exp,
+            "next_expirations": list(expirations[:5]),
+            "put_call_ratio": pc_ratio,
+            "total_call_volume": total_call_vol,
+            "total_put_volume": total_put_vol,
+            "atm_iv_pct": atm_iv,
+            "top_calls_by_volume": _top(calls),
+            "top_puts_by_volume": _top(puts),
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
+# ── Indicadores técnicos ──────────────────────────────────────────────────────
+
+def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
+    """Calcula RSI-14, MACD, Bollinger Bands e médias móveis para o ticker."""
+    try:
+        import pandas as pd
+
+        t = yf.Ticker(ticker)
+        hist = t.history(period=period)
+        if hist.empty or len(hist) < 30:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
+
+        close = hist["Close"]
+        volume = hist["Volume"]
+        price = float(close.iloc[-1])
+
+        # RSI 14
+        delta = close.diff()
+        avg_gain = delta.clip(lower=0).rolling(14).mean()
+        avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = avg_gain / avg_loss.replace(0, float("nan"))
+        rsi = round(float((100 - 100 / (1 + rs)).iloc[-1]), 2)
+
+        # MACD (12, 26, 9)
+        ema12 = close.ewm(span=12).mean()
+        ema26 = close.ewm(span=26).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9).mean()
+        histogram = macd_line - signal_line
+
+        # Bollinger Bands (20, 2)
+        sma20 = close.rolling(20).mean()
+        std20 = close.rolling(20).std()
+        bb_upper = float((sma20 + 2 * std20).iloc[-1])
+        bb_middle = float(sma20.iloc[-1])
+        bb_lower = float((sma20 - 2 * std20).iloc[-1])
+        pct_b = round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1) if (bb_upper - bb_lower) != 0 else None
+
+        def _safe(series):
+            val = series.iloc[-1]
+            return round(float(val), 2) if not pd.isna(val) else None
+
+        sma50 = _safe(close.rolling(50).mean())
+        sma200 = _safe(close.rolling(200).mean()) if len(close) >= 200 else None
+
+        def _pct_diff(a, b):
+            return round((a - b) / b * 100, 2) if a and b else None
+
+        vol_avg20 = float(volume.rolling(20).mean().iloc[-1])
+        vol_5d_avg = float(volume.iloc[-5:].mean())
+        vol_ratio = round(vol_5d_avg / vol_avg20, 2) if vol_avg20 > 0 else None
+
+        return {
+            "ticker": ticker,
+            "price": round(price, 2),
+            "rsi_14": rsi,
+            "rsi_signal": "sobrecomprado" if rsi > 70 else "sobrevendido" if rsi < 30 else "neutro",
+            "macd": {
+                "macd_line": round(float(macd_line.iloc[-1]), 4),
+                "signal_line": round(float(signal_line.iloc[-1]), 4),
+                "histogram": round(float(histogram.iloc[-1]), 4),
+                "trend": "bullish" if float(histogram.iloc[-1]) > 0 else "bearish",
+            },
+            "bollinger": {
+                "upper": round(bb_upper, 2),
+                "middle": round(bb_middle, 2),
+                "lower": round(bb_lower, 2),
+                "pct_b": pct_b,
+            },
+            "sma50": sma50,
+            "sma200": sma200,
+            "pct_above_sma50": _pct_diff(price, sma50),
+            "pct_above_sma200": _pct_diff(price, sma200),
+            "volume_ratio_5d_vs_20d": vol_ratio,
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
+# ── Performance de ETFs de setor ──────────────────────────────────────────────
+
+_SECTOR_ETFS = {
+    "SMH": "VanEck Semiconductor ETF",
+    "SOXX": "iShares Semiconductor ETF",
+    "XLK": "Technology Select Sector SPDR",
+    "QQQ": "Invesco QQQ (Nasdaq 100)",
+    "SPY": "SPDR S&P 500 ETF",
+    "IWM": "iShares Russell 2000 ETF",
+    "XLF": "Financial Select Sector SPDR",
+}
+
+
+def get_sector_performance(etfs: list[str] | None = None) -> list[dict]:
+    """Retorna a performance e pré-mercado dos principais ETFs de setor."""
+    symbols = etfs or list(_SECTOR_ETFS.keys())
+    results = []
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            info = t.info or {}
+            fi = t.fast_info
+            price = getattr(fi, "last_price", None)
+            prev_close = getattr(fi, "previous_close", None)
+            pre = info.get("preMarketPrice")
+
+            def _chg(p, c):
+                if p and c and c != 0:
+                    return round((p - c) / c * 100, 2)
+                return None
+
+            results.append({
+                "symbol": sym,
+                "name": _SECTOR_ETFS.get(sym, sym),
+                "price": round(price, 2) if price else None,
+                "pre_market_price": round(pre, 2) if pre else None,
+                "change_pct": _chg(price, prev_close),
+                "pre_market_change_pct": _chg(pre, prev_close),
+            })
+        except Exception as e:
+            results.append({"symbol": sym, "error": str(e)})
+    return results
+
+
+# ── Short interest ────────────────────────────────────────────────────────────
+
+def get_short_interest(ticker: str) -> dict:
+    """Retorna short float %, days-to-cover e variação em relação ao mês anterior."""
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+
+        short_pct = info.get("shortPercentOfFloat")
+        short_ratio = info.get("shortRatio")
+        shares_short = info.get("sharesShort")
+        shares_short_prior = info.get("sharesShortPriorMonth")
+        float_shares = info.get("floatShares")
+
+        short_change_pct = None
+        if shares_short and shares_short_prior and shares_short_prior > 0:
+            short_change_pct = round((shares_short - shares_short_prior) / shares_short_prior * 100, 2)
+
+        squeeze_risk = (
+            "alto" if short_pct and short_pct > 0.20
+            else "moderado" if short_pct and short_pct > 0.10
+            else "baixo"
+        )
+
+        return {
+            "ticker": ticker,
+            "short_pct_of_float": round(short_pct * 100, 2) if short_pct else None,
+            "days_to_cover": round(short_ratio, 2) if short_ratio else None,
+            "shares_short": shares_short,
+            "shares_short_prior_month": shares_short_prior,
+            "float_shares": float_shares,
+            "short_change_vs_prior_month_pct": short_change_pct,
+            "squeeze_risk": squeeze_risk,
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
+# ── Calendário de resultados ──────────────────────────────────────────────────
+
+def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
+    """Retorna datas e estimativas de resultados dos tickers cobertos."""
+    from . import config
+    symbols = tickers or config.TICKERS
+    results = []
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            cal = t.calendar
+
+            # yfinance returns dict or DataFrame depending on version
+            if cal is None:
+                results.append({"ticker": sym, "next_earnings_date": None})
+                continue
+
+            # Normalize to dict
+            if hasattr(cal, "to_dict"):
+                cal = cal.to_dict()
+
+            dates = cal.get("Earnings Date") or []
+            if not dates:
+                results.append({"ticker": sym, "next_earnings_date": None})
+                continue
+
+            next_date = dates[0] if hasattr(dates, "__iter__") else dates
+            date_str = str(next_date.date()) if hasattr(next_date, "date") else str(next_date)
+            try:
+                days_until = (datetime.date.fromisoformat(date_str) - datetime.date.today()).days
+            except Exception:
+                days_until = None
+
+            def _first(key):
+                v = cal.get(key)
+                if v is None:
+                    return None
+                return v[0] if hasattr(v, "__iter__") and not isinstance(v, str) else v
+
+            results.append({
+                "ticker": sym,
+                "next_earnings_date": date_str,
+                "days_until_earnings": days_until,
+                "eps_estimate_avg": _first("Earnings Average"),
+                "eps_estimate_low": _first("Earnings Low"),
+                "eps_estimate_high": _first("Earnings High"),
+                "revenue_estimate": _first("Revenue Average"),
+                "imminent": days_until is not None and 0 <= days_until <= 14,
+            })
+        except Exception as e:
+            results.append({"ticker": sym, "error": str(e)})
+    return results
+
+
+# ── Fear & Greed Index ────────────────────────────────────────────────────────
+
+def get_fear_greed_index() -> dict:
+    """Retorna o Índice Fear & Greed da CNN para sentimento de mercado."""
+    try:
+        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; PremarketAgent/1.0)",
+            "Referer": "https://edition.cnn.com/",
+        }
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        current = data.get("fear_and_greed", {})
+        score = current.get("score")
+        rating = current.get("rating", "")
+
+        hist = data.get("fear_and_greed_historical", {})
+
+        def _classify(s):
+            if s is None:
+                return "desconhecido"
+            if s <= 25:
+                return "medo extremo"
+            if s <= 45:
+                return "medo"
+            if s <= 55:
+                return "neutro"
+            if s <= 75:
+                return "ganância"
+            return "ganância extrema"
+
+        def _safe_score(obj):
+            if isinstance(obj, dict):
+                return obj.get("score")
+            return None
+
+        return {
+            "score": round(score, 1) if score is not None else None,
+            "rating_en": rating,
+            "rating_pt": _classify(score),
+            "prev_close": _safe_score(hist.get("previousClose")),
+            "one_week_ago": _safe_score(hist.get("oneWeekAgo")),
+            "one_month_ago": _safe_score(hist.get("oneMonthAgo")),
+            "one_year_ago": _safe_score(hist.get("oneYearAgo")),
+            "interpretation": (
+                "Pânico — potencial oportunidade contrária" if score and score <= 25
+                else "Medo predominante — cautela" if score and score <= 45
+                else "Sentimento neutro" if score and score <= 55
+                else "Mercado ganancioso — risco de reversão" if score and score <= 75
+                else "Euforia — risco máximo de reversão"
+            ),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Ratings de analistas ──────────────────────────────────────────────────────
+
+def get_analyst_ratings(ticker: str) -> dict:
+    """Retorna consenso, preços-alvo e upgrades/downgrades recentes de analistas."""
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+
+        rec_key = info.get("recommendationKey", "")
+        rec_mean = info.get("recommendationMean")
+        num_analysts = info.get("numberOfAnalystOpinions")
+        target_mean = info.get("targetMeanPrice")
+        target_median = info.get("targetMedianPrice")
+        target_high = info.get("targetHighPrice")
+        target_low = info.get("targetLowPrice")
+
+        current_price = info.get("regularMarketPrice") or info.get("currentPrice")
+        upside = None
+        if target_mean and current_price and current_price > 0:
+            upside = round((target_mean - current_price) / current_price * 100, 1)
+
+        rec_labels = {
+            "strongBuy": "compra forte",
+            "buy": "compra",
+            "hold": "manter",
+            "sell": "venda",
+            "strongSell": "venda forte",
+        }
+
+        upgrades_downgrades = []
+        try:
+            ud = t.upgrades_downgrades
+            if ud is not None and not ud.empty:
+                for _, row in ud.head(10).reset_index().iterrows():
+                    upgrades_downgrades.append({
+                        "date": str(row.get("GradeDate", "")),
+                        "firm": row.get("Firm", ""),
+                        "from_grade": row.get("FromGrade", ""),
+                        "to_grade": row.get("ToGrade", ""),
+                        "action": row.get("Action", ""),
+                    })
+        except Exception:
+            pass
+
+        return {
+            "ticker": ticker,
+            "consensus": rec_labels.get(rec_key, rec_key),
+            "recommendation_mean_1_5": round(rec_mean, 2) if rec_mean else None,
+            "num_analysts": num_analysts,
+            "target_mean": target_mean,
+            "target_median": target_median,
+            "target_high": target_high,
+            "target_low": target_low,
+            "upside_to_mean_pct": upside,
+            "recent_upgrades_downgrades": upgrades_downgrades,
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
 # ── Análise de mercado (market_alerts) ───────────────────────────────────────
 
 def check_market_alerts(
@@ -440,6 +822,131 @@ TOOLS = [
         },
     },
     {
+        "name": "get_options_data",
+        "description": (
+            "Retorna dados de opções do ticker: put/call ratio, IV ATM (%), "
+            "calls e puts mais negociadas por volume. "
+            "Put/call ratio > 1 indica viés bearish no mercado de opções; < 0.7 indica viés bullish. "
+            "IV alta sinaliza expectativa de movimento brusco (ex: resultado, anúncio)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo, ex: MU"},
+                "expiry": {
+                    "type": "string",
+                    "description": "Data de vencimento no formato YYYY-MM-DD. Omita para usar o mais próximo.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_technical_indicators",
+        "description": (
+            "Calcula indicadores técnicos para o ticker: RSI-14, MACD (12/26/9), "
+            "Bollinger Bands (20/2), SMA 50 e SMA 200, e ratio de volume (5d vs 20d). "
+            "Use para avaliar condição técnica antes de criar alertas de preço."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "period": {
+                    "type": "string",
+                    "description": "Período histórico: '3mo', '6mo', '1y'. Default: '6mo'.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_sector_performance",
+        "description": (
+            "Retorna a performance do dia e do pré-mercado dos ETFs de setor: "
+            "SMH, SOXX, XLK, QQQ, SPY, IWM, XLF. "
+            "Use para contextualizar se uma queda/alta de MU ou SMCI é idiossincrática "
+            "ou reflexo de movimento amplo do setor/mercado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "etfs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista customizada de ETFs. Omita para usar os defaults (SMH, SOXX, XLK, QQQ, SPY, IWM, XLF).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_short_interest",
+        "description": (
+            "Retorna o short interest do ativo: % do float vendido a descoberto, "
+            "days-to-cover e variação vs mês anterior. "
+            "Short float > 20%: risco alto de short squeeze. "
+            "Days-to-cover alto + catalisador positivo = potencial de squeeze acelerado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_earnings_calendar",
+        "description": (
+            "Retorna as próximas datas de resultado (earnings) dos tickers cobertos, "
+            "com estimativas de EPS (avg/low/high) e receita do consenso. "
+            "O campo 'imminent' é true quando o resultado está em até 14 dias. "
+            "Use para ajustar a análise de risco e criar alertas de volatilidade."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista de tickers. Omita para usar todos os tickers sob cobertura.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_fear_greed_index",
+        "description": (
+            "Retorna o Índice Fear & Greed da CNN (0–100): sentimento atual do mercado americano. "
+            "0–25: medo extremo, 26–45: medo, 46–55: neutro, 56–75: ganância, 76–100: ganância extrema. "
+            "Inclui histórico (fechamento anterior, 1 semana, 1 mês, 1 ano atrás). "
+            "Medo extremo pode sinalizar fundo de curto prazo; ganância extrema, topo."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_analyst_ratings",
+        "description": (
+            "Retorna o consenso de analistas (compra forte / compra / manter / venda), "
+            "número de analistas, preço-alvo médio/mediano/high/low, upside implícito "
+            "e os 10 upgrades/downgrades mais recentes com firma e grau anterior/novo. "
+            "Use para identificar mudanças recentes de rating que podem mover o preço."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
         "name": "check_market_alerts",
         "description": (
             "Analisa o estado atual do mercado e retorna uma lista estruturada de sinais "
@@ -514,4 +1021,11 @@ DISPATCH = {
     "create_alert": create_alert,
     "delete_alert": delete_alert,
     "check_market_alerts": check_market_alerts,
+    "get_options_data": get_options_data,
+    "get_technical_indicators": get_technical_indicators,
+    "get_sector_performance": get_sector_performance,
+    "get_short_interest": get_short_interest,
+    "get_earnings_calendar": get_earnings_calendar,
+    "get_fear_greed_index": get_fear_greed_index,
+    "get_analyst_ratings": get_analyst_ratings,
 }
