@@ -7,6 +7,14 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Determinar se está em produção
+const isProduction = process.env.NODE_ENV === "production";
+
+// Configurar origens permitidas do CORS
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : "http://localhost:3000";
+
 app.use(
   pinoHttp({
     logger,
@@ -26,20 +34,27 @@ app.use(
     },
   }),
 );
-app.use(cors({ credentials: true, origin: true }));
+
+app.use(
+  cors({
+    credentials: true,
+    origin: allowedOrigins,
+  }),
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
   session({
     name: "sid",
-    secret: process.env.SESSION_SECRET ?? "dev-only-insecure-secret",
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "strict",
-      secure: false,
+      secure: isProduction,
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   }),
