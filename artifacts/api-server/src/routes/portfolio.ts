@@ -31,6 +31,7 @@ const SEED_POSITIONS = [
   { ticker: "ARM",  quantity: 0.87559,  avgCost: 399.73, investedAmount:  350.00, firstPurchaseDate: "2026-06-02" },
   { ticker: "GOOGL",quantity: 0.81693,  avgCost: 367.22, investedAmount:  300.00, firstPurchaseDate: "2026-06-02" },
   { ticker: "TSLA", quantity: 0.53411,  avgCost: 374.45, investedAmount:  200.00, firstPurchaseDate: "2026-03-20" },
+  { ticker: "SMCI", quantity: 13.98789, avgCost:  39.31, investedAmount:  550.00, firstPurchaseDate: "2026-05-14" },
 ] as const;
 
 const SEED_PURCHASES: Record<string, Array<{ purchaseDate: string; amount: number }>> = {
@@ -42,6 +43,7 @@ const SEED_PURCHASES: Record<string, Array<{ purchaseDate: string; amount: numbe
   ARM:   [{ purchaseDate: "2026-06-02", amount: 350.00 }],
   GOOGL: [{ purchaseDate: "2026-06-02", amount: 300.00 }],
   TSLA:  [{ purchaseDate: "2026-03-20", amount: 200.00 }],
+  SMCI:  [{ purchaseDate: "2026-05-14", amount: 250.00 }, { purchaseDate: "2026-06-02", amount: 300.00 }],
 };
 
 export async function seedPortfolioIfEmpty() {
