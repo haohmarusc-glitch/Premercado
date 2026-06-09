@@ -1,4 +1,12 @@
-import { pgTable, serial, text, timestamp, doublePrecision, boolean, integer } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  doublePrecision,
+  boolean,
+  integer,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -8,9 +16,14 @@ export const reportsTable = pgTable("reports", {
   content: text("content").notNull(),
   tickers: text("tickers").array().notNull().default([]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const insertReportSchema = createInsertSchema(reportsTable).omit({ id: true, createdAt: true });
+export const insertReportSchema = createInsertSchema(reportsTable).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 export type InsertReport = z.infer<typeof insertReportSchema>;
 export type Report = typeof reportsTable.$inferSelect;
 
@@ -22,9 +35,16 @@ export const observationsTable = pgTable("observations", {
   sentiment: text("sentiment").notNull().default("neutral"),
   priceAtObservation: doublePrecision("price_at_observation"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const insertObservationSchema = createInsertSchema(observationsTable).omit({ id: true, createdAt: true });
+export const insertObservationSchema = createInsertSchema(observationsTable).omit(
+  {
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+);
 export type InsertObservation = z.infer<typeof insertObservationSchema>;
 export type Observation = typeof observationsTable.$inferSelect;
 
@@ -36,6 +56,7 @@ export const agentRunsTable = pgTable("agent_runs", {
   trigger: text("trigger").notNull().default("manual"), // manual | scheduled
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export type AgentRun = typeof agentRunsTable.$inferSelect;
@@ -46,8 +67,12 @@ export const settingsTable = pgTable("settings", {
   scheduleEnabled: boolean("schedule_enabled").notNull().default(true),
   scheduleHour: integer("schedule_hour").notNull().default(8),
   scheduleMinute: integer("schedule_minute").notNull().default(30),
-  tickers: text("tickers").array().notNull().default(["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"]),
+  tickers: text("tickers")
+    .array()
+    .notNull()
+    .default(["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"]),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export type Settings = typeof settingsTable.$inferSelect;
@@ -60,13 +85,16 @@ export const alertsTable = pgTable("alerts", {
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export type Alert = typeof alertsTable.$inferSelect;
 
 export const alertFiringsTable = pgTable("alert_firings", {
   id: serial("id").primaryKey(),
-  alertId: integer("alert_id").notNull(),
+  alertId: integer("alert_id")
+    .notNull()
+    .references(() => alertsTable.id, { onDelete: "cascade" }),
   symbol: text("symbol").notNull(),
   condition: text("condition").notNull(),
   thresholdPct: doublePrecision("threshold_pct").notNull(),
