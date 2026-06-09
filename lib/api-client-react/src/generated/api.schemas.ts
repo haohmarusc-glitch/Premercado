@@ -166,6 +166,11 @@ export interface SettingsUpdate {
   tickers?: string[];
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export type ListObservationsParams = {
 ticker?: string;
 limit?: number;

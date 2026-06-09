@@ -185,6 +185,83 @@ def run_premarket(progress_callback=None) -> str:
     return final_text
 
 
+# ── Chat mode ────────────────────────────────────────────────────────────────
+
+_CHAT_TOOL_NAMES = {
+    "get_stock_data", "get_news", "get_technical_indicators",
+    "get_fear_greed_index", "get_sector_performance",
+    "get_short_interest", "get_analyst_ratings", "get_options_data",
+}
+CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
+
+
+def build_chat_prompt() -> str:
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    now = datetime.datetime.now().strftime("%H:%M")
+    return f"""Você é um analista de ações conversacional em {today} ({now} BRT).
+Ativos monitorados: {", ".join(config.TICKERS)}.
+
+Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
+get_fear_greed_index, get_sector_performance, get_short_interest,
+get_analyst_ratings, get_options_data.
+
+Regras:
+- Responda à pergunta do usuário de forma direta e concisa.
+- Use ferramentas apenas quando necessário. Máximo 4 chamadas por resposta.
+- NÃO use: save_observation, search_edgar_filings, read_filing, create_alert,
+  delete_alert, list_alerts, check_market_alerts, detect_sector_contagion.
+- Formate em Markdown. Seja factual; cite números.
+
+=== CONTEXTO RECENTE DO AGENTE ===
+{memory.recent_context()}
+=== FIM DO CONTEXTO ==="""
+
+
+def run_chat_stream(message: str, history: list) -> None:
+    """
+    Runs a chat turn, printing STEP: progress lines and a final RESULT:<json>
+    line to stdout. Called by agent.run_chat subprocess.
+    """
+    import json as _json
+
+    system = build_chat_prompt()
+    messages = list(history) + [{"role": "user", "content": message}]
+    final_text = ""
+
+    for turn in range(6):
+        print(f"STEP:Turno {turn + 1}...", flush=True)
+
+        resp = client.messages.create(
+            model=config.MODEL,
+            max_tokens=2048,
+            system=system,
+            tools=CHAT_TOOLS,
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": resp.content})
+
+        for block in resp.content:
+            if block.type == "text":
+                final_text = block.text
+
+        if resp.stop_reason != "tool_use":
+            break
+
+        tool_results = []
+        for block in resp.content:
+            if block.type == "tool_use":
+                print(f"STEP:{block.name}", flush=True)
+                result = run_tool(block.name, dict(block.input))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        messages.append({"role": "user", "content": tool_results})
+
+    print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
+
+
 def run_tool(name: str, args: dict) -> str:
     fn = t.DISPATCH.get(name)
     if not fn:

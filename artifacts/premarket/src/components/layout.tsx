@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare } from "lucide-react";
 import { 
   useGetAgentStatus, 
   getGetAgentStatusQueryKey,
@@ -107,6 +107,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
           {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
           {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
+          {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
 

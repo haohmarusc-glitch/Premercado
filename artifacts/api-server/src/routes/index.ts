@@ -9,6 +9,7 @@ import quotesRouter from "./quotes";
 import chartRouter from "./chart";
 import alertsRouter from "./alerts";
 import authRouter from "./auth";
+import chatRouter from "./chat";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
@@ -24,5 +25,6 @@ router.use(requireAuth, agentRouter);
 router.use(requireAuth, settingsRouter);
 router.use(requireAuth, alertsRouter);
 router.use(requireAuth, runsRouter);
+router.use(requireAuth, chatRouter);
 
 export default router;
