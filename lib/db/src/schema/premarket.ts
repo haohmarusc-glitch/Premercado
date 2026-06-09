@@ -53,7 +53,8 @@ export const agentRunsTable = pgTable("agent_runs", {
   startedAt: timestamp("started_at").defaultNow().notNull(),
   finishedAt: timestamp("finished_at"),
   status: text("status").notNull().default("running"), // running | success | failed
-  trigger: text("trigger").notNull().default("manual"), // manual | scheduled
+  trigger: text("trigger").notNull().default("manual"), // manual | scheduled | premarket
+  mode: text("mode").notNull().default("daily"), // daily | premarket
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -71,6 +72,11 @@ export const settingsTable = pgTable("settings", {
     .array()
     .notNull()
     .default(["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"]),
+  // Pré-mercado intradiário automático
+  premarketEnabled: boolean("premarket_enabled").notNull().default(false),
+  premarketIntervalMin: integer("premarket_interval_min").notNull().default(30),
+  premarketWindowStartHour: integer("premarket_window_start_hour").notNull().default(6),
+  premarketWindowEndHour: integer("premarket_window_end_hour").notNull().default(9),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

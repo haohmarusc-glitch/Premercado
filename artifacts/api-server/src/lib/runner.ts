@@ -9,7 +9,10 @@ import { db, reportsTable, agentRunsTable, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 
-const DEFAULT_TICKERS = ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"];
+const DEFAULT_TICKERS = [
+  "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
+  "SNDK", "WDC", "ALAB", "CRDO", "ANET", "VRT", "TSM", "ASML",
+];
 
 async function getMonitoredTickers(): Promise<string[]> {
   try {
@@ -45,14 +48,16 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual"): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
+  const mode = trigger === "premarket" ? "premarket" : "daily";
+
   state.running = true;
-  state.currentStep = "Iniciando agente...";
+  state.currentStep = trigger === "premarket" ? "Iniciando varredura pré-mercado..." : "Iniciando agente...";
   state.lastRunAt = new Date().toISOString();
 
   const startedAt = new Date();
@@ -66,7 +71,7 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
   try {
     const [row] = await db
       .insert(agentRunsTable)
-      .values({ status: "running", trigger, startedAt })
+      .values({ status: "running", trigger, mode, startedAt })
       .returning();
     runId = row.id;
   } catch (err) {
@@ -82,6 +87,7 @@ export function runAgent(trigger: "manual" | "scheduled" = "manual"): void {
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
+      AGENT_MODE: mode,
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });

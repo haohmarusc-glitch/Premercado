@@ -5,6 +5,8 @@ import type { Settings } from "@workspace/db";
 
 const TIMEZONE = "America/Sao_Paulo";
 
+// ── Daily scheduler ───────────────────────────────────────────────────────────
+
 let currentTask: ScheduledTask | null = null;
 let currentHour = 8;
 let currentMinute = 30;
@@ -45,22 +47,85 @@ function scheduleTask(hour: number, minute: number): void {
   );
 }
 
-export function applySettings(settings: Pick<Settings, "scheduleEnabled" | "scheduleHour" | "scheduleMinute">): void {
+// ── Intraday pre-market scheduler ─────────────────────────────────────────────
+
+let premarketTask: ScheduledTask | null = null;
+
+/**
+ * Cron that fires every `intervalMin` minutes during [startHour, endHour) on weekdays.
+ * Example: intervalMin=30, startHour=6, endHour=9 → `*\/30 6-8 * * 1-5`
+ */
+function premarketCronExpr(intervalMin: number, startHour: number, endHour: number): string {
+  const clampedEnd = Math.max(startHour, endHour - 1);
+  return `*/${intervalMin} ${startHour}-${clampedEnd} * * 1-5`;
+}
+
+function schedulePremarketTask(intervalMin: number, startHour: number, endHour: number): void {
+  if (premarketTask) {
+    premarketTask.stop();
+    premarketTask = null;
+  }
+  const expr = premarketCronExpr(intervalMin, startHour, endHour);
+  premarketTask = cron.schedule(
+    expr,
+    () => {
+      logger.info({ expr }, "Intraday pre-market scan triggered");
+      runAgent("premarket");
+    },
+    { timezone: TIMEZONE },
+  );
+  logger.info({ cron: expr, intervalMin, startHour, endHour, tz: TIMEZONE }, "Intraday pre-market scheduler started");
+}
+
+function stopPremarketTask(): void {
+  if (premarketTask) {
+    premarketTask.stop();
+    premarketTask = null;
+  }
+}
+
+// ── Unified settings application ─────────────────────────────────────────────
+
+type SchedulerSettings = Pick<
+  Settings,
+  | "scheduleEnabled"
+  | "scheduleHour"
+  | "scheduleMinute"
+  | "premarketEnabled"
+  | "premarketIntervalMin"
+  | "premarketWindowStartHour"
+  | "premarketWindowEndHour"
+>;
+
+export function applySettings(settings: SchedulerSettings): void {
+  // Daily scheduler
   scheduleEnabled = settings.scheduleEnabled;
   if (!scheduleEnabled) {
     if (currentTask) { currentTask.stop(); currentTask = null; }
     state.scheduleEnabled = false;
     state.nextRunAt = null;
-    logger.info("Scheduler disabled via settings");
-    return;
+    logger.info("Daily scheduler disabled via settings");
+  } else {
+    scheduleTask(settings.scheduleHour, settings.scheduleMinute);
+    state.scheduleEnabled = true;
+    state.nextRunAt = nextOccurrence(settings.scheduleHour, settings.scheduleMinute).toISOString();
+    logger.info(
+      { nextRunAt: state.nextRunAt, hour: settings.scheduleHour, minute: settings.scheduleMinute },
+      "Daily scheduler updated",
+    );
   }
-  scheduleTask(settings.scheduleHour, settings.scheduleMinute);
-  state.scheduleEnabled = true;
-  state.nextRunAt = nextOccurrence(settings.scheduleHour, settings.scheduleMinute).toISOString();
-  logger.info(
-    { nextRunAt: state.nextRunAt, hour: settings.scheduleHour, minute: settings.scheduleMinute },
-    "Scheduler updated",
-  );
+
+  // Intraday pre-market scheduler
+  if (!settings.premarketEnabled) {
+    stopPremarketTask();
+    logger.info("Intraday pre-market scheduler disabled via settings");
+  } else {
+    schedulePremarketTask(
+      settings.premarketIntervalMin,
+      settings.premarketWindowStartHour,
+      settings.premarketWindowEndHour,
+    );
+  }
 }
 
 export async function startScheduler(): Promise<void> {
@@ -74,12 +139,12 @@ export async function startScheduler(): Promise<void> {
   } catch (_) {
     // DB not ready yet, fall back to defaults
   }
-  // Defaults: 8:30 BRT
+  // Defaults: 8:30 BRT, premarket disabled
   scheduleTask(8, 30);
   state.scheduleEnabled = true;
   state.nextRunAt = nextOccurrence(8, 30).toISOString();
   logger.info(
     { nextRunAt: state.nextRunAt, cron: cronExpr(8, 30), tz: TIMEZONE },
-    "Pre-market scheduler started (defaults 08:30 BRT)",
+    "Pre-market scheduler started (defaults 08:30 BRT, intraday disabled)",
   );
 }

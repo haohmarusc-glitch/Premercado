@@ -105,6 +105,86 @@ Princípios:
 === FIM DA MEMÓRIA ==="""
 
 
+def build_premarket_prompt() -> str:
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    now = datetime.datetime.now().strftime("%H:%M")
+    return f"""Você é um analista de ações fazendo uma VARREDURA RÁPIDA de pré-mercado intradiário às {now} de {today}.
+Ativos sob cobertura: {", ".join(config.TICKERS)}.
+
+Esta é uma varredura rápida — NÃO é o relatório diário completo. Seja conciso.
+
+**Fluxo obrigatório (execute na ordem):**
+1. get_fear_greed_index — sentimento macro atual
+2. get_sector_performance — ETFs de setor (SMH, SOXX, SPY, QQQ)
+3. detect_sector_contagion com period='1d', interval='5m' — contágio intradiário
+4. Para cada ticker que apareceu como líder ou catch-up no contágio, chame get_stock_data
+5. Para os 2–3 tickers com maior movimento, chame get_options_data
+
+**NÃO USE:** search_edgar_filings, read_filing, save_observation, get_news,
+get_technical_indicators, get_analyst_ratings, get_short_interest, get_earnings_calendar,
+list_alerts, create_alert, delete_alert.
+
+**Formato da saída — "## ⚡ Flash Pré-Mercado {now}":**
+- Linha 1: Fear & Greed score e classificação
+- Tabela compacta: SMH | SOXX | SPY (preço, variação %)
+- Contágio detectado: líder → confirmando → catch-up (por grupo)
+- Cotações dos tickers em movimento (só os relevantes)
+- Put/call ratio e IV dos tickers com opções abertas
+- ⚠️ Flag de risco se algo crítico (queda > 5%, IV > 80%, spike de volume)
+
+Limite: no máximo 350 palavras. Seja direto e factual."""
+
+
+def run_premarket(progress_callback=None) -> str:
+    """
+    Executa a varredura intradiária de pré-mercado.
+    Mais rápida que run(): menos ferramentas, menos turnos, output curto.
+    """
+    system = build_premarket_prompt()
+    messages = [{
+        "role": "user",
+        "content": "Faça a varredura rápida de pré-mercado intradiário agora.",
+    }]
+
+    final_text = ""
+    max_turns = min(config.MAX_AGENT_TURNS, 8)
+
+    for turn in range(max_turns):
+        if progress_callback:
+            progress_callback(f"[Flash] Turno {turn + 1}...")
+
+        resp = client.messages.create(
+            model=config.MODEL,
+            max_tokens=1024,
+            system=system,
+            tools=t.TOOLS,
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": resp.content})
+
+        for block in resp.content:
+            if block.type == "text":
+                final_text = block.text
+
+        if resp.stop_reason != "tool_use":
+            break
+
+        tool_results = []
+        for block in resp.content:
+            if block.type == "tool_use":
+                if progress_callback:
+                    progress_callback(f"[Flash] {block.name}")
+                result = run_tool(block.name, dict(block.input))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        messages.append({"role": "user", "content": tool_results})
+
+    return final_text
+
+
 def run_tool(name: str, args: dict) -> str:
     fn = t.DISPATCH.get(name)
     if not fn:

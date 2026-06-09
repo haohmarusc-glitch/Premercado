@@ -13,5 +13,9 @@ export interface Settings {
   scheduleHour: number;
   scheduleMinute: number;
   tickers: string[];
+  premarketEnabled: boolean;
+  premarketIntervalMin: number;
+  premarketWindowStartHour: number;
+  premarketWindowEndHour: number;
   updatedAt: string;
 }

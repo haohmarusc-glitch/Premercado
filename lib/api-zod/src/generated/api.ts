@@ -252,6 +252,7 @@ export const ListAgentRunsResponseItem = zod.object({
   "finishedAt": zod.string().nullish(),
   "status": zod.string(),
   "trigger": zod.string(),
+  "mode": zod.string(),
   "durationMs": zod.number().nullish(),
   "errorMessage": zod.string().nullish()
 })
@@ -268,6 +269,10 @@ export const GetSettingsResponse = zod.object({
   "scheduleHour": zod.number(),
   "scheduleMinute": zod.number(),
   "tickers": zod.array(zod.string()),
+  "premarketEnabled": zod.boolean(),
+  "premarketIntervalMin": zod.number(),
+  "premarketWindowStartHour": zod.number(),
+  "premarketWindowEndHour": zod.number(),
   "updatedAt": zod.string()
 })
 
@@ -280,7 +285,11 @@ export const UpdateSettingsBody = zod.object({
   "scheduleEnabled": zod.boolean().optional(),
   "scheduleHour": zod.number().optional(),
   "scheduleMinute": zod.number().optional(),
-  "tickers": zod.array(zod.string()).optional()
+  "tickers": zod.array(zod.string()).optional(),
+  "premarketEnabled": zod.boolean().optional(),
+  "premarketIntervalMin": zod.number().optional(),
+  "premarketWindowStartHour": zod.number().optional(),
+  "premarketWindowEndHour": zod.number().optional()
 })
 
 export const UpdateSettingsResponse = zod.object({
@@ -290,6 +299,10 @@ export const UpdateSettingsResponse = zod.object({
   "scheduleHour": zod.number(),
   "scheduleMinute": zod.number(),
   "tickers": zod.array(zod.string()),
+  "premarketEnabled": zod.boolean(),
+  "premarketIntervalMin": zod.number(),
+  "premarketWindowStartHour": zod.number(),
+  "premarketWindowEndHour": zod.number(),
   "updatedAt": zod.string()
 })
 

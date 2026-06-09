@@ -12,7 +12,17 @@ async function getOrCreateSettings() {
   const notifyEmail = process.env.NOTIFY_EMAIL ?? "";
   const [created] = await db
     .insert(settingsTable)
-    .values({ notifyEmail, scheduleEnabled: true, scheduleHour: 8, scheduleMinute: 30, tickers: ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"] })
+    .values({
+      notifyEmail,
+      scheduleEnabled: true,
+      scheduleHour: 8,
+      scheduleMinute: 30,
+      tickers: ["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA", "SNDK", "WDC", "ALAB", "CRDO", "ANET", "VRT", "TSM", "ASML"],
+      premarketEnabled: false,
+      premarketIntervalMin: 30,
+      premarketWindowStartHour: 6,
+      premarketWindowEndHour: 9,
+    })
     .returning();
   return created;
 }
