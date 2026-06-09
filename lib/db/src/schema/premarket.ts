@@ -132,3 +132,31 @@ export const chatMessagesTable = pgTable("chat_messages", {
 });
 
 export type ChatMessage = typeof chatMessagesTable.$inferSelect;
+
+export const portfolioPositionsTable = pgTable("portfolio_positions", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull(),
+  quantity: doublePrecision("quantity").notNull(),
+  avgCost: doublePrecision("avg_cost").notNull(),
+  investedAmount: doublePrecision("invested_amount").notNull(),
+  firstPurchaseDate: text("first_purchase_date").notNull(),
+  notes: text("notes"),
+  downAlertPcts: integer("down_alert_pcts").array().notNull().default([10, 15, 20, 30]),
+  upAlertPcts: integer("up_alert_pcts").array().notNull().default([15, 20, 30, 40]),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type PortfolioPosition = typeof portfolioPositionsTable.$inferSelect;
+
+export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
+  id: serial("id").primaryKey(),
+  positionId: integer("position_id")
+    .notNull()
+    .references(() => portfolioPositionsTable.id, { onDelete: "cascade" }),
+  purchaseDate: text("purchase_date").notNull(),
+  amount: doublePrecision("amount").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortfolioPurchase = typeof portfolioPurchasesTable.$inferSelect;

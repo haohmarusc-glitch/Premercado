@@ -11,6 +11,7 @@ import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
 import AlertsPage from "@/pages/alerts";
 import ChatPage from "@/pages/chat";
+import PortfolioPage from "@/pages/portfolio";
 import LoginPage from "@/pages/login";
 import { Layout } from "@/components/layout";
 
@@ -34,6 +35,7 @@ function Router() {
         <Route path="/runs" component={RunsPage} />
         <Route path="/alerts" component={AlertsPage} />
         <Route path="/chat" component={ChatPage} />
+        <Route path="/portfolio" component={PortfolioPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

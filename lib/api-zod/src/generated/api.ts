@@ -340,3 +340,66 @@ export const GetChatMessagesResponseItem = zod.object({
 export const GetChatMessagesResponse = zod.array(GetChatMessagesResponseItem)
 
 
+/**
+ * @summary Portfolio positions
+ */
+export const PortfolioPositionSchema = zod.object({
+  "id": zod.number(),
+  "ticker": zod.string(),
+  "quantity": zod.number(),
+  "avgCost": zod.number(),
+  "investedAmount": zod.number(),
+  "firstPurchaseDate": zod.string(),
+  "notes": zod.string().nullable().optional(),
+  "downAlertPcts": zod.array(zod.number()),
+  "upAlertPcts": zod.array(zod.number()),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+})
+export const ListPortfolioPositionsResponse = zod.array(PortfolioPositionSchema)
+
+export const CreatePortfolioPositionBody = zod.object({
+  "ticker": zod.string().min(1).max(10),
+  "quantity": zod.number().positive(),
+  "avgCost": zod.number().positive(),
+  "investedAmount": zod.number().positive(),
+  "firstPurchaseDate": zod.string(),
+  "notes": zod.string().optional(),
+  "downAlertPcts": zod.array(zod.number()).optional(),
+  "upAlertPcts": zod.array(zod.number()).optional(),
+})
+
+export const UpdatePortfolioPositionBody = zod.object({
+  "ticker": zod.string().min(1).max(10).optional(),
+  "quantity": zod.number().positive().optional(),
+  "avgCost": zod.number().positive().optional(),
+  "investedAmount": zod.number().positive().optional(),
+  "firstPurchaseDate": zod.string().optional(),
+  "notes": zod.string().nullable().optional(),
+  "downAlertPcts": zod.array(zod.number()).optional(),
+  "upAlertPcts": zod.array(zod.number()).optional(),
+})
+
+export const PortfolioPositionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const PortfolioPurchaseSchema = zod.object({
+  "id": zod.number(),
+  "positionId": zod.number(),
+  "purchaseDate": zod.string(),
+  "amount": zod.number(),
+  "createdAt": zod.string(),
+})
+export const ListPortfolioPurchasesResponse = zod.array(PortfolioPurchaseSchema)
+
+export const CreatePortfolioPurchaseBody = zod.object({
+  "purchaseDate": zod.string(),
+  "amount": zod.number().positive(),
+})
+
+export const PortfolioPurchaseParams = zod.object({
+  "purchaseId": zod.coerce.number()
+})
+
+

@@ -10,6 +10,7 @@ import chartRouter from "./chart";
 import alertsRouter from "./alerts";
 import authRouter from "./auth";
 import chatRouter from "./chat";
+import portfolioRouter from "./portfolio";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
@@ -26,5 +27,6 @@ router.use(requireAuth, settingsRouter);
 router.use(requireAuth, alertsRouter);
 router.use(requireAuth, runsRouter);
 router.use(requireAuth, chatRouter);
+router.use(requireAuth, portfolioRouter);
 
 export default router;

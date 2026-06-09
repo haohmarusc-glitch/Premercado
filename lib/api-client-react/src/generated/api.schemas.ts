@@ -182,6 +182,28 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface PortfolioPosition {
+  id: number;
+  ticker: string;
+  quantity: number;
+  avgCost: number;
+  investedAmount: number;
+  firstPurchaseDate: string;
+  notes?: string | null;
+  downAlertPcts: number[];
+  upAlertPcts: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PortfolioPurchase {
+  id: number;
+  positionId: number;
+  purchaseDate: string;
+  amount: number;
+  createdAt: string;
+}
+
 export type ListObservationsParams = {
 ticker?: string;
 limit?: number;

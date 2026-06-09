@@ -1,0 +1,662 @@
+import { useState, useMemo, useEffect, Fragment } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useListPortfolioPositions,
+  getListPortfolioPositionsQueryKey,
+  useCreatePortfolioPosition,
+  useUpdatePortfolioPosition,
+  useDeletePortfolioPosition,
+  useListPortfolioPurchases,
+  getListPortfolioPurchasesQueryKey,
+  useCreatePortfolioPurchase,
+  useDeletePortfolioPurchase,
+  useGetTickerQuotes,
+  getGetTickerQuotesQueryKey,
+} from "@workspace/api-client-react";
+import type { PortfolioPosition } from "@workspace/api-client-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const fmt$ = (n: number) =>
+  `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+const fmtQty = (n: number) =>
+  n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 5 });
+
+function daysSince(dateStr: string): number {
+  return (Date.now() - new Date(dateStr).getTime()) / 86_400_000;
+}
+
+function getMaxDownAlert(pnlPct: number, thresholds: number[]): number | null {
+  const crossed = thresholds.filter((t) => pnlPct <= -t);
+  return crossed.length ? Math.max(...crossed) : null;
+}
+
+function getMaxUpAlert(pnlPct: number, thresholds: number[]): number | null {
+  const crossed = thresholds.filter((t) => pnlPct >= t);
+  return crossed.length ? Math.max(...crossed) : null;
+}
+
+// ── Position form ─────────────────────────────────────────────────────────────
+
+interface PosForm {
+  ticker: string;
+  quantity: string;
+  avgCost: string;
+  investedAmount: string;
+  firstPurchaseDate: string;
+  notes: string;
+  downAlertPcts: string;
+  upAlertPcts: string;
+}
+
+const EMPTY_FORM: PosForm = {
+  ticker: "",
+  quantity: "",
+  avgCost: "",
+  investedAmount: "",
+  firstPurchaseDate: "",
+  notes: "",
+  downAlertPcts: "10,15,20,30",
+  upAlertPcts: "15,20,30,40",
+};
+
+function posToForm(p: PortfolioPosition): PosForm {
+  return {
+    ticker: p.ticker,
+    quantity: String(p.quantity),
+    avgCost: String(p.avgCost),
+    investedAmount: String(p.investedAmount),
+    firstPurchaseDate: p.firstPurchaseDate,
+    notes: p.notes ?? "",
+    downAlertPcts: p.downAlertPcts.join(","),
+    upAlertPcts: p.upAlertPcts.join(","),
+  };
+}
+
+function parseAlertPcts(s: string): number[] {
+  return s
+    .split(",")
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((n) => !isNaN(n) && n > 0);
+}
+
+// ── Purchases sub-table ───────────────────────────────────────────────────────
+
+function PurchasesRow({ positionId }: { positionId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data: purchases = [], isLoading } = useListPortfolioPurchases(positionId);
+  const deletePurchase = useDeletePortfolioPurchase();
+  const createPurchase = useCreatePortfolioPurchase();
+  const [addOpen, setAddOpen] = useState(false);
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [amount, setAmount] = useState("");
+
+  const handleDelete = (purchaseId: number) => {
+    deletePurchase.mutate(
+      { purchaseId },
+      {
+        onSuccess: () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) }),
+        onError: () => toast({ variant: "destructive", title: "Erro ao remover compra" }),
+      },
+    );
+  };
+
+  const handleAdd = () => {
+    if (!purchaseDate || !amount) return;
+    createPurchase.mutate(
+      { positionId, data: { purchaseDate, amount: parseFloat(amount) } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) });
+          setAddOpen(false);
+          setPurchaseDate("");
+          setAmount("");
+        },
+        onError: () => toast({ variant: "destructive", title: "Erro ao adicionar compra" }),
+      },
+    );
+  };
+
+  return (
+    <>
+      <tr>
+        <td colSpan={11} className="px-6 py-3 bg-muted/20 border-b border-border/50">
+          <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-2 uppercase tracking-widest">
+            Histórico de compras
+          </div>
+          {isLoading ? (
+            <div className="text-xs text-muted-foreground font-mono">Carregando...</div>
+          ) : (
+            <table className="w-full max-w-xs text-xs font-mono">
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="text-left py-0.5 pr-8">Data</th>
+                  <th className="text-right pr-4">Valor</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {purchases.map((p) => (
+                  <tr key={p.id} className="border-t border-border/20">
+                    <td className="py-0.5 pr-8">{p.purchaseDate}</td>
+                    <td className="text-right pr-4 tabular-nums">{fmt$(p.amount)}</td>
+                    <td>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(p.id)}
+                        disabled={deletePurchase.isPending}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2 h-6 text-[11px] font-mono"
+            onClick={() => setAddOpen(true)}
+          >
+            <Plus className="h-3 w-3 mr-1" />
+            Adicionar compra
+          </Button>
+        </td>
+      </tr>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">Nova compra</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs font-mono">Data</Label>
+              <Input
+                type="date"
+                value={purchaseDate}
+                onChange={(e) => setPurchaseDate(e.target.value)}
+                className="font-mono text-xs h-8"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Valor ($)</Label>
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="font-mono text-xs h-8"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} className="font-mono text-xs">
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAdd}
+              disabled={!purchaseDate || !amount || createPurchase.isPending}
+              className="font-mono text-xs"
+            >
+              {createPurchase.isPending ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ── Position form dialog ──────────────────────────────────────────────────────
+
+interface PositionDialogProps {
+  open: boolean;
+  onClose: () => void;
+  editing?: PortfolioPosition;
+  onSaved: () => void;
+}
+
+function PositionDialog({ open, onClose, editing, onSaved }: PositionDialogProps) {
+  const { toast } = useToast();
+  const createPos = useCreatePortfolioPosition();
+  const updatePos = useUpdatePortfolioPosition();
+  const [form, setForm] = useState<PosForm>(editing ? posToForm(editing) : EMPTY_FORM);
+
+  useEffect(() => {
+    if (open) setForm(editing ? posToForm(editing) : EMPTY_FORM);
+  }, [open, editing]);
+
+  const upd =
+    (k: keyof PosForm) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const handleSave = () => {
+    const payload = {
+      ticker: form.ticker.trim().toUpperCase(),
+      quantity: parseFloat(form.quantity),
+      avgCost: parseFloat(form.avgCost),
+      investedAmount: parseFloat(form.investedAmount),
+      firstPurchaseDate: form.firstPurchaseDate,
+      notes: form.notes || undefined,
+      downAlertPcts: parseAlertPcts(form.downAlertPcts),
+      upAlertPcts: parseAlertPcts(form.upAlertPcts),
+    };
+
+    if (!payload.ticker || isNaN(payload.quantity) || isNaN(payload.avgCost) || isNaN(payload.investedAmount)) {
+      toast({ variant: "destructive", title: "Preencha todos os campos obrigatórios" });
+      return;
+    }
+
+    if (editing) {
+      updatePos.mutate(
+        { id: editing.id, data: payload },
+        { onSuccess: () => { onSaved(); onClose(); }, onError: () => toast({ variant: "destructive", title: "Erro ao atualizar posição" }) },
+      );
+    } else {
+      createPos.mutate(
+        { data: payload },
+        { onSuccess: () => { onSaved(); onClose(); }, onError: () => toast({ variant: "destructive", title: "Erro ao criar posição" }) },
+      );
+    }
+  };
+
+  const isPending = createPos.isPending || updatePos.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-sm">
+            {editing ? `Editar ${editing.ticker}` : "Nova posição"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-mono">Ticker *</Label>
+              <Input
+                value={form.ticker}
+                onChange={upd("ticker")}
+                placeholder="NVDA"
+                className="font-mono text-xs h-8 uppercase"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Quantidade *</Label>
+              <Input
+                type="number"
+                value={form.quantity}
+                onChange={upd("quantity")}
+                placeholder="0.00000"
+                className="font-mono text-xs h-8"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-mono">Custo médio ($) *</Label>
+              <Input
+                type="number"
+                value={form.avgCost}
+                onChange={upd("avgCost")}
+                placeholder="0.00"
+                className="font-mono text-xs h-8"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Total investido ($) *</Label>
+              <Input
+                type="number"
+                value={form.investedAmount}
+                onChange={upd("investedAmount")}
+                placeholder="0.00"
+                className="font-mono text-xs h-8"
+              />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-mono">Primeira compra *</Label>
+            <Input
+              type="date"
+              value={form.firstPurchaseDate}
+              onChange={upd("firstPurchaseDate")}
+              className="font-mono text-xs h-8"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-mono">Alertas baixa (%)</Label>
+              <Input
+                value={form.downAlertPcts}
+                onChange={upd("downAlertPcts")}
+                placeholder="10,15,20,30"
+                className="font-mono text-xs h-8"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Alertas alta (%)</Label>
+              <Input
+                value={form.upAlertPcts}
+                onChange={upd("upAlertPcts")}
+                placeholder="15,20,30,40"
+                className="font-mono text-xs h-8"
+              />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-mono">Notas</Label>
+            <Textarea
+              value={form.notes}
+              onChange={upd("notes")}
+              rows={2}
+              className="font-mono text-xs resize-none"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose} className="font-mono text-xs">
+            Cancelar
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={isPending} className="font-mono text-xs">
+            {isPending ? "Salvando..." : "Salvar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function PortfolioPage() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: positions = [], isLoading } = useListPortfolioPositions();
+  const { data: quotes = [] } = useGetTickerQuotes({
+    query: { queryKey: getGetTickerQuotesQueryKey(), refetchInterval: 60_000, staleTime: 55_000 },
+  });
+
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  // undefined = dialog closed, null = new position, PortfolioPosition = editing
+  const [dialogTarget, setDialogTarget] = useState<PortfolioPosition | null | undefined>(undefined);
+  const deletePos = useDeletePortfolioPosition();
+
+  const priceMap = useMemo(() => new Map(quotes.map((q) => [q.symbol, q.price ?? 0]), ), [quotes]);
+
+  const rows = useMemo(() => {
+    const totalInvested = positions.reduce((s, p) => s + p.investedAmount, 0);
+    return positions.map((p) => {
+      const price = priceMap.get(p.ticker) ?? 0;
+      const currentValue = price > 0 ? p.quantity * price : 0;
+      const pnlDollar = price > 0 ? currentValue - p.investedAmount : 0;
+      const pnlPct = price > 0 && p.investedAmount > 0 ? (pnlDollar / p.investedAmount) * 100 : 0;
+      const weight = totalInvested > 0 ? (p.investedAmount / totalInvested) * 100 : 0;
+      const downAlert = price > 0 ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
+      const upAlert = price > 0 ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
+      const is30d = daysSince(p.firstPurchaseDate) >= 30;
+      return { pos: p, price, currentValue, pnlDollar, pnlPct, weight, downAlert, upAlert, is30d };
+    });
+  }, [positions, priceMap]);
+
+  const totals = useMemo(() => {
+    const invested = rows.reduce((s, r) => s + r.pos.investedAmount, 0);
+    const current = rows.reduce((s, r) => s + r.currentValue, 0);
+    const pnl = current - invested;
+    const pnlPct = invested > 0 && current > 0 ? (pnl / invested) * 100 : 0;
+    return { invested, current, pnl, pnlPct };
+  }, [rows]);
+
+  const hasPrices = quotes.length > 0;
+
+  const toggleExpand = (id: number) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const handleDelete = (id: number, ticker: string) => {
+    if (!confirm(`Remover ${ticker} da carteira?`)) return;
+    deletePos.mutate(
+      { id },
+      {
+        onSuccess: () => qc.invalidateQueries({ queryKey: getListPortfolioPositionsQueryKey() }),
+        onError: () => toast({ variant: "destructive", title: "Erro ao remover posição" }),
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold font-mono tracking-tight flex items-center gap-2">
+            <Wallet className="h-6 w-6 text-primary" />
+            Carteira
+          </h1>
+          <p className="text-xs text-muted-foreground font-mono mt-1">Posições, P&amp;L e alertas</p>
+        </div>
+        <Button size="sm" className="font-mono text-xs" onClick={() => setDialogTarget(null)}>
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          Nova posição
+        </Button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-4 gap-3">
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Investido</span>
+              <TrendingDown className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="text-xl font-bold font-mono tabular-nums">{fmt$(totals.invested)}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Valor atual</span>
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="text-xl font-bold font-mono tabular-nums">
+              {hasPrices && totals.current > 0 ? fmt$(totals.current) : "—"}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L ($)</span>
+            </div>
+            <div className={cn("text-xl font-bold font-mono tabular-nums",
+              hasPrices && totals.current > 0
+                ? totals.pnl >= 0 ? "text-green-400" : "text-red-400"
+                : ""
+            )}>
+              {hasPrices && totals.current > 0
+                ? `${totals.pnl >= 0 ? "+" : "-"}${fmt$(totals.pnl)}`
+                : "—"}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L (%)</span>
+            </div>
+            <div className={cn("text-xl font-bold font-mono tabular-nums",
+              hasPrices && totals.current > 0
+                ? totals.pnlPct >= 0 ? "text-green-400" : "text-red-400"
+                : ""
+            )}>
+              {hasPrices && totals.current > 0 ? fmtPct(totals.pnlPct) : "—"}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Positions table */}
+      <Card className="border-border bg-card overflow-hidden">
+        <CardContent className="p-0">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="border-b border-border bg-muted/30 text-muted-foreground text-[11px]">
+                <th className="w-8 py-2.5 pl-3" />
+                <th className="text-left py-2.5 pl-1">Ticker</th>
+                <th className="text-right pr-3">Qtde</th>
+                <th className="text-right pr-3">Custo médio</th>
+                <th className="text-right pr-3">Investido</th>
+                <th className="text-right pr-3">Atual</th>
+                <th className="text-right pr-3">P&amp;L $</th>
+                <th className="text-right pr-3">P&amp;L %</th>
+                <th className="text-right pr-3">Peso</th>
+                <th className="text-right pr-3">Alertas</th>
+                <th className="text-right pr-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading && (
+                <tr>
+                  <td colSpan={11} className="py-10 text-center text-muted-foreground">
+                    Carregando...
+                  </td>
+                </tr>
+              )}
+              {!isLoading && rows.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="py-10 text-center text-muted-foreground">
+                    Nenhuma posição cadastrada.
+                  </td>
+                </tr>
+              )}
+              {rows.map(({ pos, price, currentValue, pnlDollar, pnlPct, weight, downAlert, upAlert, is30d }) => {
+                const expanded = expandedIds.has(pos.id);
+                const hasPrice = price > 0;
+                const pnlPos = pnlPct >= 0;
+                return (
+                  <Fragment key={pos.id}>
+                  <tr
+                    className={cn(
+                      "border-b border-border/40 hover:bg-muted/10 transition-colors",
+                      expanded && "bg-muted/10",
+                    )}
+                  >
+                    <td className="py-2.5 pl-3">
+                      <button
+                        onClick={() => toggleExpand(pos.id)}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        {expanded
+                          ? <ChevronDown className="h-3.5 w-3.5" />
+                          : <ChevronRight className="h-3.5 w-3.5" />}
+                      </button>
+                    </td>
+                    <td className="py-2.5 pl-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-foreground text-sm">{pos.ticker}</span>
+                        {is30d && (
+                          <Badge className="h-4 px-1 text-[9px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            30d+
+                          </Badge>
+                        )}
+                      </div>
+                      {pos.notes && (
+                        <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{pos.notes}</div>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(pos.quantity)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.avgCost)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.investedAmount)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">
+                      {hasPrice ? fmt$(currentValue) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
+                      {hasPrice
+                        ? `${pnlDollar >= 0 ? "+" : "-"}${fmt$(pnlDollar)}`
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
+                      {hasPrice ? fmtPct(pnlPct) : <span className="text-muted-foreground font-normal">—</span>}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">
+                      {weight.toFixed(1)}%
+                    </td>
+                    <td className="py-2.5 pr-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {downAlert != null && (
+                          <Badge className="h-4 px-1 text-[9px] font-mono bg-red-500/20 text-red-400 border border-red-500/30">
+                            -{downAlert}%
+                          </Badge>
+                        )}
+                        {upAlert != null && (
+                          <Badge className="h-4 px-1 text-[9px] font-mono bg-green-500/20 text-green-400 border border-green-500/30">
+                            +{upAlert}%
+                          </Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-2.5 pr-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                          onClick={() => setDialogTarget(pos)}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(pos.id, pos.ticker)}
+                          disabled={deletePos.isPending}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expanded && <PurchasesRow positionId={pos.id} />}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {/* Position dialog */}
+      {dialogTarget !== undefined && (
+        <PositionDialog
+          open
+          onClose={() => setDialogTarget(undefined)}
+          editing={dialogTarget ?? undefined}
+          onSaved={() => qc.invalidateQueries({ queryKey: getListPortfolioPositionsQueryKey() })}
+        />
+      )}
+    </div>
+  );
+}
