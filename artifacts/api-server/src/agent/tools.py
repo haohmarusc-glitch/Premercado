@@ -9,6 +9,7 @@ import requests
 import yfinance as yf
 
 from . import market_alerts as _ma
+from . import sector_contagion as _sc
 
 # ── Cotações ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ EDGAR_HEADERS = {
 }
 
 TICKER_TO_CIK = {
+    # Originais
     "MU": "0000723125",
     "SMCI": "0001375365",
     "NVDA": "0001045810",
@@ -80,6 +82,13 @@ TICKER_TO_CIK = {
     "GOOGL": "0001652044",
     "ARM": "0001973239",
     "TSLA": "0001318605",
+    # Memória/Armazenamento
+    "WDC": "0000106040",
+    # Interconexão/Servidores
+    "ANET": "0001313925",
+    # Fundição/Equipamentos
+    "TSM": "0001046179",
+    "ASML": "0000937966",
 }
 
 
@@ -637,6 +646,37 @@ def get_analyst_ratings(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
+# ── Contágio setorial ────────────────────────────────────────────────────────
+
+def detect_sector_contagion(
+    period: str = "5d",
+    interval: str = "1d",
+    trigger_pct: float | None = None,
+    sympathy_pct: float | None = None,
+) -> dict:
+    """
+    Detecta contágio setorial entre os grupos da cadeia de IA:
+    Memória/Armazenamento, Interconexão/Servidores, Energia/Refrigeração e Fundição/Equipamentos.
+    Retorna lista de alertas com líder, vizinhos confirmando e candidatos a catch-up.
+    """
+    try:
+        kwargs: dict = {"period": period, "interval": interval}
+        if trigger_pct is not None:
+            kwargs["trigger_pct"] = trigger_pct
+        if sympathy_pct is not None:
+            kwargs["sympathy_pct"] = sympathy_pct
+
+        alerts = _sc.detect_contagion(**kwargs)
+        return {
+            "total": len(alerts),
+            "alerts": [a.to_dict() for a in alerts],
+            "messages": [a.to_message() for a in alerts],
+            "groups_monitored": {k: v["label"] for k, v in _sc.SECTOR_GROUPS.items()},
+        }
+    except Exception as e:
+        return {"error": str(e), "total": 0, "alerts": []}
+
+
 # ── Análise de mercado (market_alerts) ───────────────────────────────────────
 
 def check_market_alerts(
@@ -947,6 +987,44 @@ TOOLS = [
         },
     },
     {
+        "name": "detect_sector_contagion",
+        "description": (
+            "Detecta contágio setorial entre os grupos da cadeia de IA. "
+            "Grupos monitorados: "
+            "(1) Memória/Armazenamento — MU, SNDK, WDC; "
+            "(2) Interconexão/Servidores — SMCI, ALAB, CRDO, ANET; "
+            "(3) Energia/Refrigeração — VRT; "
+            "(4) Fundição/Equipamentos — TSM, ASML. "
+            "Para cada grupo, identifica o 'líder' (ticker com maior movimento) e classifica "
+            "os vizinhos em 'confirming' (já acompanhando — o tema está ativo) ou "
+            "'catch_up' (ainda parados — candidatos a seguir). "
+            "Use no início da análise para priorizar quais ativos investigar com mais profundidade. "
+            "Para pré-mercado/intradiário use period='1d' e interval='5m'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "description": "Período histórico: '5d' (default, dia a dia), '1d' (intradiário).",
+                },
+                "interval": {
+                    "type": "string",
+                    "description": "Intervalo das barras: '1d' (default), '5m' (pré-market/intradiário).",
+                },
+                "trigger_pct": {
+                    "type": "number",
+                    "description": "Movimento mínimo (%) para um ticker ser considerado líder. Default: 4.0.",
+                },
+                "sympathy_pct": {
+                    "type": "number",
+                    "description": "Movimento mínimo (%) para um vizinho ser 'confirming'. Default: 1.5.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "check_market_alerts",
         "description": (
             "Analisa o estado atual do mercado e retorna uma lista estruturada de sinais "
@@ -1028,4 +1106,5 @@ DISPATCH = {
     "get_earnings_calendar": get_earnings_calendar,
     "get_fear_greed_index": get_fear_greed_index,
     "get_analyst_ratings": get_analyst_ratings,
+    "detect_sector_contagion": detect_sector_contagion,
 }
