@@ -182,7 +182,11 @@ function PriceChart({ ticker }: { ticker: string }) {
             />
             <RechartsTooltip
               formatter={(value) => [`$${(value as number).toFixed(2)}`, ticker]}
-              labelFormatter={(label) => formatXTick(label as number, period)}
+              labelFormatter={(label) => {
+                const d = new Date(label as number);
+                if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+                return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+              }}
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
             />
             <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
