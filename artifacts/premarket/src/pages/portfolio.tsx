@@ -162,7 +162,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           sem dados
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={96}>
+        <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             <XAxis
               dataKey="t"
