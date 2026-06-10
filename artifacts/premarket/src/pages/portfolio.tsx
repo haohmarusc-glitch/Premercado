@@ -93,38 +93,102 @@ function parseAlertPcts(s: string): number[] {
     .filter((n) => !isNaN(n) && n > 0);
 }
 
-// ── Mini sparkline ────────────────────────────────────────────────────────────
+// ── Price chart with period selector ─────────────────────────────────────────
 
-function MiniChart({ ticker }: { ticker: string }) {
+const CHART_PERIODS = [
+  { label: "1D", value: "1d" },
+  { label: "5D", value: "5d" },
+  { label: "1M", value: "1mo" },
+  { label: "1A", value: "1y" },
+] as const;
+
+type ChartPeriod = typeof CHART_PERIODS[number]["value"];
+
+function formatXTick(ts: number, period: ChartPeriod): string {
+  const d = new Date(ts);
+  if (period === "1d")  return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  if (period === "5d")  return d.toLocaleDateString("pt-BR", { weekday: "short", day: "numeric" });
+  if (period === "1mo") return d.toLocaleDateString("pt-BR", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
+}
+
+function PriceChart({ ticker }: { ticker: string }) {
+  const [period, setPeriod] = useState<ChartPeriod>("1d");
   const { data, isLoading } = useGetTickerChart(
-    { symbol: ticker, period: "5d" },
-    { query: { staleTime: 5 * 60_000 } },
+    { symbol: ticker, period },
+    { query: { staleTime: period === "1d" ? 60_000 : 5 * 60_000 } },
   );
 
-  if (isLoading) return (
-    <div className="h-14 flex items-center justify-center text-[10px] text-muted-foreground font-mono">carregando...</div>
-  );
-  if (!data?.candles?.length) return null;
-
-  const candles = data.candles;
+  const candles = data?.candles ?? [];
   const chartData = candles.map((c) => ({ t: c.t, v: c.c }));
-  const isUp = (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0);
+  const isUp = candles.length >= 2
+    ? (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0)
+    : true;
   const color = isUp ? "#4ade80" : "#f87171";
-  const min = Math.min(...chartData.map((d) => d.v)) * 0.998;
-  const max = Math.max(...chartData.map((d) => d.v)) * 1.002;
+  const min = chartData.length ? Math.min(...chartData.map((d) => d.v)) * 0.998 : 0;
+  const max = chartData.length ? Math.max(...chartData.map((d) => d.v)) * 1.002 : 100;
+  const tickCount = Math.min(6, candles.length);
 
   return (
-    <div className="w-full max-w-xs">
-      <div className="text-[10px] font-mono text-muted-foreground mb-1 uppercase tracking-widest">
-        {ticker} — 5d
+    <div className="w-full mt-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+          {ticker} — histórico
+        </span>
+        <div className="flex gap-1">
+          {CHART_PERIODS.map(({ label, value }) => (
+            <button
+              key={value}
+              onClick={() => setPeriod(value)}
+              className={cn(
+                "text-[10px] font-mono px-2 py-0.5 rounded border transition-colors",
+                period === value
+                  ? "border-primary text-primary bg-primary/10"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-      <ResponsiveContainer width="100%" height={56}>
-        <LineChart data={chartData}>
-          <XAxis dataKey="t" hide />
-          <YAxis domain={[min, max]} hide />
-          <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
-        </LineChart>
-      </ResponsiveContainer>
+
+      {isLoading ? (
+        <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
+          carregando...
+        </div>
+      ) : !chartData.length ? (
+        <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
+          sem dados
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={96}>
+          <LineChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+            <XAxis
+              dataKey="t"
+              tickFormatter={(v) => formatXTick(v as number, period)}
+              tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+              tickCount={tickCount}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              domain={[min, max]}
+              tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+              tickFormatter={(v) => `$${(v as number).toFixed(0)}`}
+              width={42}
+              axisLine={false}
+              tickLine={false}
+            />
+            <RechartsTooltip
+              formatter={(value) => [`$${(value as number).toFixed(2)}`, ticker]}
+              labelFormatter={(label) => formatXTick(label as number, period)}
+              contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+            />
+            <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
@@ -263,9 +327,7 @@ function PurchasesRow({ positionId, ticker }: { positionId: number; ticker: stri
             <Plus className="h-3 w-3 mr-1" />
             Adicionar compra
           </Button>
-          <div className="mt-3">
-            <MiniChart ticker={ticker} />
-          </div>
+          <PriceChart ticker={ticker} />
         </td>
       </tr>
 
