@@ -88,6 +88,15 @@ Para cada ativo do Grupo A, nesta ordem:
     Use o campo "prompt_block" do resultado para enriquecer sua análise e o relatório final.
     Inclua uma seção "## Radar de Mercado" com os alertas críticos e de atenção encontrados.
 
+**FASE 2.8 — Carteira** (execute depois da FASE 2, antes dos alertas)
+15. Chame get_portfolio_performance para ver P&L geral da carteira.
+16. Chame get_position_alerts para verificar se alguma posição atingiu alerta de alta/baixa.
+    Inclua uma seção "## Carteira" no relatório com:
+    - Valor total investido, valor atual e P&L (R$ e %)
+    - Tabela por posição: ticker | preço compra | preço atual | P&L | variação %
+    - Alertas disparados (se houver)
+    Se a API de portfólio não estiver disponível (erro de conexão), pule silenciosamente esta fase.
+
 **FASE 3 — Gestão de alertas** (execute ao final, depois de analisar todos os ativos)
 Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
 
@@ -121,6 +130,7 @@ Princípios:
     - Consenso de analistas e preço-alvo
     - Put/call ratio e IV de opções
     - Notícias e catalisadores
+  • "## Carteira" — P&L total, tabela de posições e alertas disparados
   • "## Radar de Mercado" — alertas críticos e de atenção do check_market_alerts
   • "## Alertas Atualizados" — alertas criados/removidos com justificativa
   • "## Resumo Executivo" — prosa curta com o diagnóstico geral do dia

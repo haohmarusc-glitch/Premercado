@@ -10,6 +10,7 @@ import yfinance as yf
 
 from . import market_alerts as _ma
 from . import sector_contagion as _sc
+from .portfolio_tools import PORTFOLIO_TOOLS, PORTFOLIO_DISPATCH
 
 # ── Cotações ──────────────────────────────────────────────────────────────────
 
@@ -1107,4 +1108,7 @@ DISPATCH = {
     "get_fear_greed_index": get_fear_greed_index,
     "get_analyst_ratings": get_analyst_ratings,
     "detect_sector_contagion": detect_sector_contagion,
+    **PORTFOLIO_DISPATCH,
 }
+
+TOOLS = TOOLS + PORTFOLIO_TOOLS
