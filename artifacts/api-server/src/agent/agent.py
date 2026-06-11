@@ -15,8 +15,8 @@ from . import tools as t
 
 client = anthropic.Anthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    timeout=60.0,
-    max_retries=2,
+    timeout=config.API_TIMEOUT_SECONDS,
+    max_retries=config.MAX_RETRIES,
 )
 
 
@@ -181,7 +181,7 @@ def run_premarket(progress_callback=None) -> str:
 
         resp = client.messages.create(
             model=config.MODEL_FLASH,
-            max_tokens=1024,
+            max_tokens=config.MAX_TOKENS_PREMARKET,
             system=_cached_system(system),
             tools=_cached_tools(t.TOOLS),
             messages=messages,
@@ -259,7 +259,7 @@ def run_chat_stream(message: str, history: list) -> None:
 
         resp = client.messages.create(
             model=config.MODEL_CHAT,
-            max_tokens=2048,
+            max_tokens=config.MAX_TOKENS_CHAT,
             system=_cached_system(system),
             tools=_cached_tools(CHAT_TOOLS),
             messages=messages,
@@ -291,7 +291,7 @@ def run_chat_stream(message: str, history: list) -> None:
     if not history:
         try:
             title_resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=config.MODEL_CHAT,
                 max_tokens=20,
                 system=(
                     "Generate a concise title for this chat conversation. "
