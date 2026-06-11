@@ -42,7 +42,7 @@ def update_all_positions_high_low(positions: list) -> dict:
             else:
                 period = "1y"
             hist = t.history(period=period)
-            if hist.empty:
+            if hist is None or hist.empty:
                 results.append({"ticker": ticker, "status": "no_data"})
                 continue
             high_price = float(hist["High"].max())
