@@ -182,7 +182,7 @@ def save_observation(ticker: str, summary: str, sentiment: str, price: float | N
 
 # ── Gerenciamento de alertas ──────────────────────────────────────────────────
 
-def list_alerts(symbol: str | None = None) -> list[dict]:
+def list_alerts(symbol: str | None = None) -> list[dict]:  # Tente 3x se falhar
     """
     Lista os alertas de preço ativos no sistema.
     Filtra por símbolo se informado.
@@ -212,7 +212,7 @@ def list_alerts(symbol: str | None = None) -> list[dict]:
         return [{"error": str(e)}]
 
 
-def create_alert(symbol: str, condition: str, threshold_pct: float, reason: str) -> dict:
+def create_alert(symbol: str, condition: str, threshold_pct: float, reason: str) -> dict:  # Tente 3x se falhar
     """
     Cria um novo alerta de preço.
     condition: 'above' ou 'below'

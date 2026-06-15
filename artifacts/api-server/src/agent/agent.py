@@ -88,7 +88,13 @@ Para cada ativo do Grupo A, nesta ordem:
     Use o campo "prompt_block" do resultado para enriquecer sua análise e o relatório final.
     Inclua uma seção "## Radar de Mercado" com os alertas críticos e de atenção encontrados.
 
-**FASE 3 — Gestão de alertas** (execute ao final, depois de analisar todos os ativos)
+**FASE 3 — Gestão de alertas** (OBRIGATORIA — execute SEMPRE nos últimos 5 turnos)
+
+REGRAS OBRIGATORIAS:
+1. Chame list_alerts (sem filtro) no INICIO da FASE 3
+2. Crie alertas para níveis técnicos relevantes (max 3 novos)
+3. Remova alertas obsoletos ou duplicados
+4. Cada alerta DEVE ter justificativa clara
 Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
 
 - **Criar novos alertas** com create_alert quando identificar:
