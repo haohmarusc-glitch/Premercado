@@ -17,6 +17,16 @@ from . import tools as t
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
+def _clean_schema(schema: object) -> object:
+    """Recursively remove JSON Schema fields unsupported by Gemini function declarations."""
+    _UNSUPPORTED = {"additionalProperties", "default", "$schema", "$id"}
+    if isinstance(schema, dict):
+        return {k: _clean_schema(v) for k, v in schema.items() if k not in _UNSUPPORTED}
+    if isinstance(schema, list):
+        return [_clean_schema(item) for item in schema]
+    return schema
+
+
 def _to_gemini_tools(anthropic_tools: list) -> list:
     """Convert Anthropic tool list (input_schema key) to Gemini function declarations (parameters key)."""
     declarations = []
@@ -27,7 +37,7 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
         }
         schema = tool.get("input_schema", {})
         if schema.get("properties"):
-            decl["parameters"] = schema
+            decl["parameters"] = _clean_schema(schema)
         declarations.append(decl)
     return [{"function_declarations": declarations}]
 
