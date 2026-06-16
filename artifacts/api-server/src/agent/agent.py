@@ -697,6 +697,16 @@ def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
     Kimi: uses the caller-supplied limits without truncation.
     """
     providers = []
+    if os.environ.get("KIMI_API_KEY"):
+        providers.append({
+            "name": "Kimi",
+            "base_url": config.KIMI_BASE_URL,
+            "api_key": os.environ["KIMI_API_KEY"],
+            "model": config.KIMI_MODEL_FULL,
+            "max_turns": config.MAX_AGENT_TURNS,
+            "max_tokens": max_tokens,
+            "max_tool_result_chars": None,
+        })
     if os.environ.get("GROQ_API_KEY"):
         providers.append({
             "name": "Groq",
@@ -706,16 +716,6 @@ def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
             "max_turns": 6,
             "max_tokens": 1024,
             "max_tool_result_chars": 2500,
-        })
-    if os.environ.get("KIMI_API_KEY"):
-        providers.append({
-            "name": "Kimi",
-            "base_url": config.KIMI_BASE_URL,
-            "api_key": os.environ["KIMI_API_KEY"],
-            "model": config.KIMI_MODEL_FULL,
-            "max_turns": max_turns,
-            "max_tokens": max_tokens,
-            "max_tool_result_chars": None,
         })
 
     for p in providers:
