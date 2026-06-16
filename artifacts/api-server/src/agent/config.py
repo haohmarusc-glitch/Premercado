@@ -37,9 +37,16 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
-# Kimi (Moonshot AI) — OpenAI-compatible API, used as fallback when Gemini quota is exhausted.
+# Groq — OpenAI-compatible API, first non-Gemini fallback.
+# Get a free key at: https://console.groq.com (login with Google, no verification required)
+# Set GROQ_API_KEY as a Replit Secret to enable.
+GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama-3.3-70b-versatile")
+GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama-3.3-70b-versatile")
+GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+
+# Kimi (Moonshot AI) — second non-Gemini fallback.
 # Get a free key at: https://platform.moonshot.cn/
-# Set KIMI_API_KEY as a Replit Secret to enable this fallback.
+# Set KIMI_API_KEY as a Replit Secret to enable.
 KIMI_MODEL_FULL = os.environ.get("KIMI_MODEL_FULL", "moonshot-v1-32k")
 KIMI_MODEL_CHAT = os.environ.get("KIMI_MODEL_CHAT", "moonshot-v1-8k")
 KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
