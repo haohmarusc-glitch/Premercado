@@ -19,6 +19,10 @@ from . import tools as t
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
+class QuotaExhaustedError(Exception):
+    """Raised when a model's free-tier daily request quota is exhausted."""
+
+
 def _clean_schema(schema: object) -> object:
     """Recursively remove JSON Schema fields unsupported by Gemini function declarations."""
     _UNSUPPORTED = {"additionalProperties", "default", "$schema", "$id"}
@@ -85,7 +89,11 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
         except ClientError as e:
             if getattr(e, "status_code", None) != 429 or attempt == max_retries:
                 raise
-            m = re.search(r"retry in (\d+(?:\.\d+)?)s", str(e))
+            err_str = str(e)
+            # Daily quota cannot be recovered by waiting — signal for model fallback
+            if "PerDay" in err_str or "per_day" in err_str.lower():
+                raise QuotaExhaustedError(err_str) from e
+            m = re.search(r"retry in (\d+(?:\.\d+)?)s", err_str)
             wait = min(float(m.group(1)) + 5 if m else 65.0, 130.0)
             if progress_callback:
                 progress_callback(f"{step_label}Rate limit — aguardando {int(wait)}s...")
@@ -240,18 +248,14 @@ list_alerts, create_alert, delete_alert.
 Limite: no máximo 350 palavras. Seja direto e factual."""
 
 
-def run_premarket(progress_callback=None) -> str:
-    """
-    Executa a varredura intradiária de pré-mercado.
-    Mais rápida que run(): menos ferramentas, menos turnos, output curto.
-    """
+def _run_premarket_impl(model: str, progress_callback=None) -> str:
     system = build_premarket_prompt()
     cfg = _make_config(t.TOOLS, system, config.MAX_TOKENS_PREMARKET)
-    chat = client.chats.create(model=config.MODEL_FLASH, config=cfg)
+    chat = client.chats.create(model=model, config=cfg)
     max_turns = min(config.MAX_AGENT_TURNS, 8)
 
     if progress_callback:
-        progress_callback("[Flash] Turno 1...")
+        progress_callback(f"[Flash] Turno 1... ({model})")
     response = _send(chat, "Faça a varredura rápida de pré-mercado intradiário agora.", progress_callback, "[Flash] ")
 
     final_text = ""
@@ -271,6 +275,27 @@ def run_premarket(progress_callback=None) -> str:
         response = _send(chat, fn_parts, progress_callback, "[Flash] ")
 
     return final_text
+
+
+def run_premarket(progress_callback=None) -> str:
+    """
+    Executa a varredura intradiária de pré-mercado.
+    Mais rápida que run(): menos ferramentas, menos turnos, output curto.
+    Tenta modelos alternativos se a cota diária do modelo primário estiver esgotada.
+    """
+    models = list(dict.fromkeys([config.MODEL_FLASH] + config.MODEL_FALLBACKS))
+    last_err = None
+    for model in models:
+        try:
+            return _run_premarket_impl(model, progress_callback)
+        except QuotaExhaustedError as e:
+            last_err = e
+            if progress_callback:
+                progress_callback(f"Cota diária esgotada para {model} — tentando próximo modelo...")
+    raise RuntimeError(
+        f"Todos os modelos esgotaram a cota diária ({', '.join(models)}). "
+        "Tente novamente após meia-noite UTC."
+    ) from last_err
 
 
 # ── Chat mode ────────────────────────────────────────────────────────────────
@@ -309,6 +334,7 @@ def run_chat_stream(message: str, history: list) -> None:
     """
     Runs a chat turn, printing STEP: progress lines and a final RESULT:<json>
     line to stdout. Called by agent.run_chat subprocess.
+    Tries fallback models if the primary model's daily quota is exhausted.
     """
     import json as _json
 
@@ -327,44 +353,55 @@ def run_chat_stream(message: str, history: list) -> None:
             )
         gemini_history.append({"role": role, "parts": [{"text": str(content)}]})
 
-    cfg = _make_config(CHAT_TOOLS, system, config.MAX_TOKENS_CHAT)
-    chat = client.chats.create(
-        model=config.MODEL_CHAT,
-        config=cfg,
-        history=gemini_history if gemini_history else None,
-    )
+    models = list(dict.fromkeys([config.MODEL_CHAT] + config.MODEL_FALLBACKS))
     final_text = ""
+    chat_model_used = models[0]
 
-    print("STEP:Turno 1...", flush=True)
-    response = _send(chat, message)
+    for model in models:
+        chat_model_used = model
+        cfg = _make_config(CHAT_TOOLS, system, config.MAX_TOKENS_CHAT)
+        chat = client.chats.create(
+            model=model,
+            config=cfg,
+            history=gemini_history if gemini_history else None,
+        )
+        final_text = ""
+        try:
+            print("STEP:Turno 1...", flush=True)
+            response = _send(chat, message)
 
-    for turn in range(6):
-        text = _get_text(response)
-        if text:
-            final_text = text
+            for turn in range(6):
+                text = _get_text(response)
+                if text:
+                    final_text = text
 
-        tool_calls = _get_tool_calls(response)
-        if not tool_calls:
-            break
+                tool_calls = _get_tool_calls(response)
+                if not tool_calls:
+                    break
 
-        fn_parts = []
-        for fc in tool_calls:
-            print(f"STEP:{fc.name}", flush=True)
-            result = run_tool(fc.name, dict(fc.args))
-            fn_parts.append(types.Part.from_function_response(
-                name=fc.name,
-                response={"output": result},
-            ))
+                fn_parts = []
+                for fc in tool_calls:
+                    print(f"STEP:{fc.name}", flush=True)
+                    result = run_tool(fc.name, dict(fc.args))
+                    fn_parts.append(types.Part.from_function_response(
+                        name=fc.name,
+                        response={"output": result},
+                    ))
 
-        print(f"STEP:Turno {turn + 2}...", flush=True)
-        response = _send(chat, fn_parts)
+                print(f"STEP:Turno {turn + 2}...", flush=True)
+                response = _send(chat, fn_parts)
+
+            break  # success — exit model loop
+        except QuotaExhaustedError:
+            print(f"STEP:Cota diária esgotada para {model} — tentando próximo modelo...", flush=True)
+            continue
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
     if not history:
         try:
             title_resp = client.models.generate_content(
-                model=config.MODEL_CHAT,
+                model=chat_model_used,
                 contents=(
                     "Generate a concise title for this chat conversation. "
                     "Max 6 words. Same language as the user message. "
@@ -391,17 +428,13 @@ def run_tool(name: str, args: dict) -> str:
         return f"[erro ao executar {name}: {type(e).__name__}: {e}]"
 
 
-def run(progress_callback=None) -> str:
-    """
-    Executa o loop agêntico e retorna o texto do relatório final.
-    progress_callback(step: str) é chamado opcionalmente a cada passo.
-    """
+def _run_impl(model: str, progress_callback=None) -> str:
     system = build_system_prompt()
     cfg = _make_config(t.TOOLS, system, config.MAX_TOKENS)
-    chat = client.chats.create(model=config.MODEL_FULL, config=cfg)
+    chat = client.chats.create(model=model, config=cfg)
 
     if progress_callback:
-        progress_callback("Turno 1 — consultando Gemini...")
+        progress_callback(f"Turno 1 — consultando Gemini ({model})...")
     response = _send(
         chat,
         "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
@@ -432,3 +465,24 @@ def run(progress_callback=None) -> str:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
     return final_text
+
+
+def run(progress_callback=None) -> str:
+    """
+    Executa o loop agêntico e retorna o texto do relatório final.
+    progress_callback(step: str) é chamado opcionalmente a cada passo.
+    Tenta modelos alternativos se a cota diária do modelo primário estiver esgotada.
+    """
+    models = list(dict.fromkeys([config.MODEL_FULL] + config.MODEL_FALLBACKS))
+    last_err = None
+    for model in models:
+        try:
+            return _run_impl(model, progress_callback)
+        except QuotaExhaustedError as e:
+            last_err = e
+            if progress_callback:
+                progress_callback(f"Cota diária esgotada para {model} — tentando próximo modelo...")
+    raise RuntimeError(
+        f"Todos os modelos esgotaram a cota diária ({', '.join(models)}). "
+        "Tente novamente após meia-noite UTC."
+    ) from last_err

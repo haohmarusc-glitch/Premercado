@@ -10,11 +10,16 @@ TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _
 PORTFOLIO_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
 
 # Free-tier Gemini models — gemini-2.5-flash is the recommended default as of mid-2026.
-# gemini-2.0-flash free-tier quota may be exhausted; gemini-2.5-flash has broader availability.
+# When the daily quota for the primary model is exhausted, MODEL_FALLBACKS are tried in order.
 MODEL_FULL = os.environ.get("GEMINI_MODEL_FULL", "gemini-2.5-flash")
 MODEL_FLASH = os.environ.get("GEMINI_MODEL_FLASH", "gemini-2.5-flash")
 MODEL_CHAT = os.environ.get("GEMINI_MODEL_CHAT", "gemini-2.5-flash")
-MODEL_FALLBACK = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-2.5-flash")
+
+_fallbacks_env = os.environ.get(
+    "GEMINI_MODEL_FALLBACKS",
+    "gemini-2.5-flash,gemini-2.0-flash-lite,gemini-1.5-flash-8b",
+)
+MODEL_FALLBACKS: list[str] = [m.strip() for m in _fallbacks_env.split(",") if m.strip()]
 
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_TOKENS_PREMARKET = int(os.environ.get("AGENT_MAX_TOKENS_PREMARKET", "512"))
