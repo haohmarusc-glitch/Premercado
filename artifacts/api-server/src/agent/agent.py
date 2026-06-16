@@ -584,13 +584,11 @@ def run_tool(name: str, args: dict) -> str:
         return f"[erro ao executar {name}: {type(e).__name__}: {e}]"
 
 
-_MAX_TOOL_RESULT_CHARS = 2500  # Keep tool results short to avoid 413 on free-tier providers
-
-
 def _run_openai_compat(base_url: str, api_key: str, model: str,
                        system: str, tools: list, max_tokens: int,
                        initial_message: str, max_turns: int,
                        provider_name: str = "Provider",
+                       max_tool_result_chars: int | None = None,
                        progress_callback=None, step_prefix: str = "") -> str:
     """Run an agentic tool-use loop via any OpenAI-compatible API (Groq, Kimi, etc.)."""
     import json as _json
@@ -643,8 +641,8 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
             except _json.JSONDecodeError:
                 args = {}
             result = run_tool(tc.function.name, args)
-            if len(result) > _MAX_TOOL_RESULT_CHARS:
-                result = result[:_MAX_TOOL_RESULT_CHARS] + "...[truncado]"
+            if max_tool_result_chars and len(result) > max_tool_result_chars:
+                result = result[:max_tool_result_chars] + "...[truncado]"
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return final_text
@@ -692,27 +690,51 @@ def _run_impl(model: str, progress_callback=None) -> str:
 def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
                                   initial_message: str, max_turns: int,
                                   progress_callback=None, step_prefix: str = "") -> str | None:
-    """Try Groq then Kimi in order; returns result or None if both fail."""
+    """Try Groq then Kimi in order; returns result or None if both fail.
+
+    Groq (free tier 20k TPM): tighter limits — max_turns=6, max_tokens=1024,
+    tool results truncated to 2500 chars.
+    Kimi: uses the caller-supplied limits without truncation.
+    """
     providers = []
     if os.environ.get("GROQ_API_KEY"):
-        providers.append(("Groq", config.GROQ_BASE_URL, os.environ["GROQ_API_KEY"], config.GROQ_MODEL_FULL))
+        providers.append({
+            "name": "Groq",
+            "base_url": config.GROQ_BASE_URL,
+            "api_key": os.environ["GROQ_API_KEY"],
+            "model": config.GROQ_MODEL_FULL,
+            "max_turns": 6,
+            "max_tokens": 1024,
+            "max_tool_result_chars": 2500,
+        })
     if os.environ.get("KIMI_API_KEY"):
-        providers.append(("Kimi", config.KIMI_BASE_URL, os.environ["KIMI_API_KEY"], config.KIMI_MODEL_FULL))
+        providers.append({
+            "name": "Kimi",
+            "base_url": config.KIMI_BASE_URL,
+            "api_key": os.environ["KIMI_API_KEY"],
+            "model": config.KIMI_MODEL_FULL,
+            "max_turns": max_turns,
+            "max_tokens": max_tokens,
+            "max_tool_result_chars": None,
+        })
 
-    for name, base_url, api_key, model in providers:
+    for p in providers:
         if progress_callback:
-            progress_callback(f"{step_prefix}Tentando {name} ({model})...")
+            progress_callback(f"{step_prefix}Tentando {p['name']} ({p['model']})...")
         try:
             return _run_openai_compat(
-                base_url=base_url, api_key=api_key, model=model,
-                system=system, tools=tools, max_tokens=max_tokens,
-                initial_message=initial_message, max_turns=max_turns,
-                provider_name=name,
+                base_url=p["base_url"], api_key=p["api_key"], model=p["model"],
+                system=system, tools=tools,
+                max_tokens=p["max_tokens"],
+                initial_message=initial_message,
+                max_turns=p["max_turns"],
+                provider_name=p["name"],
+                max_tool_result_chars=p["max_tool_result_chars"],
                 progress_callback=progress_callback, step_prefix=step_prefix,
             )
         except Exception as e:
             if progress_callback:
-                progress_callback(f"{step_prefix}{name} falhou ({type(e).__name__}: {str(e)[:120]}) — tentando próximo...")
+                progress_callback(f"{step_prefix}{p['name']} falhou ({type(e).__name__}: {str(e)[:120]}) — tentando próximo...")
     return None
 
 
@@ -737,13 +759,13 @@ def run(progress_callback=None) -> str:
     result = _try_openai_compat_providers(
         system=build_system_prompt_compact(),
         tools=FALLBACK_TOOLS,
-        max_tokens=min(config.MAX_TOKENS, 1024),
+        max_tokens=min(config.MAX_TOKENS, 2048),
         initial_message=(
             "Faça a análise pré-mercado de hoje para os ativos da carteira. "
             "Use get_fear_greed_index, get_sector_performance e para cada ativo: "
             "get_stock_data, get_news, get_technical_indicators."
         ),
-        max_turns=6,
+        max_turns=10,
         progress_callback=progress_callback,
     )
     if result is not None:
