@@ -34,8 +34,15 @@ const workspaceRoot = process.cwd().endsWith(
 export const agentDir = path.resolve(workspaceRoot, "artifacts/api-server/src");
 
 // Use venv Python if one exists at the project root (created with `uv venv .venv`).
-const _venvPython = path.resolve(workspaceRoot, ".venv/bin/python3");
-export const pythonBin = existsSync(_venvPython) ? _venvPython : "python3";
+const _venvDir = path.resolve(workspaceRoot, ".venv");
+const _venvBin = path.join(_venvDir, "bin");
+const _venvPython = path.join(_venvBin, "python3");
+const _hasVenv = existsSync(_venvPython);
+export const pythonBin = _hasVenv ? _venvPython : "python3";
+// Also inject VIRTUAL_ENV + PATH so the subprocess sees venv packages regardless of binary path.
+export const venvEnv: Record<string, string> = _hasVenv
+  ? { VIRTUAL_ENV: _venvDir, PATH: `${_venvBin}:${process.env.PATH ?? ""}` }
+  : {};
 
 export interface AgentState {
   running: boolean;
@@ -89,6 +96,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
     cwd: agentDir,
     env: {
       ...process.env,
+      ...venvEnv,
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
