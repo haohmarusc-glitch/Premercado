@@ -1,4 +1,4 @@
 yfinance>=0.2.40
 feedparser>=6.0.11
-anthropic>=0.40.0
+google-generativeai>=0.7.0
 beautifulsoup4>=4.12.0

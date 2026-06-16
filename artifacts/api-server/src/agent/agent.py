@@ -1,37 +1,74 @@
 """
 Loop agêntico do analisador de pré-mercado.
-Claude decide quais ferramentas chamar, lê a memória e grava observações.
+Gemini decide quais ferramentas chamar, lê a memória e grava observações.
 """
 import datetime
 import os
 import sys
 
-import anthropic
+import google.generativeai as genai
 
 from . import config
 from . import memory
 from . import tools as t
 
 
-client = anthropic.Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    timeout=config.API_TIMEOUT_SECONDS,
-    max_retries=config.MAX_RETRIES,
-)
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
-def _cached_system(text: str) -> list:
-    """Wrap system prompt for prompt caching (read at 10% cost after 1st turn)."""
-    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+def _to_gemini_tools(anthropic_tools: list) -> list:
+    """Convert Anthropic tool list (input_schema key) to Gemini function declarations (parameters key)."""
+    declarations = []
+    for tool in anthropic_tools:
+        decl = {
+            "name": tool["name"],
+            "description": tool["description"],
+        }
+        schema = tool.get("input_schema", {})
+        if schema.get("properties"):
+            decl["parameters"] = schema
+        declarations.append(decl)
+    return [{"function_declarations": declarations}]
 
 
-def _cached_tools(tools: list) -> list:
-    """Return tools list with cache_control on the last item."""
-    if not tools:
-        return tools
-    cached = list(tools)
-    cached[-1] = {**cached[-1], "cache_control": {"type": "ephemeral"}}
-    return cached
+def _make_model(model_name: str, tools: list, system_instruction: str, max_tokens: int):
+    return genai.GenerativeModel(
+        model_name=model_name,
+        tools=_to_gemini_tools(tools),
+        system_instruction=system_instruction,
+        generation_config=genai.GenerationConfig(max_output_tokens=max_tokens),
+    )
+
+
+def _get_text(response) -> str:
+    text = ""
+    try:
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "text") and part.text:
+                text += part.text
+    except (IndexError, AttributeError):
+        pass
+    return text
+
+
+def _get_tool_calls(response) -> list:
+    calls = []
+    try:
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "function_call") and part.function_call.name:
+                calls.append(part.function_call)
+    except (IndexError, AttributeError):
+        pass
+    return calls
+
+
+def _make_fn_part(name: str, result: str):
+    return genai.protos.Part(
+        function_response=genai.protos.FunctionResponse(
+            name=name,
+            response={"output": result},
+        )
+    )
 
 
 def build_system_prompt() -> str:
@@ -167,46 +204,34 @@ def run_premarket(progress_callback=None) -> str:
     Mais rápida que run(): menos ferramentas, menos turnos, output curto.
     """
     system = build_premarket_prompt()
-    messages = [{
-        "role": "user",
-        "content": "Faça a varredura rápida de pré-mercado intradiário agora.",
-    }]
-
-    final_text = ""
+    model = _make_model(config.MODEL_FLASH, t.TOOLS, system, config.MAX_TOKENS_PREMARKET)
+    chat = model.start_chat()
     max_turns = min(config.MAX_AGENT_TURNS, 8)
 
+    if progress_callback:
+        progress_callback("[Flash] Turno 1...")
+    response = chat.send_message("Faça a varredura rápida de pré-mercado intradiário agora.")
+
+    final_text = ""
     for turn in range(max_turns):
-        if progress_callback:
-            progress_callback(f"[Flash] Turno {turn + 1}...")
+        text = _get_text(response)
+        if text:
+            final_text = text
 
-        resp = client.messages.create(
-            model=config.MODEL_FLASH,
-            max_tokens=config.MAX_TOKENS_PREMARKET,
-            system=_cached_system(system),
-            tools=_cached_tools(t.TOOLS),
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": resp.content})
-
-        for block in resp.content:
-            if block.type == "text":
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
+        tool_calls = _get_tool_calls(response)
+        if not tool_calls:
             break
 
-        tool_results = []
-        for block in resp.content:
-            if block.type == "tool_use":
-                if progress_callback:
-                    progress_callback(f"[Flash] {block.name}")
-                result = run_tool(block.name, dict(block.input))
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
+        parts = []
+        for fc in tool_calls:
+            if progress_callback:
+                progress_callback(f"[Flash] {fc.name}")
+            result = run_tool(fc.name, dict(fc.args))
+            parts.append(_make_fn_part(fc.name, result))
+
+        if progress_callback:
+            progress_callback(f"[Flash] Turno {turn + 2}...")
+        response = chat.send_message(parts)
 
     return final_text
 
@@ -251,59 +276,61 @@ def run_chat_stream(message: str, history: list) -> None:
     import json as _json
 
     system = build_chat_prompt()
-    messages = list(history) + [{"role": "user", "content": message}]
+
+    # Convert history from {role, content} format to Gemini {role, parts} format.
+    # Gemini uses "model" instead of "assistant" for the AI role.
+    gemini_history = []
+    for h in history:
+        role = "model" if h.get("role") == "assistant" else "user"
+        content = h.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") if isinstance(b, dict) else getattr(b, "text", "")
+                for b in content
+            )
+        gemini_history.append({"role": role, "parts": [str(content)]})
+
+    model = _make_model(config.MODEL_CHAT, CHAT_TOOLS, system, config.MAX_TOKENS_CHAT)
+    chat = model.start_chat(history=gemini_history)
     final_text = ""
 
+    print(f"STEP:Turno 1...", flush=True)
+    response = chat.send_message(message)
+
     for turn in range(6):
-        print(f"STEP:Turno {turn + 1}...", flush=True)
+        text = _get_text(response)
+        if text:
+            final_text = text
 
-        resp = client.messages.create(
-            model=config.MODEL_CHAT,
-            max_tokens=config.MAX_TOKENS_CHAT,
-            system=_cached_system(system),
-            tools=_cached_tools(CHAT_TOOLS),
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": resp.content})
-
-        for block in resp.content:
-            if block.type == "text":
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
+        tool_calls = _get_tool_calls(response)
+        if not tool_calls:
             break
 
-        tool_results = []
-        for block in resp.content:
-            if block.type == "tool_use":
-                print(f"STEP:{block.name}", flush=True)
-                result = run_tool(block.name, dict(block.input))
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
+        parts = []
+        for fc in tool_calls:
+            print(f"STEP:{fc.name}", flush=True)
+            result = run_tool(fc.name, dict(fc.args))
+            parts.append(_make_fn_part(fc.name, result))
+
+        print(f"STEP:Turno {turn + 2}...", flush=True)
+        response = chat.send_message(parts)
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
-    # Generate a concise session title for new conversations (no prior history)
     if not history:
         try:
-            title_resp = client.messages.create(
-                model=config.MODEL_CHAT,
-                max_tokens=20,
-                system=(
-                    "Generate a concise title for this chat conversation. "
-                    "Max 6 words. Same language as the user message. "
-                    "No quotes, no trailing punctuation."
-                ),
-                messages=[{"role": "user", "content": f"First message: {message[:300]}"}],
+            title_model = genai.GenerativeModel(
+                model_name=config.MODEL_CHAT,
+                generation_config=genai.GenerationConfig(max_output_tokens=20),
             )
-            for block in title_resp.content:
-                if block.type == "text" and block.text.strip():
-                    print(f"TITLE:{_json.dumps(block.text.strip(), ensure_ascii=False)}", flush=True)
-                    break
+            title_resp = title_model.generate_content(
+                "Generate a concise title for this chat conversation. "
+                "Max 6 words. Same language as the user message. "
+                f"No quotes, no trailing punctuation.\n\nFirst message: {message[:300]}"
+            )
+            title = _get_text(title_resp).strip()
+            if title:
+                print(f"TITLE:{_json.dumps(title, ensure_ascii=False)}", flush=True)
         except Exception:
             pass  # title stays as truncated first message — no crash
 
@@ -326,48 +353,37 @@ def run(progress_callback=None) -> str:
     progress_callback(step: str) é chamado opcionalmente a cada passo.
     """
     system = build_system_prompt()
-    messages = [{
-        "role": "user",
-        "content": (
-            "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
-            "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
-            "as observações do dia ao final."
-        ),
-    }]
+    model = _make_model(config.MODEL_FULL, t.TOOLS, system, config.MAX_TOKENS)
+    chat = model.start_chat()
+
+    if progress_callback:
+        progress_callback("Turno 1 — consultando Gemini...")
+    response = chat.send_message(
+        "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
+        "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
+        "as observações do dia ao final."
+    )
 
     final_text = ""
     for turn in range(config.MAX_AGENT_TURNS):
-        if progress_callback:
-            progress_callback(f"Turno {turn + 1} — consultando Claude...")
+        text = _get_text(response)
+        if text:
+            final_text = text
 
-        resp = client.messages.create(
-            model=config.MODEL_FULL,
-            max_tokens=config.MAX_TOKENS,
-            system=_cached_system(system),
-            tools=_cached_tools(t.TOOLS),
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": resp.content})
-
-        for block in resp.content:
-            if block.type == "text":
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
+        tool_calls = _get_tool_calls(response)
+        if not tool_calls:
             break
 
         tool_results = []
-        for block in resp.content:
-            if block.type == "tool_use":
-                if progress_callback:
-                    progress_callback(f"Executando ferramenta: {block.name}")
-                result = run_tool(block.name, dict(block.input))
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
+        for fc in tool_calls:
+            if progress_callback:
+                progress_callback(f"Executando ferramenta: {fc.name}")
+            result = run_tool(fc.name, dict(fc.args))
+            tool_results.append(_make_fn_part(fc.name, result))
+
+        if progress_callback:
+            progress_callback(f"Turno {turn + 2} — consultando Gemini...")
+        response = chat.send_message(tool_results)
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 

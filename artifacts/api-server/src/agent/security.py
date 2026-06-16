@@ -48,6 +48,7 @@ def sanitize_url(url):
 def mask_sensitive_data(text):
     if not text:
         return text
+    text = re.sub(r'AIzaSy[a-zA-Z0-9\-_]{30,}', 'AIzaSy***MASKED***', text)
     text = re.sub(r'sk-ant-[a-zA-Z0-9]{20,}', 'sk-ant-***MASKED***', text)
     text = re.sub(r'sk-[a-zA-Z0-9]{20,}', 'sk-***MASKED***', text)
     text = re.sub(r'Bearer\s+[a-zA-Z0-9\-_]{20,}', 'Bearer ***MASKED***', text)

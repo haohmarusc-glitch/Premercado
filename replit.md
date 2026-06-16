@@ -9,7 +9,7 @@ App de monitoramento pré-mercado com loop agêntico Claude para MU (Micron) e S
 - `pnpm run typecheck` — typecheck completo
 - `pnpm --filter @workspace/api-spec run codegen` — regenerar hooks e schemas do OpenAPI
 - `pnpm --filter @workspace/db run push` — aplicar schema no banco (dev only)
-- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`
+- Required env: `DATABASE_URL`, `GEMINI_API_KEY`
 
 ## Stack
 
@@ -19,7 +19,7 @@ App de monitoramento pré-mercado com loop agêntico Claude para MU (Micron) e S
 - Validation: Zod, drizzle-zod
 - API codegen: Orval (from OpenAPI spec)
 - Frontend: React + Vite + shadcn/ui + Tailwind
-- Agent: Python 3 + Anthropic SDK + yfinance + requests (SEC EDGAR)
+- Agent: Python 3 + Google Gemini SDK + yfinance + requests (SEC EDGAR)
 
 ## Where things live
 
@@ -27,7 +27,7 @@ App de monitoramento pré-mercado com loop agêntico Claude para MU (Micron) e S
 - `lib/db/src/schema/premarket.ts` — tabelas `reports` e `observations`
 - `artifacts/api-server/src/routes/` — rotas Express (reports, observations, agent)
 - `artifacts/api-server/src/agent/` — código Python do loop agêntico
-  - `agent.py` — loop principal (chama Claude com ferramentas)
+  - `agent.py` — loop principal (chama Gemini com ferramentas)
   - `tools.py` — ferramentas: get_stock_data, get_news, search_edgar_filings, read_filing, save_observation
   - `memory.py` — lê observações anteriores para injetar no system prompt
   - `run_agent.py` — entry point chamado como subprocess pelo Node
@@ -56,4 +56,4 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 - O agente Python usa `python3 -m agent.run_agent` com `cwd = artifacts/api-server/src`
 - `INTERNAL_API_URL` precisa apontar para o servidor Express correto em runtime
-- Para o agente rodar, `ANTHROPIC_API_KEY` deve estar disponível como variável de ambiente
+- Para o agente rodar, `GEMINI_API_KEY` deve estar disponível como variável de ambiente (obtenha grátis em aistudio.google.com)

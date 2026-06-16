@@ -9,10 +9,13 @@ _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
 PORTFOLIO_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
 
-MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-4-6")
-MODEL_FLASH = os.environ.get("ANTHROPIC_MODEL_FLASH", "claude-haiku-4-5")
-MODEL_CHAT = os.environ.get("ANTHROPIC_MODEL_CHAT", "claude-haiku-4-5")
-MODEL_FALLBACK = os.environ.get("ANTHROPIC_MODEL_FALLBACK", "claude-haiku-4-5")
+# Free-tier Gemini models (Google AI Studio): gemini-2.0-flash = 15 RPM / 1500 RPD.
+# gemini-1.5-pro is available but limited to 2 RPM / 50 RPD on the free tier —
+# use it for MODEL_FULL only if you have a paid quota.
+MODEL_FULL = os.environ.get("GEMINI_MODEL_FULL", "gemini-2.0-flash")
+MODEL_FLASH = os.environ.get("GEMINI_MODEL_FLASH", "gemini-2.0-flash")
+MODEL_CHAT = os.environ.get("GEMINI_MODEL_CHAT", "gemini-2.0-flash")
+MODEL_FALLBACK = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-2.0-flash")
 
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_TOKENS_PREMARKET = int(os.environ.get("AGENT_MAX_TOKENS_PREMARKET", "512"))
@@ -30,13 +33,11 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
-def validate_anthropic_key():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    return validate_api_key(key, expected_prefix="sk-ant-")
+def validate_gemini_key():
+    key = os.environ.get("GEMINI_API_KEY", "")
+    return validate_api_key(key, expected_prefix="AIzaSy")
 
-def get_anthropic_client_config():
+def get_gemini_client_config():
     return {
-        "api_key": os.environ.get("ANTHROPIC_API_KEY"),
-        "timeout": API_TIMEOUT_SECONDS,
-        "max_retries": MAX_RETRIES,
+        "api_key": os.environ.get("GEMINI_API_KEY"),
     }
