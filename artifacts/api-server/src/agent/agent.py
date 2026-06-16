@@ -48,13 +48,38 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
     return [{"function_declarations": declarations}]
 
 
+def _clean_schema_openai(schema: object) -> object:
+    """Strip fields unsupported by OpenAI-compatible APIs (Groq, Kimi).
+    More aggressive than _clean_schema(): also removes format, examples, nullable, etc."""
+    _SAFE = {"type", "description", "properties", "required", "items", "enum",
+             "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+    if isinstance(schema, dict):
+        cleaned = {}
+        for k, v in schema.items():
+            if k in _SAFE:
+                cleaned[k] = _clean_schema_openai(v)
+        # Groq requires type:object at top level of parameters
+        if "properties" in cleaned and "type" not in cleaned:
+            cleaned["type"] = "object"
+        return cleaned
+    if isinstance(schema, list):
+        return [_clean_schema_openai(item) for item in schema]
+    return schema
+
+
 def _to_openai_tools(anthropic_tools: list) -> list:
-    """Convert Anthropic tool list to OpenAI function calling format (used by Kimi)."""
+    """Convert Anthropic tool list to OpenAI function calling format (Groq, Kimi, etc.)."""
     result = []
     for tool in anthropic_tools:
         schema = tool.get("input_schema", {})
         func: dict = {"name": tool["name"], "description": tool["description"]}
-        func["parameters"] = _clean_schema(schema) if schema.get("properties") else {"type": "object", "properties": {}}
+        if schema.get("properties"):
+            params = _clean_schema_openai(schema)
+            if "type" not in params:
+                params["type"] = "object"
+        else:
+            params = {"type": "object", "properties": {}}
+        func["parameters"] = params
         result.append({"type": "function", "function": func})
     return result
 
@@ -658,7 +683,7 @@ def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
             )
         except Exception as e:
             if progress_callback:
-                progress_callback(f"{step_prefix}{name} falhou ({type(e).__name__}) — tentando próximo...")
+                progress_callback(f"{step_prefix}{name} falhou ({type(e).__name__}: {str(e)[:120]}) — tentando próximo...")
     return None
 
 
