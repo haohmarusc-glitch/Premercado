@@ -37,6 +37,13 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# Kimi (Moonshot AI) — OpenAI-compatible API, used as fallback when Gemini quota is exhausted.
+# Get a free key at: https://platform.moonshot.cn/
+# Set KIMI_API_KEY as a Replit Secret to enable this fallback.
+KIMI_MODEL_FULL = os.environ.get("KIMI_MODEL_FULL", "moonshot-v1-32k")
+KIMI_MODEL_CHAT = os.environ.get("KIMI_MODEL_CHAT", "moonshot-v1-8k")
+KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+
 def validate_gemini_key():
     key = os.environ.get("GEMINI_API_KEY", "")
     return validate_api_key(key, expected_prefix="AIzaSy")

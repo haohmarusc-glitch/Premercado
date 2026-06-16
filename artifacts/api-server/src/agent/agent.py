@@ -48,6 +48,17 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
     return [{"function_declarations": declarations}]
 
 
+def _to_openai_tools(anthropic_tools: list) -> list:
+    """Convert Anthropic tool list to OpenAI function calling format (used by Kimi)."""
+    result = []
+    for tool in anthropic_tools:
+        schema = tool.get("input_schema", {})
+        func: dict = {"name": tool["name"], "description": tool["description"]}
+        func["parameters"] = _clean_schema(schema) if schema.get("properties") else {"type": "object", "properties": {}}
+        result.append({"type": "function", "function": func})
+    return result
+
+
 def _make_config(tools: list, system_instruction: str, max_tokens: int) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(
         tools=_to_gemini_tools(tools),
@@ -104,6 +115,31 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
             wait = 30.0 * (attempt + 1)
             if progress_callback:
                 progress_callback(f"{step_label}Servidor indisponível — aguardando {int(wait)}s...")
+            time.sleep(wait)
+
+
+def _kimi_send(kimi_client, model: str, messages: list, tools: list, max_tokens: int,
+               progress_callback=None, step_label: str = "") -> object:
+    """Send a Kimi request, retrying on rate limits (raises QuotaExhaustedError after max retries)."""
+    try:
+        from openai import RateLimitError
+    except ImportError:
+        raise RuntimeError("openai package not installed; run: uv pip install openai")
+    max_retries = int(os.environ.get("KIMI_MAX_RETRIES", "3"))
+    for attempt in range(max_retries + 1):
+        try:
+            return kimi_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools if tools else None,
+                max_tokens=max_tokens,
+            )
+        except RateLimitError as e:
+            if attempt == max_retries:
+                raise QuotaExhaustedError(str(e)) from e
+            wait = 60.0 * (attempt + 1)
+            if progress_callback:
+                progress_callback(f"{step_label}Kimi rate limit — aguardando {int(wait)}s...")
             time.sleep(wait)
 
 
@@ -280,22 +316,37 @@ def _run_premarket_impl(model: str, progress_callback=None) -> str:
 def run_premarket(progress_callback=None) -> str:
     """
     Executa a varredura intradiária de pré-mercado.
-    Mais rápida que run(): menos ferramentas, menos turnos, output curto.
-    Tenta modelos alternativos se a cota diária do modelo primário estiver esgotada.
+    Ordem de fallback: modelos Gemini → Kimi (se KIMI_API_KEY configurada).
     """
-    models = list(dict.fromkeys([config.MODEL_FLASH] + config.MODEL_FALLBACKS))
-    last_err = None
-    for model in models:
+    gemini_models = list(dict.fromkeys([config.MODEL_FLASH] + config.MODEL_FALLBACKS))
+    for model in gemini_models:
         try:
             return _run_premarket_impl(model, progress_callback)
-        except QuotaExhaustedError as e:
-            last_err = e
+        except QuotaExhaustedError:
             if progress_callback:
-                progress_callback(f"Cota diária esgotada para {model} — tentando próximo modelo...")
+                progress_callback(f"Cota diária esgotada para {model} — tentando próximo...")
+
+    if os.environ.get("KIMI_API_KEY"):
+        if progress_callback:
+            progress_callback(f"Tentando Kimi ({config.KIMI_MODEL_FULL})...")
+        try:
+            return _run_agentic_kimi(
+                model=config.KIMI_MODEL_FULL,
+                system=build_premarket_prompt(),
+                tools=t.TOOLS,
+                max_tokens=config.MAX_TOKENS_PREMARKET,
+                initial_message="Faça a varredura rápida de pré-mercado intradiário agora.",
+                max_turns=min(config.MAX_AGENT_TURNS, 8),
+                progress_callback=progress_callback,
+                step_prefix="[Flash] ",
+            )
+        except QuotaExhaustedError:
+            if progress_callback:
+                progress_callback("Kimi também esgotou a cota.")
+
     raise RuntimeError(
-        f"Todos os modelos esgotaram a cota diária ({', '.join(models)}). "
-        "Tente novamente após meia-noite UTC."
-    ) from last_err
+        "Todos os modelos esgotaram a cota diária. Tente novamente após meia-noite UTC."
+    )
 
 
 # ── Chat mode ────────────────────────────────────────────────────────────────
@@ -396,6 +447,56 @@ def run_chat_stream(message: str, history: list) -> None:
             print(f"STEP:Cota diária esgotada para {model} — tentando próximo modelo...", flush=True)
             continue
 
+    # Kimi fallback if all Gemini models exhausted
+    if not final_text and os.environ.get("KIMI_API_KEY"):
+        print(f"STEP:Tentando Kimi ({config.KIMI_MODEL_CHAT})...", flush=True)
+        try:
+            import json as _json2
+            from openai import OpenAI
+            kimi_client = OpenAI(
+                api_key=os.environ.get("KIMI_API_KEY", ""),
+                base_url=config.KIMI_BASE_URL,
+            )
+            openai_tools = _to_openai_tools(CHAT_TOOLS)
+            kimi_messages: list = [{"role": "system", "content": system}]
+            for h in gemini_history:
+                role = "assistant" if h["role"] == "model" else "user"
+                text = h["parts"][0]["text"] if h.get("parts") else ""
+                kimi_messages.append({"role": role, "content": text})
+            kimi_messages.append({"role": "user", "content": message})
+
+            for turn in range(6):
+                print(f"STEP:Turno {turn + 1}... (Kimi)", flush=True)
+                resp = _kimi_send(
+                    kimi_client, config.KIMI_MODEL_CHAT,
+                    kimi_messages, openai_tools, config.MAX_TOKENS_CHAT,
+                )
+                msg = resp.choices[0].message
+                assistant_entry: dict = {"role": "assistant", "content": msg.content or ""}
+                if msg.tool_calls:
+                    assistant_entry["tool_calls"] = [
+                        {"id": tc.id, "type": "function",
+                         "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                        for tc in msg.tool_calls
+                    ]
+                kimi_messages.append(assistant_entry)
+                if msg.content:
+                    final_text = msg.content
+                if not msg.tool_calls:
+                    break
+                for tc in msg.tool_calls:
+                    print(f"STEP:{tc.function.name}", flush=True)
+                    try:
+                        args = _json2.loads(tc.function.arguments)
+                    except _json2.JSONDecodeError:
+                        args = {}
+                    result = run_tool(tc.function.name, args)
+                    kimi_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            chat_model_used = config.KIMI_MODEL_CHAT
+        except (QuotaExhaustedError, Exception) as e:
+            if not final_text:
+                final_text = f"[Erro: todos os modelos esgotaram cota ou falharam — {e}]"
+
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
     if not history:
@@ -426,6 +527,65 @@ def run_tool(name: str, args: dict) -> str:
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
         return f"[erro ao executar {name}: {type(e).__name__}: {e}]"
+
+
+def _run_agentic_kimi(model: str, system: str, tools: list, max_tokens: int,
+                      initial_message: str, max_turns: int,
+                      progress_callback=None, step_prefix: str = "") -> str:
+    """Run an agentic tool-use loop using Kimi (Moonshot AI) via OpenAI-compatible API."""
+    import json as _json
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("openai package not installed; run: uv pip install openai")
+
+    kimi_client = OpenAI(
+        api_key=os.environ.get("KIMI_API_KEY", ""),
+        base_url=config.KIMI_BASE_URL,
+    )
+    openai_tools = _to_openai_tools(tools)
+    messages: list = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": initial_message},
+    ]
+    final_text = ""
+
+    for turn in range(max_turns):
+        if progress_callback:
+            progress_callback(f"{step_prefix}Turno {turn + 1} — consultando Kimi ({model})...")
+
+        response = _kimi_send(
+            kimi_client, model, messages, openai_tools, max_tokens,
+            progress_callback, step_prefix,
+        )
+        msg = response.choices[0].message
+
+        assistant_entry: dict = {"role": "assistant", "content": msg.content or ""}
+        if msg.tool_calls:
+            assistant_entry["tool_calls"] = [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ]
+        messages.append(assistant_entry)
+
+        if msg.content:
+            final_text = msg.content
+
+        if not msg.tool_calls:
+            break
+
+        for tc in msg.tool_calls:
+            if progress_callback:
+                progress_callback(f"{step_prefix}{tc.function.name}")
+            try:
+                args = _json.loads(tc.function.arguments)
+            except _json.JSONDecodeError:
+                args = {}
+            result = run_tool(tc.function.name, args)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+    return final_text
 
 
 def _run_impl(model: str, progress_callback=None) -> str:
@@ -470,19 +630,39 @@ def _run_impl(model: str, progress_callback=None) -> str:
 def run(progress_callback=None) -> str:
     """
     Executa o loop agêntico e retorna o texto do relatório final.
-    progress_callback(step: str) é chamado opcionalmente a cada passo.
-    Tenta modelos alternativos se a cota diária do modelo primário estiver esgotada.
+    Ordem de fallback: modelos Gemini → Kimi (se KIMI_API_KEY configurada).
     """
-    models = list(dict.fromkeys([config.MODEL_FULL] + config.MODEL_FALLBACKS))
-    last_err = None
-    for model in models:
+    # 1. Tenta modelos Gemini em ordem
+    gemini_models = list(dict.fromkeys([config.MODEL_FULL] + config.MODEL_FALLBACKS))
+    for model in gemini_models:
         try:
             return _run_impl(model, progress_callback)
-        except QuotaExhaustedError as e:
-            last_err = e
+        except QuotaExhaustedError:
             if progress_callback:
-                progress_callback(f"Cota diária esgotada para {model} — tentando próximo modelo...")
+                progress_callback(f"Cota diária esgotada para {model} — tentando próximo...")
+
+    # 2. Tenta Kimi como último recurso
+    if os.environ.get("KIMI_API_KEY"):
+        if progress_callback:
+            progress_callback(f"Tentando Kimi ({config.KIMI_MODEL_FULL})...")
+        try:
+            return _run_agentic_kimi(
+                model=config.KIMI_MODEL_FULL,
+                system=build_system_prompt(),
+                tools=t.TOOLS,
+                max_tokens=config.MAX_TOKENS,
+                initial_message=(
+                    "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
+                    "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
+                    "as observações do dia ao final."
+                ),
+                max_turns=config.MAX_AGENT_TURNS,
+                progress_callback=progress_callback,
+            )
+        except QuotaExhaustedError:
+            if progress_callback:
+                progress_callback("Kimi também esgotou a cota.")
+
     raise RuntimeError(
-        f"Todos os modelos esgotaram a cota diária ({', '.join(models)}). "
-        "Tente novamente após meia-noite UTC."
-    ) from last_err
+        "Todos os modelos esgotaram a cota diária. Tente novamente após meia-noite UTC."
+    )
