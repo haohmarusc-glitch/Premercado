@@ -37,11 +37,13 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
-# Groq — OpenAI-compatible API, first non-Gemini fallback.
+# Groq — OpenAI-compatible API, fallback after Kimi.
 # Get a free key at: https://console.groq.com (login with Google, no verification required)
 # Set GROQ_API_KEY as a Replit Secret to enable.
-GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama-3.1-8b-instant")
-GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama-3.1-8b-instant")
+# llama3-groq-8b-8192-tool-use-preview is fine-tuned for function calling;
+# llama-3.1-8b-instant is NOT reliable for tool use (embeds args in the function name).
+GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama3-groq-8b-8192-tool-use-preview")
+GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama3-groq-8b-8192-tool-use-preview")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
 # Kimi (Moonshot AI) — second non-Gemini fallback.
