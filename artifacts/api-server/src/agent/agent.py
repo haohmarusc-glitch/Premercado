@@ -584,9 +584,13 @@ def run_tool(name: str, args: dict) -> str:
         return f"[erro ao executar {name}: {type(e).__name__}: {e}]"
 
 
+_MAX_TOOL_RESULT_CHARS = 2500  # Keep tool results short to avoid 413 on free-tier providers
+
+
 def _run_openai_compat(base_url: str, api_key: str, model: str,
                        system: str, tools: list, max_tokens: int,
                        initial_message: str, max_turns: int,
+                       provider_name: str = "Provider",
                        progress_callback=None, step_prefix: str = "") -> str:
     """Run an agentic tool-use loop via any OpenAI-compatible API (Groq, Kimi, etc.)."""
     import json as _json
@@ -595,7 +599,7 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
     except ImportError:
         raise RuntimeError("openai package not installed; run: uv pip install openai")
 
-    kimi_client = OpenAI(
+    oc_client = OpenAI(
         api_key=api_key,
         base_url=base_url,
     )
@@ -608,10 +612,10 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
 
     for turn in range(max_turns):
         if progress_callback:
-            progress_callback(f"{step_prefix}Turno {turn + 1} — consultando Kimi ({model})...")
+            progress_callback(f"{step_prefix}Turno {turn + 1} — consultando {provider_name} ({model})...")
 
         response = _kimi_send(
-            kimi_client, model, messages, openai_tools, max_tokens,
+            oc_client, model, messages, openai_tools, max_tokens,
             progress_callback, step_prefix,
         )
         msg = response.choices[0].message
@@ -639,6 +643,8 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
             except _json.JSONDecodeError:
                 args = {}
             result = run_tool(tc.function.name, args)
+            if len(result) > _MAX_TOOL_RESULT_CHARS:
+                result = result[:_MAX_TOOL_RESULT_CHARS] + "...[truncado]"
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return final_text
@@ -701,6 +707,7 @@ def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
                 base_url=base_url, api_key=api_key, model=model,
                 system=system, tools=tools, max_tokens=max_tokens,
                 initial_message=initial_message, max_turns=max_turns,
+                provider_name=name,
                 progress_callback=progress_callback, step_prefix=step_prefix,
             )
         except Exception as e:
@@ -730,13 +737,13 @@ def run(progress_callback=None) -> str:
     result = _try_openai_compat_providers(
         system=build_system_prompt_compact(),
         tools=FALLBACK_TOOLS,
-        max_tokens=min(config.MAX_TOKENS, 2048),
+        max_tokens=min(config.MAX_TOKENS, 1024),
         initial_message=(
             "Faça a análise pré-mercado de hoje para os ativos da carteira. "
             "Use get_fear_greed_index, get_sector_performance e para cada ativo: "
             "get_stock_data, get_news, get_technical_indicators."
         ),
-        max_turns=10,
+        max_turns=6,
         progress_callback=progress_callback,
     )
     if result is not None:
