@@ -4,7 +4,9 @@ Gemini decide quais ferramentas chamar, lê a memória e grava observações.
 """
 import datetime
 import os
+import re
 import sys
+import time
 
 from google import genai
 from google.genai import types
@@ -71,6 +73,24 @@ def _get_tool_calls(response) -> list:
     except (IndexError, AttributeError):
         pass
     return calls
+
+
+def _send(chat, message, progress_callback=None, step_label: str = "") -> object:
+    """Send a chat message, retrying automatically on 429 rate-limit errors."""
+    from google.genai.errors import ClientError
+    max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "5"))
+    for attempt in range(max_retries + 1):
+        try:
+            return chat.send_message(message)
+        except ClientError as e:
+            if getattr(e, "status_code", None) != 429 or attempt == max_retries:
+                raise
+            # Parse suggested retry delay from the error message
+            m = re.search(r"retry in (\d+(?:\.\d+)?)s", str(e))
+            wait = min(float(m.group(1)) + 5 if m else 65.0, 130.0)
+            if progress_callback:
+                progress_callback(f"{step_label}Rate limit — aguardando {int(wait)}s...")
+            time.sleep(wait)
 
 
 def _execute_tools(tool_calls: list, progress_callback=None, prefix="") -> list:
@@ -226,7 +246,7 @@ def run_premarket(progress_callback=None) -> str:
 
     if progress_callback:
         progress_callback("[Flash] Turno 1...")
-    response = chat.send_message("Faça a varredura rápida de pré-mercado intradiário agora.")
+    response = _send(chat, "Faça a varredura rápida de pré-mercado intradiário agora.", progress_callback, "[Flash] ")
 
     final_text = ""
     for turn in range(max_turns):
@@ -242,7 +262,7 @@ def run_premarket(progress_callback=None) -> str:
 
         if progress_callback:
             progress_callback(f"[Flash] Turno {turn + 2}...")
-        response = chat.send_message(fn_parts)
+        response = _send(chat, fn_parts, progress_callback, "[Flash] ")
 
     return final_text
 
@@ -310,7 +330,7 @@ def run_chat_stream(message: str, history: list) -> None:
     final_text = ""
 
     print("STEP:Turno 1...", flush=True)
-    response = chat.send_message(message)
+    response = _send(chat, message)
 
     for turn in range(6):
         text = _get_text(response)
@@ -331,7 +351,7 @@ def run_chat_stream(message: str, history: list) -> None:
             ))
 
         print(f"STEP:Turno {turn + 2}...", flush=True)
-        response = chat.send_message(fn_parts)
+        response = _send(chat, fn_parts)
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
@@ -376,10 +396,12 @@ def run(progress_callback=None) -> str:
 
     if progress_callback:
         progress_callback("Turno 1 — consultando Gemini...")
-    response = chat.send_message(
+    response = _send(
+        chat,
         "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
         "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
-        "as observações do dia ao final."
+        "as observações do dia ao final.",
+        progress_callback,
     )
 
     final_text = ""
@@ -399,7 +421,7 @@ def run(progress_callback=None) -> str:
 
         if progress_callback:
             progress_callback(f"Turno {turn + 2} — consultando Gemini...")
-        response = chat.send_message(fn_parts)
+        response = _send(chat, fn_parts, progress_callback)
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
