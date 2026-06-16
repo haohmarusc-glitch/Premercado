@@ -37,12 +37,20 @@ export const agentDir = path.resolve(workspaceRoot, "artifacts/api-server/src");
 const _venvDir = path.resolve(workspaceRoot, ".venv");
 const _venvBin = path.join(_venvDir, "bin");
 const _venvPython = path.join(_venvBin, "python3");
-const _hasVenv = existsSync(_venvPython);
-export const pythonBin = _hasVenv ? _venvPython : "python3";
-// Also inject VIRTUAL_ENV + PATH so the subprocess sees venv packages regardless of binary path.
-export const venvEnv: Record<string, string> = _hasVenv
-  ? { VIRTUAL_ENV: _venvDir, PATH: `${_venvBin}:${process.env.PATH ?? ""}` }
-  : {};
+
+// Check venv existence at call time so the server survives venv recreation without restart.
+export function getPythonBin(): string {
+  return existsSync(_venvPython) ? _venvPython : "python3";
+}
+export function getVenvEnv(): Record<string, string> {
+  return existsSync(_venvPython)
+    ? { VIRTUAL_ENV: _venvDir, PATH: `${_venvBin}:${process.env.PATH ?? ""}` }
+    : {};
+}
+
+// Legacy exports kept for import compatibility.
+export const pythonBin = _venvPython; // caller should prefer getPythonBin()
+export const venvEnv: Record<string, string> = {};
 
 export interface AgentState {
   running: boolean;
@@ -92,11 +100,11 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
 
-  const py = spawn(pythonBin, ["-m", "agent.run_agent"], {
+  const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
     cwd: agentDir,
     env: {
       ...process.env,
-      ...venvEnv,
+      ...getVenvEnv(),
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
