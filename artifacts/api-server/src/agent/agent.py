@@ -328,6 +328,9 @@ def run_premarket(progress_callback=None) -> str:
         except QuotaExhaustedError:
             if progress_callback:
                 progress_callback(f"Cota diária esgotada para {model} — tentando próximo...")
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
     if os.environ.get("KIMI_API_KEY"):
         if progress_callback:
@@ -343,12 +346,12 @@ def run_premarket(progress_callback=None) -> str:
                 progress_callback=progress_callback,
                 step_prefix="[Flash] ",
             )
-        except QuotaExhaustedError:
+        except Exception as e:
             if progress_callback:
-                progress_callback("Kimi também esgotou a cota.")
+                progress_callback(f"Kimi falhou ({type(e).__name__}: {e}) — sem mais modelos.")
 
     raise RuntimeError(
-        "Todos os modelos esgotaram a cota diária. Tente novamente após meia-noite UTC."
+        "Todos os modelos falharam ou esgotaram cota. Tente novamente após meia-noite UTC."
     )
 
 
@@ -643,6 +646,10 @@ def run(progress_callback=None) -> str:
         except QuotaExhaustedError:
             if progress_callback:
                 progress_callback(f"Cota diária esgotada para {model} — tentando próximo...")
+        except Exception as e:
+            # 404 (model not found), 400 (invalid), or other API errors — try next model
+            if progress_callback:
+                progress_callback(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
     # 2. Tenta Kimi como último recurso
     if os.environ.get("KIMI_API_KEY"):
@@ -662,10 +669,10 @@ def run(progress_callback=None) -> str:
                 max_turns=config.MAX_AGENT_TURNS,
                 progress_callback=progress_callback,
             )
-        except QuotaExhaustedError:
+        except Exception as e:
             if progress_callback:
-                progress_callback("Kimi também esgotou a cota.")
+                progress_callback(f"Kimi falhou ({type(e).__name__}: {e}) — sem mais modelos.")
 
     raise RuntimeError(
-        "Todos os modelos esgotaram a cota diária. Tente novamente após meia-noite UTC."
+        "Todos os modelos falharam ou esgotaram cota. Tente novamente após meia-noite UTC."
     )
