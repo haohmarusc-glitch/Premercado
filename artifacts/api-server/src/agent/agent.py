@@ -6,14 +6,15 @@ import datetime
 import os
 import sys
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from . import config
 from . import memory
 from . import tools as t
 
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
 def _to_gemini_tools(anthropic_tools: list) -> list:
@@ -31,12 +32,11 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
     return [{"function_declarations": declarations}]
 
 
-def _make_model(model_name: str, tools: list, system_instruction: str, max_tokens: int):
-    return genai.GenerativeModel(
-        model_name=model_name,
+def _make_config(tools: list, system_instruction: str, max_tokens: int) -> types.GenerateContentConfig:
+    return types.GenerateContentConfig(
         tools=_to_gemini_tools(tools),
         system_instruction=system_instruction,
-        generation_config=genai.GenerationConfig(max_output_tokens=max_tokens),
+        max_output_tokens=max_tokens,
     )
 
 
@@ -55,20 +55,26 @@ def _get_tool_calls(response) -> list:
     calls = []
     try:
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "function_call") and part.function_call.name:
-                calls.append(part.function_call)
+            fc = getattr(part, "function_call", None)
+            if fc and fc.name:
+                calls.append(fc)
     except (IndexError, AttributeError):
         pass
     return calls
 
 
-def _make_fn_part(name: str, result: str):
-    return genai.protos.Part(
-        function_response=genai.protos.FunctionResponse(
-            name=name,
+def _execute_tools(tool_calls: list, progress_callback=None, prefix="") -> list:
+    """Execute tool calls and return a list of function-response Parts."""
+    parts = []
+    for fc in tool_calls:
+        if progress_callback:
+            progress_callback(f"{prefix}{fc.name}")
+        result = run_tool(fc.name, dict(fc.args))
+        parts.append(types.Part.from_function_response(
+            name=fc.name,
             response={"output": result},
-        )
-    )
+        ))
+    return parts
 
 
 def build_system_prompt() -> str:
@@ -204,8 +210,8 @@ def run_premarket(progress_callback=None) -> str:
     Mais rápida que run(): menos ferramentas, menos turnos, output curto.
     """
     system = build_premarket_prompt()
-    model = _make_model(config.MODEL_FLASH, t.TOOLS, system, config.MAX_TOKENS_PREMARKET)
-    chat = model.start_chat()
+    cfg = _make_config(t.TOOLS, system, config.MAX_TOKENS_PREMARKET)
+    chat = client.chats.create(model=config.MODEL_FLASH, config=cfg)
     max_turns = min(config.MAX_AGENT_TURNS, 8)
 
     if progress_callback:
@@ -222,16 +228,11 @@ def run_premarket(progress_callback=None) -> str:
         if not tool_calls:
             break
 
-        parts = []
-        for fc in tool_calls:
-            if progress_callback:
-                progress_callback(f"[Flash] {fc.name}")
-            result = run_tool(fc.name, dict(fc.args))
-            parts.append(_make_fn_part(fc.name, result))
+        fn_parts = _execute_tools(tool_calls, progress_callback, prefix="[Flash] ")
 
         if progress_callback:
             progress_callback(f"[Flash] Turno {turn + 2}...")
-        response = chat.send_message(parts)
+        response = chat.send_message(fn_parts)
 
     return final_text
 
@@ -277,8 +278,8 @@ def run_chat_stream(message: str, history: list) -> None:
 
     system = build_chat_prompt()
 
-    # Convert history from {role, content} format to Gemini {role, parts} format.
-    # Gemini uses "model" instead of "assistant" for the AI role.
+    # Convert history from {role, content} format to google-genai Content format.
+    # google-genai uses "model" instead of "assistant" for the AI role.
     gemini_history = []
     for h in history:
         role = "model" if h.get("role") == "assistant" else "user"
@@ -288,13 +289,17 @@ def run_chat_stream(message: str, history: list) -> None:
                 b.get("text", "") if isinstance(b, dict) else getattr(b, "text", "")
                 for b in content
             )
-        gemini_history.append({"role": role, "parts": [str(content)]})
+        gemini_history.append({"role": role, "parts": [{"text": str(content)}]})
 
-    model = _make_model(config.MODEL_CHAT, CHAT_TOOLS, system, config.MAX_TOKENS_CHAT)
-    chat = model.start_chat(history=gemini_history)
+    cfg = _make_config(CHAT_TOOLS, system, config.MAX_TOKENS_CHAT)
+    chat = client.chats.create(
+        model=config.MODEL_CHAT,
+        config=cfg,
+        history=gemini_history if gemini_history else None,
+    )
     final_text = ""
 
-    print(f"STEP:Turno 1...", flush=True)
+    print("STEP:Turno 1...", flush=True)
     response = chat.send_message(message)
 
     for turn in range(6):
@@ -306,27 +311,30 @@ def run_chat_stream(message: str, history: list) -> None:
         if not tool_calls:
             break
 
-        parts = []
+        fn_parts = []
         for fc in tool_calls:
             print(f"STEP:{fc.name}", flush=True)
             result = run_tool(fc.name, dict(fc.args))
-            parts.append(_make_fn_part(fc.name, result))
+            fn_parts.append(types.Part.from_function_response(
+                name=fc.name,
+                response={"output": result},
+            ))
 
         print(f"STEP:Turno {turn + 2}...", flush=True)
-        response = chat.send_message(parts)
+        response = chat.send_message(fn_parts)
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
     if not history:
         try:
-            title_model = genai.GenerativeModel(
-                model_name=config.MODEL_CHAT,
-                generation_config=genai.GenerationConfig(max_output_tokens=20),
-            )
-            title_resp = title_model.generate_content(
-                "Generate a concise title for this chat conversation. "
-                "Max 6 words. Same language as the user message. "
-                f"No quotes, no trailing punctuation.\n\nFirst message: {message[:300]}"
+            title_resp = client.models.generate_content(
+                model=config.MODEL_CHAT,
+                contents=(
+                    "Generate a concise title for this chat conversation. "
+                    "Max 6 words. Same language as the user message. "
+                    f"No quotes, no trailing punctuation.\n\nFirst message: {message[:300]}"
+                ),
+                config=types.GenerateContentConfig(max_output_tokens=20),
             )
             title = _get_text(title_resp).strip()
             if title:
@@ -353,8 +361,8 @@ def run(progress_callback=None) -> str:
     progress_callback(step: str) é chamado opcionalmente a cada passo.
     """
     system = build_system_prompt()
-    model = _make_model(config.MODEL_FULL, t.TOOLS, system, config.MAX_TOKENS)
-    chat = model.start_chat()
+    cfg = _make_config(t.TOOLS, system, config.MAX_TOKENS)
+    chat = client.chats.create(model=config.MODEL_FULL, config=cfg)
 
     if progress_callback:
         progress_callback("Turno 1 — consultando Gemini...")
@@ -374,16 +382,14 @@ def run(progress_callback=None) -> str:
         if not tool_calls:
             break
 
-        tool_results = []
-        for fc in tool_calls:
-            if progress_callback:
+        if progress_callback:
+            for fc in tool_calls:
                 progress_callback(f"Executando ferramenta: {fc.name}")
-            result = run_tool(fc.name, dict(fc.args))
-            tool_results.append(_make_fn_part(fc.name, result))
+        fn_parts = _execute_tools(tool_calls)
 
         if progress_callback:
             progress_callback(f"Turno {turn + 2} — consultando Gemini...")
-        response = chat.send_message(tool_results)
+        response = chat.send_message(fn_parts)
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
