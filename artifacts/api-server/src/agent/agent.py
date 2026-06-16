@@ -110,11 +110,14 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
                 progress_callback(f"{step_label}Rate limit — aguardando {int(wait)}s...")
             time.sleep(wait)
         except ServerError as e:
-            if getattr(e, "status_code", None) != 503 or attempt == max_retries:
+            if getattr(e, "status_code", None) != 503:
                 raise
-            wait = 30.0 * (attempt + 1)
+            if attempt == max_retries:
+                # Persistent 503 — trigger model fallback the same way quota exhaustion does
+                raise QuotaExhaustedError(f"503 persistente após {max_retries} tentativas: {e}") from e
+            wait = 15.0 * (attempt + 1)
             if progress_callback:
-                progress_callback(f"{step_label}Servidor indisponível — aguardando {int(wait)}s...")
+                progress_callback(f"{step_label}Servidor sobrecarregado — aguardando {int(wait)}s...")
             time.sleep(wait)
 
 
