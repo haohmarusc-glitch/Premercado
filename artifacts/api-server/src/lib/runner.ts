@@ -3,6 +3,7 @@
  * Spawns the Python subprocess, records the run in DB, saves the report, and sends e-mail.
  */
 import { spawn } from "child_process";
+import { existsSync } from "fs";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable } from "@workspace/db";
@@ -31,6 +32,10 @@ const workspaceRoot = process.cwd().endsWith(
   : process.cwd();
 
 export const agentDir = path.resolve(workspaceRoot, "artifacts/api-server/src");
+
+// Use venv Python if one exists at the project root (created with `uv venv .venv`).
+const _venvPython = path.resolve(workspaceRoot, ".venv/bin/python3");
+export const pythonBin = existsSync(_venvPython) ? _venvPython : "python3";
 
 export interface AgentState {
   running: boolean;
@@ -80,7 +85,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
 
-  const py = spawn("python3", ["-m", "agent.run_agent"], {
+  const py = spawn(pythonBin, ["-m", "agent.run_agent"], {
     cwd: agentDir,
     env: {
       ...process.env,

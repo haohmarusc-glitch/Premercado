@@ -8,7 +8,7 @@ import {
   GetChatMessagesResponse,
   DeleteChatSessionParams,
 } from "@workspace/api-zod";
-import { agentDir } from "../lib/runner";
+import { agentDir, pythonBin } from "../lib/runner";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -121,7 +121,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     ? history.filter((m) => m.role && typeof m.content === "string").slice(-20)
     : [];
 
-  const py = spawn("python3", ["-m", "agent.run_chat"], {
+  const py = spawn(pythonBin, ["-m", "agent.run_chat"], {
     cwd: agentDir,
     env: {
       ...process.env,
