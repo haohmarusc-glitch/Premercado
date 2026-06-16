@@ -9,13 +9,12 @@ _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
 PORTFOLIO_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
 
-# Free-tier Gemini models (Google AI Studio): gemini-2.0-flash = 15 RPM / 1500 RPD.
-# gemini-1.5-pro is available but limited to 2 RPM / 50 RPD on the free tier —
-# use it for MODEL_FULL only if you have a paid quota.
-MODEL_FULL = os.environ.get("GEMINI_MODEL_FULL", "gemini-2.0-flash")
-MODEL_FLASH = os.environ.get("GEMINI_MODEL_FLASH", "gemini-2.0-flash")
-MODEL_CHAT = os.environ.get("GEMINI_MODEL_CHAT", "gemini-2.0-flash")
-MODEL_FALLBACK = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-2.0-flash")
+# Free-tier Gemini models — gemini-2.5-flash is the recommended default as of mid-2026.
+# gemini-2.0-flash free-tier quota may be exhausted; gemini-2.5-flash has broader availability.
+MODEL_FULL = os.environ.get("GEMINI_MODEL_FULL", "gemini-2.5-flash")
+MODEL_FLASH = os.environ.get("GEMINI_MODEL_FLASH", "gemini-2.5-flash")
+MODEL_CHAT = os.environ.get("GEMINI_MODEL_CHAT", "gemini-2.5-flash")
+MODEL_FALLBACK = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-2.5-flash")
 
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_TOKENS_PREMARKET = int(os.environ.get("AGENT_MAX_TOKENS_PREMARKET", "512"))
