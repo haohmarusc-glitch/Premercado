@@ -76,8 +76,8 @@ def _get_tool_calls(response) -> list:
 
 
 def _send(chat, message, progress_callback=None, step_label: str = "") -> object:
-    """Send a chat message, retrying automatically on 429 rate-limit errors."""
-    from google.genai.errors import ClientError
+    """Send a chat message, retrying automatically on 429 / 503 errors."""
+    from google.genai.errors import ClientError, ServerError
     max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "5"))
     for attempt in range(max_retries + 1):
         try:
@@ -85,11 +85,17 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
         except ClientError as e:
             if getattr(e, "status_code", None) != 429 or attempt == max_retries:
                 raise
-            # Parse suggested retry delay from the error message
             m = re.search(r"retry in (\d+(?:\.\d+)?)s", str(e))
             wait = min(float(m.group(1)) + 5 if m else 65.0, 130.0)
             if progress_callback:
                 progress_callback(f"{step_label}Rate limit — aguardando {int(wait)}s...")
+            time.sleep(wait)
+        except ServerError as e:
+            if getattr(e, "status_code", None) != 503 or attempt == max_retries:
+                raise
+            wait = 30.0 * (attempt + 1)
+            if progress_callback:
+                progress_callback(f"{step_label}Servidor indisponível — aguardando {int(wait)}s...")
             time.sleep(wait)
 
 
