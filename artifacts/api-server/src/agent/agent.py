@@ -282,6 +282,28 @@ Princípios:
 === FIM DA MEMÓRIA ==="""
 
 
+def build_system_prompt_compact() -> str:
+    """Shorter system prompt for fallback providers with tight token limits."""
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    return f"""Você é um analista de ações fazendo leitura pré-mercado do dia {today}.
+Ativos: {", ".join(config.TICKERS)}. Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
+
+Para cada ativo da carteira: use get_stock_data, get_news, get_technical_indicators.
+Para o mercado geral: use get_fear_greed_index e get_sector_performance.
+
+Seja factual, cite números, formate em Markdown com seção por ativo.
+Inclua: cotação, variação pré-mercado, principais notícias, RSI e MACD se disponíveis.
+Termine com "## Resumo Executivo" com diagnóstico geral."""
+
+
+# Minimal tool subset for fallback providers (avoids 413 token-too-large errors)
+_FALLBACK_TOOL_NAMES = {
+    "get_stock_data", "get_news", "get_technical_indicators",
+    "get_fear_greed_index", "get_sector_performance",
+}
+FALLBACK_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _FALLBACK_TOOL_NAMES]
+
+
 def build_premarket_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     now = datetime.datetime.now().strftime("%H:%M")
@@ -358,11 +380,11 @@ def run_premarket(progress_callback=None) -> str:
                 progress_callback(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
     result = _try_openai_compat_providers(
-        system=build_premarket_prompt(),
-        tools=t.TOOLS,
-        max_tokens=config.MAX_TOKENS_PREMARKET,
-        initial_message="Faça a varredura rápida de pré-mercado intradiário agora.",
-        max_turns=min(config.MAX_AGENT_TURNS, 8),
+        system=build_system_prompt_compact(),
+        tools=FALLBACK_TOOLS,
+        max_tokens=min(config.MAX_TOKENS_PREMARKET, 512),
+        initial_message="Faça uma varredura rápida de pré-mercado: sentimento, ETFs de setor e cotações dos principais ativos.",
+        max_turns=5,
         progress_callback=progress_callback,
         step_prefix="[Flash] ",
     )
@@ -704,17 +726,17 @@ def run(progress_callback=None) -> str:
             if progress_callback:
                 progress_callback(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
-    # 2. Tenta Groq → Kimi
+    # 2. Tenta Groq → Kimi com prompt compacto e conjunto reduzido de ferramentas
     result = _try_openai_compat_providers(
-        system=build_system_prompt(),
-        tools=t.TOOLS,
-        max_tokens=config.MAX_TOKENS,
+        system=build_system_prompt_compact(),
+        tools=FALLBACK_TOOLS,
+        max_tokens=min(config.MAX_TOKENS, 2048),
         initial_message=(
-            "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
-            "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
-            "as observações do dia ao final."
+            "Faça a análise pré-mercado de hoje para os ativos da carteira. "
+            "Use get_fear_greed_index, get_sector_performance e para cada ativo: "
+            "get_stock_data, get_news, get_technical_indicators."
         ),
-        max_turns=config.MAX_AGENT_TURNS,
+        max_turns=10,
         progress_callback=progress_callback,
     )
     if result is not None:

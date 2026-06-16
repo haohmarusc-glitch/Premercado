@@ -40,8 +40,8 @@ CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1",
 # Groq — OpenAI-compatible API, first non-Gemini fallback.
 # Get a free key at: https://console.groq.com (login with Google, no verification required)
 # Set GROQ_API_KEY as a Replit Secret to enable.
-GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama-3.3-70b-versatile")
-GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama-3.3-70b-versatile")
+GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama-3.1-8b-instant")
+GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama-3.1-8b-instant")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
 # Kimi (Moonshot AI) — second non-Gemini fallback.
