@@ -845,15 +845,15 @@ def run(progress_callback=None) -> str:
         except Exception as e:
             _cb(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
-    # 3. Kimi — free, 128k context; compact prompt + limited tools
+    # 3. Kimi — free, 128k context; full prompt + all tools
     if os.environ.get("KIMI_API_KEY"):
         _cb(f"Tentando Kimi ({config.KIMI_MODEL_FULL})...")
         try:
             return _run_openai_compat(
                 base_url=config.KIMI_BASE_URL, api_key=os.environ["KIMI_API_KEY"],
                 model=config.KIMI_MODEL_FULL,
-                system=build_system_prompt_compact(), tools=FALLBACK_TOOLS,
-                max_tokens=2048, initial_message=_INITIAL_MESSAGE_COMPACT,
+                system=build_system_prompt(), tools=t.TOOLS,
+                max_tokens=config.MAX_TOKENS, initial_message=_INITIAL_MESSAGE_FULL,
                 max_turns=config.MAX_AGENT_TURNS, provider_name="Kimi",
                 max_tool_result_chars=None, progress_callback=progress_callback,
             )
