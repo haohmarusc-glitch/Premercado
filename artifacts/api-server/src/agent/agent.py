@@ -537,6 +537,12 @@ def run_chat_stream(message: str, history: list) -> None:
         except QuotaExhaustedError:
             print(f"STEP:Cota diária esgotada para {model} — tentando próximo modelo...", flush=True)
             continue
+        except Exception as e:
+            _es = str(e)
+            if "429" in _es or "RESOURCE_EXHAUSTED" in _es or "PerDay" in _es or "quota" in _es.lower():
+                print(f"STEP:Cota/limite para {model} — tentando próximo modelo...", flush=True)
+                continue
+            raise
 
     # Groq → Kimi fallback if all Gemini models exhausted
     if not final_text:
