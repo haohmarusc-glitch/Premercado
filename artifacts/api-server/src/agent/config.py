@@ -42,8 +42,8 @@ CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1",
 # Set GROQ_API_KEY as a Replit Secret to enable.
 # llama3-groq-8b-8192-tool-use-preview is fine-tuned for function calling;
 # llama-3.1-8b-instant is NOT reliable for tool use (embeds args in the function name).
-GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama3-groq-8b-8192-tool-use-preview")
-GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama3-groq-8b-8192-tool-use-preview")
+GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama-3.3-70b-versatile")
+GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama-3.3-70b-versatile")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
 # Kimi (Moonshot AI) — first non-Gemini fallback.

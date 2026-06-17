@@ -50,12 +50,10 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
 
 _GROQ_SAFE = {"type", "description", "properties", "required", "items", "enum",
               "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
-# Kimi (Moonshot) only accepts a minimal subset of JSON Schema fields
-_KIMI_SAFE = {"type", "description", "properties", "required", "items", "enum"}
 
 
 def _clean_schema_openai(schema: object, safe: frozenset | set = _GROQ_SAFE) -> object:
-    """Strip fields unsupported by OpenAI-compatible APIs (Groq, Kimi)."""
+    """Strip fields unsupported by OpenAI-compatible APIs (Groq)."""
     if isinstance(schema, dict):
         cleaned = {}
         for k, v in schema.items():
@@ -69,26 +67,60 @@ def _clean_schema_openai(schema: object, safe: frozenset | set = _GROQ_SAFE) -> 
     return schema
 
 
-def _to_openai_tools(anthropic_tools: list, kimi: bool = False) -> list:
-    """Convert Anthropic tool list to OpenAI function calling format (Groq, Kimi, etc.)."""
-    safe = _KIMI_SAFE if kimi else _GROQ_SAFE
+def _to_openai_tools(anthropic_tools: list) -> list:
+    """Convert Anthropic tool list to OpenAI function calling format (Groq)."""
     result = []
     for tool in anthropic_tools:
         schema = tool.get("input_schema", {})
         func: dict = {"name": tool["name"], "description": tool["description"]}
-        params = _clean_schema_openai(schema, safe)
+        params = _clean_schema_openai(schema)
         if "type" not in params:
             params["type"] = "object"
         if "properties" not in params:
             params["properties"] = {}
-        if kimi:
-            # Kimi rejects empty required arrays and empty properties objects
-            if not params.get("required"):
-                params.pop("required", None)
-            if not params.get("properties"):
-                params.pop("properties", None)
         func["parameters"] = params
         result.append({"type": "function", "function": func})
+    return result
+
+
+def _to_kimi_tools(anthropic_tools: list) -> list:
+    """Build minimal tool schemas for Kimi (Moonshot) from scratch.
+    Kimi's 'moonshot flavored json' only accepts type/description/enum/items/properties/required
+    and rejects empty arrays/objects. Built explicitly to avoid recursive-cleaning edge cases.
+    """
+    result = []
+    for tool in anthropic_tools:
+        raw = tool.get("input_schema", {})
+        raw_props = raw.get("properties", {})
+        required = [r for r in raw.get("required", []) if r]
+
+        props: dict = {}
+        for pname, ps in raw_props.items():
+            p: dict = {}
+            if "type" in ps:
+                p["type"] = ps["type"]
+            if "description" in ps:
+                p["description"] = ps["description"]
+            if "enum" in ps:
+                p["enum"] = ps["enum"]
+            if ps.get("type") == "array" and isinstance(ps.get("items"), dict):
+                p["items"] = {"type": ps["items"].get("type", "string")}
+            props[pname] = p
+
+        params: dict = {"type": "object"}
+        if props:
+            params["properties"] = props
+        if required:
+            params["required"] = required
+
+        result.append({
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": params,
+            },
+        })
     return result
 
 
@@ -609,7 +641,7 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
         api_key=api_key,
         base_url=base_url,
     )
-    openai_tools = _to_openai_tools(tools, kimi=(provider_name == "Kimi"))
+    openai_tools = _to_kimi_tools(tools) if provider_name == "Kimi" else _to_openai_tools(tools)
     messages: list = [
         {"role": "system", "content": system},
         {"role": "user", "content": initial_message},
