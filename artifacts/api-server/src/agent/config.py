@@ -37,6 +37,12 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# OpenAI — paid fallback after Kimi; supports all tools natively.
+# Set OPENAI_API_KEY as a Replit Secret to enable.
+OPENAI_MODEL_FULL = os.environ.get("OPENAI_MODEL_FULL", "gpt-4o")
+OPENAI_MODEL_CHAT = os.environ.get("OPENAI_MODEL_CHAT", "gpt-4o")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
 # Groq — OpenAI-compatible API, fallback after Kimi.
 # Get a free key at: https://console.groq.com (login with Google, no verification required)
 # Set GROQ_API_KEY as a Replit Secret to enable.

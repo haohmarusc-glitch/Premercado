@@ -845,7 +845,22 @@ def run(progress_callback=None) -> str:
         except Exception as e:
             _cb(f"Kimi falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
 
-    # 3. Groq — free but limited (5 tools, compact prompt, tight token budget)
+    # 3. OpenAI — paid; full prompt + all tools
+    if os.environ.get("OPENAI_API_KEY"):
+        _cb(f"Tentando OpenAI ({config.OPENAI_MODEL_FULL})...")
+        try:
+            return _run_openai_compat(
+                base_url=config.OPENAI_BASE_URL, api_key=os.environ["OPENAI_API_KEY"],
+                model=config.OPENAI_MODEL_FULL,
+                system=build_system_prompt(), tools=t.TOOLS,
+                max_tokens=config.MAX_TOKENS, initial_message=_INITIAL_MESSAGE_FULL,
+                max_turns=config.MAX_AGENT_TURNS, provider_name="OpenAI",
+                max_tool_result_chars=None, progress_callback=progress_callback,
+            )
+        except Exception as e:
+            _cb(f"OpenAI falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
+
+    # 4. Groq — free but limited (5 tools, compact prompt, tight token budget)
     if os.environ.get("GROQ_API_KEY"):
         _cb(f"Tentando Groq ({config.GROQ_MODEL_FULL})...")
         try:
@@ -860,7 +875,7 @@ def run(progress_callback=None) -> str:
         except Exception as e:
             _cb(f"Groq falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
 
-    # 4. Anthropic — paid last resort; full prompt + all tools
+    # 5. Anthropic — paid last resort; full prompt + all tools
     if os.environ.get("ANTHROPIC_API_KEY"):
         _cb(f"Tentando Anthropic ({config.ANTHROPIC_MODEL})...")
         try:
