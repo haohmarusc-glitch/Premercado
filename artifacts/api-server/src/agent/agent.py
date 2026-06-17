@@ -539,8 +539,10 @@ def run_chat_stream(message: str, history: list) -> None:
             continue
         except Exception as e:
             _es = str(e)
-            if "429" in _es or "RESOURCE_EXHAUSTED" in _es or "PerDay" in _es or "quota" in _es.lower():
-                print(f"STEP:Cota/limite para {model} — tentando próximo modelo...", flush=True)
+            if ("429" in _es or "RESOURCE_EXHAUSTED" in _es or "PerDay" in _es
+                    or "quota" in _es.lower() or "NOT_FOUND" in _es or "404" in _es
+                    or "not found" in _es.lower() or "not supported" in _es.lower()):
+                print(f"STEP:Modelo {model} indisponível/esgotado — tentando próximo...", flush=True)
                 continue
             raise
 

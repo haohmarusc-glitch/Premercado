@@ -17,7 +17,7 @@ MODEL_CHAT = os.environ.get("GEMINI_MODEL_CHAT", "gemini-2.5-flash")
 
 _fallbacks_env = os.environ.get(
     "GEMINI_MODEL_FALLBACKS",
-    "gemini-2.5-flash,gemini-2.0-flash-lite,gemini-1.5-flash-8b",
+    "gemini-2.5-flash,gemini-2.0-flash-lite",
 )
 MODEL_FALLBACKS: list[str] = [m.strip() for m in _fallbacks_env.split(",") if m.strip()]
 
