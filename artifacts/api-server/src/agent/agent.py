@@ -750,89 +750,129 @@ def _run_impl(model: str, progress_callback=None) -> str:
     return final_text
 
 
-def _try_openai_compat_providers(system: str, tools: list, max_tokens: int,
-                                  initial_message: str, max_turns: int,
-                                  progress_callback=None, step_prefix: str = "") -> str | None:
-    """Try Groq then Kimi in order; returns result or None if both fail.
+_INITIAL_MESSAGE_FULL = (
+    "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
+    "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
+    "as observações do dia ao final."
+)
+_INITIAL_MESSAGE_COMPACT = (
+    "Faça a análise pré-mercado de hoje para os ativos da carteira. "
+    "Use get_fear_greed_index, get_sector_performance e para cada ativo: "
+    "get_stock_data, get_news, get_technical_indicators."
+)
 
-    Groq (free tier 20k TPM): tighter limits — max_turns=6, max_tokens=1024,
-    tool results truncated to 2500 chars.
-    Kimi: uses the caller-supplied limits without truncation.
-    """
-    providers = []
-    if os.environ.get("KIMI_API_KEY"):
-        providers.append({
-            "name": "Kimi",
-            "base_url": config.KIMI_BASE_URL,
-            "api_key": os.environ["KIMI_API_KEY"],
-            "model": config.KIMI_MODEL_FULL,
-            "max_turns": config.MAX_AGENT_TURNS,
-            "max_tokens": max_tokens,
-            "max_tool_result_chars": None,
-        })
-    if os.environ.get("GROQ_API_KEY"):
-        providers.append({
-            "name": "Groq",
-            "base_url": config.GROQ_BASE_URL,
-            "api_key": os.environ["GROQ_API_KEY"],
-            "model": config.GROQ_MODEL_FULL,
-            "max_turns": 6,
-            "max_tokens": 1024,
-            "max_tool_result_chars": 2500,
-        })
 
-    for p in providers:
+def _run_anthropic(api_key: str, model: str, system: str, tools: list, max_tokens: int,
+                   initial_message: str, max_turns: int,
+                   progress_callback=None, step_prefix: str = "") -> str:
+    """Run an agentic tool-use loop via the Anthropic API."""
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        raise RuntimeError("anthropic package not installed; run: uv pip install anthropic")
+
+    ac = _anthropic.Anthropic(api_key=api_key)
+    messages: list = [{"role": "user", "content": initial_message}]
+    final_text = ""
+
+    for turn in range(max_turns):
         if progress_callback:
-            progress_callback(f"{step_prefix}Tentando {p['name']} ({p['model']})...")
-        try:
-            return _run_openai_compat(
-                base_url=p["base_url"], api_key=p["api_key"], model=p["model"],
-                system=system, tools=tools,
-                max_tokens=p["max_tokens"],
-                initial_message=initial_message,
-                max_turns=p["max_turns"],
-                provider_name=p["name"],
-                max_tool_result_chars=p["max_tool_result_chars"],
-                progress_callback=progress_callback, step_prefix=step_prefix,
-            )
-        except Exception as e:
+            progress_callback(f"{step_prefix}Turno {turn + 1} — consultando Anthropic ({model})...")
+
+        response = ac.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+
+        tool_uses = []
+        for block in response.content:
+            if hasattr(block, "text"):
+                final_text = block.text
+            elif getattr(block, "type", None) == "tool_use":
+                tool_uses.append(block)
+
+        if not tool_uses or response.stop_reason == "end_turn":
+            break
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        tool_results = []
+        for tu in tool_uses:
             if progress_callback:
-                progress_callback(f"{step_prefix}{p['name']} falhou ({type(e).__name__}: {str(e)[:120]}) — tentando próximo...")
-    return None
+                progress_callback(f"{step_prefix}{tu.name}")
+            result = run_tool(tu.name, dict(tu.input))
+            tool_results.append({"type": "tool_result", "tool_use_id": tu.id, "content": result})
+
+        messages.append({"role": "user", "content": tool_results})
+
+    return final_text
 
 
 def run(progress_callback=None) -> str:
     """
     Executa o loop agêntico e retorna o texto do relatório final.
-    Ordem de fallback: modelos Gemini → Groq → Kimi.
+    Ordem: Groq → Gemini → Kimi → Anthropic.
     """
-    # 1. Tenta modelos Gemini em ordem
+    def _cb(msg: str) -> None:
+        if progress_callback:
+            progress_callback(msg)
+
+    # 1. Groq — free, fast; compact prompt + limited tools to stay within 6k TPM
+    if os.environ.get("GROQ_API_KEY"):
+        _cb(f"Tentando Groq ({config.GROQ_MODEL_FULL})...")
+        try:
+            return _run_openai_compat(
+                base_url=config.GROQ_BASE_URL, api_key=os.environ["GROQ_API_KEY"],
+                model=config.GROQ_MODEL_FULL,
+                system=build_system_prompt_compact(), tools=FALLBACK_TOOLS,
+                max_tokens=1024, initial_message=_INITIAL_MESSAGE_COMPACT,
+                max_turns=6, provider_name="Groq", max_tool_result_chars=2500,
+                progress_callback=progress_callback,
+            )
+        except Exception as e:
+            _cb(f"Groq falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
+
+    # 2. Gemini — free; full prompt + all tools
     gemini_models = list(dict.fromkeys([config.MODEL_FULL] + config.MODEL_FALLBACKS))
     for model in gemini_models:
         try:
             return _run_impl(model, progress_callback)
         except QuotaExhaustedError:
-            if progress_callback:
-                progress_callback(f"Cota diária esgotada para {model} — tentando próximo...")
+            _cb(f"Cota diária esgotada para {model} — tentando próximo...")
         except Exception as e:
-            if progress_callback:
-                progress_callback(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
+            _cb(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
-    # 2. Tenta Groq → Kimi com prompt compacto e conjunto reduzido de ferramentas
-    result = _try_openai_compat_providers(
-        system=build_system_prompt_compact(),
-        tools=FALLBACK_TOOLS,
-        max_tokens=min(config.MAX_TOKENS, 2048),
-        initial_message=(
-            "Faça a análise pré-mercado de hoje para os ativos da carteira. "
-            "Use get_fear_greed_index, get_sector_performance e para cada ativo: "
-            "get_stock_data, get_news, get_technical_indicators."
-        ),
-        max_turns=10,
-        progress_callback=progress_callback,
-    )
-    if result is not None:
-        return result
+    # 3. Kimi — free, 128k context; compact prompt + limited tools
+    if os.environ.get("KIMI_API_KEY"):
+        _cb(f"Tentando Kimi ({config.KIMI_MODEL_FULL})...")
+        try:
+            return _run_openai_compat(
+                base_url=config.KIMI_BASE_URL, api_key=os.environ["KIMI_API_KEY"],
+                model=config.KIMI_MODEL_FULL,
+                system=build_system_prompt_compact(), tools=FALLBACK_TOOLS,
+                max_tokens=2048, initial_message=_INITIAL_MESSAGE_COMPACT,
+                max_turns=config.MAX_AGENT_TURNS, provider_name="Kimi",
+                max_tool_result_chars=None, progress_callback=progress_callback,
+            )
+        except Exception as e:
+            _cb(f"Kimi falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
+
+    # 4. Anthropic — paid last resort; full prompt + all tools
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        _cb(f"Tentando Anthropic ({config.ANTHROPIC_MODEL})...")
+        try:
+            return _run_anthropic(
+                api_key=os.environ["ANTHROPIC_API_KEY"],
+                model=config.ANTHROPIC_MODEL,
+                system=build_system_prompt(), tools=t.TOOLS,
+                max_tokens=config.MAX_TOKENS, initial_message=_INITIAL_MESSAGE_FULL,
+                max_turns=config.MAX_AGENT_TURNS, progress_callback=progress_callback,
+            )
+        except Exception as e:
+            _cb(f"Anthropic falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
 
     raise RuntimeError(
         "Todos os modelos falharam ou esgotaram cota. Tente novamente após meia-noite UTC."

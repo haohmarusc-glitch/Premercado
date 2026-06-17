@@ -54,6 +54,12 @@ KIMI_MODEL_FULL = os.environ.get("KIMI_MODEL_FULL", "moonshot-v1-128k")
 KIMI_MODEL_CHAT = os.environ.get("KIMI_MODEL_CHAT", "moonshot-v1-8k")
 KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
 
+# Anthropic — paid fallback of last resort.
+# Set ANTHROPIC_API_KEY as a Replit Secret to enable.
+# claude-haiku-4-5 is the cheapest Claude model; override via ANTHROPIC_MODEL.
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+ANTHROPIC_MODEL_CHAT = os.environ.get("ANTHROPIC_MODEL_CHAT", "claude-haiku-4-5-20251001")
+
 def validate_gemini_key():
     key = os.environ.get("GEMINI_API_KEY", "")
     return validate_api_key(key, expected_prefix="AIzaSy")
