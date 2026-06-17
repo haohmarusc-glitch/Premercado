@@ -187,14 +187,13 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
 
 
 def _openai_compat_send(oc_client, model: str, messages: list, tools: list, max_tokens: int,
-                        provider_name: str = "Provider",
+                        provider_name: str = "Provider", max_retries: int = 1,
                         progress_callback=None, step_label: str = "") -> object:
     """Send a request to any OpenAI-compatible API, retrying on rate limits."""
     try:
         from openai import RateLimitError
     except ImportError:
         raise RuntimeError("openai package not installed; run: uv pip install openai")
-    max_retries = int(os.environ.get("OPENAI_COMPAT_MAX_RETRIES", "3"))
     for attempt in range(max_retries + 1):
         try:
             return oc_client.chat.completions.create(
@@ -628,6 +627,7 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
                        system: str, tools: list, max_tokens: int,
                        initial_message: str, max_turns: int,
                        provider_name: str = "Provider",
+                       rate_limit_retries: int = 1,
                        max_tool_result_chars: int | None = None,
                        progress_callback=None, step_prefix: str = "") -> str:
     """Run an agentic tool-use loop via any OpenAI-compatible API (Groq, Kimi, etc.)."""
@@ -654,7 +654,7 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
 
         response = _openai_compat_send(
             oc_client, model, messages, openai_tools, max_tokens,
-            provider_name=provider_name,
+            provider_name=provider_name, max_retries=rate_limit_retries,
             progress_callback=progress_callback, step_label=step_prefix,
         )
         msg = response.choices[0].message
@@ -841,7 +841,8 @@ def run(progress_callback=None) -> str:
                 system=build_system_prompt(), tools=t.TOOLS,
                 max_tokens=config.MAX_TOKENS, initial_message=_INITIAL_MESSAGE_FULL,
                 max_turns=config.MAX_AGENT_TURNS, provider_name="Kimi",
-                max_tool_result_chars=None, progress_callback=progress_callback,
+                rate_limit_retries=2, max_tool_result_chars=None,
+                progress_callback=progress_callback,
             )
         except Exception as e:
             _cb(f"Kimi falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
@@ -856,7 +857,8 @@ def run(progress_callback=None) -> str:
                 system=build_system_prompt(), tools=t.TOOLS,
                 max_tokens=config.MAX_TOKENS, initial_message=_INITIAL_MESSAGE_FULL,
                 max_turns=config.MAX_AGENT_TURNS, provider_name="OpenAI",
-                max_tool_result_chars=None, progress_callback=progress_callback,
+                rate_limit_retries=0, max_tool_result_chars=None,
+                progress_callback=progress_callback,
             )
         except Exception as e:
             _cb(f"OpenAI falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
