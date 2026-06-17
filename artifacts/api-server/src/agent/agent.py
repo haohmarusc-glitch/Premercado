@@ -820,22 +820,7 @@ def run(progress_callback=None) -> str:
         if progress_callback:
             progress_callback(msg)
 
-    # 1. Groq — free, fast; compact prompt + limited tools to stay within 6k TPM
-    if os.environ.get("GROQ_API_KEY"):
-        _cb(f"Tentando Groq ({config.GROQ_MODEL_FULL})...")
-        try:
-            return _run_openai_compat(
-                base_url=config.GROQ_BASE_URL, api_key=os.environ["GROQ_API_KEY"],
-                model=config.GROQ_MODEL_FULL,
-                system=build_system_prompt_compact(), tools=FALLBACK_TOOLS,
-                max_tokens=1024, initial_message=_INITIAL_MESSAGE_COMPACT,
-                max_turns=6, provider_name="Groq", max_tool_result_chars=2500,
-                progress_callback=progress_callback,
-            )
-        except Exception as e:
-            _cb(f"Groq falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
-
-    # 2. Gemini — free; full prompt + all tools
+    # 1. Gemini — free; full prompt + all tools
     gemini_models = list(dict.fromkeys([config.MODEL_FULL] + config.MODEL_FALLBACKS))
     for model in gemini_models:
         try:
@@ -845,7 +830,7 @@ def run(progress_callback=None) -> str:
         except Exception as e:
             _cb(f"Modelo {model} falhou ({type(e).__name__}) — tentando próximo...")
 
-    # 3. Kimi — free, 128k context; full prompt + all tools
+    # 2. Kimi — free, 128k context; full prompt + all tools
     if os.environ.get("KIMI_API_KEY"):
         _cb(f"Tentando Kimi ({config.KIMI_MODEL_FULL})...")
         try:
@@ -859,6 +844,21 @@ def run(progress_callback=None) -> str:
             )
         except Exception as e:
             _cb(f"Kimi falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
+
+    # 3. Groq — free but limited (5 tools, compact prompt, tight token budget)
+    if os.environ.get("GROQ_API_KEY"):
+        _cb(f"Tentando Groq ({config.GROQ_MODEL_FULL})...")
+        try:
+            return _run_openai_compat(
+                base_url=config.GROQ_BASE_URL, api_key=os.environ["GROQ_API_KEY"],
+                model=config.GROQ_MODEL_FULL,
+                system=build_system_prompt_compact(), tools=FALLBACK_TOOLS,
+                max_tokens=1024, initial_message=_INITIAL_MESSAGE_COMPACT,
+                max_turns=6, provider_name="Groq", max_tool_result_chars=2500,
+                progress_callback=progress_callback,
+            )
+        except Exception as e:
+            _cb(f"Groq falhou ({type(e).__name__}: {str(e)[:100]}) — tentando próximo...")
 
     # 4. Anthropic — paid last resort; full prompt + all tools
     if os.environ.get("ANTHROPIC_API_KEY"):
