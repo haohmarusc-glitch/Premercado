@@ -76,12 +76,17 @@ def _to_openai_tools(anthropic_tools: list, kimi: bool = False) -> list:
     for tool in anthropic_tools:
         schema = tool.get("input_schema", {})
         func: dict = {"name": tool["name"], "description": tool["description"]}
-        if schema.get("properties"):
-            params = _clean_schema_openai(schema, safe)
-            if "type" not in params:
-                params["type"] = "object"
-        else:
-            params = {"type": "object", "properties": {}}
+        params = _clean_schema_openai(schema, safe)
+        if "type" not in params:
+            params["type"] = "object"
+        if "properties" not in params:
+            params["properties"] = {}
+        if kimi:
+            # Kimi rejects empty required arrays and empty properties objects
+            if not params.get("required"):
+                params.pop("required", None)
+            if not params.get("properties"):
+                params.pop("properties", None)
         func["parameters"] = params
         result.append({"type": "function", "function": func})
     return result
