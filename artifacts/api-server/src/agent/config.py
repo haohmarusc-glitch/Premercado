@@ -46,12 +46,13 @@ GROQ_MODEL_FULL = os.environ.get("GROQ_MODEL_FULL", "llama3-groq-8b-8192-tool-us
 GROQ_MODEL_CHAT = os.environ.get("GROQ_MODEL_CHAT", "llama3-groq-8b-8192-tool-use-preview")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
-# Kimi (Moonshot AI) — second non-Gemini fallback.
+# Kimi (Moonshot AI) — first non-Gemini fallback.
 # Get a free key at: https://platform.moonshot.cn/
 # Set KIMI_API_KEY as a Replit Secret to enable.
-KIMI_MODEL_FULL = os.environ.get("KIMI_MODEL_FULL", "moonshot-v1-32k")
+# Use api.moonshot.ai (not .cn) for access outside China.
+KIMI_MODEL_FULL = os.environ.get("KIMI_MODEL_FULL", "moonshot-v1-128k")
 KIMI_MODEL_CHAT = os.environ.get("KIMI_MODEL_CHAT", "moonshot-v1-8k")
-KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
 
 def validate_gemini_key():
     key = os.environ.get("GEMINI_API_KEY", "")
