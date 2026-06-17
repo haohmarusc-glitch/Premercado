@@ -186,17 +186,18 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
             time.sleep(wait)
 
 
-def _kimi_send(kimi_client, model: str, messages: list, tools: list, max_tokens: int,
-               progress_callback=None, step_label: str = "") -> object:
-    """Send a Kimi request, retrying on rate limits (raises QuotaExhaustedError after max retries)."""
+def _openai_compat_send(oc_client, model: str, messages: list, tools: list, max_tokens: int,
+                        provider_name: str = "Provider",
+                        progress_callback=None, step_label: str = "") -> object:
+    """Send a request to any OpenAI-compatible API, retrying on rate limits."""
     try:
         from openai import RateLimitError
     except ImportError:
         raise RuntimeError("openai package not installed; run: uv pip install openai")
-    max_retries = int(os.environ.get("KIMI_MAX_RETRIES", "3"))
+    max_retries = int(os.environ.get("OPENAI_COMPAT_MAX_RETRIES", "3"))
     for attempt in range(max_retries + 1):
         try:
-            return kimi_client.chat.completions.create(
+            return oc_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 tools=tools if tools else None,
@@ -207,9 +208,8 @@ def _kimi_send(kimi_client, model: str, messages: list, tools: list, max_tokens:
                 raise QuotaExhaustedError(str(e)) from e
             wait = 60.0 * (attempt + 1)
             if progress_callback:
-                progress_callback(f"{step_label}Kimi rate limit — aguardando {int(wait)}s...")
+                progress_callback(f"{step_label}{provider_name} rate limit — aguardando {int(wait)}s...")
             time.sleep(wait)
-
 
 def _execute_tools(tool_calls: list, progress_callback=None, prefix="") -> list:
     """Execute tool calls and return a list of function-response Parts."""
@@ -562,7 +562,7 @@ def run_chat_stream(message: str, history: list) -> None:
 
                 for turn in range(6):
                     print(f"STEP:Turno {turn + 1}... ({pname})", flush=True)
-                    resp = _kimi_send(oc_client, pmodel, oc_messages, openai_tools, config.MAX_TOKENS_CHAT)
+                    resp = _openai_compat_send(oc_client, pmodel, oc_messages, openai_tools, config.MAX_TOKENS_CHAT, provider_name=pname)
                     msg = resp.choices[0].message
                     assistant_entry: dict = {"role": "assistant", "content": msg.content or ""}
                     if msg.tool_calls:
@@ -652,9 +652,10 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
         if progress_callback:
             progress_callback(f"{step_prefix}Turno {turn + 1} — consultando {provider_name} ({model})...")
 
-        response = _kimi_send(
+        response = _openai_compat_send(
             oc_client, model, messages, openai_tools, max_tokens,
-            progress_callback, step_prefix,
+            provider_name=provider_name,
+            progress_callback=progress_callback, step_label=step_prefix,
         )
         msg = response.choices[0].message
 
