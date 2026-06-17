@@ -48,33 +48,36 @@ def _to_gemini_tools(anthropic_tools: list) -> list:
     return [{"function_declarations": declarations}]
 
 
-def _clean_schema_openai(schema: object) -> object:
-    """Strip fields unsupported by OpenAI-compatible APIs (Groq, Kimi).
-    More aggressive than _clean_schema(): also removes format, examples, nullable, etc."""
-    _SAFE = {"type", "description", "properties", "required", "items", "enum",
-             "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+_GROQ_SAFE = {"type", "description", "properties", "required", "items", "enum",
+              "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+# Kimi (Moonshot) only accepts a minimal subset of JSON Schema fields
+_KIMI_SAFE = {"type", "description", "properties", "required", "items", "enum"}
+
+
+def _clean_schema_openai(schema: object, safe: frozenset | set = _GROQ_SAFE) -> object:
+    """Strip fields unsupported by OpenAI-compatible APIs (Groq, Kimi)."""
     if isinstance(schema, dict):
         cleaned = {}
         for k, v in schema.items():
-            if k in _SAFE:
-                cleaned[k] = _clean_schema_openai(v)
-        # Groq requires type:object at top level of parameters
+            if k in safe:
+                cleaned[k] = _clean_schema_openai(v, safe)
         if "properties" in cleaned and "type" not in cleaned:
             cleaned["type"] = "object"
         return cleaned
     if isinstance(schema, list):
-        return [_clean_schema_openai(item) for item in schema]
+        return [_clean_schema_openai(item, safe) for item in schema]
     return schema
 
 
-def _to_openai_tools(anthropic_tools: list) -> list:
+def _to_openai_tools(anthropic_tools: list, kimi: bool = False) -> list:
     """Convert Anthropic tool list to OpenAI function calling format (Groq, Kimi, etc.)."""
+    safe = _KIMI_SAFE if kimi else _GROQ_SAFE
     result = []
     for tool in anthropic_tools:
         schema = tool.get("input_schema", {})
         func: dict = {"name": tool["name"], "description": tool["description"]}
         if schema.get("properties"):
-            params = _clean_schema_openai(schema)
+            params = _clean_schema_openai(schema, safe)
             if "type" not in params:
                 params["type"] = "object"
         else:
@@ -601,7 +604,7 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
         api_key=api_key,
         base_url=base_url,
     )
-    openai_tools = _to_openai_tools(tools)
+    openai_tools = _to_openai_tools(tools, kimi=(provider_name == "Kimi"))
     messages: list = [
         {"role": "system", "content": system},
         {"role": "user", "content": initial_message},
