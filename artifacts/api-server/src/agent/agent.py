@@ -163,9 +163,11 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
         try:
             return chat.send_message(message)
         except ClientError as e:
-            if getattr(e, "status_code", None) != 429 or attempt == max_retries:
-                raise
             err_str = str(e)
+            sc = getattr(e, "status_code", None)
+            is_429 = sc == 429 or str(sc) == "429" or err_str.startswith("429") or "RESOURCE_EXHAUSTED" in err_str
+            if not is_429 or attempt == max_retries:
+                raise
             # Daily quota cannot be recovered by waiting — signal for model fallback
             if "PerDay" in err_str or "per_day" in err_str.lower():
                 raise QuotaExhaustedError(err_str) from e
@@ -175,7 +177,10 @@ def _send(chat, message, progress_callback=None, step_label: str = "") -> object
                 progress_callback(f"{step_label}Rate limit — aguardando {int(wait)}s...")
             time.sleep(wait)
         except ServerError as e:
-            if getattr(e, "status_code", None) != 503:
+            err_str_s = str(e)
+            sc_s = getattr(e, "status_code", None)
+            is_503 = sc_s == 503 or str(sc_s) == "503" or err_str_s.startswith("503") or "UNAVAILABLE" in err_str_s
+            if not is_503:
                 raise
             if attempt == max_retries:
                 # Persistent 503 — trigger model fallback the same way quota exhaustion does
