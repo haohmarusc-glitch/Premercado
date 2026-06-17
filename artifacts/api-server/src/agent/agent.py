@@ -670,20 +670,43 @@ def _run_openai_compat(base_url: str, api_key: str, model: str,
         if msg.content:
             final_text = msg.content
 
-        if not msg.tool_calls:
-            break
+        # Native function calling (OpenAI tool_calls field)
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                if progress_callback:
+                    progress_callback(f"{step_prefix}{tc.function.name}")
+                try:
+                    args = _json.loads(tc.function.arguments)
+                except _json.JSONDecodeError:
+                    args = {}
+                result = run_tool(tc.function.name, args)
+                if max_tool_result_chars and len(result) > max_tool_result_chars:
+                    result = result[:max_tool_result_chars] + "...[truncado]"
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            continue
 
-        for tc in msg.tool_calls:
-            if progress_callback:
-                progress_callback(f"{step_prefix}{tc.function.name}")
-            try:
-                args = _json.loads(tc.function.arguments)
-            except _json.JSONDecodeError:
-                args = {}
-            result = run_tool(tc.function.name, args)
-            if max_tool_result_chars and len(result) > max_tool_result_chars:
-                result = result[:max_tool_result_chars] + "...[truncado]"
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+        # Kimi text-based tool call fallback: "functions.name:id$\n{args}"
+        if provider_name == "Kimi" and msg.content:
+            import re as _re
+            text_calls = _re.findall(
+                r'functions\.(\w+):\d+\$\s*\n?\s*(\{.*?\})',
+                msg.content, _re.DOTALL,
+            )
+            if text_calls:
+                tool_results: list[str] = []
+                for tc_name, tc_args_raw in text_calls:
+                    if progress_callback:
+                        progress_callback(f"{step_prefix}{tc_name}")
+                    try:
+                        args = _json.loads(tc_args_raw)
+                    except _json.JSONDecodeError:
+                        args = {}
+                    result = run_tool(tc_name, args)
+                    tool_results.append(f"[{tc_name} result]\n{result}")
+                messages.append({"role": "user", "content": "\n\n".join(tool_results)})
+                continue
+
+        break
 
     return final_text
 
