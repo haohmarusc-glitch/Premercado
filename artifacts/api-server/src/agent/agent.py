@@ -546,6 +546,8 @@ def run_chat_stream(message: str, history: list) -> None:
             providers_chat.append(("Groq", config.GROQ_BASE_URL, os.environ["GROQ_API_KEY"], config.GROQ_MODEL_CHAT))
         if OpenAI and os.environ.get("KIMI_API_KEY"):
             providers_chat.append(("Kimi", config.KIMI_BASE_URL, os.environ["KIMI_API_KEY"], config.KIMI_MODEL_CHAT))
+        if OpenAI and os.environ.get("OPENAI_API_KEY"):
+            providers_chat.append(("OpenAI", config.OPENAI_BASE_URL, os.environ["OPENAI_API_KEY"], config.OPENAI_MODEL_CHAT))
 
         for pname, base_url, api_key, pmodel in providers_chat:
             print(f"STEP:Tentando {pname} ({pmodel})...", flush=True)
