@@ -32,6 +32,18 @@ def _cached_tools(tools: list) -> list:
     return cached
 
 
+def build_system_prompt_lite() -> str:
+    """Prompt reduzido para provedores com limite baixo de tokens (Groq free tier)."""
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    tickers = ", ".join(config.TICKERS)
+    portfolio = ", ".join(config.PORTFOLIO_TICKERS)
+    return f"""Você é um analista de ações. Data: {today}. Tickers: {tickers}. Carteira: {portfolio}.
+
+Fluxo: 1) get_fear_greed_index 2) get_sector_performance 3) Para cada ticker da carteira: get_stock_data + get_news 4) save_observation com resumo.
+
+Seja conciso. Formate em Markdown. Cite números."""
+
+
 def build_system_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     return f"""Você é um analista de ações sênior fazendo a leitura pré-mercado do dia {today}.
@@ -180,7 +192,8 @@ CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 
 def run(progress_callback=None) -> str:
     client = _get_client()
-    system = build_system_prompt()
+    system_full = build_system_prompt()
+    system_lite = build_system_prompt_lite()
     model = client.models["full"]
     messages = [{
         "role": "user",
@@ -196,6 +209,7 @@ def run(progress_callback=None) -> str:
         if progress_callback:
             progress_callback(f"Turno {turn + 1} — consultando {client.provider_name}...")
 
+        system = system_lite if client.provider_name == "groq" else system_full
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS,

@@ -71,9 +71,18 @@ PROVIDERS = {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "api_key_env": "GEMINI_API_KEY",
         "models": {
-            "full":  "gemini-1.5-flash",
-            "flash": "gemini-1.5-flash",
-            "chat":  "gemini-1.5-flash",
+            "full":  "gemini-1.5-flash-latest",
+            "flash": "gemini-1.5-flash-latest",
+            "chat":  "gemini-1.5-flash-latest",
+        },
+    },
+    "gemini-pro": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "models": {
+            "full":  "gemini-1.5-pro-latest",
+            "flash": "gemini-1.5-pro-latest",
+            "chat":  "gemini-1.5-pro-latest",
         },
     },
     "kimi": {
@@ -261,7 +270,7 @@ class ProviderClient:
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "gemini", "gemini15", "openai", "kimi", "groq"]
+_DEFAULT_ORDER = ["anthropic", "gemini", "gemini15", "gemini-pro", "openai", "kimi", "groq"]
 
 def _provider_order() -> list[str]:
     env = os.environ.get("AGENT_PROVIDER_ORDER", "")
