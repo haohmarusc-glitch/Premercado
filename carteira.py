@@ -1,18 +1,16 @@
 """
-Gera Carteira_Investimentos.xlsx a partir dos dados reais do banco de dados.
-Usa DATABASE_URL do ambiente (mesmo banco da interface web).
+Gera Carteira_Investimentos.xlsx a partir da API REST do servidor local.
+Requer openpyxl. Nao precisa de psycopg2.
 """
 import os
 import sys
-import psycopg2
+import json
+import urllib.request
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import CellIsRule
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    print("ERRO: DATABASE_URL nao definida.", file=sys.stderr)
-    sys.exit(1)
+API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8080")
 
 # ── Cores e estilos ────────────────────────────────────────────────────────────
 DARK_BG   = "1E1E2E"
@@ -46,23 +44,30 @@ FMT_DATE = 'DD/MM/YYYY'
 FMT_CURR = 'R$ #,##0.00;(R$ #,##0.00);"-"'
 FMT_PCT  = '0.00%;(0.00%);"-"'
 
-# ── Busca dados do banco ───────────────────────────────────────────────────────
-conn = psycopg2.connect(DATABASE_URL)
-cur  = conn.cursor()
+# ── Busca dados via API REST ───────────────────────────────────────────────────
+def api_get(path):
+    url = f"{API_BASE}{path}"
+    with urllib.request.urlopen(url, timeout=10) as r:
+        return json.loads(r.read())
 
-cur.execute("""
-    SELECT
-        p.ticker,
-        p.avg_cost,
-        pu.purchase_date,
-        pu.amount
-    FROM portfolio_positions p
-    JOIN portfolio_purchases pu ON pu.position_id = p.id
-    ORDER BY p.ticker, pu.purchase_date
-""")
-rows_db = cur.fetchall()
-cur.close()
-conn.close()
+try:
+    positions = api_get("/portfolio")
+except Exception as e:
+    print(f"ERRO: nao foi possivel conectar ao servidor em {API_BASE}\n{e}", file=sys.stderr)
+    sys.exit(1)
+
+rows_db = []
+for pos in positions:
+    try:
+        purchases = api_get(f"/portfolio/{pos['id']}/purchases")
+    except Exception:
+        purchases = []
+
+    if purchases:
+        for pu in purchases:
+            rows_db.append((pos["ticker"], pos["avgCost"], pu["purchaseDate"], pu["amount"]))
+    else:
+        rows_db.append((pos["ticker"], pos["avgCost"], pos["firstPurchaseDate"], pos["investedAmount"]))
 
 # ── Monta workbook ─────────────────────────────────────────────────────────────
 wb = Workbook()
