@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import CellIsRule
 
-API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8080")
+API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8080/api")
 API_KEY  = os.environ.get("OPERATOR_API_KEY", "")
 
 # ── Cores e estilos ────────────────────────────────────────────────────────────
