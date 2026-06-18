@@ -98,7 +98,8 @@ export const alertsTable = pgTable("alerts", {
   id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
   condition: text("condition").notNull(), // 'above' | 'below'
-  thresholdPct: doublePrecision("threshold_pct").notNull(),
+  thresholdPct: doublePrecision("threshold_pct"),
+  thresholdPrice: doublePrecision("threshold_price"),
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -117,8 +118,9 @@ export const alertFiringsTable = pgTable("alert_firings", {
     .references(() => alertsTable.id, { onDelete: "cascade" }),
   symbol: text("symbol").notNull(),
   condition: text("condition").notNull(),
-  thresholdPct: doublePrecision("threshold_pct").notNull(),
-  changePctAtFiring: doublePrecision("change_pct_at_firing").notNull(),
+  thresholdPct: doublePrecision("threshold_pct"),
+  thresholdPrice: doublePrecision("threshold_price"),
+  changePctAtFiring: doublePrecision("change_pct_at_firing"),
   priceAtFiring: doublePrecision("price_at_firing"),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
 }, (t) => [

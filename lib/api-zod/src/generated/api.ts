@@ -110,7 +110,8 @@ export const ListAlertsResponseItem = zod.object({
   "id": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number(),
+  "thresholdPct": zod.number().nullish(),
+  "thresholdPrice": zod.number().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -124,7 +125,8 @@ export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
 export const CreateAlertBody = zod.object({
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number()
+  "thresholdPct": zod.number().nullish(),
+  "thresholdPrice": zod.number().nullish()
 })
 
 
@@ -151,7 +153,8 @@ export const ToggleAlertResponse = zod.object({
   "id": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number(),
+  "thresholdPct": zod.number().nullish(),
+  "thresholdPrice": zod.number().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -180,8 +183,9 @@ export const ListAlertFiringsResponseItem = zod.object({
   "alertId": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number(),
-  "changePctAtFiring": zod.number(),
+  "thresholdPct": zod.number().nullish(),
+  "thresholdPrice": zod.number().nullish(),
+  "changePctAtFiring": zod.number().nullish(),
   "priceAtFiring": zod.number().nullish(),
   "firedAt": zod.string()
 })

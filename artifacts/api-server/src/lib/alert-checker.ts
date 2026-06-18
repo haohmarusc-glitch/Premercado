@@ -63,10 +63,16 @@ async function checkAlerts(): Promise<void> {
     const quote = quoteMap.get(alert.symbol);
     if (!quote || quote.changePct == null) continue;
 
-    const triggered =
-      alert.condition === "above"
+    let triggered = false;
+    if (alert.thresholdPrice != null && quote.price != null) {
+      triggered = alert.condition === "above"
+        ? quote.price >= alert.thresholdPrice
+        : quote.price <= alert.thresholdPrice;
+    } else if (alert.thresholdPct != null && quote.changePct != null) {
+      triggered = alert.condition === "above"
         ? quote.changePct >= alert.thresholdPct
         : quote.changePct <= alert.thresholdPct;
+    }
 
     if (!triggered) continue;
 
@@ -96,6 +102,7 @@ async function checkAlerts(): Promise<void> {
         symbol: alert.symbol,
         condition: alert.condition,
         thresholdPct: alert.thresholdPct,
+        thresholdPrice: alert.thresholdPrice,
         changePctAtFiring: quote.changePct,
         priceAtFiring: quote.price,
         firedAt: now,

@@ -9,5 +9,8 @@
 export interface AlertCreateInput {
   symbol: string;
   condition: string;
-  thresholdPct: number;
+  /** @nullable */
+  thresholdPct?: number | null;
+  /** @nullable */
+  thresholdPrice?: number | null;
 }

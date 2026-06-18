@@ -10,7 +10,10 @@ export interface PriceAlert {
   id: number;
   symbol: string;
   condition: string;
-  thresholdPct: number;
+  /** @nullable */
+  thresholdPct?: number | null;
+  /** @nullable */
+  thresholdPrice?: number | null;
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
