@@ -427,12 +427,27 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
 
                         <td className="px-2 py-2">
                           <div className="flex gap-1">
-                            {!isSold && (
+                            {!isSold ? (
                               <Button size="sm" variant="outline"
                                 className="h-5 px-2 text-[10px] font-mono text-green-400 border-green-500/30 hover:bg-green-500/10"
                                 onClick={() => handleSaleOpen(p.id)}
                               >
                                 Vender
+                              </Button>
+                            ) : (
+                              <Button size="sm" variant="outline"
+                                className="h-5 px-2 text-[10px] font-mono text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                                onClick={async () => {
+                                  await fetch(`/api/portfolio/purchases/${p.id}`, {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ saleDate: null, salePrice: null }),
+                                    credentials: "include",
+                                  });
+                                  invalidate();
+                                }}
+                              >
+                                ↩ Desfazer
                               </Button>
                             )}
                             <Button size="sm" variant="ghost"
