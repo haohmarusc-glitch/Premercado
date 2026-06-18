@@ -205,11 +205,17 @@ class ProviderClient:
             return self._call_openai(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages)
 
     def _call_anthropic(self, *, model, max_tokens, system, tools, messages) -> NormalizedResponse:
+        # Apply Anthropic prompt caching
+        if isinstance(system, str):
+            system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        cached_tools = list(tools)
+        if cached_tools:
+            cached_tools[-1] = {**cached_tools[-1], "cache_control": {"type": "ephemeral"}}
         resp = self._anthropic.messages.create(
             model=model,
             max_tokens=max_tokens,
             system=system,
-            tools=tools,
+            tools=cached_tools,
             messages=messages,
         )
         content = []
@@ -243,12 +249,101 @@ class ProviderClient:
         return result
 
 
+# ── Fallback chain ────────────────────────────────────────────────────────────
+
+# Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
+_DEFAULT_ORDER = ["anthropic", "groq", "gemini", "openai", "kimi"]
+
+def _provider_order() -> list[str]:
+    env = os.environ.get("AGENT_PROVIDER_ORDER", "")
+    if env:
+        return [p.strip() for p in env.split(",") if p.strip()]
+    # Put AGENT_PROVIDER first, then the rest of the defaults
+    primary = os.environ.get("AGENT_PROVIDER", "anthropic").lower()
+    order = [primary] + [p for p in _DEFAULT_ORDER if p != primary]
+    return order
+
+def _has_key(provider_name: str) -> bool:
+    cfg = PROVIDERS.get(provider_name)
+    if not cfg:
+        return False
+    return bool(os.environ.get(cfg["api_key_env"], "").strip())
+
+def _is_quota_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in [
+        "credit balance", "quota", "rate limit", "429", "insufficient_quota",
+        "billing", "too many requests", "tokens", "capacity",
+    ])
+
+
+class FallbackClient:
+    """Tries providers in order, falling back on quota/auth errors."""
+
+    def __init__(self):
+        self._order = [p for p in _provider_order() if _has_key(p)]
+        if not self._order:
+            raise RuntimeError("No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, KIMI_API_KEY")
+        self._clients: dict[str, ProviderClient] = {}
+        self._current_idx = 0
+
+    @property
+    def provider_name(self) -> str:
+        return self._order[self._current_idx] if self._current_idx < len(self._order) else self._order[-1]
+
+    @property
+    def models(self) -> dict:
+        return self._get_client(self.provider_name).models
+
+    def _get_client(self, name: str) -> ProviderClient:
+        if name not in self._clients:
+            self._clients[name] = ProviderClient(name)
+        return self._clients[name]
+
+    def create(self, *, model: str, max_tokens: int, system, tools: list, messages: list) -> NormalizedResponse:
+        for idx in range(self._current_idx, len(self._order)):
+            name = self._order[idx]
+            c = self._get_client(name)
+            # Remap model tier: resolve model string from provider's own model map
+            tier = _resolve_tier(model)
+            resolved_model = c.models.get(tier, model) if tier else model
+            try:
+                result = c.create(
+                    model=resolved_model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    tools=tools,
+                    messages=messages,
+                )
+                if idx != self._current_idx:
+                    print(f"[provider] switched to {name}", flush=True)
+                    self._current_idx = idx
+                return result
+            except Exception as exc:
+                print(f"[provider] {name} failed: {exc}", flush=True)
+                if idx + 1 < len(self._order):
+                    print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
+                else:
+                    raise RuntimeError(f"All providers exhausted. Last error: {exc}") from exc
+        raise RuntimeError("No providers available")
+
+
+# Tier detection: map a model name back to its tier key
+_TIER_MAP: dict[str, str] = {}
+for _pname, _pcfg in PROVIDERS.items():
+    for _tier, _mname in _pcfg["models"].items():
+        _TIER_MAP[_mname] = _tier
+
+def _resolve_tier(model: str) -> str | None:
+    return _TIER_MAP.get(model)
+
+
 # ── Singleton factory ─────────────────────────────────────────────────────────
 
-_client: ProviderClient | None = None
+_client: FallbackClient | None = None
 
-def get_client() -> ProviderClient:
+def get_client() -> FallbackClient:
     global _client
     if _client is None:
-        _client = ProviderClient()
+        _client = FallbackClient()
     return _client

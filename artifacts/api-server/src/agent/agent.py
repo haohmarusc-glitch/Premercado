@@ -199,8 +199,8 @@ def run(progress_callback=None) -> str:
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS,
-            system=_cached_system(system) if client.provider_name == "anthropic" else system,
-            tools=_cached_tools(t.TOOLS) if client.provider_name == "anthropic" else t.TOOLS,
+            system=system,
+            tools=t.TOOLS,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
@@ -247,8 +247,8 @@ def run_premarket(progress_callback=None) -> str:
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS_PREMARKET,
-            system=_cached_system(system) if client.provider_name == "anthropic" else system,
-            tools=_cached_tools(t.TOOLS) if client.provider_name == "anthropic" else t.TOOLS,
+            system=system,
+            tools=t.TOOLS,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
@@ -290,8 +290,8 @@ def run_chat_stream(message: str, history: list) -> None:
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS_CHAT,
-            system=_cached_system(system) if client.provider_name == "anthropic" else system,
-            tools=_cached_tools(CHAT_TOOLS) if client.provider_name == "anthropic" else CHAT_TOOLS,
+            system=system,
+            tools=CHAT_TOOLS,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
