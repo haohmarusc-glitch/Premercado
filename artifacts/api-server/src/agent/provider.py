@@ -67,22 +67,13 @@ PROVIDERS = {
             "chat":  "gemini-2.0-flash",
         },
     },
-    "gemini15": {
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "api_key_env": "GEMINI_API_KEY",
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
         "models": {
-            "full":  "gemini-1.5-flash-latest",
-            "flash": "gemini-1.5-flash-latest",
-            "chat":  "gemini-1.5-flash-latest",
-        },
-    },
-    "gemini-pro": {
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "api_key_env": "GEMINI_API_KEY",
-        "models": {
-            "full":  "gemini-1.5-pro-latest",
-            "flash": "gemini-1.5-pro-latest",
-            "chat":  "gemini-1.5-pro-latest",
+            "full":  "meta-llama/llama-3.3-70b-instruct:free",
+            "flash": "meta-llama/llama-3.1-8b-instruct:free",
+            "chat":  "meta-llama/llama-3.3-70b-instruct:free",
         },
     },
     "kimi": {
@@ -270,7 +261,7 @@ class ProviderClient:
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "gemini", "gemini15", "gemini-pro", "openai", "kimi", "groq"]
+_DEFAULT_ORDER = ["anthropic", "gemini", "openrouter", "openai", "kimi", "groq"]
 
 def _provider_order() -> list[str]:
     env = os.environ.get("AGENT_PROVIDER_ORDER", "")
