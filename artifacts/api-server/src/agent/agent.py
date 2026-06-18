@@ -194,6 +194,9 @@ def run(progress_callback=None) -> str:
     client = _get_client()
     system_full = build_system_prompt()
     system_lite = build_system_prompt_lite()
+    def _system_fn(provider_name: str) -> str:
+        return system_lite if provider_name == "groq" else system_full
+
     model = client.models["full"]
     messages = [{
         "role": "user",
@@ -209,13 +212,13 @@ def run(progress_callback=None) -> str:
         if progress_callback:
             progress_callback(f"Turno {turn + 1} — consultando {client.provider_name}...")
 
-        system = system_lite if client.provider_name == "groq" else system_full
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS,
-            system=system,
+            system=system_full,
             tools=t.TOOLS,
             messages=messages,
+            system_fn=_system_fn,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 

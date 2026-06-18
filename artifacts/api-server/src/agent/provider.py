@@ -309,18 +309,23 @@ class FallbackClient:
             self._clients[name] = ProviderClient(name)
         return self._clients[name]
 
-    def create(self, *, model: str, max_tokens: int, system, tools: list, messages: list) -> NormalizedResponse:
+    def create(self, *, model: str, max_tokens: int, system, tools: list, messages: list,
+               system_fn=None) -> NormalizedResponse:
+        """
+        system_fn: optional callable(provider_name: str) -> str that returns a
+        provider-specific system prompt. Overrides system when provided.
+        """
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
             c = self._get_client(name)
-            # Remap model tier: resolve model string from provider's own model map
             tier = _resolve_tier(model)
             resolved_model = c.models.get(tier, model) if tier else model
+            resolved_system = system_fn(name) if system_fn else system
             try:
                 result = c.create(
                     model=resolved_model,
                     max_tokens=max_tokens,
-                    system=system,
+                    system=resolved_system,
                     tools=tools,
                     messages=messages,
                 )
