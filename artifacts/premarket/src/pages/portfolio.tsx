@@ -553,6 +553,35 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
               <Label className="text-xs font-mono">Preço de venda ($)</Label>
               <Input type="number" placeholder="0.00" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} className="font-mono text-xs h-8" />
             </div>
+            {(() => {
+              const purchase = salePurchaseId ? purchases.find(p => p.id === salePurchaseId) : null;
+              const qty = purchase?.purchasePrice ? purchase.amount / purchase.purchasePrice : null;
+              const salePriceNum = parseFloat(salePrice);
+              const saleTotal = qty && !isNaN(salePriceNum) ? qty * salePriceNum : null;
+              const purchaseCost = purchase?.amount ?? null;
+              const pnl = saleTotal != null && purchaseCost != null ? saleTotal - purchaseCost : null;
+              return saleTotal != null ? (
+                <div className="rounded border border-border bg-muted/20 px-3 py-2 space-y-1 font-mono text-xs">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Qtde</span>
+                    <span>{qty?.toFixed(5)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor da venda</span>
+                    <span className="font-semibold">${saleTotal.toFixed(2)}</span>
+                  </div>
+                  {pnl != null && (
+                    <div className="flex justify-between border-t border-border pt-1">
+                      <span className="text-muted-foreground">Lucro/Perda</span>
+                      <span className={pnl >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
+                        {pnl >= 0 ? "+" : ""}${Math.abs(pnl).toFixed(2)}
+                        {purchaseCost ? ` (${((pnl / purchaseCost) * 100).toFixed(1)}%)` : ""}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : null;
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setSaleOpen(false)} className="font-mono text-xs">Cancelar</Button>
