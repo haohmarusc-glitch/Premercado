@@ -310,10 +310,10 @@ class FallbackClient:
         return self._clients[name]
 
     def create(self, *, model: str, max_tokens: int, system, tools: list, messages: list,
-               system_fn=None) -> NormalizedResponse:
+               system_fn=None, tools_fn=None) -> NormalizedResponse:
         """
-        system_fn: optional callable(provider_name: str) -> str that returns a
-        provider-specific system prompt. Overrides system when provided.
+        system_fn: optional callable(provider_name) -> str for per-provider system prompt.
+        tools_fn:  optional callable(provider_name) -> list for per-provider tools subset.
         """
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
@@ -321,12 +321,13 @@ class FallbackClient:
             tier = _resolve_tier(model)
             resolved_model = c.models.get(tier, model) if tier else model
             resolved_system = system_fn(name) if system_fn else system
+            resolved_tools = tools_fn(name) if tools_fn else tools
             try:
                 result = c.create(
                     model=resolved_model,
                     max_tokens=max_tokens,
                     system=resolved_system,
-                    tools=tools,
+                    tools=resolved_tools,
                     messages=messages,
                 )
                 if idx != self._current_idx:

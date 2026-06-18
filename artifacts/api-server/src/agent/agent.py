@@ -187,6 +187,13 @@ _CHAT_TOOL_NAMES = {
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 
+# Minimal tools for providers with small token limits (Groq free tier ~6k TPM)
+_GROQ_TOOL_NAMES = {
+    "get_stock_data", "get_news", "get_fear_greed_index",
+    "get_sector_performance", "save_observation",
+}
+GROQ_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _GROQ_TOOL_NAMES]
+
 
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
@@ -196,6 +203,9 @@ def run(progress_callback=None) -> str:
     system_lite = build_system_prompt_lite()
     def _system_fn(provider_name: str) -> str:
         return system_lite if provider_name == "groq" else system_full
+
+    def _tools_fn(provider_name: str) -> list:
+        return GROQ_TOOLS if provider_name == "groq" else t.TOOLS
 
     model = client.models["full"]
     messages = [{
@@ -219,6 +229,7 @@ def run(progress_callback=None) -> str:
             tools=t.TOOLS,
             messages=messages,
             system_fn=_system_fn,
+            tools_fn=_tools_fn,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
