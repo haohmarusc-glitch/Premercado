@@ -235,7 +235,7 @@ ws.freeze_panes = 'A3'
 ws.sheet_properties.tabColor = "00C896"
 
 # ── Salva ──────────────────────────────────────────────────────────────────────
-out = os.path.join(os.path.expanduser("~"), "Desktop", "Carteira_Investimentos.xlsx")
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "Carteira_Investimentos.xlsx")
 wb.save(out)
 print(f"Salvo: {out}")
 print(f"Operacoes exportadas: {len(rows_db)}")
