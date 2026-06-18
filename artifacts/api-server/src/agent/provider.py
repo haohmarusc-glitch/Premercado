@@ -252,7 +252,7 @@ class ProviderClient:
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "groq", "gemini", "openai", "kimi"]
+_DEFAULT_ORDER = ["anthropic", "gemini", "openai", "kimi", "groq"]
 
 def _provider_order() -> list[str]:
     env = os.environ.get("AGENT_PROVIDER_ORDER", "")
