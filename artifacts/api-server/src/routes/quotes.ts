@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
-import { agentDir } from "../lib/runner";
+import { agentDir, getPythonBin } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { GetTickerQuotesResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
@@ -17,7 +17,7 @@ const CACHE_TTL_MS = 60_000;
 function fetchQuotes(tickers: string[]): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(
-      "python3",
+      getPythonBin(),
       ["-m", "agent.get_quotes", ...tickers],
       {
         cwd: agentDir,

@@ -7,7 +7,7 @@
 import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { agentDir } from "./runner";
+import { agentDir, getPythonBin } from "./runner";
 import { sendAlertEmail, sendPortfolioHoldingEmail } from "./mailer";
 import { logger } from "./logger";
 
@@ -23,7 +23,7 @@ interface PriceQuote {
 
 function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
   return new Promise((resolve, reject) => {
-    const py = spawn("python3", ["-m", "agent.get_quotes", ...tickers], {
+    const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
     });

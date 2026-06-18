@@ -4,6 +4,7 @@
  */
 import { spawn } from "child_process";
 import path from "path";
+import { existsSync } from "fs";
 import { eq } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
@@ -31,6 +32,11 @@ const workspaceRoot = process.cwd().endsWith(
   : process.cwd();
 
 export const agentDir = path.resolve(workspaceRoot, "artifacts/api-server/src");
+
+export function getPythonBin(): string {
+  const venvPython = path.resolve(workspaceRoot, ".venv/bin/python");
+  return existsSync(venvPython) ? venvPython : "python3";
+}
 
 export interface AgentState {
   running: boolean;
@@ -80,7 +86,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
 
-  const py = spawn("python3", ["-m", "agent.run_agent"], {
+  const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
     cwd: agentDir,
     env: {
       ...process.env,
