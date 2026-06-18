@@ -282,7 +282,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
   const handleSaleOpen = (purchaseId: number) => {
     setSalePurchaseId(purchaseId);
     setSaleDate(new Date().toISOString().split("T")[0]);
-    setSalePrice("");
+    setSalePrice(currentPrice > 0 ? currentPrice.toFixed(2) : "");
     setSaleOpen(true);
   };
 
@@ -337,6 +337,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                   <tr className="bg-muted/30 text-muted-foreground text-[10px] uppercase tracking-wide">
                     <th className="text-left px-3 py-2">Data Compra</th>
                     <th className="text-right px-3 py-2">Preço Compra</th>
+                    <th className="text-right px-3 py-2">Preço Atual</th>
                     <th className="text-right px-3 py-2">Total Invest.</th>
                     <th className="text-right px-3 py-2">Lucro/Perda Atual</th>
                     <th className="text-right px-3 py-2">Data Venda</th>
@@ -375,6 +376,11 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                         <td className="px-3 py-2 font-semibold">{p.purchaseDate}</td>
                         <td className="px-3 py-2 text-right tabular-nums">
                           {p.purchasePrice ? `$${p.purchasePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                          {!isSold && currentPrice > 0
+                            ? <span className="text-blue-400">${currentPrice.toFixed(2)}</span>
+                            : <span className="text-muted-foreground">—</span>}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">{fmt$(p.amount)}</td>
 
@@ -448,6 +454,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/20 font-semibold">
                       <td className="px-3 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">TOTAL</td>
+                      <td className="px-3 py-2" />
                       <td className="px-3 py-2" />
                       <td className="px-3 py-2 text-right tabular-nums">{fmt$(totalInvested)}</td>
                       <td className={cn("px-3 py-2 text-right tabular-nums",
