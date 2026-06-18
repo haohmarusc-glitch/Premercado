@@ -81,8 +81,8 @@ function FiringHistory({ alertId }: { alertId: number }) {
                 className={`border-b border-border/30 last:border-0 ${i % 2 === 0 ? "" : "bg-secondary/10"}`}
               >
                 <td className="px-3 py-1.5 text-muted-foreground">{fmtDateTime(f.firedAt)}</td>
-                <td className={`px-3 py-1.5 text-right font-bold ${f.changePctAtFiring >= 0 ? "text-green-400" : "text-red-400"}`}>
-                  {fmtPct(f.changePctAtFiring)}
+                <td className={`px-3 py-1.5 text-right font-bold ${(f.changePctAtFiring ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  {f.changePctAtFiring != null ? fmtPct(f.changePctAtFiring) : "—"}
                 </td>
                 <td className="px-3 py-1.5 text-right text-foreground">
                   {f.priceAtFiring != null ? `$${f.priceAtFiring.toFixed(2)}` : "—"}
@@ -116,23 +116,34 @@ export default function Alerts() {
   const [symbol, setSymbol] = useState("");
   const [condition, setCondition] = useState<"above" | "below">("below");
   const [thresholdPct, setThresholdPct] = useState("");
+  const [thresholdPrice, setThresholdPrice] = useState("");
+  const [alertMode, setAlertMode] = useState<"pct" | "price">("price");
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const availableSymbols = quotes?.map((q) => q.symbol) ?? [];
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const pct = parseFloat(thresholdPct);
-    if (!symbol || isNaN(pct)) return;
+    if (!symbol) return;
+
+    const pct = alertMode === "pct" ? parseFloat(thresholdPct) : undefined;
+    const price = alertMode === "price" ? parseFloat(thresholdPrice) : undefined;
+    if (alertMode === "pct" && (pct == null || isNaN(pct))) return;
+    if (alertMode === "price" && (price == null || isNaN(price))) return;
+
+    const desc = alertMode === "price"
+      ? `${symbol} ${condition === "above" ? "acima de" : "abaixo de"} $${price}`
+      : `${symbol} ${condition} ${pct! > 0 ? "+" : ""}${pct}%`;
 
     createAlert.mutate(
-      { data: { symbol, condition, thresholdPct: pct } },
+      { data: { symbol, condition, thresholdPct: pct ?? null, thresholdPrice: price ?? null } },
       {
         onSuccess: () => {
           invalidate();
           setSymbol("");
           setThresholdPct("");
-          toast({ title: "Alerta criado", description: `${symbol} ${condition} ${pct > 0 ? "+" : ""}${pct}%` });
+          setThresholdPrice("");
+          toast({ title: "Alerta criado", description: desc });
         },
         onError: () => toast({ title: "Erro ao criar alerta", variant: "destructive" }),
       },
@@ -253,24 +264,65 @@ export default function Alerts() {
             </div>
 
             <div>
-              <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Variação (%)</label>
-              <div className="flex items-center gap-2">
-                <Input
-                  value={thresholdPct}
-                  onChange={(e) => setThresholdPct(e.target.value)}
-                  type="number"
-                  step="0.5"
-                  placeholder={condition === "below" ? "-5.0" : "3.0"}
-                  className="font-mono bg-secondary border-border w-28"
-                  data-testid="input-threshold-pct"
-                />
-                <span className="font-mono text-sm text-muted-foreground">% no dia</span>
+              <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Tipo de alerta</label>
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setAlertMode("price")}
+                  className={`px-3 py-1.5 rounded border font-mono text-sm transition-colors ${
+                    alertMode === "price"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  $ Preço absoluto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAlertMode("pct")}
+                  className={`px-3 py-1.5 rounded border font-mono text-sm transition-colors ${
+                    alertMode === "pct"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  % Variação diária
+                </button>
               </div>
+
+              {alertMode === "price" ? (
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-muted-foreground">$</span>
+                  <Input
+                    value={thresholdPrice}
+                    onChange={(e) => setThresholdPrice(e.target.value)}
+                    type="number"
+                    step="0.01"
+                    placeholder={condition === "below" ? "865.00" : "1000.00"}
+                    className="font-mono bg-secondary border-border w-32"
+                    data-testid="input-threshold-price"
+                  />
+                  <span className="font-mono text-sm text-muted-foreground">USD</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={thresholdPct}
+                    onChange={(e) => setThresholdPct(e.target.value)}
+                    type="number"
+                    step="0.5"
+                    placeholder={condition === "below" ? "-5.0" : "3.0"}
+                    className="font-mono bg-secondary border-border w-28"
+                    data-testid="input-threshold-pct"
+                  />
+                  <span className="font-mono text-sm text-muted-foreground">% no dia</span>
+                </div>
+              )}
             </div>
 
             <Button
               type="submit"
-              disabled={!symbol || !thresholdPct || createAlert.isPending}
+              disabled={!symbol || (alertMode === "pct" ? !thresholdPct : !thresholdPrice) || createAlert.isPending}
               className="font-mono font-bold"
               data-testid="btn-create-alert"
             >
@@ -279,7 +331,15 @@ export default function Alerts() {
             </Button>
           </div>
 
-          {symbol && thresholdPct && !isNaN(parseFloat(thresholdPct)) && (
+          {symbol && alertMode === "price" && thresholdPrice && !isNaN(parseFloat(thresholdPrice)) && (
+            <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-2">
+              Enviar e-mail quando <span className="text-primary font-bold">{symbol}</span>{" "}
+              {condition === "above" ? "subir acima de" : "cair abaixo de"}{" "}
+              <span className="text-primary font-bold">${parseFloat(thresholdPrice).toFixed(2)}</span>.{" "}
+              Cooldown: 4h.
+            </p>
+          )}
+          {symbol && alertMode === "pct" && thresholdPct && !isNaN(parseFloat(thresholdPct)) && (
             <p className="text-xs font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-2">
               Enviar e-mail quando <span className="text-primary font-bold">{symbol}</span>{" "}
               {condition === "above" ? "subir acima de" : "cair abaixo de"}{" "}
@@ -341,7 +401,9 @@ export default function Alerts() {
                         }`}
                       >
                         {alert.condition === "above" ? "↑ acima de" : "↓ abaixo de"}{" "}
-                        {alert.thresholdPct > 0 ? "+" : ""}{alert.thresholdPct}%
+                        {alert.thresholdPrice != null
+                          ? `$${alert.thresholdPrice.toFixed(2)}`
+                          : `${(alert.thresholdPct ?? 0) > 0 ? "+" : ""}${alert.thresholdPct ?? 0}%`}
                       </Badge>
                       {!alert.enabled && (
                         <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border">
