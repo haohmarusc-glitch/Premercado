@@ -10,6 +10,7 @@ import {
   ListPortfolioPurchasesResponse,
   PortfolioPurchaseSchema,
   CreatePortfolioPurchaseBody,
+  UpdatePortfolioPurchaseBody,
   PortfolioPurchaseParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
@@ -20,7 +21,13 @@ function serPos(r: typeof portfolioPositionsTable.$inferSelect) {
   return { ...r, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString() };
 }
 function serPur(r: typeof portfolioPurchasesTable.$inferSelect) {
-  return { ...r, createdAt: r.createdAt.toISOString() };
+  return {
+    ...r,
+    purchasePrice: r.purchasePrice ?? null,
+    saleDate: r.saleDate ?? null,
+    salePrice: r.salePrice ?? null,
+    createdAt: r.createdAt.toISOString(),
+  };
 }
 
 // Seed initial portfolio data if table is empty
@@ -129,6 +136,20 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
     .values({ positionId: params.data.id, ...body.data })
     .returning();
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
+});
+
+// PATCH /portfolio/purchases/:purchaseId — registrar venda
+router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void> => {
+  const p = PortfolioPurchaseParams.safeParse(req.params);
+  const body = UpdatePortfolioPurchaseBody.safeParse(req.body);
+  if (!p.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
+  const [row] = await db
+    .update(portfolioPurchasesTable)
+    .set({ saleDate: body.data.saleDate ?? null, salePrice: body.data.salePrice ?? null })
+    .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
 // DELETE /portfolio/purchases/:purchaseId

@@ -393,6 +393,9 @@ export const PortfolioPurchaseSchema = zod.object({
   "positionId": zod.number(),
   "purchaseDate": zod.string(),
   "amount": zod.number(),
+  "purchasePrice": zod.number().nullish(),
+  "saleDate": zod.string().nullish(),
+  "salePrice": zod.number().nullish(),
   "createdAt": zod.string(),
 })
 export const ListPortfolioPurchasesResponse = zod.array(PortfolioPurchaseSchema)
@@ -400,6 +403,14 @@ export const ListPortfolioPurchasesResponse = zod.array(PortfolioPurchaseSchema)
 export const CreatePortfolioPurchaseBody = zod.object({
   "purchaseDate": zod.string(),
   "amount": zod.number().positive(),
+  "purchasePrice": zod.number().nullish(),
+  "saleDate": zod.string().nullish(),
+  "salePrice": zod.number().nullish(),
+})
+
+export const UpdatePortfolioPurchaseBody = zod.object({
+  "saleDate": zod.string().nullish(),
+  "salePrice": zod.number().nullish(),
 })
 
 export const PortfolioPurchaseParams = zod.object({

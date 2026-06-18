@@ -242,92 +242,244 @@ function AllocationChart({ data }: { data: AllocEntry[] }) {
 
 // ── Purchases sub-table ───────────────────────────────────────────────────────
 
-function PurchasesRow({ positionId, ticker }: { positionId: number; ticker: string }) {
+function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number; ticker: string; currentPrice: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: purchases = [], isLoading } = useListPortfolioPurchases(positionId);
   const deletePurchase = useDeletePortfolioPurchase();
   const createPurchase = useCreatePortfolioPurchase();
+
   const [addOpen, setAddOpen] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState("");
   const [amount, setAmount] = useState("");
 
+  const [saleOpen, setSaleOpen] = useState(false);
+  const [salePurchaseId, setSalePurchaseId] = useState<number | null>(null);
+  const [saleDate, setSaleDate] = useState("");
+  const [salePrice, setSalePrice] = useState("");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) });
+
   const handleDelete = (purchaseId: number) => {
-    deletePurchase.mutate(
-      { purchaseId },
-      {
-        onSuccess: () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) }),
-        onError: () => toast({ variant: "destructive", title: "Erro ao remover compra" }),
-      },
-    );
+    deletePurchase.mutate({ purchaseId }, {
+      onSuccess: invalidate,
+      onError: () => toast({ variant: "destructive", title: "Erro ao remover compra" }),
+    });
   };
 
   const handleAdd = () => {
     if (!purchaseDate || !amount) return;
     createPurchase.mutate(
-      { positionId, data: { purchaseDate, amount: parseFloat(amount) } },
+      { positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: purchasePrice ? parseFloat(purchasePrice) : null } },
       {
-        onSuccess: () => {
-          qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) });
-          setAddOpen(false);
-          setPurchaseDate("");
-          setAmount("");
-        },
+        onSuccess: () => { invalidate(); setAddOpen(false); setPurchaseDate(""); setPurchasePrice(""); setAmount(""); },
         onError: () => toast({ variant: "destructive", title: "Erro ao adicionar compra" }),
       },
     );
   };
 
+  const handleSaleOpen = (purchaseId: number) => {
+    setSalePurchaseId(purchaseId);
+    setSaleDate(new Date().toISOString().split("T")[0]);
+    setSalePrice("");
+    setSaleOpen(true);
+  };
+
+  const handleSaleSave = async () => {
+    if (!salePurchaseId || !saleDate || !salePrice) return;
+    try {
+      await fetch(`/api/portfolio/purchases/${salePurchaseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saleDate, salePrice: parseFloat(salePrice) }),
+        credentials: "include",
+      });
+      invalidate();
+      setSaleOpen(false);
+      toast({ title: "Venda registrada" });
+    } catch {
+      toast({ variant: "destructive", title: "Erro ao registrar venda" });
+    }
+  };
+
+  // Totais
+  const totalInvested = purchases.reduce((s, p) => s + p.amount, 0);
+  const totalSold = purchases.filter(p => p.salePrice && p.saleDate).reduce((s, p) => {
+    const qty = p.purchasePrice ? p.amount / p.purchasePrice : 0;
+    return s + (qty * (p.salePrice ?? 0));
+  }, 0);
+  const totalRealizedPnl = purchases.filter(p => p.salePrice && p.purchasePrice).reduce((s, p) => {
+    const qty = p.amount / p.purchasePrice!;
+    return s + (qty * ((p.salePrice ?? 0) - p.purchasePrice!));
+  }, 0);
+  const totalUnrealizedPnl = currentPrice > 0
+    ? purchases.filter(p => !p.saleDate && p.purchasePrice).reduce((s, p) => {
+        const qty = p.amount / p.purchasePrice!;
+        return s + (qty * (currentPrice - p.purchasePrice!));
+      }, 0)
+    : null;
+
   return (
     <>
       <tr>
-        <td colSpan={13} className="px-6 py-3 bg-muted/20 border-b border-border/50">
-          <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-2 uppercase tracking-widest">
-            Histórico de compras
+        <td colSpan={13} className="px-6 py-4 bg-muted/20 border-b border-border/50">
+          <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-3 uppercase tracking-widest">
+            Operações — {ticker}
           </div>
+
           {isLoading ? (
             <div className="text-xs text-muted-foreground font-mono">Carregando...</div>
           ) : (
-            <table className="w-full max-w-xs text-xs font-mono">
-              <thead>
-                <tr className="text-muted-foreground">
-                  <th className="text-left py-0.5 pr-8">Data</th>
-                  <th className="text-right pr-4">Valor</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {purchases.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="py-1 text-muted-foreground italic">Nenhuma compra registrada.</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs font-mono border border-border/30 rounded">
+                <thead>
+                  <tr className="bg-muted/30 text-muted-foreground text-[10px] uppercase tracking-wide">
+                    <th className="text-left px-3 py-2">Data Compra</th>
+                    <th className="text-right px-3 py-2">Preço Compra</th>
+                    <th className="text-right px-3 py-2">Total Invest.</th>
+                    <th className="text-right px-3 py-2">Lucro/Perda Atual</th>
+                    <th className="text-right px-3 py-2">Data Venda</th>
+                    <th className="text-right px-3 py-2">Preço Venda</th>
+                    <th className="text-right px-3 py-2">Lucro/Perda Venda</th>
+                    <th className="text-right px-3 py-2">Status</th>
+                    <th className="px-2 py-2" />
                   </tr>
+                </thead>
+                <tbody>
+                  {purchases.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-3 px-3 text-muted-foreground italic">Nenhuma compra registrada.</td>
+                    </tr>
+                  )}
+                  {purchases.map((p) => {
+                    const qty = p.purchasePrice ? p.amount / p.purchasePrice : null;
+                    const isSold = !!p.saleDate && !!p.salePrice;
+
+                    // Lucro/perda atual (não vendido)
+                    const unrealizedPnl = !isSold && qty && currentPrice > 0 && p.purchasePrice
+                      ? qty * (currentPrice - p.purchasePrice)
+                      : null;
+                    const unrealizedPct = unrealizedPnl != null && p.amount > 0
+                      ? (unrealizedPnl / p.amount) * 100 : null;
+
+                    // Lucro/perda da venda
+                    const realizedPnl = isSold && qty && p.purchasePrice && p.salePrice
+                      ? qty * (p.salePrice - p.purchasePrice)
+                      : null;
+                    const realizedPct = realizedPnl != null && p.amount > 0
+                      ? (realizedPnl / p.amount) * 100 : null;
+
+                    return (
+                      <tr key={p.id} className="border-t border-border/20 hover:bg-muted/10">
+                        <td className="px-3 py-2 font-semibold">{p.purchaseDate}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {p.purchasePrice ? `$${p.purchasePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmt$(p.amount)}</td>
+
+                        {/* Lucro/perda atual */}
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-semibold",
+                          unrealizedPnl == null ? "text-muted-foreground"
+                          : unrealizedPnl >= 0 ? "text-green-400" : "text-red-400"
+                        )}>
+                          {unrealizedPnl != null ? (
+                            <span>{unrealizedPnl >= 0 ? "+" : ""}{fmt$(unrealizedPnl)}<br/>
+                            <span className="text-[10px] font-normal">{unrealizedPct! >= 0 ? "+" : ""}{unrealizedPct!.toFixed(2)}%</span></span>
+                          ) : isSold ? <span className="text-muted-foreground text-[10px]">vendida</span> : "—"}
+                        </td>
+
+                        {/* Data venda */}
+                        <td className="px-3 py-2 text-right">
+                          {p.saleDate ?? <span className="text-muted-foreground">—</span>}
+                        </td>
+
+                        {/* Preço venda */}
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {p.salePrice ? `$${p.salePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        </td>
+
+                        {/* Lucro/perda venda */}
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-semibold",
+                          realizedPnl == null ? "text-muted-foreground"
+                          : realizedPnl >= 0 ? "text-green-400" : "text-red-400"
+                        )}>
+                          {realizedPnl != null ? (
+                            <span>{realizedPnl >= 0 ? "+" : ""}{fmt$(realizedPnl)}<br/>
+                            <span className="text-[10px] font-normal">{realizedPct! >= 0 ? "+" : ""}{realizedPct!.toFixed(2)}%</span></span>
+                          ) : "—"}
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-3 py-2 text-right">
+                          <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-semibold",
+                            isSold ? "bg-muted text-muted-foreground" : "bg-green-500/10 text-green-400"
+                          )}>
+                            {isSold ? "Fechada" : "Aberta"}
+                          </span>
+                        </td>
+
+                        <td className="px-2 py-2">
+                          <div className="flex gap-1">
+                            {!isSold && (
+                              <Button size="sm" variant="outline"
+                                className="h-5 px-2 text-[10px] font-mono text-green-400 border-green-500/30 hover:bg-green-500/10"
+                                onClick={() => handleSaleOpen(p.id)}
+                              >
+                                Vender
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost"
+                              className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => handleDelete(p.id)}
+                              disabled={deletePurchase.isPending}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+
+                {/* Linha de totais */}
+                {purchases.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/20 font-semibold">
+                      <td className="px-3 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">TOTAL</td>
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2 text-right tabular-nums">{fmt$(totalInvested)}</td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums",
+                        totalUnrealizedPnl == null ? "text-muted-foreground"
+                        : totalUnrealizedPnl >= 0 ? "text-green-400" : "text-red-400"
+                      )}>
+                        {totalUnrealizedPnl != null
+                          ? `${totalUnrealizedPnl >= 0 ? "+" : ""}${fmt$(totalUnrealizedPnl)}`
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                        {totalSold > 0 ? fmt$(totalSold) : "—"}
+                      </td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums",
+                        totalRealizedPnl === 0 ? "text-muted-foreground"
+                        : totalRealizedPnl > 0 ? "text-green-400" : "text-red-400"
+                      )}>
+                        {totalRealizedPnl !== 0
+                          ? `${totalRealizedPnl >= 0 ? "+" : ""}${fmt$(totalRealizedPnl)}`
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2" colSpan={2} />
+                    </tr>
+                  </tfoot>
                 )}
-                {purchases.map((p) => (
-                  <tr key={p.id} className="border-t border-border/20">
-                    <td className="py-0.5 pr-8">{p.purchaseDate}</td>
-                    <td className="text-right pr-4 tabular-nums">{fmt$(p.amount)}</td>
-                    <td>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDelete(p.id)}
-                        disabled={deletePurchase.isPending}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              </table>
+            </div>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="mt-2 h-6 text-[11px] font-mono"
-            onClick={() => setAddOpen(true)}
-          >
+
+          <Button size="sm" variant="outline" className="mt-3 h-6 text-[11px] font-mono"
+            onClick={() => setAddOpen(true)}>
             <Plus className="h-3 w-3 mr-1" />
             Adicionar compra
           </Button>
@@ -335,43 +487,55 @@ function PurchasesRow({ positionId, ticker }: { positionId: number; ticker: stri
         </td>
       </tr>
 
+      {/* Dialog — Nova compra */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-xs">
           <DialogHeader>
-            <DialogTitle className="font-mono text-sm">Nova compra</DialogTitle>
+            <DialogTitle className="font-mono text-sm">Nova compra — {ticker}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs font-mono">Data</Label>
-              <Input
-                type="date"
-                value={purchaseDate}
-                onChange={(e) => setPurchaseDate(e.target.value)}
-                className="font-mono text-xs h-8"
-              />
+              <Label className="text-xs font-mono">Data da compra</Label>
+              <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="font-mono text-xs h-8" />
             </div>
             <div>
-              <Label className="text-xs font-mono">Valor ($)</Label>
-              <Input
-                type="number"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="font-mono text-xs h-8"
-              />
+              <Label className="text-xs font-mono">Preço no dia da compra ($)</Label>
+              <Input type="number" placeholder="865.00" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} className="font-mono text-xs h-8" />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Total investido ($)</Label>
+              <Input type="number" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="font-mono text-xs h-8" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} className="font-mono text-xs">
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleAdd}
-              disabled={!purchaseDate || !amount || createPurchase.isPending}
-              className="font-mono text-xs"
-            >
+            <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} className="font-mono text-xs">Cancelar</Button>
+            <Button size="sm" onClick={handleAdd} disabled={!purchaseDate || !amount || createPurchase.isPending} className="font-mono text-xs">
               {createPurchase.isPending ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog — Registrar venda */}
+      <Dialog open={saleOpen} onOpenChange={setSaleOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">Registrar venda — {ticker}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs font-mono">Data da venda</Label>
+              <Input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="font-mono text-xs h-8" />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Preço de venda ($)</Label>
+              <Input type="number" placeholder="0.00" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} className="font-mono text-xs h-8" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setSaleOpen(false)} className="font-mono text-xs">Cancelar</Button>
+            <Button size="sm" onClick={handleSaleSave} disabled={!saleDate || !salePrice} className="font-mono text-xs">
+              Confirmar venda
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -853,7 +1017,7 @@ export default function PortfolioPage() {
                       </div>
                     </td>
                   </tr>
-                  {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} />}
+                  {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} currentPrice={price} />}
                   </Fragment>
                 );
               })}

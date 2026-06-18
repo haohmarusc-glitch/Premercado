@@ -179,6 +179,9 @@ export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
     .references(() => portfolioPositionsTable.id, { onDelete: "cascade" }),
   purchaseDate: text("purchase_date").notNull(),
   amount: doublePrecision("amount").notNull(),
+  purchasePrice: doublePrecision("purchase_price"),
+  saleDate: text("sale_date"),
+  salePrice: doublePrecision("sale_price"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_portfolio_purchases_position_id").on(t.positionId),
