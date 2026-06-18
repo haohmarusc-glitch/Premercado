@@ -11,6 +11,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import CellIsRule
 
 API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8080")
+API_KEY  = os.environ.get("OPERATOR_API_KEY", "")
 
 # ── Cores e estilos ────────────────────────────────────────────────────────────
 DARK_BG   = "1E1E2E"
@@ -47,7 +48,8 @@ FMT_PCT  = '0.00%;(0.00%);"-"'
 # ── Busca dados via API REST ───────────────────────────────────────────────────
 def api_get(path):
     url = f"{API_BASE}{path}"
-    with urllib.request.urlopen(url, timeout=10) as r:
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {API_KEY}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read())
 
 try:
