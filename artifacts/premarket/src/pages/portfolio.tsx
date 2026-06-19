@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, Fragment } from "react";
+import { useState, useMemo, useEffect, Fragment, useCallback } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListPortfolioPositions,
@@ -12,6 +13,7 @@ import {
   useDeletePortfolioPurchase,
   useGetTickerQuotes,
   getGetTickerQuotesQueryKey,
+  listPortfolioPurchases,
 } from "@workspace/api-client-react";
 import type { PortfolioPosition } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -786,7 +788,33 @@ export default function PortfolioPage() {
     return m;
   }, [quotes]);
 
-  const rows = useMemo(() => {
+  // Fetch purchases for all positions to detect fully-sold ones
+  const purchasesQueries = useQueries({
+    queries: positions.map((p) => ({
+      queryKey: getListPortfolioPurchasesQueryKey(p.id),
+      queryFn: () => listPortfolioPurchases(p.id),
+      staleTime: 60_000,
+    })),
+  });
+
+  const soldPositionIds = useMemo(() => {
+    const ids = new Set<number>();
+    positions.forEach((p, i) => {
+      const data = purchasesQueries[i]?.data ?? [];
+      if (data.length > 0 && data.every((pur) => !!pur.saleDate && !!pur.salePrice)) {
+        ids.add(p.id);
+      }
+    });
+    return ids;
+  }, [positions, purchasesQueries]);
+
+  const purchasesMap = useMemo(() => {
+    const m = new Map<number, typeof purchasesQueries[0]["data"]>();
+    positions.forEach((p, i) => { m.set(p.id, purchasesQueries[i]?.data ?? []); });
+    return m;
+  }, [positions, purchasesQueries]);
+
+  const allRows = useMemo(() => {
     const totalInvested = positions.reduce((s, p) => s + p.investedAmount, 0);
     return positions.map((p) => {
       const price = priceMap.get(p.ticker) ?? 0;
@@ -802,9 +830,13 @@ export default function PortfolioPage() {
       const downAlert = price > 0 ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
       const upAlert = price > 0 ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
-      return { pos: p, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d };
+      const isSoldOut = soldPositionIds.has(p.id);
+      return { pos: p, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut };
     });
-  }, [positions, priceMap, changeMap]);
+  }, [positions, priceMap, changeMap, soldPositionIds]);
+
+  const rows = useMemo(() => allRows.filter((r) => !r.isSoldOut), [allRows]);
+  const soldRows = useMemo(() => allRows.filter((r) => r.isSoldOut), [allRows]);
 
   const totals = useMemo(() => {
     const invested = rows.reduce((s, r) => s + r.pos.investedAmount, 0);
@@ -1076,6 +1108,79 @@ export default function PortfolioPage() {
           </table>
         </CardContent>
       </Card>
+
+      {/* Ações Vendidas */}
+      {soldRows.length > 0 && (
+        <Card className="border-border bg-card overflow-hidden">
+          <CardContent className="p-0">
+            <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+              <span className="text-xs font-mono font-semibold text-muted-foreground uppercase tracking-widest">
+                Ações Vendidas
+              </span>
+              <Badge className="h-4 px-1.5 text-[9px] font-mono bg-muted text-muted-foreground border border-border">
+                {soldRows.length}
+              </Badge>
+            </div>
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-border bg-muted/20 text-muted-foreground text-[11px]">
+                  <th className="text-left py-2.5 pl-4">Ticker</th>
+                  <th className="text-right pr-3">Investido</th>
+                  <th className="text-right pr-3">Receita total</th>
+                  <th className="text-right pr-3">Lucro/Perda</th>
+                  <th className="text-right pr-3">Retorno %</th>
+                  <th className="text-right pr-3">Data encerr.</th>
+                  <th className="pr-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {soldRows.map(({ pos }) => {
+                  const purchases = purchasesMap.get(pos.id) ?? [];
+                  const totalInvested = purchases.reduce((s, p) => s + p.amount, 0);
+                  const totalRevenue = purchases.reduce((s, p) => {
+                    const qty = p.purchasePrice ? p.amount / p.purchasePrice : 0;
+                    return s + qty * (p.salePrice ?? 0);
+                  }, 0);
+                  const pnl = totalRevenue - totalInvested;
+                  const pnlPct = totalInvested > 0 ? (pnl / totalInvested) * 100 : 0;
+                  const lastSaleDate = purchases
+                    .map((p) => p.saleDate ?? "")
+                    .filter(Boolean)
+                    .sort()
+                    .pop() ?? "—";
+                  return (
+                    <tr key={pos.id} className="border-b border-border/40 hover:bg-muted/10">
+                      <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">{pos.ticker}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmt$(totalInvested)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(totalRevenue)}</td>
+                      <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
+                        pnl >= 0 ? "text-green-400" : "text-red-400"
+                      )}>
+                        {pnl >= 0 ? "+" : ""}{fmt$(pnl)}
+                      </td>
+                      <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
+                        pnlPct >= 0 ? "text-green-400" : "text-red-400"
+                      )}>
+                        {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                      </td>
+                      <td className="py-2.5 pr-3 text-right text-muted-foreground">{lastSaleDate}</td>
+                      <td className="py-2.5 pr-3 text-right">
+                        <Button size="sm" variant="ghost"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(pos.id, pos.ticker)}
+                          disabled={deletePos.isPending}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Position dialog */}
       {dialogTarget !== undefined && (
