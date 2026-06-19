@@ -4,6 +4,8 @@ and Anthropic into a single interface that agent.py can use transparently.
 """
 import json
 import os
+import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +28,40 @@ class TextBlock:
 class NormalizedResponse:
     content: list
     stop_reason: str  # "tool_use" | "end_turn"
+
+
+# ── Pseudo tool-call leak detection ───────────────────────────────────────────
+# Alguns modelos Llama menores (ex.: llama-3.1-8b-instant no Groq) às vezes não
+# retornam tool_calls estruturado pela API e em vez disso "alucinam" a sintaxe
+# de chamada de função como TEXTO da resposta, no formato:
+#   <function=NOME>{"arg": "valor", ...}</function>
+# Sem essa detecção, esse texto: (1) nunca executa a ferramenta de fato, e
+# (2) vaza para o relatório final do usuário, como visto em produção.
+_FUNCTION_LEAK_RE = re.compile(
+    r"<function=(\w+)>\s*(\{.*?\})\s*</function>", re.DOTALL
+)
+
+
+def _extract_leaked_function_calls(text: str) -> tuple[list[ToolUseBlock], str]:
+    """
+    Procura por chamadas de função vazadas como texto (ver _FUNCTION_LEAK_RE).
+    Retorna (lista de ToolUseBlock encontrados, texto restante sem essas chamadas).
+    Se o JSON de algum match estiver malformado, ele é descartado silenciosamente
+    (melhor perder uma tool call do que quebrar o turno inteiro).
+    """
+    blocks: list[ToolUseBlock] = []
+
+    def _replace(match: "re.Match[str]") -> str:
+        name, raw_args = match.group(1), match.group(2)
+        try:
+            args = json.loads(raw_args)
+        except Exception:
+            return match.group(0)  # JSON inválido: deixa o texto como estava
+        blocks.append(ToolUseBlock(id=f"leaked_{uuid.uuid4().hex[:8]}", name=name, input=args))
+        return ""  # remove o trecho do texto visível
+
+    cleaned = _FUNCTION_LEAK_RE.sub(_replace, text)
+    return blocks, cleaned.strip()
 
 
 # ── Provider config ───────────────────────────────────────────────────────────
@@ -69,9 +105,13 @@ PROVIDERS = {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "api_key_env": "GEMINI_API_KEY",
         "models": {
-            "full":  "gemini-2.0-flash",
-            "flash": "gemini-2.0-flash",
-            "chat":  "gemini-2.0-flash",
+            # gemini-2.0-flash foi desativado pelo Google em 01/06/2026 (404
+            # em produção). gemini-2.5-flash-lite é o substituto de preço
+            # equivalente; note que o próprio 2.5-flash tem desligamento
+            # anunciado para 16/10/2026 — vale checar de novo nessa época.
+            "full":  "gemini-2.5-flash-lite",
+            "flash": "gemini-2.5-flash-lite",
+            "chat":  "gemini-2.5-flash-lite",
         },
         "tpm_limit": None,
     },
@@ -177,8 +217,18 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
     finish = choice.finish_reason
 
     content = []
+    leaked_calls: list[ToolUseBlock] = []
+
     if msg.content:
-        content.append(TextBlock(text=msg.content))
+        leaked_calls, cleaned_text = _extract_leaked_function_calls(msg.content)
+        if leaked_calls:
+            print(
+                f"[provider] {len(leaked_calls)} chamada(s) de função vazada(s) "
+                f"como texto foram recuperadas: {[b.name for b in leaked_calls]}",
+                flush=True,
+            )
+        if cleaned_text:
+            content.append(TextBlock(text=cleaned_text))
 
     if getattr(msg, "tool_calls", None):
         for tc in msg.tool_calls:
@@ -188,11 +238,66 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
                 args = {}
             content.append(ToolUseBlock(id=tc.id, name=tc.function.name, input=args))
 
-    stop_reason = "tool_use" if finish == "tool_calls" else "end_turn"
+    # Tool calls recuperadas do texto contam como tool_use de verdade — sem
+    # isso, save_observation (e qualquer outra ferramenta) nunca executava,
+    # mesmo o modelo "pedindo" para chamá-la.
+    content.extend(leaked_calls)
+
+    stop_reason = "tool_use" if (finish == "tool_calls" or leaked_calls) else "end_turn"
     return NormalizedResponse(content=content, stop_reason=stop_reason)
 
 
 # ── Main client ───────────────────────────────────────────────────────────────
+
+def _try_recover_tool_use_failed(exc: Exception) -> "NormalizedResponse | None":
+    """
+    Alguns provedores (visto em produção: Groq com llama-3.1-8b-instant)
+    retornam erro HTTP 400 'tool_use_failed' quando o modelo monta a chamada
+    de função com sintaxe errada — colando os argumentos no nome da tool, ex.:
+        get_stock_data={"ticker": "NVDA"}
+    O corpo do erro inclui 'failed_generation' com o texto bruto que o modelo
+    tentou emitir, no formato <function=NOME>{...}</function> OU
+    <function=NOME={...}></function> (variação sem o JSON bem formado).
+
+    Tenta recuperar uma ToolUseBlock utilizável a partir disso, para o agente
+    seguir em vez de abortar a run inteira por causa de um erro de formatação
+    do modelo. Retorna None se não conseguir recuperar nada (deixa a exceção
+    seguir seu curso normal nesse caso).
+    """
+    msg = str(exc)
+    if "tool_use_failed" not in msg and "tool call validation failed" not in msg:
+        return None
+
+    # Tenta extrair o campo failed_generation do corpo do erro (texto cru).
+    match = re.search(r"failed_generation['\"]?\s*:\s*'((?:[^'\\]|\\.)*)'", msg)
+    if not match:
+        match = re.search(r'failed_generation["\']?\s*:\s*"((?:[^"\\]|\\.)*)"', msg)
+    if not match:
+        return None
+
+    raw = match.group(1).encode("utf-8").decode("unicode_escape", errors="ignore")
+
+    # Caso 1: formato normal <function=NOME>{...}</function>
+    blocks, _ = _extract_leaked_function_calls(raw)
+    if blocks:
+        print(f"[provider] recuperado de tool_use_failed (formato padrão): {[b.name for b in blocks]}", flush=True)
+        return NormalizedResponse(content=blocks, stop_reason="tool_use")
+
+    # Caso 2: formato visto em produção, sem JSON separado:
+    # <function=get_stock_data={"ticker": "NVDA"}></function>
+    alt_match = re.match(r"<function=(\w+)=(\{.*\})>\s*</function>", raw.strip())
+    if alt_match:
+        name, raw_args = alt_match.group(1), alt_match.group(2)
+        try:
+            args = json.loads(raw_args)
+        except Exception:
+            return None
+        block = ToolUseBlock(id=f"recovered_{uuid.uuid4().hex[:8]}", name=name, input=args)
+        print(f"[provider] recuperado de tool_use_failed (formato alternativo): {name}", flush=True)
+        return NormalizedResponse(content=[block], stop_reason="tool_use")
+
+    return None
+
 
 class ProviderClient:
     def __init__(self, provider_name: str | None = None):
@@ -252,12 +357,18 @@ class ProviderClient:
     def _call_openai(self, *, model, max_tokens, system, tools, messages) -> NormalizedResponse:
         oai_messages = _anthropic_messages_to_openai(system, messages)
         oai_tools = _anthropic_tools_to_openai(tools)
-        resp = self._openai.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=oai_messages,
-            tools=oai_tools if oai_tools else None,
-        )
+        try:
+            resp = self._openai.chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=oai_messages,
+                tools=oai_tools if oai_tools else None,
+            )
+        except Exception as exc:
+            recovered = _try_recover_tool_use_failed(exc)
+            if recovered is not None:
+                return recovered
+            raise
         return _openai_response_to_normalized(resp)
 
     def _normalized_to_anthropic_content(self, resp: NormalizedResponse) -> list:
