@@ -1,5 +1,5 @@
 """
-Provider adapter — wraps OpenAI-compatible APIs (OpenAI, Groq, Gemini, Kimi)
+Provider adapter — wraps OpenAI-compatible APIs (OpenAI, Gemini, OpenRouter, Kimi)
 and Anthropic into a single interface that agent.py can use transparently.
 """
 import json
@@ -31,12 +31,16 @@ class NormalizedResponse:
 
 
 # ── Pseudo tool-call leak detection ───────────────────────────────────────────
-# Alguns modelos Llama menores (ex.: llama-3.1-8b-instant no Groq) às vezes não
-# retornam tool_calls estruturado pela API e em vez disso "alucinam" a sintaxe
-# de chamada de função como TEXTO da resposta, no formato:
+# Alguns modelos Llama menores (ex.: visto em produção com llama-3.1-8b-instant,
+# servido via OpenRouter/Kimi) às vezes não retornam tool_calls estruturado
+# pela API e em vez disso "alucinam" a sintaxe de chamada de função como TEXTO
+# da resposta, no formato:
 #   <function=NOME>{"arg": "valor", ...}</function>
 # Sem essa detecção, esse texto: (1) nunca executa a ferramenta de fato, e
 # (2) vaza para o relatório final do usuário, como visto em produção.
+# Mantida como proteção genérica mesmo após a remoção do Groq da cadeia de
+# fallback, pois outros provedores (OpenRouter, Kimi) também servem modelos
+# abertos sujeitos ao mesmo comportamento.
 _FUNCTION_LEAK_RE = re.compile(
     r"<function=(\w+)>\s*(\{.*?\})\s*</function>", re.DOTALL
 )
@@ -76,7 +80,6 @@ PROVIDERS = {
             "chat":  "claude-haiku-4-5",
         },
         # Sem limite de TPM agressivo conhecido — não trunca por tamanho.
-        "tpm_limit": None,
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -86,22 +89,6 @@ PROVIDERS = {
             "flash": "gpt-4o-mini",
             "chat":  "gpt-4o-mini",
         },
-        "tpm_limit": None,
-    },
-    "groq": {
-        "base_url": "https://api.groq.com/openai/v1",
-        "api_key_env": "GROQ_API_KEY",
-        "models": {
-            "full":  "llama-3.1-8b-instant",
-            "flash": "llama-3.1-8b-instant",
-            "chat":  "llama-3.1-8b-instant",
-        },
-        # Free tier do Groq: 6000 tokens/minuto reais. Com a estimativa
-        # corrigida (divisor 2.5) more conservadora, ainda mantemos esta
-        # margem extra — o orçamento aqui é deliberadamente bem menor que
-        # o limite real, porque já fomos pegos de surpresa uma vez (a
-        # estimativa anterior achava ~5000 quando o real era 9556).
-        "tpm_limit": 3500,
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -115,7 +102,6 @@ PROVIDERS = {
             "flash": "gemini-2.5-flash-lite",
             "chat":  "gemini-2.5-flash-lite",
         },
-        "tpm_limit": None,
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
@@ -125,7 +111,6 @@ PROVIDERS = {
             "flash": "meta-llama/llama-3.1-8b-instruct:free",
             "chat":  "meta-llama/llama-3.3-70b-instruct:free",
         },
-        "tpm_limit": None,
     },
     "kimi": {
         "base_url": "https://api.moonshot.cn/v1",
@@ -135,7 +120,6 @@ PROVIDERS = {
             "flash": "moonshot-v1-8k",
             "chat":  "moonshot-v1-8k",
         },
-        "tpm_limit": None,
     },
 }
 
@@ -387,7 +371,7 @@ class ProviderClient:
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "gemini", "openrouter", "openai", "kimi", "groq"]
+_DEFAULT_ORDER = ["anthropic", "gemini", "openrouter", "openai", "kimi"]
 
 def _provider_order() -> list[str]:
     env = os.environ.get("AGENT_PROVIDER_ORDER", "")
@@ -412,62 +396,15 @@ def _is_quota_error(exc: Exception) -> bool:
     ])
 
 
-def _estimate_tokens(obj: Any) -> int:
+def _truncate_history_for_fallback(messages: list) -> list:
     """
-    Estimativa de tokens a partir de uma representação textual do objeto.
-
-    NOTA IMPORTANTE: a aproximação clássica de "4 caracteres por token" é
-    calibrada para texto em prosa, e é OTIMISTA DEMAIS para JSON — que é a
-    maior parte do que circula no histórico de tool_use/tool_result. Aspas,
-    chaves, vírgulas, dois-pontos e números tendem a fragmentar em mais
-    tokens por caractere do que palavras em linguagem natural.
-
-    Em produção, um histórico estimado em ~5000 tokens por esta função foi
-    rejeitado pelo Groq como tendo 9556 tokens reais — quase o dobro. Por
-    isso usamos um divisor mais conservador (2.5 em vez de 4) especificamente
-    para dar margem a esse viés, em vez de tentar tokenizar de verdade (o que
-    exigiria a biblioteca de tokenizer do modelo específico, indisponível
-    aqui sem uma dependência nova)."""
-    return int(len(str(obj)) / 2.5)
-
-
-def _fit_messages_to_budget(messages: list, system, tools: list, budget: int) -> list:
+    Ao trocar para um provider diferente do que iniciou esta chamada, o
+    histórico de tool_use/tool_result acumulado no provider original não faz
+    sentido para o novo assumir de onde parou — mantemos só a primeira
+    mensagem (a instrução original do usuário) e o novo provider recomeça o
+    fluxo de ferramentas do zero.
     """
-    Mantém o histórico dentro de um orçamento de tokens (aproximado), para
-    providers com TPM baixo (ex.: Groq free tier).
-
-    Estratégia: sempre preserva a primeira mensagem (a instrução original do
-    usuário) e vai incluindo as mensagens MAIS RECENTES enquanto couber no
-    orçamento. Isso evita o caso visto em produção onde um turno que agrupou
-    muitas tool calls (ex.: 14 tickers de uma vez) deixava o histórico grande
-    o bastante para estourar o limite já no turno seguinte, mesmo sem trocar
-    de provider de novo.
-
-    Se nem a primeira + a última mensagem couberem no orçamento, ainda assim
-    retorna só essas duas — não há como caber menos que isso sem quebrar o
-    protocolo de tool_use/tool_result.
-    """
-    if not messages:
-        return messages
-
-    overhead = _estimate_tokens(system) + _estimate_tokens(tools)
-    available = max(budget - overhead, 0)
-
-    first = messages[0]
-    first_cost = _estimate_tokens(first)
-
-    # Acumula do fim para o início (mensagens mais recentes primeiro)
-    kept = []
-    used = first_cost
-    for msg in reversed(messages[1:]):
-        cost = _estimate_tokens(msg)
-        if used + cost > available:
-            break
-        kept.append(msg)
-        used += cost
-    kept.reverse()
-
-    return [first] + kept
+    return messages[:1] if messages else messages
 
 
 class FallbackClient:
@@ -476,7 +413,7 @@ class FallbackClient:
     def __init__(self):
         self._order = [p for p in _provider_order() if _has_key(p)]
         if not self._order:
-            raise RuntimeError("No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, KIMI_API_KEY")
+            raise RuntimeError("No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, KIMI_API_KEY")
         self._clients: dict[str, ProviderClient] = {}
         self._current_idx = 0
 
@@ -508,32 +445,16 @@ class FallbackClient:
             resolved_system = system_fn(name) if system_fn else system
             resolved_tools = tools_fn(name) if tools_fn else tools
 
-            tpm_limit = PROVIDERS.get(name, {}).get("tpm_limit")
-            if tpm_limit:
-                # Provider com TPM baixo conhecido (ex.: Groq free tier).
-                # Aplica o orçamento SEMPRE, não só na primeira troca — um
-                # turno que agrupou muitas tool calls pode inflar o histórico
-                # o bastante para estourar o limite já no turno seguinte,
-                # mesmo permanecendo no mesmo provider.
-                resolved_messages = _fit_messages_to_budget(
-                    messages, resolved_system, resolved_tools, tpm_limit
-                )
-                if len(resolved_messages) < len(messages):
-                    print(
-                        f"[provider] histórico ajustado ao orçamento de {name} "
-                        f"({len(messages)} -> {len(resolved_messages)} mensagens, "
-                        f"limite ~{tpm_limit} tokens)",
-                        flush=True,
-                    )
-            elif name != primary_name:
-                # Trocando para um provider sem limite conhecido, mas que não
-                # era o original desta chamada: ainda assim não soma sentido
-                # herdar o histórico de tool_use/tool_result de outro provider.
-                resolved_messages = messages[:1]
+            if name != primary_name:
+                # Trocando de provider no meio desta chamada: o histórico de
+                # tool_use/tool_result acumulado no provider original não faz
+                # sentido para o novo assumir de onde parou — ele recomeça o
+                # fluxo de ferramentas do zero.
+                resolved_messages = _truncate_history_for_fallback(messages)
                 if len(messages) > 1:
                     print(
                         f"[provider] histórico truncado para {name} "
-                        f"({len(messages)} -> 1 mensagem)",
+                        f"({len(messages)} -> {len(resolved_messages)} mensagem(ns))",
                         flush=True,
                     )
             else:
@@ -553,41 +474,6 @@ class FallbackClient:
                 return result
             except Exception as exc:
                 print(f"[provider] {name} failed: {exc}", flush=True)
-
-                # Rede de segurança extra: se o erro é especificamente de
-                # tamanho/TPM excedido (ex.: 413, rate_limit_exceeded por
-                # tokens) e ainda não tentamos o corte mais agressivo possível
-                # neste provider, tenta UMA VEZ MAIS com só a primeira
-                # mensagem antes de desistir e ir para o próximo provider.
-                # Isso cobre o caso em que nossa estimativa de tokens (sempre
-                # aproximada) ainda deixou passar mais do que o provider aceita.
-                msg_lower = str(exc).lower()
-                is_size_error = "413" in str(exc) or (
-                    "rate_limit_exceeded" in msg_lower and "token" in msg_lower
-                )
-                already_minimal = len(resolved_messages) <= 1
-                if is_size_error and not already_minimal:
-                    print(
-                        f"[provider] {name}: erro de tamanho — tentando de novo "
-                        f"com corte agressivo (so a mensagem inicial)",
-                        flush=True,
-                    )
-                    try:
-                        result = c.create(
-                            model=resolved_model,
-                            max_tokens=max_tokens,
-                            system=resolved_system,
-                            tools=resolved_tools,
-                            messages=messages[:1],
-                        )
-                        if idx != self._current_idx:
-                            print(f"[provider] switched to {name}", flush=True)
-                            self._current_idx = idx
-                        return result
-                    except Exception as exc2:
-                        print(f"[provider] {name} failed again after cut: {exc2}", flush=True)
-                        exc = exc2  # propaga o erro mais recente, se chegar ao final
-
                 if idx + 1 < len(self._order):
                     print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
                 else:

@@ -1,6 +1,6 @@
 """
 Loop agêntico do analisador de pré-mercado.
-Suporta múltiplos provedores: anthropic, openai, groq, gemini, kimi.
+Suporta múltiplos provedores: anthropic, openai, gemini, openrouter, kimi.
 Configurado via variável AGENT_PROVIDER (padrão: anthropic).
 """
 import datetime
@@ -49,28 +49,6 @@ def _cached_tools(tools: list) -> list:
     cached = list(tools)
     cached[-1] = {**cached[-1], "cache_control": {"type": "ephemeral"}}
     return cached
-
-
-def build_system_prompt_lite() -> str:
-    """Prompt reduzido para provedores com limite baixo de tokens (Groq free tier:
-    6000 TPM). Ambos histórico E system+tools competem por esse orçamento, então
-    aqui a prioridade é processar POUCOS tickers por vez, não tentar cobrir tudo."""
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    portfolio = ", ".join(config.PORTFOLIO_TICKERS)
-    return f"""Você é um analista de ações. Data: {today}.
-
-Por causa de um limite de tokens baixo neste provedor, analise APENAS a
-carteira (NÃO a lista completa de cobertura): {portfolio}.
-
-Fluxo, na ordem, UM ticker por chamada de ferramenta (não agrupe aqui —
-o limite de tokens deste provedor é pequeno demais para respostas grandes):
-1) get_fear_greed_index
-2) get_sector_performance
-3) Para cada ticker da carteira, NESTA ORDEM, um de cada vez: get_stock_data,
-   depois get_news, depois save_observation com resumo curto (1-2 frases).
-   Vá para o próximo ticker só depois de salvar a observação do atual.
-
-Seja extremamente conciso. Formate em Markdown. Cite números."""
 
 
 def _system_stable_full() -> str:
@@ -256,13 +234,6 @@ _CHAT_TOOL_NAMES = {
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 
-# Minimal tools for providers with small token limits (Groq free tier ~6k TPM)
-_GROQ_TOOL_NAMES = {
-    "get_stock_data", "get_news", "get_fear_greed_index",
-    "get_sector_performance", "save_observation",
-}
-GROQ_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _GROQ_TOOL_NAMES]
-
 # Subconjunto para a varredura rápida intradiária. O prompt do premarket já
 # proíbe as demais ferramentas; aqui cortamos de fato o schema delas do request,
 # economizando ~7k tokens de input por turno (das 17 ferramentas só 5 são usadas).
@@ -278,12 +249,6 @@ PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_N
 def run(progress_callback=None) -> str:
     client = _get_client()
     system_full_blocks = build_system_prompt_blocks()
-    system_lite = build_system_prompt_lite()
-    def _system_fn(provider_name: str):
-        return system_lite if provider_name == "groq" else system_full_blocks
-
-    def _tools_fn(provider_name: str) -> list:
-        return GROQ_TOOLS if provider_name == "groq" else t.TOOLS
 
     model = client.models["full"]
     messages = [{
@@ -306,8 +271,6 @@ def run(progress_callback=None) -> str:
             system=system_full_blocks,
             tools=t.TOOLS,
             messages=messages,
-            system_fn=_system_fn,
-            tools_fn=_tools_fn,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
