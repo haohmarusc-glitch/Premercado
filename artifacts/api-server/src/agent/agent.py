@@ -87,29 +87,46 @@ Seu fluxo completo:
 
 **FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
 
-*Grupo A — análise COMPLETA* (ferramentas 5–12):
+*Grupo A — análise COMPLETA*:
   • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
-Para cada ativo do Grupo A, nesta ordem:
-5. get_stock_data — cotação e pré-mercado
-6. get_news — manchetes
-7. get_technical_indicators — RSI, MACD, Bollinger, médias móveis
-8. get_short_interest — exposição short e risco de squeeze
-9. get_analyst_ratings — consenso, preço-alvo, upgrades/downgrades
-10. get_options_data — put/call ratio e IV
-11. Se catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
-12. Compare com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
-13. Chame save_observation com resumo curto e sentimento.
+
+Para o Grupo A, colete estas categorias de dados — NÃO finalize um ativo
+antes de passar ao próximo; em vez disso, complete uma CATEGORIA para
+TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
+
+1. Cotação e pré-mercado — get_stock_data
+2. Manchetes — get_news
+3. Indicadores técnicos — get_technical_indicators
+4. Exposição short — get_short_interest
+5. Consenso de analistas — get_analyst_ratings
+6. Put/call ratio e IV — get_options_data
+7. Se houver catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
+8. Compare cada ativo com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
+9. Chame save_observation para cada ativo, com resumo curto e sentimento.
+
+OBRIGATÓRIO — agrupe tool calls por categoria, não por ativo:
+Se o Grupo A tem N ativos, a categoria 1 (get_stock_data) deve ser UMA
+resposta sua com N chamadas de ferramenta juntas — não N respostas
+separadas. O mesmo vale para cada categoria seguinte.
+
+Exemplo correto com Grupo A = [MU, NVDA, SMCI]:
+  Turno X: você chama get_stock_data(MU) + get_stock_data(NVDA) +
+           get_stock_data(SMCI) — as 3 JUNTAS na mesma resposta.
+  Turno X+1: você chama get_news(MU) + get_news(NVDA) + get_news(SMCI)
+           — de novo as 3 juntas, e assim por diante a cada categoria.
+Padrão ERRADO a evitar: get_stock_data(MU), depois get_news(MU), depois
+get_technical_indicators(MU) — terminando a MU inteira antes de tocar
+em NVDA. Isso multiplica o número de turnos sem necessidade.
+
+Outras regras de eficiência:
+- Não repita uma ferramenta para o mesmo ticker se o dado já está no contexto.
+- Pare assim que tiver informação suficiente para o relatório; não gaste turnos extras.
 
 *Grupo B — cotação RÁPIDA* (só get_stock_data):
   • Todos os demais tickers em cobertura não incluídos no Grupo A
   Registre preço e variação no relatório; não chame outras ferramentas para eles.
-
-**EFICIÊNCIA (controle de custo):**
-- Quando precisar dos mesmos dados para vários tickers, agrupe as chamadas de
-  ferramenta no MESMO turno (várias tool calls de uma vez) em vez de uma por turno.
-- Não repita uma ferramenta para o mesmo ticker se o dado já está no contexto.
-- Pare assim que tiver informação suficiente para o relatório; não gaste turnos extras.
+  Agrupe: uma resposta com get_stock_data de todos os tickers do Grupo B juntos.
 
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
