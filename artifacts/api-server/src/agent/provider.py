@@ -96,10 +96,12 @@ PROVIDERS = {
             "flash": "llama-3.1-8b-instant",
             "chat":  "llama-3.1-8b-instant",
         },
-        # Free tier do Groq: 6000 tokens/minuto. Deixamos margem de segurança
-        # (orçamento abaixo do limite real) porque a estimativa de tokens por
-        # caracteres é aproximada, não exata.
-        "tpm_limit": 5000,
+        # Free tier do Groq: 6000 tokens/minuto reais. Com a estimativa
+        # corrigida (divisor 2.5) more conservadora, ainda mantemos esta
+        # margem extra — o orçamento aqui é deliberadamente bem menor que
+        # o limite real, porque já fomos pegos de surpresa uma vez (a
+        # estimativa anterior achava ~5000 quando o real era 9556).
+        "tpm_limit": 3500,
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -411,9 +413,22 @@ def _is_quota_error(exc: Exception) -> bool:
 
 
 def _estimate_tokens(obj: Any) -> int:
-    """Estimativa grosseira: ~4 caracteres por token. Não é exata, mas é
-    suficiente para decidir quando truncar com margem de segurança."""
-    return len(str(obj)) // 4
+    """
+    Estimativa de tokens a partir de uma representação textual do objeto.
+
+    NOTA IMPORTANTE: a aproximação clássica de "4 caracteres por token" é
+    calibrada para texto em prosa, e é OTIMISTA DEMAIS para JSON — que é a
+    maior parte do que circula no histórico de tool_use/tool_result. Aspas,
+    chaves, vírgulas, dois-pontos e números tendem a fragmentar em mais
+    tokens por caractere do que palavras em linguagem natural.
+
+    Em produção, um histórico estimado em ~5000 tokens por esta função foi
+    rejeitado pelo Groq como tendo 9556 tokens reais — quase o dobro. Por
+    isso usamos um divisor mais conservador (2.5 em vez de 4) especificamente
+    para dar margem a esse viés, em vez de tentar tokenizar de verdade (o que
+    exigiria a biblioteca de tokenizer do modelo específico, indisponível
+    aqui sem uma dependência nova)."""
+    return int(len(str(obj)) / 2.5)
 
 
 def _fit_messages_to_budget(messages: list, system, tools: list, budget: int) -> list:
@@ -538,6 +553,41 @@ class FallbackClient:
                 return result
             except Exception as exc:
                 print(f"[provider] {name} failed: {exc}", flush=True)
+
+                # Rede de segurança extra: se o erro é especificamente de
+                # tamanho/TPM excedido (ex.: 413, rate_limit_exceeded por
+                # tokens) e ainda não tentamos o corte mais agressivo possível
+                # neste provider, tenta UMA VEZ MAIS com só a primeira
+                # mensagem antes de desistir e ir para o próximo provider.
+                # Isso cobre o caso em que nossa estimativa de tokens (sempre
+                # aproximada) ainda deixou passar mais do que o provider aceita.
+                msg_lower = str(exc).lower()
+                is_size_error = "413" in str(exc) or (
+                    "rate_limit_exceeded" in msg_lower and "token" in msg_lower
+                )
+                already_minimal = len(resolved_messages) <= 1
+                if is_size_error and not already_minimal:
+                    print(
+                        f"[provider] {name}: erro de tamanho — tentando de novo "
+                        f"com corte agressivo (so a mensagem inicial)",
+                        flush=True,
+                    )
+                    try:
+                        result = c.create(
+                            model=resolved_model,
+                            max_tokens=max_tokens,
+                            system=resolved_system,
+                            tools=resolved_tools,
+                            messages=messages[:1],
+                        )
+                        if idx != self._current_idx:
+                            print(f"[provider] switched to {name}", flush=True)
+                            self._current_idx = idx
+                        return result
+                    except Exception as exc2:
+                        print(f"[provider] {name} failed again after cut: {exc2}", flush=True)
+                        exc = exc2  # propaga o erro mais recente, se chegar ao final
+
                 if idx + 1 < len(self._order):
                     print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
                 else:
