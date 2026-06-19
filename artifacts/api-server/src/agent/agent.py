@@ -52,15 +52,25 @@ def _cached_tools(tools: list) -> list:
 
 
 def build_system_prompt_lite() -> str:
-    """Prompt reduzido para provedores com limite baixo de tokens (Groq free tier)."""
+    """Prompt reduzido para provedores com limite baixo de tokens (Groq free tier:
+    6000 TPM). Ambos histórico E system+tools competem por esse orçamento, então
+    aqui a prioridade é processar POUCOS tickers por vez, não tentar cobrir tudo."""
     today = datetime.date.today().strftime("%d/%m/%Y")
-    tickers = ", ".join(config.TICKERS)
     portfolio = ", ".join(config.PORTFOLIO_TICKERS)
-    return f"""Você é um analista de ações. Data: {today}. Tickers: {tickers}. Carteira: {portfolio}.
+    return f"""Você é um analista de ações. Data: {today}.
 
-Fluxo: 1) get_fear_greed_index 2) get_sector_performance 3) Para cada ticker da carteira: get_stock_data + get_news 4) save_observation com resumo.
+Por causa de um limite de tokens baixo neste provedor, analise APENAS a
+carteira (NÃO a lista completa de cobertura): {portfolio}.
 
-Seja conciso. Formate em Markdown. Cite números."""
+Fluxo, na ordem, UM ticker por chamada de ferramenta (não agrupe aqui —
+o limite de tokens deste provedor é pequeno demais para respostas grandes):
+1) get_fear_greed_index
+2) get_sector_performance
+3) Para cada ticker da carteira, NESTA ORDEM, um de cada vez: get_stock_data,
+   depois get_news, depois save_observation com resumo curto (1-2 frases).
+   Vá para o próximo ticker só depois de salvar a observação do atual.
+
+Seja extremamente conciso. Formate em Markdown. Cite números."""
 
 
 def _system_stable_full() -> str:

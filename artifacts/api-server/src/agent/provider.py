@@ -39,6 +39,8 @@ PROVIDERS = {
             "flash": "claude-haiku-4-5",
             "chat":  "claude-haiku-4-5",
         },
+        # Sem limite de TPM agressivo conhecido — não trunca por tamanho.
+        "tpm_limit": None,
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -48,6 +50,7 @@ PROVIDERS = {
             "flash": "gpt-4o-mini",
             "chat":  "gpt-4o-mini",
         },
+        "tpm_limit": None,
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
@@ -57,6 +60,10 @@ PROVIDERS = {
             "flash": "llama-3.1-8b-instant",
             "chat":  "llama-3.1-8b-instant",
         },
+        # Free tier do Groq: 6000 tokens/minuto. Deixamos margem de segurança
+        # (orçamento abaixo do limite real) porque a estimativa de tokens por
+        # caracteres é aproximada, não exata.
+        "tpm_limit": 5000,
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -66,6 +73,7 @@ PROVIDERS = {
             "flash": "gemini-2.0-flash",
             "chat":  "gemini-2.0-flash",
         },
+        "tpm_limit": None,
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
@@ -75,6 +83,7 @@ PROVIDERS = {
             "flash": "meta-llama/llama-3.1-8b-instruct:free",
             "chat":  "meta-llama/llama-3.3-70b-instruct:free",
         },
+        "tpm_limit": None,
     },
     "kimi": {
         "base_url": "https://api.moonshot.cn/v1",
@@ -84,6 +93,7 @@ PROVIDERS = {
             "flash": "moonshot-v1-8k",
             "chat":  "moonshot-v1-8k",
         },
+        "tpm_limit": None,
     },
 }
 
@@ -289,6 +299,51 @@ def _is_quota_error(exc: Exception) -> bool:
     ])
 
 
+def _estimate_tokens(obj: Any) -> int:
+    """Estimativa grosseira: ~4 caracteres por token. Não é exata, mas é
+    suficiente para decidir quando truncar com margem de segurança."""
+    return len(str(obj)) // 4
+
+
+def _fit_messages_to_budget(messages: list, system, tools: list, budget: int) -> list:
+    """
+    Mantém o histórico dentro de um orçamento de tokens (aproximado), para
+    providers com TPM baixo (ex.: Groq free tier).
+
+    Estratégia: sempre preserva a primeira mensagem (a instrução original do
+    usuário) e vai incluindo as mensagens MAIS RECENTES enquanto couber no
+    orçamento. Isso evita o caso visto em produção onde um turno que agrupou
+    muitas tool calls (ex.: 14 tickers de uma vez) deixava o histórico grande
+    o bastante para estourar o limite já no turno seguinte, mesmo sem trocar
+    de provider de novo.
+
+    Se nem a primeira + a última mensagem couberem no orçamento, ainda assim
+    retorna só essas duas — não há como caber menos que isso sem quebrar o
+    protocolo de tool_use/tool_result.
+    """
+    if not messages:
+        return messages
+
+    overhead = _estimate_tokens(system) + _estimate_tokens(tools)
+    available = max(budget - overhead, 0)
+
+    first = messages[0]
+    first_cost = _estimate_tokens(first)
+
+    # Acumula do fim para o início (mensagens mais recentes primeiro)
+    kept = []
+    used = first_cost
+    for msg in reversed(messages[1:]):
+        cost = _estimate_tokens(msg)
+        if used + cost > available:
+            break
+        kept.append(msg)
+        used += cost
+    kept.reverse()
+
+    return [first] + kept
+
+
 class FallbackClient:
     """Tries providers in order, falling back on quota/auth errors."""
 
@@ -327,19 +382,36 @@ class FallbackClient:
             resolved_system = system_fn(name) if system_fn else system
             resolved_tools = tools_fn(name) if tools_fn else tools
 
-            # Se este provider é diferente do primário desta chamada, o histórico
-            # de `messages` acumulado (tool_use/tool_result de turnos anteriores
-            # no provider original) não serve para ele — só ocupa tokens e pode
-            # estourar limites baixos (ex.: Groq free tier = 6000 TPM). Trocar de
-            # provider no meio de uma run já é um "recomeço" para quem assume:
-            # mantemos só a primeira mensagem do usuário.
-            resolved_messages = messages if name == primary_name else messages[:1]
-            if name != primary_name and len(messages) > 1:
-                print(
-                    f"[provider] histórico truncado para {name} "
-                    f"({len(messages)} -> 1 mensagem, evita estourar TPM/contexto)",
-                    flush=True,
+            tpm_limit = PROVIDERS.get(name, {}).get("tpm_limit")
+            if tpm_limit:
+                # Provider com TPM baixo conhecido (ex.: Groq free tier).
+                # Aplica o orçamento SEMPRE, não só na primeira troca — um
+                # turno que agrupou muitas tool calls pode inflar o histórico
+                # o bastante para estourar o limite já no turno seguinte,
+                # mesmo permanecendo no mesmo provider.
+                resolved_messages = _fit_messages_to_budget(
+                    messages, resolved_system, resolved_tools, tpm_limit
                 )
+                if len(resolved_messages) < len(messages):
+                    print(
+                        f"[provider] histórico ajustado ao orçamento de {name} "
+                        f"({len(messages)} -> {len(resolved_messages)} mensagens, "
+                        f"limite ~{tpm_limit} tokens)",
+                        flush=True,
+                    )
+            elif name != primary_name:
+                # Trocando para um provider sem limite conhecido, mas que não
+                # era o original desta chamada: ainda assim não soma sentido
+                # herdar o histórico de tool_use/tool_result de outro provider.
+                resolved_messages = messages[:1]
+                if len(messages) > 1:
+                    print(
+                        f"[provider] histórico truncado para {name} "
+                        f"({len(messages)} -> 1 mensagem)",
+                        flush=True,
+                    )
+            else:
+                resolved_messages = messages
 
             try:
                 result = c.create(
