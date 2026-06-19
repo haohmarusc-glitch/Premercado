@@ -17,7 +17,7 @@ MODEL_FALLBACK = os.environ.get("ANTHROPIC_MODEL_FALLBACK", "claude-haiku-4-5")
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_TOKENS_PREMARKET = int(os.environ.get("AGENT_MAX_TOKENS_PREMARKET", "512"))
 MAX_TOKENS_CHAT = int(os.environ.get("AGENT_MAX_TOKENS_CHAT", "2048"))
-MAX_AGENT_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "20"))
+MAX_AGENT_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "13"))
 MAX_AGENT_TURNS_PREMARKET = int(os.environ.get("AGENT_MAX_TURNS_PREMARKET", "8"))
 
 TOOL_TIMEOUT_SECONDS = int(os.environ.get("TOOL_TIMEOUT_SECONDS", "15"))

@@ -23,6 +23,25 @@ def _cached_system(text: str) -> list:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
+def _system_blocks(stable_text: str, volatile_text: str = "") -> list:
+    """
+    Monta o system como blocos para otimizar o prompt caching da Anthropic.
+
+    - `stable_text`: instruções/fluxo que NÃO mudam entre execuções → recebe
+      cache_control (este prefixo é reaproveitado e custa ~10% nos cache hits).
+    - `volatile_text`: data de hoje + memória dos dias anteriores, que mudam a
+      cada run → vai num bloco SEPARADO e SEM cache, depois do estável, para
+      não invalidar o cache do prefixo fixo.
+
+    Para provedores não-Anthropic, _anthropic_messages_to_openai() já achata
+    esta lista de blocos em uma única string de system.
+    """
+    blocks = [{"type": "text", "text": stable_text, "cache_control": {"type": "ephemeral"}}]
+    if volatile_text:
+        blocks.append({"type": "text", "text": volatile_text})
+    return blocks
+
+
 def _cached_tools(tools: list) -> list:
     """Cache hint para Anthropic — outros provedores ignoram o campo extra."""
     if not tools:
@@ -44,9 +63,10 @@ Fluxo: 1) get_fear_greed_index 2) get_sector_performance 3) Para cada ticker da 
 Seja conciso. Formate em Markdown. Cite números."""
 
 
-def build_system_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    return f"""Você é um analista de ações sênior fazendo a leitura pré-mercado do dia {today}.
+def _system_stable_full() -> str:
+    """Parte ESTÁVEL do system prompt do modo completo (cacheável).
+    Não inclui data nem memória — esses vão no bloco volátil."""
+    return f"""Você é um analista de ações sênior fazendo a leitura pré-mercado do dia.
 Ativos sob cobertura: {", ".join(config.TICKERS)}.
 
 Seu fluxo completo:
@@ -85,6 +105,12 @@ Para cada ativo do Grupo A, nesta ordem:
   • Todos os demais tickers em cobertura não incluídos no Grupo A
   Registre preço e variação no relatório; não chame outras ferramentas para eles.
 
+**EFICIÊNCIA (controle de custo):**
+- Quando precisar dos mesmos dados para vários tickers, agrupe as chamadas de
+  ferramenta no MESMO turno (várias tool calls de uma vez) em vez de uma por turno.
+- Não repita uma ferramenta para o mesmo ticker se o dado já está no contexto.
+- Pare assim que tiver informação suficiente para o relatório; não gaste turnos extras.
+
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
 
@@ -96,11 +122,27 @@ Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
 
 Princípios:
 - Seja factual e cite os números.
-- No relatório final, inclua seções por ativo em Markdown.
+- No relatório final, inclua seções por ativo em Markdown."""
+
+
+def _system_volatile() -> str:
+    """Parte VOLÁTIL: muda a cada execução, fica num bloco SEM cache."""
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    return f"""Data de hoje: {today}.
 
 === MEMÓRIA DOS DIAS ANTERIORES ===
 {memory.recent_context()}
 === FIM DA MEMÓRIA ==="""
+
+
+def build_system_prompt() -> str:
+    """Mantida para compatibilidade — concatena estável + volátil como string."""
+    return _system_stable_full() + "\n\n" + _system_volatile()
+
+
+def build_system_prompt_blocks() -> list:
+    """System em blocos: fixo cacheado + volátil sem cache (otimiza cache da Anthropic)."""
+    return _system_blocks(_system_stable_full(), _system_volatile())
 
 
 def build_premarket_prompt() -> str:
@@ -194,15 +236,24 @@ _GROQ_TOOL_NAMES = {
 }
 GROQ_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _GROQ_TOOL_NAMES]
 
+# Subconjunto para a varredura rápida intradiária. O prompt do premarket já
+# proíbe as demais ferramentas; aqui cortamos de fato o schema delas do request,
+# economizando ~7k tokens de input por turno (das 17 ferramentas só 5 são usadas).
+_PREMARKET_TOOL_NAMES = {
+    "get_fear_greed_index", "get_sector_performance",
+    "detect_sector_contagion", "get_stock_data", "get_options_data",
+}
+PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_NAMES]
+
 
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
 def run(progress_callback=None) -> str:
     client = _get_client()
-    system_full = build_system_prompt()
+    system_full_blocks = build_system_prompt_blocks()
     system_lite = build_system_prompt_lite()
-    def _system_fn(provider_name: str) -> str:
-        return system_lite if provider_name == "groq" else system_full
+    def _system_fn(provider_name: str):
+        return system_lite if provider_name == "groq" else system_full_blocks
 
     def _tools_fn(provider_name: str) -> list:
         return GROQ_TOOLS if provider_name == "groq" else t.TOOLS
@@ -225,7 +276,7 @@ def run(progress_callback=None) -> str:
         resp = client.create(
             model=model,
             max_tokens=config.MAX_TOKENS,
-            system=system_full,
+            system=system_full_blocks,
             tools=t.TOOLS,
             messages=messages,
             system_fn=_system_fn,
@@ -276,7 +327,7 @@ def run_premarket(progress_callback=None) -> str:
             model=model,
             max_tokens=config.MAX_TOKENS_PREMARKET,
             system=system,
-            tools=t.TOOLS,
+            tools=PREMARKET_TOOLS,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})

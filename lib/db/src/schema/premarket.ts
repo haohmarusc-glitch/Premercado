@@ -84,10 +84,12 @@ export const settingsTable = pgTable("settings", {
     .notNull()
     .default(["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"]),
   // Pré-mercado intradiário automático
+  // OBS de custo: cada scan dispara um loop de agente. Intervalos curtos (ex.: 30min)
+  // multiplicam o gasto de API. Default conservador: 60min numa janela curta.
   premarketEnabled: boolean("premarket_enabled").notNull().default(false),
-  premarketIntervalMin: integer("premarket_interval_min").notNull().default(30),
-  premarketWindowStartHour: integer("premarket_window_start_hour").notNull().default(6),
-  premarketWindowEndHour: integer("premarket_window_end_hour").notNull().default(9),
+  premarketIntervalMin: integer("premarket_interval_min").notNull().default(60),
+  premarketWindowStartHour: integer("premarket_window_start_hour").notNull().default(8),
+  premarketWindowEndHour: integer("premarket_window_end_hour").notNull().default(10),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

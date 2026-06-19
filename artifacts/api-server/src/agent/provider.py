@@ -214,7 +214,10 @@ class ProviderClient:
             return self._call_openai(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages)
 
     def _call_anthropic(self, *, model, max_tokens, system, tools, messages) -> NormalizedResponse:
-        # Apply Anthropic prompt caching
+        # Apply Anthropic prompt caching.
+        # Se `system` já vier como lista de blocos, respeitamos os cache_control
+        # definidos por quem chamou (bloco fixo cacheado, bloco volátil sem cache).
+        # Só fazemos o wrap automático quando vier como string simples.
         if isinstance(system, str):
             system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         cached_tools = list(tools)
