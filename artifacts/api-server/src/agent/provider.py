@@ -318,6 +318,7 @@ class FallbackClient:
         system_fn: optional callable(provider_name) -> str for per-provider system prompt.
         tools_fn:  optional callable(provider_name) -> list for per-provider tools subset.
         """
+        primary_name = self._order[self._current_idx]
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
             c = self._get_client(name)
@@ -325,13 +326,28 @@ class FallbackClient:
             resolved_model = c.models.get(tier, model) if tier else model
             resolved_system = system_fn(name) if system_fn else system
             resolved_tools = tools_fn(name) if tools_fn else tools
+
+            # Se este provider é diferente do primário desta chamada, o histórico
+            # de `messages` acumulado (tool_use/tool_result de turnos anteriores
+            # no provider original) não serve para ele — só ocupa tokens e pode
+            # estourar limites baixos (ex.: Groq free tier = 6000 TPM). Trocar de
+            # provider no meio de uma run já é um "recomeço" para quem assume:
+            # mantemos só a primeira mensagem do usuário.
+            resolved_messages = messages if name == primary_name else messages[:1]
+            if name != primary_name and len(messages) > 1:
+                print(
+                    f"[provider] histórico truncado para {name} "
+                    f"({len(messages)} -> 1 mensagem, evita estourar TPM/contexto)",
+                    flush=True,
+                )
+
             try:
                 result = c.create(
                     model=resolved_model,
                     max_tokens=max_tokens,
                     system=resolved_system,
                     tools=resolved_tools,
-                    messages=messages,
+                    messages=resolved_messages,
                 )
                 if idx != self._current_idx:
                     print(f"[provider] switched to {name}", flush=True)
