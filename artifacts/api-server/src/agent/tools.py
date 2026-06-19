@@ -10,9 +10,11 @@ import yfinance as yf
 
 from . import market_alerts as _ma
 from . import sector_contagion as _sc
+from .cache import cached
 
 # ── Cotações ──────────────────────────────────────────────────────────────────
 
+@cached("stock_data:{0}", ttl=120)
 def get_stock_data(ticker: str) -> dict:
     """Retorna dados de cotação e pré-mercado do ticker."""
     try:
@@ -46,20 +48,23 @@ def get_stock_data(ticker: str) -> dict:
 
 # ── Notícias ──────────────────────────────────────────────────────────────────
 
-def get_news(ticker: str, max_items: int = 8) -> list[dict]:
-    """Retorna manchetes recentes do ticker via yfinance."""
+@cached("news:{0}:{1}", ttl=600)
+def get_news(ticker: str, max_items: int = 6) -> list[dict]:
+    """Retorna manchetes recentes do ticker via yfinance (resumo truncado para economizar tokens)."""
     try:
         t = yf.Ticker(ticker)
         news = t.news or []
         result = []
         for item in news[:max_items]:
             content = item.get("content", {})
+            summary = content.get("summary", item.get("summary", "")) or ""
             result.append({
                 "title": content.get("title", item.get("title", "")),
                 "published": content.get("pubDate", item.get("providerPublishTime", "")),
-                "summary": content.get("summary", item.get("summary", "")),
-                "url": content.get("canonicalUrl", {}).get("url", "") if isinstance(content.get("canonicalUrl"), dict) else item.get("link", ""),
+                # Truncado: o modelo precisa do gist, não do texto completo da notícia.
+                "summary": summary[:280] + ("..." if len(summary) > 280 else ""),
                 "source": content.get("provider", {}).get("displayName", "") if isinstance(content.get("provider"), dict) else "",
+                # url removida do payload — não é usada na análise e só consome tokens de input.
             })
         return result
     except Exception as e:
@@ -92,6 +97,7 @@ TICKER_TO_CIK = {
 }
 
 
+@cached("edgar:{0}:{1}:{2}", ttl=1800)
 def search_edgar_filings(ticker: str, form_type: str = "8-K", count: int = 5) -> list[dict]:
     """Busca filings recentes na SEC EDGAR para o ticker."""
     cik = TICKER_TO_CIK.get(ticker.upper())
@@ -126,8 +132,10 @@ def search_edgar_filings(ticker: str, form_type: str = "8-K", count: int = 5) ->
         return [{"error": str(e)}]
 
 
+@cached("filing:{0}:{1}", ttl=86400)
 def read_filing(url: str, max_chars: int = 4000) -> str:
-    """Lê o conteúdo de um filing da SEC (truncado)."""
+    """Lê o conteúdo de um filing da SEC (truncado). Cacheado por 24h — um
+    filing já publicado não muda."""
     try:
         r = requests.get(url, headers=EDGAR_HEADERS, timeout=15)
         r.raise_for_status()
@@ -266,6 +274,7 @@ def delete_alert(alert_id: int, reason: str) -> dict:
 
 # ── Opções ────────────────────────────────────────────────────────────────────
 
+@cached("options:{0}:{1}", ttl=300)
 def get_options_data(ticker: str, expiry: str | None = None) -> dict:
     """Retorna put/call ratio, IV ATM e as opções mais negociadas do ticker."""
     try:
@@ -315,6 +324,7 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
 # ── Indicadores técnicos ──────────────────────────────────────────────────────
 
+@cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     """Calcula RSI-14, MACD, Bollinger Bands e médias móveis para o ticker."""
     try:
@@ -405,6 +415,7 @@ _SECTOR_ETFS = {
 }
 
 
+@cached("sector_perf:{0}", ttl=180)
 def get_sector_performance(etfs: list[str] | None = None) -> list[dict]:
     """Retorna a performance e pré-mercado dos principais ETFs de setor."""
     symbols = etfs or list(_SECTOR_ETFS.keys())
@@ -438,6 +449,7 @@ def get_sector_performance(etfs: list[str] | None = None) -> list[dict]:
 
 # ── Short interest ────────────────────────────────────────────────────────────
 
+@cached("short_interest:{0}", ttl=3600)
 def get_short_interest(ticker: str) -> dict:
     """Retorna short float %, days-to-cover e variação em relação ao mês anterior."""
     try:
@@ -476,6 +488,7 @@ def get_short_interest(ticker: str) -> dict:
 
 # ── Calendário de resultados ──────────────────────────────────────────────────
 
+@cached("earnings_cal:{0}", ttl=3600)
 def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
     """Retorna datas e estimativas de resultados dos tickers cobertos."""
     from . import config
@@ -530,6 +543,7 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
 
 # ── Fear & Greed Index ────────────────────────────────────────────────────────
 
+@cached("fear_greed", ttl=900)
 def get_fear_greed_index() -> dict:
     """Retorna o Índice Fear & Greed da CNN para sentimento de mercado."""
     try:
@@ -588,6 +602,7 @@ def get_fear_greed_index() -> dict:
 
 # ── Ratings de analistas ──────────────────────────────────────────────────────
 
+@cached("analyst_ratings:{0}", ttl=3600)
 def get_analyst_ratings(ticker: str) -> dict:
     """Retorna consenso, preços-alvo e upgrades/downgrades recentes de analistas."""
     try:
