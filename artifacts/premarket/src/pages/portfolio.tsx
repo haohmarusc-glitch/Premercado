@@ -975,8 +975,9 @@ export default function PortfolioPage() {
                 <th className="text-left py-2.5 pl-1">Ticker</th>
                 <th className="text-right pr-3">Qtde</th>
                 <th className="text-right pr-3">Custo médio</th>
+                <th className="text-right pr-3">Preço atual</th>
                 <th className="text-right pr-3">Investido</th>
-                <th className="text-right pr-3">Atual</th>
+                <th className="text-right pr-3">Valor atual</th>
                 <th className="text-right pr-3">Var. $</th>
                 <th className="text-right pr-3">Var. %</th>
                 <th className="text-right pr-3">P&amp;L $</th>
@@ -989,7 +990,7 @@ export default function PortfolioPage() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={13} className="py-10 text-center text-muted-foreground">
+                  <td colSpan={15} className="py-10 text-center text-muted-foreground">
                     Carregando...
                   </td>
                 </tr>
@@ -1039,8 +1040,11 @@ export default function PortfolioPage() {
                     </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(pos.quantity)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.avgCost)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
+                      {hasPrice ? `$${price.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.investedAmount)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">
+                    <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
                       {hasPrice ? fmt$(currentValue) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice && dailyChange != null ? (dayPos ? "text-green-400" : "text-red-400") : "text-muted-foreground")}>
