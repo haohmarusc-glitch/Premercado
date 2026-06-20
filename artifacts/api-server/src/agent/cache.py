@@ -13,6 +13,7 @@ Design:
 - Falha aberta: qualquer erro de leitura/escrita do cache não deve quebrar a
   ferramenta — pior caso é buscar de novo, como antes de existir o cache.
 """
+import inspect
 import json
 import os
 import time
@@ -57,13 +58,21 @@ def cached(key: str, ttl: int | None = None) -> Callable:
     effective_ttl = ttl if ttl is not None else config.CACHE_TTL_SECONDS
 
     def decorator(fn: Callable) -> Callable:
+        sig = inspect.signature(fn)
+
         def wrapper(*args, **kwargs):
             if not config.CACHE_ENABLED:
                 return fn(*args, **kwargs)
 
             _load()
             try:
-                cache_key = key.format(*args, **kwargs)
+                # Resolve both positional and keyword args to parameter names so
+                # {0}-style keys work whether the caller used positional or keyword
+                # args (the Anthropic tool-use SDK always passes keyword args).
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+                positional_vals = list(bound.arguments.values())
+                cache_key = key.format(*positional_vals, **bound.arguments)
             except Exception:
                 cache_key = key  # chave sem placeholders, ou args não combinam
 
