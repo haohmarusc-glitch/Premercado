@@ -1,6 +1,7 @@
-"""
+"""t:
 Ferramentas disponíveis para o agente de pré-mercado.
 """
+
 import datetime
 import json
 import os
@@ -11,12 +12,18 @@ import yfinance as yf
 from . import market_alerts as _ma
 from . import sector_contagion as _sc
 from .cache import cached
+from .security import sanitize_for_llm, sanitize_ticker, sanitize_url
 
 # ── Cotações ──────────────────────────────────────────────────────────────────
+
 
 @cached("stock_data:{0}", ttl=120)
 def get_stock_data(ticker: str) -> dict:
     """Retorna dados de cotação e pré-mercado do ticker."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
         info = t.info or {}
@@ -48,9 +55,14 @@ def get_stock_data(ticker: str) -> dict:
 
 # ── Notícias ──────────────────────────────────────────────────────────────────
 
+
 @cached("news:{0}:{1}", ttl=600)
 def get_news(ticker: str, max_items: int = 6) -> list[dict]:
     """Retorna manchetes recentes do ticker via yfinance (resumo truncado para economizar tokens)."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return [{"error": str(e)}]
     try:
         t = yf.Ticker(ticker)
         news = t.news or []
@@ -58,14 +70,20 @@ def get_news(ticker: str, max_items: int = 6) -> list[dict]:
         for item in news[:max_items]:
             content = item.get("content", {})
             summary = content.get("summary", item.get("summary", "")) or ""
-            result.append({
-                "title": content.get("title", item.get("title", "")),
-                "published": content.get("pubDate", item.get("providerPublishTime", "")),
-                # Truncado: o modelo precisa do gist, não do texto completo da notícia.
-                "summary": summary[:280] + ("..." if len(summary) > 280 else ""),
-                "source": content.get("provider", {}).get("displayName", "") if isinstance(content.get("provider"), dict) else "",
-                # url removida do payload — não é usada na análise e só consome tokens de input.
-            })
+            result.append(
+                {
+                    "title": sanitize_for_llm(content.get("title", item.get("title", ""))),
+                    "published": content.get(
+                        "pubDate", item.get("providerPublishTime", "")
+                    ),
+                    # Truncado: o modelo precisa do gist, não do texto completo da notícia.
+                    "summary": sanitize_for_llm(summary[:280] + ("..." if len(summary) > 280 else "")),
+                    "source": content.get("provider", {}).get("displayName", "")
+                    if isinstance(content.get("provider"), dict)
+                    else "",
+                    # url removida do payload — não é usada na análise e só consome tokens de input.
+                }
+            )
         return result
     except Exception as e:
         return [{"error": str(e)}]
@@ -98,7 +116,9 @@ TICKER_TO_CIK = {
 
 
 @cached("edgar:{0}:{1}:{2}", ttl=1800)
-def search_edgar_filings(ticker: str, form_type: str = "8-K", count: int = 5) -> list[dict]:
+def search_edgar_filings(
+    ticker: str, form_type: str = "8-K", count: int = 5
+) -> list[dict]:
     """Busca filings recentes na SEC EDGAR para o ticker."""
     cik = TICKER_TO_CIK.get(ticker.upper())
     if not cik:
@@ -114,20 +134,28 @@ def search_edgar_filings(ticker: str, form_type: str = "8-K", count: int = 5) ->
         accessions = filings.get("accessionNumber", [])
         descriptions = filings.get("primaryDocument", [])
         results = []
-        for i, (form, date, acc, doc) in enumerate(zip(forms, dates, accessions, descriptions)):
+        for i, (form, date, acc, doc) in enumerate(
+            zip(forms, dates, accessions, descriptions)
+        ):
             if form_type and form != form_type:
                 continue
             acc_clean = acc.replace("-", "")
-            doc_name = doc.split("/")[-1]  # strip XSLT viewer prefix (ex: xslF345X06/) p/ XML bruto
-            results.append({
-                "form": form,
-                "date": date,
-                "accession": acc,
-                "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc_name}",
-            })
+            doc_name = doc.split("/")[
+                -1
+            ]  # strip XSLT viewer prefix (ex: xslF345X06/) p/ XML bruto
+            results.append(
+                {
+                    "form": form,
+                    "date": date,
+                    "accession": acc,
+                    "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_clean}/{doc_name}",
+                }
+            )
             if len(results) >= count:
                 break
-        return results or [{"info": f"Nenhum filing {form_type} recente encontrado para {ticker}"}]
+        return results or [
+            {"info": f"Nenhum filing {form_type} recente encontrado para {ticker}"}
+        ]
     except Exception as e:
         return [{"error": str(e)}]
 
@@ -137,18 +165,25 @@ def read_filing(url: str, max_chars: int = 4000) -> str:
     """Lê o conteúdo de um filing da SEC (truncado). Cacheado por 24h — um
     filing já publicado não muda."""
     try:
+        url = sanitize_url(url)
+    except ValueError as e:
+        return f"[erro ao ler filing: {e}]"
+    try:
         r = requests.get(url, headers=EDGAR_HEADERS, timeout=15)
         r.raise_for_status()
         text = r.text
         import re
+
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
+        text = sanitize_for_llm(text)
         return text[:max_chars] + (" [TRUNCADO]" if len(text) > max_chars else "")
     except Exception as e:
         return f"[erro ao ler filing: {e}]"
 
 
 # ── Autenticação interna ───────────────────────────────────────────────────────
+
 
 def _internal_headers() -> dict:
     """Retorna os headers de autenticação para chamadas internas à API."""
@@ -162,15 +197,22 @@ def _api_url() -> str:
 
 # ── Memória / observações ─────────────────────────────────────────────────────
 
-def save_observation(ticker: str, summary: str, sentiment: str, price: float | None = None) -> dict:
+
+def save_observation(
+    ticker: str, summary: str, sentiment: str, price: float | None = None
+) -> dict:
     """
     Salva observação do dia via API interna.
     Retorna o resultado da gravação.
     """
     try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"saved": False, "error": str(e)}
+    try:
         today = datetime.date.today().isoformat()
         payload = {
-            "ticker": ticker.upper(),
+            "ticker": ticker,
             "date": today,
             "summary": summary,
             "sentiment": sentiment.lower(),
@@ -189,6 +231,7 @@ def save_observation(ticker: str, summary: str, sentiment: str, price: float | N
 
 
 # ── Gerenciamento de alertas ──────────────────────────────────────────────────
+
 
 def list_alerts(symbol: str | None = None) -> list[dict]:
     """
@@ -220,7 +263,9 @@ def list_alerts(symbol: str | None = None) -> list[dict]:
         return [{"error": str(e)}]
 
 
-def create_alert(symbol: str, condition: str, threshold_pct: float, reason: str) -> dict:
+def create_alert(
+    symbol: str, condition: str, threshold_pct: float, reason: str
+) -> dict:
     """
     Cria um novo alerta de preço.
     condition: 'above' ou 'below'
@@ -274,9 +319,14 @@ def delete_alert(alert_id: int, reason: str) -> dict:
 
 # ── Opções ────────────────────────────────────────────────────────────────────
 
+
 @cached("options:{0}:{1}", ttl=300)
 def get_options_data(ticker: str, expiry: str | None = None) -> dict:
     """Retorna put/call ratio, IV ATM e as opções mais negociadas do ticker."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
         expirations = t.options
@@ -290,16 +340,23 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
         total_call_vol = int(calls["volume"].sum()) if not calls.empty else 0
         total_put_vol = int(puts["volume"].sum()) if not puts.empty else 0
-        pc_ratio = round(total_put_vol / total_call_vol, 3) if total_call_vol > 0 else None
+        pc_ratio = (
+            round(total_put_vol / total_call_vol, 3) if total_call_vol > 0 else None
+        )
 
         def _top(df, n=5):
-            cols = ["strike", "lastPrice", "volume", "openInterest", "impliedVolatility"]
+            cols = [
+                "strike",
+                "lastPrice",
+                "volume",
+                "openInterest",
+                "impliedVolatility",
+            ]
             return (
-                df.nlargest(n, "volume")[cols]
-                .fillna(0)
-                .round(4)
-                .to_dict("records")
-            ) if not df.empty else []
+                (df.nlargest(n, "volume")[cols].fillna(0).round(4).to_dict("records"))
+                if not df.empty
+                else []
+            )
 
         spot = getattr(t.fast_info, "last_price", None)
         atm_iv = None
@@ -324,9 +381,14 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
 # ── Indicadores técnicos ──────────────────────────────────────────────────────
 
+
 @cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     """Calcula RSI-14, MACD, Bollinger Bands e médias móveis para o ticker."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
     try:
         import pandas as pd
 
@@ -359,7 +421,11 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         bb_upper = float((sma20 + 2 * std20).iloc[-1])
         bb_middle = float(sma20.iloc[-1])
         bb_lower = float((sma20 - 2 * std20).iloc[-1])
-        pct_b = round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1) if (bb_upper - bb_lower) != 0 else None
+        pct_b = (
+            round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1)
+            if (bb_upper - bb_lower) != 0
+            else None
+        )
 
         def _safe(series):
             val = series.iloc[-1]
@@ -379,7 +445,11 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             "ticker": ticker,
             "price": round(price, 2),
             "rsi_14": rsi,
-            "rsi_signal": "sobrecomprado" if rsi > 70 else "sobrevendido" if rsi < 30 else "neutro",
+            "rsi_signal": "sobrecomprado"
+            if rsi > 70
+            else "sobrevendido"
+            if rsi < 30
+            else "neutro",
             "macd": {
                 "macd_line": round(float(macd_line.iloc[-1]), 4),
                 "signal_line": round(float(signal_line.iloc[-1]), 4),
@@ -434,14 +504,16 @@ def get_sector_performance(etfs: list[str] | None = None) -> list[dict]:
                     return round((p - c) / c * 100, 2)
                 return None
 
-            results.append({
-                "symbol": sym,
-                "name": _SECTOR_ETFS.get(sym, sym),
-                "price": round(price, 2) if price else None,
-                "pre_market_price": round(pre, 2) if pre else None,
-                "change_pct": _chg(price, prev_close),
-                "pre_market_change_pct": _chg(pre, prev_close),
-            })
+            results.append(
+                {
+                    "symbol": sym,
+                    "name": _SECTOR_ETFS.get(sym, sym),
+                    "price": round(price, 2) if price else None,
+                    "pre_market_price": round(pre, 2) if pre else None,
+                    "change_pct": _chg(price, prev_close),
+                    "pre_market_change_pct": _chg(pre, prev_close),
+                }
+            )
         except Exception as e:
             results.append({"symbol": sym, "error": str(e)})
     return results
@@ -449,9 +521,14 @@ def get_sector_performance(etfs: list[str] | None = None) -> list[dict]:
 
 # ── Short interest ────────────────────────────────────────────────────────────
 
+
 @cached("short_interest:{0}", ttl=3600)
 def get_short_interest(ticker: str) -> dict:
     """Retorna short float %, days-to-cover e variação em relação ao mês anterior."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
         info = t.info or {}
@@ -464,11 +541,15 @@ def get_short_interest(ticker: str) -> dict:
 
         short_change_pct = None
         if shares_short and shares_short_prior and shares_short_prior > 0:
-            short_change_pct = round((shares_short - shares_short_prior) / shares_short_prior * 100, 2)
+            short_change_pct = round(
+                (shares_short - shares_short_prior) / shares_short_prior * 100, 2
+            )
 
         squeeze_risk = (
-            "alto" if short_pct and short_pct > 0.20
-            else "moderado" if short_pct and short_pct > 0.10
+            "alto"
+            if short_pct and short_pct > 0.20
+            else "moderado"
+            if short_pct and short_pct > 0.10
             else "baixo"
         )
 
@@ -488,10 +569,12 @@ def get_short_interest(ticker: str) -> dict:
 
 # ── Calendário de resultados ──────────────────────────────────────────────────
 
+
 @cached("earnings_cal:{0}", ttl=3600)
 def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
     """Retorna datas e estimativas de resultados dos tickers cobertos."""
     from . import config
+
     symbols = tickers or config.TICKERS
     results = []
     for sym in symbols:
@@ -514,9 +597,13 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
                 continue
 
             next_date = dates[0] if hasattr(dates, "__iter__") else dates
-            date_str = str(next_date.date()) if hasattr(next_date, "date") else str(next_date)
+            date_str = (
+                str(next_date.date()) if hasattr(next_date, "date") else str(next_date)
+            )
             try:
-                days_until = (datetime.date.fromisoformat(date_str) - datetime.date.today()).days
+                days_until = (
+                    datetime.date.fromisoformat(date_str) - datetime.date.today()
+                ).days
             except Exception:
                 days_until = None
 
@@ -526,22 +613,25 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
                     return None
                 return v[0] if hasattr(v, "__iter__") and not isinstance(v, str) else v
 
-            results.append({
-                "ticker": sym,
-                "next_earnings_date": date_str,
-                "days_until_earnings": days_until,
-                "eps_estimate_avg": _first("Earnings Average"),
-                "eps_estimate_low": _first("Earnings Low"),
-                "eps_estimate_high": _first("Earnings High"),
-                "revenue_estimate": _first("Revenue Average"),
-                "imminent": days_until is not None and 0 <= days_until <= 14,
-            })
+            results.append(
+                {
+                    "ticker": sym,
+                    "next_earnings_date": date_str,
+                    "days_until_earnings": days_until,
+                    "eps_estimate_avg": _first("Earnings Average"),
+                    "eps_estimate_low": _first("Earnings Low"),
+                    "eps_estimate_high": _first("Earnings High"),
+                    "revenue_estimate": _first("Revenue Average"),
+                    "imminent": days_until is not None and 0 <= days_until <= 14,
+                }
+            )
         except Exception as e:
             results.append({"ticker": sym, "error": str(e)})
     return results
 
 
 # ── Fear & Greed Index ────────────────────────────────────────────────────────
+
 
 @cached("fear_greed", ttl=900)
 def get_fear_greed_index() -> dict:
@@ -589,10 +679,14 @@ def get_fear_greed_index() -> dict:
             "one_month_ago": _safe_score(hist.get("oneMonthAgo")),
             "one_year_ago": _safe_score(hist.get("oneYearAgo")),
             "interpretation": (
-                "Pânico — potencial oportunidade contrária" if score and score <= 25
-                else "Medo predominante — cautela" if score and score <= 45
-                else "Sentimento neutro" if score and score <= 55
-                else "Mercado ganancioso — risco de reversão" if score and score <= 75
+                "Pânico — potencial oportunidade contrária"
+                if score and score <= 25
+                else "Medo predominante — cautela"
+                if score and score <= 45
+                else "Sentimento neutro"
+                if score and score <= 55
+                else "Mercado ganancioso — risco de reversão"
+                if score and score <= 75
                 else "Euforia — risco máximo de reversão"
             ),
         }
@@ -602,9 +696,14 @@ def get_fear_greed_index() -> dict:
 
 # ── Ratings de analistas ──────────────────────────────────────────────────────
 
+
 @cached("analyst_ratings:{0}", ttl=3600)
 def get_analyst_ratings(ticker: str) -> dict:
     """Retorna consenso, preços-alvo e upgrades/downgrades recentes de analistas."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
         info = t.info or {}
@@ -635,13 +734,15 @@ def get_analyst_ratings(ticker: str) -> dict:
             ud = t.upgrades_downgrades
             if ud is not None and not ud.empty:
                 for _, row in ud.head(10).reset_index().iterrows():
-                    upgrades_downgrades.append({
-                        "date": str(row.get("GradeDate", "")),
-                        "firm": row.get("Firm", ""),
-                        "from_grade": row.get("FromGrade", ""),
-                        "to_grade": row.get("ToGrade", ""),
-                        "action": row.get("Action", ""),
-                    })
+                    upgrades_downgrades.append(
+                        {
+                            "date": str(row.get("GradeDate", "")),
+                            "firm": row.get("Firm", ""),
+                            "from_grade": row.get("FromGrade", ""),
+                            "to_grade": row.get("ToGrade", ""),
+                            "action": row.get("Action", ""),
+                        }
+                    )
         except Exception:
             pass
 
@@ -662,6 +763,7 @@ def get_analyst_ratings(ticker: str) -> dict:
 
 
 # ── Contágio setorial ────────────────────────────────────────────────────────
+
 
 def detect_sector_contagion(
     period: str = "5d",
@@ -694,6 +796,7 @@ def detect_sector_contagion(
 
 # ── Análise de mercado (market_alerts) ───────────────────────────────────────
 
+
 def check_market_alerts(
     tickers: list[str] | None = None,
     headlines_by_ticker: dict[str, list] | None = None,
@@ -714,9 +817,10 @@ def check_market_alerts(
     check_halts: habilita circuit breaker S&P + halt intraday (padrão True)
     """
     from . import config
+
     tickers = tickers or config.TICKERS
     headlines_by_ticker = headlines_by_ticker or {}
-    filings_by_ticker   = filings_by_ticker   or {}
+    filings_by_ticker = filings_by_ticker or {}
 
     try:
         alerts = _ma.run_all_alerts(
@@ -744,7 +848,10 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "description": "Símbolo do ativo, ex: MU, SMCI"}
+                "ticker": {
+                    "type": "string",
+                    "description": "Símbolo do ativo, ex: MU, SMCI",
+                }
             },
             "required": ["ticker"],
         },
@@ -793,13 +900,19 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
-                "summary": {"type": "string", "description": "Resumo factual em 2-4 frases"},
+                "summary": {
+                    "type": "string",
+                    "description": "Resumo factual em 2-4 frases",
+                },
                 "sentiment": {
                     "type": "string",
                     "enum": ["bullish", "bearish", "neutral"],
                     "description": "Sentimento geral com base nos dados coletados",
                 },
-                "price": {"type": "number", "description": "Preço atual ou pré-mercado do ativo"},
+                "price": {
+                    "type": "number",
+                    "description": "Preço atual ou pré-mercado do ativo",
+                },
             },
             "required": ["ticker", "summary", "sentiment"],
         },

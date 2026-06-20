@@ -1,52 +1,111 @@
 # Pré-Mercado — Agente de Análise
 
-App de monitoramento pré-mercado com loop agêntico Claude para MU (Micron) e SMCI (Super Micro Computer).
+App de monitoramento pré-mercado com loop agêntico (Claude + fallback multi-provider)
+para uma cesta de tickers do ecossistema de semicondutores/IA, com gestão de carteira,
+alertas de preço e chat conversacional.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — API server (porta 5000)
-- `pnpm --filter @workspace/premarket run dev` — Frontend React (porta 19156)
-- `pnpm run typecheck` — typecheck completo
+- `pnpm --filter @workspace/api-server run dev` — API server (porta via `PORT` env)
+- `pnpm --filter @workspace/premarket run dev` — Frontend React (porta via `PORT` env)
+- `pnpm run typecheck` — typecheck completo do monorepo
 - `pnpm --filter @workspace/api-spec run codegen` — regenerar hooks e schemas do OpenAPI
 - `pnpm --filter @workspace/db run push` — aplicar schema no banco (dev only)
-- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`
+- `pnpm --filter @workspace/api-server test` — testes do servidor (vitest)
+- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `SESSION_SECRET`, `OPERATOR_API_KEY`
+- Opcional (fallback chain): `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
+- API: Express 5, sessão via `express-session` (cookie `httpOnly`/`sameSite=strict`)
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod, drizzle-zod
-- API codegen: Orval (from OpenAPI spec)
+- API codegen: Orval (a partir do OpenAPI spec)
 - Frontend: React + Vite + shadcn/ui + Tailwind
-- Agent: Python 3 + Anthropic SDK + yfinance + requests (SEC EDGAR)
+- Agent: Python 3 + Anthropic SDK + yfinance + requests + pandas
+- Scheduler: `node-cron`, timezone `America/Sao_Paulo`, só dias úteis
 
 ## Where things live
 
 - `lib/api-spec/openapi.yaml` — contrato único da API
-- `lib/db/src/schema/premarket.ts` — tabelas `reports` e `observations`
-- `artifacts/api-server/src/routes/` — rotas Express (reports, observations, agent)
+- `lib/db/src/schema/premarket.ts` — todas as tabelas (ver lista abaixo)
+- `artifacts/api-server/src/routes/` — rotas Express:
+  - `agent.ts` (`/agent/run`, `/agent/status`) — dispara e monitora o loop agêntico
+  - `runs.ts` (`/agent/runs`) — histórico de execuções
+  - `reports.ts` (`/reports`, `/reports/latest`, `/reports/:id`)
+  - `observations.ts` (`/observations`, `/observations/internal`) — memória do agente
+  - `alerts.ts` — CRUD de alertas de preço + histórico de disparos
+  - `portfolio.ts` — posições, compras/vendas, alertas de carteira
+  - `chat.ts` — sessões + streaming SSE de chat conversacional
+  - `settings.ts`, `quotes.ts`, `chart.ts`, `auth.ts`, `health.ts`
+  - `index.ts` monta `requireAuth` em todas as rotas operator-only
+    (agent, settings, alerts, runs, chat, portfolio, observations)
+- `artifacts/api-server/src/middleware/auth.ts` — sessão OU bearer `OPERATOR_API_KEY`
+- `artifacts/api-server/src/lib/`:
+  - `runner.ts` — spawna o subprocess Python do agente completo
+  - `scheduler.ts` — cron diário + scan intradiário de pré-mercado
+  - `alert-checker.ts`, `portfolio-alerts.ts` — avaliam gatilhos de preço/tempo
+  - `mailer.ts` — envio de relatório por e-mail
 - `artifacts/api-server/src/agent/` — código Python do loop agêntico
-  - `agent.py` — loop principal (chama Claude com ferramentas)
-  - `tools.py` — ferramentas: get_stock_data, get_news, search_edgar_filings, read_filing, save_observation
-  - `memory.py` — lê observações anteriores para injetar no system prompt
-  - `run_agent.py` — entry point chamado como subprocess pelo Node
-  - `config.py` — TICKERS, MODEL, MAX_TOKENS, MAX_AGENT_TURNS
+  - `agent.py` — prompts (estável/cacheável + volátil) e os 3 modos de run:
+    `run()` completo, `run_premarket()` flash intradiário, `run_chat_stream()`
+  - `provider.py` — adapter Anthropic/OpenAI-compatible + `FallbackClient`
+    (cadeia configurável via `AGENT_PROVIDER_ORDER`, default:
+    `anthropic → gemini → openrouter → openai → kimi`); recupera tool-calls
+    "vazadas" como texto por modelos menores
+  - `tools.py` — todas as ferramentas do agente (cotação, notícias, técnicos,
+    opções, short interest, analyst ratings, EDGAR, alertas, contágio setorial)
+  - `cache.py` — cache em disco (JSON, `/tmp`) com TTL por chamada, falha aberta
+  - `security.py` — `sanitize_ticker`, `sanitize_url` (bloqueia SSRF: localhost,
+    RFC1918, link-local/metadata de cloud), `sanitize_for_llm` (mitiga prompt
+    injection em conteúdo externo), `mask_sensitive_data` (mascara chaves em logs)
+  - `market_alerts.py` — contágio, macro (FOMC/CPI), técnico, Form 4, circuit breaker
+  - `sector_contagion.py` — detecção de líder/catch-up entre grupos da cadeia de IA
+  - `memory.py` — lê observações anteriores via API interna para injetar no prompt
+  - `run_agent.py` / `run_chat.py` — entry points chamados como subprocess pelo Node
+  - `config.py` — `TICKERS`, modelos por tier, limites de turnos/tokens, cache TTL
 - `artifacts/premarket/src/` — frontend React
+- `carteira.py` — script standalone de carteira (usa `psycopg2` direto, fora do agente)
 
 ## Architecture decisions
 
-- Agent roda como subprocess Python lançado pelo Express; progress via stdout "STEP:" lines
-- Relatório final começa com "REPORT:" no stdout e é salvo no banco pelo Node após o processo terminar
-- Observações salvas via chamada HTTP interna do Python para `POST /api/observations/internal`
-- Memória dos dias anteriores injetada no system prompt via `GET /api/observations/internal`
-- Frontend polling do status do agente a cada 3s enquanto `running: true`
+- Agent roda como subprocess Python lançado pelo Express; progress via stdout
+  linhas `STEP:`; relatório final começa com `REPORT:` e é salvo no banco pelo
+  Node após o processo terminar
+- Chat usa o mesmo padrão de subprocess, mas com streaming SSE (`STEP:`,
+  `RESULT:`, `TITLE:` no stdout) em vez de esperar o processo terminar
+- Observações salvas via chamada HTTP interna do Python para
+  `POST /api/observations/internal`; memória dos últimos 7 dias injetada no
+  system prompt via `GET /api/observations/internal`
+- System prompt do modo completo é dividido em bloco estável (cacheável via
+  `cache_control` da Anthropic) e bloco volátil (data + memória, sem cache) —
+  ver `_system_blocks()` em `agent.py`
+- `FallbackClient` tenta os providers na ordem configurada; ao trocar de
+  provider no meio de uma run, trunca o histórico de tool_use/tool_result
+  acumulado (o novo provider não tem como continuar de onde o anterior parou)
+- Cada ferramenta de rede em `tools.py` é cacheada via `cache.py` com TTL
+  proporcional à volatilidade do dado (preço: 120s; filing SEC: 24h)
+- Frontend faz polling do status do agente a cada ~3s enquanto `running: true`
+- Todas as rotas operator-only exigem `requireAuth` (sessão de login OU bearer
+  `OPERATOR_API_KEY`) — montado centralmente em `routes/index.ts`, não rota a rota
+
+## Database (tabelas em `lib/db/src/schema/premarket.ts`)
+
+`reports`, `observations`, `agent_runs`, `settings`, `alerts`, `alert_firings`,
+`chat_sessions`, `chat_messages`, `portfolio_positions`, `portfolio_purchases`,
+`portfolio_alert_firings`
 
 ## Product
 
-- Dashboard com relatório do dia em Markdown, indicador de status do agente, botão "RUN AGENT"
+- Dashboard com relatório do dia em Markdown, indicador de status do agente,
+  botão "RUN AGENT"
 - Histórico de todos os relatórios passados com badges de sentimento
 - Feed de observações (memória do agente) filtrável por ticker
+- Gestão de carteira (posições, compras/vendas parciais, alertas de
+  ganho/perda e marcos de tempo de holding)
+- Chat conversacional com subconjunto de ferramentas read-only
+- Scan intradiário de pré-mercado opcional (janela configurável, modelo "flash")
 
 ## User preferences
 
@@ -54,6 +113,18 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-- O agente Python usa `python3 -m agent.run_agent` com `cwd = artifacts/api-server/src`
+- O agente Python usa `python3 -m agent.run_agent` (ou `agent.run_chat`) com
+  `cwd = artifacts/api-server/src`; `PYTHONPATH` precisa apontar pro mesmo dir
 - `INTERNAL_API_URL` precisa apontar para o servidor Express correto em runtime
-- Para o agente rodar, `ANTHROPIC_API_KEY` deve estar disponível como variável de ambiente
+- `ANTHROPIC_API_KEY` vazia não impede o agente de rodar — `FallbackClient` só
+  monta a cadeia com os providers que têm chave configurada; se nenhuma chave
+  estiver presente, levanta `RuntimeError` explícito
+- A lista de tickers default existe duplicada em `runner.ts` (TS) e
+  `config.py` (Python) — `runner.ts` é a fonte de verdade em runtime, porque
+  o valor lido de `settingsTable` é repassado ao Python via `AGENT_TICKERS`;
+  ao mudar a lista default, atualizar os dois lugares
+- `search_edgar_filings` só cobre os tickers presentes em `TICKER_TO_CIK`
+  (em `tools.py`) — tickers fora desse dict retornam erro tratado, não crash
+- Erros de provider em `provider.py` passam por `mask_sensitive_data` antes
+  de log/persistência — não remover essa máscara ao tocar nesse código,
+  porque `runner.ts` grava `errorMessage` direto em `agent_runs` no Postgres
