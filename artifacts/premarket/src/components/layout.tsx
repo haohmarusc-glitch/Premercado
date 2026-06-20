@@ -86,18 +86,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [phasesOpen, setPhasesOpen] = useState(false);
 
   const PHASES = [
-    { label: "MACRO",     turns: 1,  dest: "/",             desc: "Fear & Greed · setor · earnings · contágio" },
-    { label: "COTAÇÕES",  turns: 2,  dest: "/",             desc: "+ cotações de todos os ativos do Grupo A" },
-    { label: "NOTÍCIAS",  turns: 3,  dest: "/history",      desc: "+ manchetes de todos os ativos" },
-    { label: "TÉCNICOS",  turns: 4,  dest: "/observations", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
-    { label: "SHORT",     turns: 5,  dest: "/observations", desc: "+ exposição short de cada ativo" },
-    { label: "ANALISTAS", turns: 6,  dest: "/history",      desc: "+ consenso e preço-alvo dos analistas" },
-    { label: "OPÇÕES",    turns: 7,  dest: "/history",      desc: "+ put/call ratio e volatilidade implícita" },
-    { label: "GRUPO B",   turns: 8,  dest: "/",             desc: "+ cotações rápidas dos tickers restantes" },
-    { label: "RADAR",     turns: 9,  dest: "/alerts",       desc: "+ radar de alertas de mercado" },
-    { label: "EDGAR",     turns: 11, dest: "/history",      desc: "+ busca e leitura de filings" },
-    { label: "ALERTAS",   turns: 12, dest: "/alerts",       desc: "+ criação e remoção de alertas técnicos" },
-    { label: "COMPLETO",  turns: 13, dest: "/",             desc: "+ observações salvas + relatório final" },
+    { label: "MACRO",     turns: 1,  dest: "/history", desc: "Fear & Greed · setor · earnings · contágio" },
+    { label: "COTAÇÕES",  turns: 2,  dest: "/history", desc: "+ cotações de todos os ativos do Grupo A" },
+    { label: "NOTÍCIAS",  turns: 3,  dest: "/history", desc: "+ manchetes de todos os ativos" },
+    { label: "TÉCNICOS",  turns: 4,  dest: "/history", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
+    { label: "SHORT",     turns: 5,  dest: "/history", desc: "+ exposição short de cada ativo" },
+    { label: "ANALISTAS", turns: 6,  dest: "/history", desc: "+ consenso e preço-alvo dos analistas" },
+    { label: "OPÇÕES",    turns: 7,  dest: "/history", desc: "+ put/call ratio e volatilidade implícita" },
+    { label: "GRUPO B",   turns: 8,  dest: "/history", desc: "+ cotações rápidas dos tickers restantes" },
+    { label: "RADAR",     turns: 9,  dest: "/alerts",  desc: "+ radar de alertas de mercado" },
+    { label: "EDGAR",     turns: 11, dest: "/history", desc: "+ busca e leitura de filings" },
+    { label: "ALERTAS",   turns: 12, dest: "/alerts",  desc: "+ criação e remoção de alertas técnicos" },
+    { label: "COMPLETO",  turns: 13, dest: "/",        desc: "+ observações salvas + relatório final" },
   ];
 
   const wasRunningRef = useRef(isRunning);
