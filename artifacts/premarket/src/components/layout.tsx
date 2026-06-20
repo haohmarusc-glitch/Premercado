@@ -60,15 +60,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }).then((r) => r.json());
 
   const runAI = useMutation({
-    mutationFn: () => { navigate("/observations"); return runFastMode("ai"); },
+    mutationFn: () => { navigate("/setor/ia"); return runFastMode("ai"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
   });
 
   const runCoal = useMutation({
-    mutationFn: () => { navigate("/observations"); return runFastMode("coal"); },
-
+    mutationFn: () => { navigate("/setor/carvao"); return runFastMode("coal"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
