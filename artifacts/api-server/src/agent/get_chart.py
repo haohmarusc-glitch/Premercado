@@ -7,29 +7,17 @@ Outputs a JSON object to stdout.
 """
 import sys
 import json
+import datetime
 import yfinance as yf
 
-import datetime
-
 PERIOD_MAP = {
-    "1d":  {"period": "1d",  "interval": "5m",  "days": None},
-    "5d":  {"period": "5d",  "interval": "30m", "days": None},
-    "1mo": {"period": "1mo", "interval": "1d",  "days": 35},
-    "3mo": {"period": "3mo", "interval": "1d",  "days": 95},
-    "6mo": {"period": "6mo", "interval": "1d",  "days": 185},
-    "1y":  {"period": "1y",  "interval": "1wk", "days": 370},
+    "1d":  {"interval": "5m",  "days": 1},
+    "5d":  {"interval": "30m", "days": 5},
+    "1mo": {"interval": "1d",  "days": 35},
+    "3mo": {"interval": "1d",  "days": 95},
+    "6mo": {"interval": "1d",  "days": 185},
+    "1y":  {"interval": "1wk", "days": 370},
 }
-
-def _fetch(ticker, params):
-    """Try period= first; fall back to start=/end= if result is empty."""
-    hist = ticker.history(period=params["period"], interval=params["interval"], auto_adjust=True)
-    if not hist.empty:
-        return hist
-    if params["days"]:
-        end = datetime.date.today()
-        start = end - datetime.timedelta(days=params["days"])
-        hist = ticker.history(start=str(start), end=str(end), interval=params["interval"], auto_adjust=True)
-    return hist
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -46,11 +34,22 @@ if __name__ == "__main__":
     params = PERIOD_MAP[period_key]
 
     try:
-        ticker = yf.Ticker(symbol)
-        hist = _fetch(ticker, params)
+        end = datetime.date.today() + datetime.timedelta(days=1)
+        start = datetime.date.today() - datetime.timedelta(days=params["days"])
 
-        if hist.empty:
-            print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}))
+        hist = yf.download(
+            symbol,
+            start=str(start),
+            end=str(end),
+            interval=params["interval"],
+            auto_adjust=True,
+            progress=False,
+            multi_level_index=False,
+        )
+
+        if hist is None or hist.empty:
+            print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}), file=sys.stdout)
+            print(f"[get_chart] empty result for {symbol} {period_key}", file=sys.stderr)
             sys.exit(0)
 
         candles = []
@@ -65,9 +64,11 @@ if __name__ == "__main__":
                     "c": round(float(row["Close"]), 4),
                     "v": int(row["Volume"]),
                 })
-            except Exception:
+            except Exception as e:
+                print(f"[get_chart] skipping row {ts}: {e}", file=sys.stderr)
                 continue
 
         print(json.dumps({"symbol": symbol, "period": period_key, "candles": candles}))
     except Exception as e:
+        print(f"[get_chart] exception: {e}", file=sys.stderr)
         print(json.dumps({"symbol": symbol, "period": period_key, "candles": [], "error": str(e)}))

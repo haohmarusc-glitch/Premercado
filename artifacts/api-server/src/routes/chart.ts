@@ -21,7 +21,8 @@ const TTL: Record<string, number> = {
 
 function fetchChart(symbol: string, period: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_chart", symbol, period], {
+    const sym = symbol, per = period;
+    const py = spawn(getPythonBin(), ["-m", "agent.get_chart", sym, per], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
     });
@@ -30,6 +31,7 @@ function fetchChart(symbol: string, period: string): Promise<unknown> {
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
+      if (err) logger.warn({ symbol: sym, period: per, stderr: err.trim() }, "get_chart stderr");
       if (code !== 0) { reject(new Error(`get_chart exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
