@@ -37,7 +37,7 @@ function useFiringCount(): number {
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const queryClient = useQueryClient();
   const firingCount = useFiringCount();
 
@@ -58,21 +58,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }).then((r) => r.json());
 
   const runPortfolio = useMutation({
-    mutationFn: () => runFastMode("portfolio"),
+    mutationFn: () => { navigate("/observations"); return runFastMode("portfolio"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
   });
 
   const runPremarket = useMutation({
-    mutationFn: () => runFastMode("premarket"),
+    mutationFn: () => { navigate("/"); return runFastMode("premarket"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
   });
 
   const runPhase = useMutation({
-    mutationFn: (maxTurns: number) => runFastMode("manual", maxTurns),
+    mutationFn: ({ turns, dest }: { turns: number; dest: string }) => {
+      navigate(dest);
+      return runFastMode("manual", turns);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
@@ -81,18 +84,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [phasesOpen, setPhasesOpen] = useState(false);
 
   const PHASES = [
-    { label: "MACRO", turns: 1, desc: "Fear & Greed · setor · earnings · contágio · alertas" },
-    { label: "COTAÇÕES", turns: 2, desc: "+ cotações de todos os ativos do Grupo A" },
-    { label: "NOTÍCIAS", turns: 3, desc: "+ manchetes de todos os ativos" },
-    { label: "TÉCNICOS", turns: 4, desc: "+ indicadores técnicos (RSI, MACD, médias)" },
-    { label: "SHORT", turns: 5, desc: "+ exposição short de cada ativo" },
-    { label: "ANALISTAS", turns: 6, desc: "+ consenso e preço-alvo dos analistas" },
-    { label: "OPÇÕES", turns: 7, desc: "+ put/call ratio e volatilidade implícita" },
-    { label: "GRUPO B", turns: 8, desc: "+ cotações rápidas dos tickers restantes" },
-    { label: "RADAR", turns: 9, desc: "+ radar de alertas de mercado" },
-    { label: "EDGAR", turns: 11, desc: "+ busca e leitura de filings (se houver catalisador)" },
-    { label: "ALERTAS", turns: 12, desc: "+ criação e remoção de alertas técnicos" },
-    { label: "COMPLETO", turns: 13, desc: "+ observações salvas + relatório final" },
+    { label: "MACRO",     turns: 1,  dest: "/",             desc: "Fear & Greed · setor · earnings · contágio" },
+    { label: "COTAÇÕES",  turns: 2,  dest: "/",             desc: "+ cotações de todos os ativos do Grupo A" },
+    { label: "NOTÍCIAS",  turns: 3,  dest: "/history",      desc: "+ manchetes de todos os ativos" },
+    { label: "TÉCNICOS",  turns: 4,  dest: "/observations", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
+    { label: "SHORT",     turns: 5,  dest: "/observations", desc: "+ exposição short de cada ativo" },
+    { label: "ANALISTAS", turns: 6,  dest: "/observations", desc: "+ consenso e preço-alvo dos analistas" },
+    { label: "OPÇÕES",    turns: 7,  dest: "/observations", desc: "+ put/call ratio e volatilidade implícita" },
+    { label: "GRUPO B",   turns: 8,  dest: "/",             desc: "+ cotações rápidas dos tickers restantes" },
+    { label: "RADAR",     turns: 9,  dest: "/alerts",       desc: "+ radar de alertas de mercado" },
+    { label: "EDGAR",     turns: 11, dest: "/history",      desc: "+ busca e leitura de filings" },
+    { label: "ALERTAS",   turns: 12, dest: "/alerts",       desc: "+ criação e remoção de alertas técnicos" },
+    { label: "COMPLETO",  turns: 13, dest: "/",             desc: "+ observações salvas + relatório final" },
   ];
 
   const wasRunningRef = useRef(isRunning);
@@ -107,6 +110,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [isRunning, queryClient]);
 
   const handleRun = () => {
+    navigate("/");
     runAgent.mutate(undefined, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
@@ -268,7 +272,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 {PHASES.map(({ label, turns, desc }) => (
                   <button
                     key={label}
-                    onClick={() => runPhase.mutate(turns)}
+                    onClick={() => runPhase.mutate({ turns, dest })}
                     disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runPhase.isPending}
                     className="w-full text-left rounded border border-border px-2.5 py-2 hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
