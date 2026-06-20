@@ -3,13 +3,19 @@ import {
   serial,
   text,
   timestamp,
-  doublePrecision,
+  numeric,
   boolean,
   integer,
   index,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+
+// Helper: numeric(15,4) com tipo TypeScript `number` para compatibilidade
+// com o código existente (operações aritméticas e comparações).
+// O PostgreSQL armazena com precisão fixa; JS lê como string e coerce
+// automaticamente em aritméticas, mas .$type<number>() sinaliza isso ao TS.
+const money = (col: string) => numeric(col, { precision: 15, scale: 4 }).$type<number>();
 
 export const reportsTable = pgTable("reports", {
   id: serial("id").primaryKey(),
@@ -38,7 +44,7 @@ export const observationsTable = pgTable("observations", {
   date: text("date").notNull(),
   summary: text("summary").notNull(),
   sentiment: text("sentiment").notNull().default("neutral"),
-  priceAtObservation: doublePrecision("price_at_observation"),
+  priceAtObservation: money("price_at_observation"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
@@ -83,9 +89,6 @@ export const settingsTable = pgTable("settings", {
     .array()
     .notNull()
     .default(["NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA"]),
-  // Pré-mercado intradiário automático
-  // OBS de custo: cada scan dispara um loop de agente. Intervalos curtos (ex.: 30min)
-  // multiplicam o gasto de API. Default conservador: 60min numa janela curta.
   premarketEnabled: boolean("premarket_enabled").notNull().default(false),
   premarketIntervalMin: integer("premarket_interval_min").notNull().default(60),
   premarketWindowStartHour: integer("premarket_window_start_hour").notNull().default(8),
@@ -100,8 +103,8 @@ export const alertsTable = pgTable("alerts", {
   id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
   condition: text("condition").notNull(), // 'above' | 'below'
-  thresholdPct: doublePrecision("threshold_pct"),
-  thresholdPrice: doublePrecision("threshold_price"),
+  thresholdPct: money("threshold_pct"),
+  thresholdPrice: money("threshold_price"),
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -120,10 +123,10 @@ export const alertFiringsTable = pgTable("alert_firings", {
     .references(() => alertsTable.id, { onDelete: "cascade" }),
   symbol: text("symbol").notNull(),
   condition: text("condition").notNull(),
-  thresholdPct: doublePrecision("threshold_pct"),
-  thresholdPrice: doublePrecision("threshold_price"),
-  changePctAtFiring: doublePrecision("change_pct_at_firing"),
-  priceAtFiring: doublePrecision("price_at_firing"),
+  thresholdPct: money("threshold_pct"),
+  thresholdPrice: money("threshold_price"),
+  changePctAtFiring: money("change_pct_at_firing"),
+  priceAtFiring: money("price_at_firing"),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_alert_firings_alert_id").on(t.alertId),
@@ -154,14 +157,14 @@ export const chatMessagesTable = pgTable("chat_messages", {
   index("idx_chat_messages_session_id").on(t.sessionId, t.createdAt),
 ]);
 
-export type ChatMessage = typeof chatMessagesTable.$inferSelect;
+export type ChatMessage = typeof chatSessionsTable.$inferSelect;
 
 export const portfolioPositionsTable = pgTable("portfolio_positions", {
   id: serial("id").primaryKey(),
   ticker: text("ticker").notNull(),
-  quantity: doublePrecision("quantity").notNull(),
-  avgCost: doublePrecision("avg_cost").notNull(),
-  investedAmount: doublePrecision("invested_amount").notNull(),
+  quantity: money("quantity").notNull(),
+  avgCost: money("avg_cost").notNull(),
+  investedAmount: money("invested_amount").notNull(),
   firstPurchaseDate: text("first_purchase_date").notNull(),
   notes: text("notes"),
   downAlertPcts: integer("down_alert_pcts").array().notNull().default([10, 15, 20, 30]),
@@ -180,10 +183,10 @@ export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
     .notNull()
     .references(() => portfolioPositionsTable.id, { onDelete: "cascade" }),
   purchaseDate: text("purchase_date").notNull(),
-  amount: doublePrecision("amount").notNull(),
-  purchasePrice: doublePrecision("purchase_price"),
+  amount: money("amount").notNull(),
+  purchasePrice: money("purchase_price"),
   saleDate: text("sale_date"),
-  salePrice: doublePrecision("sale_price"),
+  salePrice: money("sale_price"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_portfolio_purchases_position_id").on(t.positionId),

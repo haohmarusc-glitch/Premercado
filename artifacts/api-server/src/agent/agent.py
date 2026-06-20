@@ -282,37 +282,36 @@ Se você pular o passo 7, a análise é considerada incompleta e inválida.
 Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análise."""
 
 
-# ── Run modes ─────────────────────────────────────────────────────────────────
+# ── Agent loop (shared by all run modes) ──────────────────────────────────────
 
-def run(progress_callback=None) -> str:
-    client = _get_client()
-    system_full_blocks = build_system_prompt_blocks()
-
-    model = client.models["full"]
-    messages = [{
-        "role": "user",
-        "content": (
-            "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
-            "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
-            "as observações do dia ao final."
-        ),
-    }]
+def _agent_loop(
+    client,
+    model: str,
+    system,
+    tools: list,
+    messages: list,
+    max_turns: int,
+    max_tokens: int,
+    progress_callback=None,
+    step_prefix: str = "",
+) -> str:
+    from .provider import TextBlock, ToolUseBlock
 
     final_text = ""
-    for turn in range(config.MAX_AGENT_TURNS):
+    for turn in range(max_turns):
         if progress_callback:
-            progress_callback(f"Turno {turn + 1} — consultando {client.provider_name}...")
+            label = f"{step_prefix}Turno {turn + 1} — consultando {client.provider_name}..."
+            progress_callback(label)
 
         resp = client.create(
             model=model,
-            max_tokens=config.MAX_TOKENS,
-            system=system_full_blocks,
-            tools=t.TOOLS,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
-        from .provider import TextBlock, ToolUseBlock
         for block in resp.content:
             if isinstance(block, TextBlock):
                 final_text = block.text
@@ -338,99 +337,58 @@ def run(progress_callback=None) -> str:
     return final_text
 
 
+# ── Run modes ─────────────────────────────────────────────────────────────────
+
+def run(progress_callback=None) -> str:
+    client = _get_client()
+    return _agent_loop(
+        client=client,
+        model=client.models["full"],
+        system=build_system_prompt_blocks(),
+        tools=t.TOOLS,
+        messages=[{"role": "user", "content": (
+            "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
+            "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
+            "as observações do dia ao final."
+        )}],
+        max_turns=config.MAX_AGENT_TURNS,
+        max_tokens=config.MAX_TOKENS,
+        progress_callback=progress_callback,
+    )
+
+
 def run_portfolio(progress_callback=None) -> str:
-    import os
     env_tickers = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
-    tickers = [t.strip().upper() for t in env_tickers.split(",") if t.strip()] or config.PORTFOLIO_TICKERS
+    tickers = [tk.strip().upper() for tk in env_tickers.split(",") if tk.strip()] or config.PORTFOLIO_TICKERS
     client = _get_client()
     today = datetime.date.today().strftime("%d/%m/%Y")
     system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
-    model = client.models["flash"]
-    max_turns = min(config.MAX_AGENT_TURNS, 15)
-    messages = [{"role": "user", "content": "Faça a análise rápida da carteira agora."}]
-
-    final_text = ""
-    for turn in range(max_turns):
-        if progress_callback:
-            progress_callback(f"[Carteira] Turno {turn + 1} — {client.provider_name}...")
-
-        resp = client.create(
-            model=model,
-            max_tokens=config.MAX_TOKENS,
-            system=system,
-            tools=PORTFOLIO_TOOLS,
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
-
-        from .provider import TextBlock, ToolUseBlock
-        for block in resp.content:
-            if isinstance(block, TextBlock):
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
-            break
-
-        tool_results = []
-        for block in resp.content:
-            if isinstance(block, ToolUseBlock):
-                if progress_callback:
-                    progress_callback(f"[Carteira] {block.name}")
-                result = run_tool(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
-
-    return final_text
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=system,
+        tools=PORTFOLIO_TOOLS,
+        messages=[{"role": "user", "content": "Faça a análise rápida da carteira agora."}],
+        max_turns=min(config.MAX_AGENT_TURNS, 15),
+        max_tokens=config.MAX_TOKENS,
+        progress_callback=progress_callback,
+        step_prefix="[Carteira] ",
+    )
 
 
 def run_premarket(progress_callback=None) -> str:
     client = _get_client()
-    system = build_premarket_prompt()
-    model = client.models["flash"]
-    messages = [{"role": "user", "content": "Faça a varredura rápida de pré-mercado intradiário agora."}]
-
-    final_text = ""
-    max_turns = min(config.MAX_AGENT_TURNS, 8)
-
-    for turn in range(max_turns):
-        if progress_callback:
-            progress_callback(f"[Flash] Turno {turn + 1}...")
-
-        resp = client.create(
-            model=model,
-            max_tokens=config.MAX_TOKENS_PREMARKET,
-            system=system,
-            tools=PREMARKET_TOOLS,
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
-
-        from .provider import TextBlock, ToolUseBlock
-        for block in resp.content:
-            if isinstance(block, TextBlock):
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
-            break
-
-        tool_results = []
-        for block in resp.content:
-            if isinstance(block, ToolUseBlock):
-                if progress_callback:
-                    progress_callback(f"[Flash] {block.name}")
-                result = run_tool(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
-
-    return final_text
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=build_premarket_prompt(),
+        tools=PREMARKET_TOOLS,
+        messages=[{"role": "user", "content": "Faça a varredura rápida de pré-mercado intradiário agora."}],
+        max_turns=min(config.MAX_AGENT_TURNS, 8),
+        max_tokens=config.MAX_TOKENS_PREMARKET,
+        progress_callback=progress_callback,
+        step_prefix="[Flash] ",
+    )
 
 
 def run_chat_stream(message: str, history: list) -> None:
@@ -438,39 +396,20 @@ def run_chat_stream(message: str, history: list) -> None:
     system = build_chat_prompt()
     model = client.models["chat"]
     messages = list(history) + [{"role": "user", "content": message}]
-    final_text = ""
 
-    for turn in range(6):
-        print(f"STEP:Turno {turn + 1} — consultando {client.provider_name}...", flush=True)
+    def _chat_progress(step: str) -> None:
+        print(f"STEP:{step}", flush=True)
 
-        resp = client.create(
-            model=model,
-            max_tokens=config.MAX_TOKENS_CHAT,
-            system=system,
-            tools=CHAT_TOOLS,
-            messages=messages,
-        )
-        messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
-
-        from .provider import TextBlock, ToolUseBlock
-        for block in resp.content:
-            if isinstance(block, TextBlock):
-                final_text = block.text
-
-        if resp.stop_reason != "tool_use":
-            break
-
-        tool_results = []
-        for block in resp.content:
-            if isinstance(block, ToolUseBlock):
-                print(f"STEP:{block.name}", flush=True)
-                result = run_tool(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
+    final_text = _agent_loop(
+        client=client,
+        model=model,
+        system=system,
+        tools=CHAT_TOOLS,
+        messages=messages,
+        max_turns=6,
+        max_tokens=config.MAX_TOKENS_CHAT,
+        progress_callback=_chat_progress,
+    )
 
     print(f"RESULT:{_json.dumps(final_text, ensure_ascii=False)}", flush=True)
 
