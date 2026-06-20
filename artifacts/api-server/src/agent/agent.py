@@ -253,9 +253,9 @@ _PORTFOLIO_TOOL_NAMES = {
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
 
 
-def _system_stable_portfolio() -> str:
+def _system_stable_portfolio(tickers: list[str]) -> str:
     return f"""Você é um analista de ações fazendo uma análise RÁPIDA focada na carteira.
-Ativos da carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
+Ativos da carteira: {", ".join(tickers)}.
 
 **Fluxo obrigatório (execute nesta ordem, agrupando por categoria):**
 1. get_fear_greed_index — sentimento macro
@@ -334,9 +334,12 @@ def run(progress_callback=None) -> str:
 
 
 def run_portfolio(progress_callback=None) -> str:
+    import os
+    env_tickers = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
+    tickers = [t.strip().upper() for t in env_tickers.split(",") if t.strip()] or config.PORTFOLIO_TICKERS
     client = _get_client()
     today = datetime.date.today().strftime("%d/%m/%Y")
-    system = _system_stable_portfolio().replace("{data}", today) + "\n\n" + _system_volatile()
+    system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
     model = client.models["flash"]
     max_turns = min(config.MAX_AGENT_TURNS, 10)
     messages = [{"role": "user", "content": "Faça a análise rápida da carteira agora."}]
