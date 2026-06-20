@@ -185,33 +185,48 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <Button
-              onClick={handleRun}
-              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-              className="w-full font-mono font-bold"
-              variant="default"
-            >
-              <Play className="h-4 w-4 mr-2" />
-              {isRunning ? "AGENT ACTIVE" : "COMPLETO"}
-            </Button>
-            <Button
-              onClick={() => runPortfolio.mutate()}
-              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-              className="w-full font-mono font-bold"
-              variant="outline"
-            >
-              <Zap className="h-4 w-4 mr-2" />
-              CARTEIRA
-            </Button>
-            <Button
-              onClick={() => runPremarket.mutate()}
-              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-              className="w-full font-mono font-bold"
-              variant="outline"
-            >
-              <Zap className="h-4 w-4 mr-2" />
-              PRÉ-MERCADO
-            </Button>
+            <div>
+              <Button
+                onClick={handleRun}
+                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
+                className="w-full font-mono font-bold"
+                variant="default"
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {isRunning ? "AGENT ACTIVE" : "COMPLETO"}
+              </Button>
+              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
+                Análise completa de todos os tickers — notícias, técnicos, short, analistas, alertas.
+              </p>
+            </div>
+            <div>
+              <Button
+                onClick={() => runPortfolio.mutate()}
+                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
+                className="w-full font-mono font-bold"
+                variant="outline"
+              >
+                <Zap className="h-4 w-4 mr-2" />
+                CARTEIRA
+              </Button>
+              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
+                Análise rápida só dos ativos da sua carteira. Menos créditos de API.
+              </p>
+            </div>
+            <div>
+              <Button
+                onClick={() => runPremarket.mutate()}
+                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
+                className="w-full font-mono font-bold"
+                variant="outline"
+              >
+                <Zap className="h-4 w-4 mr-2" />
+                PRÉ-MERCADO
+              </Button>
+              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
+                Flash intradiário — contágio de setor, cotações e opções dos tickers em movimento.
+              </p>
+            </div>
           </div>
         </div>
       </aside>
