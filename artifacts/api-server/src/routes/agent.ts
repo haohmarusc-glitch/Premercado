@@ -11,7 +11,8 @@ router.post("/agent/run", async (req, res): Promise<void> => {
   }
   const rawMode = req.body?.mode;
   const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : "manual";
-  runAgent(mode);
+  const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
+  runAgent(mode, maxTurns);
   const message =
     mode === "portfolio" ? "Análise rápida da carteira iniciada. Aguarde a conclusão." :
     mode === "premarket" ? "Varredura pré-mercado iniciada. Aguarde a conclusão." :

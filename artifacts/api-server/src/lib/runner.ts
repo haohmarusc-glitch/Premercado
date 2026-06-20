@@ -67,7 +67,7 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" = "manual"): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" = "manual", maxTurns?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
@@ -113,6 +113,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       AGENT_TICKERS: tickers.join(","),
       AGENT_PORTFOLIO_TICKERS: trigger === "portfolio" ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
       AGENT_MODE: mode,
+      ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });
