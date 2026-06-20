@@ -20,9 +20,14 @@ PERIOD_MAP = {
 
 
 def _fetch(symbol, start, end, interval):
-    """Ticker.history() with explicit dates — always returns simple (non-Multi) columns."""
     ticker = yf.Ticker(symbol)
     df = ticker.history(start=str(start), end=str(end), interval=interval, auto_adjust=True)
+    # yfinance >= 0.2.x retorna MultiIndex (Field, Ticker) — achata para nomes simples
+    if hasattr(df.columns, "levels"):
+        df.columns = df.columns.get_level_values(0)
+    # remove linhas onde Close é NaN (dados incompletos do dia atual)
+    if "Close" in df.columns:
+        df = df[df["Close"].notna()]
     print(f"[get_chart] {symbol} {interval}: shape={df.shape} cols={list(df.columns)}", file=sys.stderr)
     return df
 
