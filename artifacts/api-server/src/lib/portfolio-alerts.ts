@@ -21,6 +21,8 @@ interface PriceQuote {
   error: string | null;
 }
 
+const FETCH_TIMEOUT_MS = 30_000; // 30 s — se o Python travar, rejeita
+
 function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
@@ -29,9 +31,11 @@ function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
     });
     let out = "";
     let err = "";
+    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("get_quotes timeout")); }, FETCH_TIMEOUT_MS);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
+      clearTimeout(timer);
       if (code !== 0) { reject(new Error(`get_quotes exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out) as PriceQuote[]); } catch { reject(new Error(`Bad JSON from get_quotes: ${out}`)); }
     });
@@ -155,15 +159,22 @@ async function checkPortfolioAlerts(): Promise<void> {
   }
 }
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let checkerStarted = false;
 
 export function startPortfolioAlertChecker(): void {
-  if (intervalHandle) return;
-  setTimeout(() => {
-    checkPortfolioAlerts().catch((e) => logger.error({ e }, "Portfolio alert check error"));
-  }, 60_000);
-  intervalHandle = setInterval(() => {
-    checkPortfolioAlerts().catch((e) => logger.error({ e }, "Portfolio alert check error"));
-  }, CHECK_INTERVAL_MS);
+  if (checkerStarted) return;
+  checkerStarted = true;
+
+  async function loop(): Promise<void> {
+    try {
+      await checkPortfolioAlerts();
+    } catch (e) {
+      logger.error({ e }, "Portfolio alert check error");
+    }
+    setTimeout(loop, CHECK_INTERVAL_MS);
+  }
+
+  // primeira execução após 60 s para o servidor estabilizar
+  setTimeout(loop, 60_000);
   logger.info("Portfolio alert checker started (interval: 15 min)");
 }

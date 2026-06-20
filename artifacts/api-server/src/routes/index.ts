@@ -16,11 +16,11 @@ import { requireAuth } from "../middleware/auth";
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(reportsRouter);
-router.use(quotesRouter);
-router.use(chartRouter);
 router.use(authRouter);
 
+router.use(requireAuth, reportsRouter);
+router.use(requireAuth, quotesRouter);
+router.use(requireAuth, chartRouter);
 router.use(requireAuth, observationsRouter);
 router.use(requireAuth, agentRouter);
 router.use(requireAuth, settingsRouter);
