@@ -52,15 +52,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isRunning = status?.running;
   const { toast } = useToast();
   const runAgent = useRunAgent();
-  const runFastMode = (mode: "portfolio" | "premarket" | "manual", maxTurns?: number) =>
+  const runFastMode = (mode: "portfolio" | "premarket" | "manual" | "coal" | "ai", maxTurns?: number) =>
     fetch("/api/agent/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode, ...(maxTurns !== undefined ? { maxTurns } : {}) }),
     }).then((r) => r.json());
 
+  const runAI = useMutation({
+    mutationFn: () => { navigate("/observations"); return runFastMode("ai"); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+    },
+  });
+
   const runCoal = useMutation({
     mutationFn: () => { navigate("/observations"); return runFastMode("coal"); },
+
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
@@ -252,11 +260,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 onClick: () => runCoal.mutate(),
                 variant: "outline" as const,
               },
+              {
+                icon: <Zap className="h-4 w-4 shrink-0" />,
+                label: "IA",
+                desc: "NVDA · ARM · GOOGL · META · MSFT · AMD · PLTR · SMCI",
+                onClick: () => runAI.mutate(),
+                variant: "outline" as const,
+              },
             ].map(({ icon, label, desc, onClick, variant }) => (
               <button
                 key={label}
                 onClick={onClick}
-                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending}
+                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending || runAI.isPending}
                 className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
                   ${variant === "default"
                     ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"

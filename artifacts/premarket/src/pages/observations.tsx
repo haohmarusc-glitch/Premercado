@@ -16,6 +16,7 @@ const SECTOR_GROUPS = [
   { key: "power",       label: "Energia",       tickers: ["VRT"] },
   { key: "foundry",     label: "Fundição",      tickers: ["TSM", "ASML"] },
   { key: "coal",        label: "Carvão",        tickers: ["HCC", "AMR", "ARCH", "CEIX", "BTU"] },
+  { key: "ai",          label: "IA",            tickers: ["NVDA", "ARM", "GOOGL", "META", "MSFT", "AMD", "PLTR", "SMCI"] },
   { key: "other",       label: "Outros",        tickers: ["NVDA", "INTC", "GOOGL", "ARM", "TSLA"] },
 ];
 
