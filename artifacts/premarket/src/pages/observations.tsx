@@ -15,6 +15,7 @@ const SECTOR_GROUPS = [
   { key: "interconnect",label: "Interconexão",  tickers: ["SMCI", "ALAB", "CRDO", "ANET"] },
   { key: "power",       label: "Energia",       tickers: ["VRT"] },
   { key: "foundry",     label: "Fundição",      tickers: ["TSM", "ASML"] },
+  { key: "coal",        label: "Carvão",        tickers: ["HCC", "AMR", "ARCH", "CEIX", "BTU"] },
   { key: "other",       label: "Outros",        tickers: ["NVDA", "INTC", "GOOGL", "ARM", "TSLA"] },
 ];
 

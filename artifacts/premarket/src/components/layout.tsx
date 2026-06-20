@@ -59,6 +59,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ mode, ...(maxTurns !== undefined ? { maxTurns } : {}) }),
     }).then((r) => r.json());
 
+  const runCoal = useMutation({
+    mutationFn: () => { navigate("/observations"); return runFastMode("coal"); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+    },
+  });
+
   const runPortfolio = useMutation({
     mutationFn: () => { navigate("/observations"); return runFastMode("portfolio"); },
     onSuccess: () => {
@@ -238,11 +245,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 onClick: () => runPremarket.mutate(),
                 variant: "outline" as const,
               },
+              {
+                icon: <Zap className="h-4 w-4 shrink-0" />,
+                label: "CARVÃO",
+                desc: "HCC · AMR · ARCH · CEIX · BTU — análise completa do setor",
+                onClick: () => runCoal.mutate(),
+                variant: "outline" as const,
+              },
             ].map(({ icon, label, desc, onClick, variant }) => (
               <button
                 key={label}
                 onClick={onClick}
-                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
+                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending}
                 className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
                   ${variant === "default"
                     ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"

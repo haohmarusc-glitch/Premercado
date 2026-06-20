@@ -13,7 +13,10 @@ import { sendReportEmail } from "./mailer";
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
   "SNDK", "WDC", "ALAB", "CRDO", "ANET", "VRT", "TSM", "ASML",
+  "HCC", "AMR",
 ];
+
+const COAL_TICKERS = ["HCC", "AMR", "ARCH", "CEIX", "BTU"];
 
 async function getMonitoredTickers(): Promise<string[]> {
   try {
@@ -67,18 +70,19 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" = "manual", maxTurns?: number): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" = "manual", maxTurns?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : "daily";
 
   state.running = true;
   state.currentStep =
     trigger === "premarket" ? "Iniciando varredura pré-mercado..." :
     trigger === "portfolio" ? "Iniciando análise rápida da carteira..." :
+    trigger === "coal" ? "Iniciando análise do setor de carvão..." :
     "Iniciando agente...";
   state.lastRunAt = new Date().toISOString();
 
@@ -89,6 +93,8 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   try {
   const tickers = trigger === "portfolio"
     ? await getPortfolioTickers()
+    : trigger === "coal"
+    ? COAL_TICKERS
     : await getMonitoredTickers();
 
   // Insert run record (awaited so runId is set deterministically before the process can close)
@@ -111,7 +117,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
-      AGENT_PORTFOLIO_TICKERS: trigger === "portfolio" ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
+      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
       AGENT_MODE: mode,
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",

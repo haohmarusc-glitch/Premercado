@@ -4,6 +4,7 @@ from .security import validate_api_key
 _DEFAULT_TICKERS = [
     "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
     "SNDK", "WDC", "ALAB", "CRDO", "ANET", "VRT", "TSM", "ASML",
+    "HCC", "AMR",
 ]
 _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
