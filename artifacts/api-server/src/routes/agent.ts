@@ -9,11 +9,13 @@ router.post("/agent/run", async (req, res): Promise<void> => {
     res.status(409).json({ error: "Agent already running" });
     return;
   }
-  const mode = req.body?.mode === "portfolio" ? "portfolio" : "manual";
+  const rawMode = req.body?.mode;
+  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : "manual";
   runAgent(mode);
-  const message = mode === "portfolio"
-    ? "Análise rápida da carteira iniciada. Aguarde a conclusão."
-    : "Agente iniciado. Aguarde a conclusão.";
+  const message =
+    mode === "portfolio" ? "Análise rápida da carteira iniciada. Aguarde a conclusão." :
+    mode === "premarket" ? "Varredura pré-mercado iniciada. Aguarde a conclusão." :
+    "Agente iniciado. Aguarde a conclusão.";
   res.json(RunAgentResponse.parse({ reportId: 0, message }));
 });
 

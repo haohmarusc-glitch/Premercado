@@ -50,13 +50,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isRunning = status?.running;
   const runAgent = useRunAgent();
+  const runFastMode = (mode: "portfolio" | "premarket") =>
+    fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then((r) => r.json());
+
   const runPortfolio = useMutation({
-    mutationFn: () =>
-      fetch("/api/agent/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "portfolio" }),
-      }).then((r) => r.json()),
+    mutationFn: () => runFastMode("portfolio"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+    },
+  });
+
+  const runPremarket = useMutation({
+    mutationFn: () => runFastMode("premarket"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
@@ -178,7 +187,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex flex-col gap-2">
             <Button
               onClick={handleRun}
-              disabled={isRunning || runAgent.isPending || runPortfolio.isPending}
+              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
               className="w-full font-mono font-bold"
               variant="default"
             >
@@ -187,12 +196,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </Button>
             <Button
               onClick={() => runPortfolio.mutate()}
-              disabled={isRunning || runAgent.isPending || runPortfolio.isPending}
+              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
               className="w-full font-mono font-bold"
               variant="outline"
             >
               <Zap className="h-4 w-4 mr-2" />
-              RÁPIDO (CARTEIRA)
+              CARTEIRA
+            </Button>
+            <Button
+              onClick={() => runPremarket.mutate()}
+              disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
+              className="w-full font-mono font-bold"
+              variant="outline"
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              PRÉ-MERCADO
             </Button>
           </div>
         </div>
