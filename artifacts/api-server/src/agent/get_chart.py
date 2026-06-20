@@ -19,32 +19,12 @@ PERIOD_MAP = {
 }
 
 
-def _download(symbol, start, end, interval):
-    """Try download() with and without multi_level_index to support all yfinance versions."""
-    try:
-        return yf.download(
-            symbol, start=str(start), end=str(end),
-            interval=interval, auto_adjust=True,
-            progress=False, multi_level_index=False,
-        )
-    except TypeError:
-        # older yfinance — no multi_level_index param
-        df = yf.download(
-            symbol, start=str(start), end=str(end),
-            interval=interval, auto_adjust=True, progress=False,
-        )
-        # flatten MultiIndex columns if present (yfinance >= 0.2.x returns (Field, Ticker))
-        if isinstance(df.columns, __import__("pandas").MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df
-
-
-def _row_value(row, key):
-    """Get a value from a row regardless of column casing."""
-    for k in [key, key.lower(), key.upper()]:
-        if k in row.index:
-            return row[k]
-    raise KeyError(key)
+def _fetch(symbol, start, end, interval):
+    """Ticker.history() with explicit dates — always returns simple (non-Multi) columns."""
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(start=str(start), end=str(end), interval=interval, auto_adjust=True)
+    print(f"[get_chart] {symbol} {interval}: shape={df.shape} cols={list(df.columns)}", file=sys.stderr)
+    return df
 
 
 if __name__ == "__main__":
@@ -65,14 +45,12 @@ if __name__ == "__main__":
         end = datetime.date.today() + datetime.timedelta(days=1)
         start = datetime.date.today() - datetime.timedelta(days=params["days"])
 
-        hist = _download(symbol, start, end, params["interval"])
+        hist = _fetch(symbol, start, end, params["interval"])
 
         if hist is None or hist.empty:
-            print(f"[get_chart] empty for {symbol} {period_key}", file=sys.stderr)
+            print(f"[get_chart] EMPTY for {symbol} {period_key} start={start} end={end}", file=sys.stderr)
             print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}))
             sys.exit(0)
-
-        print(f"[get_chart] {symbol} {period_key}: {len(hist)} rows, cols={list(hist.columns)}", file=sys.stderr)
 
         candles = []
         for ts, row in hist.iterrows():
@@ -80,17 +58,18 @@ if __name__ == "__main__":
                 t = int(ts.timestamp() * 1000)
                 candles.append({
                     "t": t,
-                    "o": round(float(_row_value(row, "Open")),  4),
-                    "h": round(float(_row_value(row, "High")),  4),
-                    "l": round(float(_row_value(row, "Low")),   4),
-                    "c": round(float(_row_value(row, "Close")), 4),
-                    "v": int(_row_value(row, "Volume")),
+                    "o": round(float(row["Open"]),  4),
+                    "h": round(float(row["High"]),  4),
+                    "l": round(float(row["Low"]),   4),
+                    "c": round(float(row["Close"]), 4),
+                    "v": int(row["Volume"]),
                 })
             except Exception as e:
                 print(f"[get_chart] skipping row {ts}: {e}", file=sys.stderr)
                 continue
 
+        print(f"[get_chart] OK {symbol} {period_key}: {len(candles)} candles", file=sys.stderr)
         print(json.dumps({"symbol": symbol, "period": period_key, "candles": candles}))
     except Exception as e:
-        print(f"[get_chart] exception: {e}", file=sys.stderr)
+        print(f"[get_chart] EXCEPTION: {e}", file=sys.stderr)
         print(json.dumps({"symbol": symbol, "period": period_key, "candles": [], "error": str(e)}))
