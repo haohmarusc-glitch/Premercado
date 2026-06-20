@@ -253,7 +253,8 @@ export default function Settings() {
   });
 
   useEffect(() => {
-    if (settings) {
+    // Only reset if the user hasn't started editing yet, to avoid wiping unsaved changes
+    if (settings && !form.formState.isDirty) {
       form.reset({
         notifyEmail: settings.notifyEmail,
         scheduleEnabled: settings.scheduleEnabled,
@@ -569,9 +570,15 @@ export default function Settings() {
             />
           </div>
 
+          {form.formState.isDirty && !updateSettings.isPending && (
+            <p className="text-xs font-mono text-amber-500 flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Alterações não salvas
+            </p>
+          )}
           <Button
             type="submit"
-            disabled={updateSettings.isPending}
+            disabled={updateSettings.isPending || !form.formState.isDirty}
             className="font-mono font-bold w-full"
             data-testid="button-save-settings"
           >

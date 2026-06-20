@@ -817,18 +817,19 @@ export default function PortfolioPage() {
   const allRows = useMemo(() => {
     const totalInvested = positions.reduce((s, p) => s + p.investedAmount, 0);
     return positions.map((p) => {
+      const hasPrice = priceMap.has(p.ticker);
       const price = priceMap.get(p.ticker) ?? 0;
       const entry = changeMap.get(p.ticker);
       const qChange = entry?.change ?? null;
       const qChangePct = entry?.changePct ?? null;
-      const currentValue = price > 0 ? p.quantity * price : 0;
-      const pnlDollar = price > 0 ? currentValue - p.investedAmount : 0;
-      const pnlPct = price > 0 && p.investedAmount > 0 ? (pnlDollar / p.investedAmount) * 100 : 0;
-      const dailyChange = price > 0 && qChange != null ? p.quantity * qChange : null;
+      const currentValue = hasPrice ? p.quantity * price : 0;
+      const pnlDollar = hasPrice ? currentValue - p.investedAmount : 0;
+      const pnlPct = hasPrice && p.investedAmount > 0 ? (pnlDollar / p.investedAmount) * 100 : 0;
+      const dailyChange = hasPrice && qChange != null ? p.quantity * qChange : null;
       const dailyChangePct = qChangePct;
       const weight = totalInvested > 0 ? (p.investedAmount / totalInvested) * 100 : 0;
-      const downAlert = price > 0 ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
-      const upAlert = price > 0 ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
+      const downAlert = hasPrice ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
+      const upAlert = hasPrice ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
       const isSoldOut = soldPositionIds.has(p.id);
       return { pos: p, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut };

@@ -107,7 +107,15 @@ export default function Chat() {
         credentials: "include",
       });
 
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      if (!res.body) throw new Error("Resposta sem corpo");
+      if (!res.ok) {
+        const msg =
+          res.status === 401 ? "Não autorizado — verifique a chave da API." :
+          res.status === 429 ? "Limite de requisições atingido. Aguarde um momento." :
+          res.status >= 500 ? "Erro interno do servidor. Tente novamente." :
+          `Erro ${res.status}`;
+        throw new Error(msg);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -161,10 +169,11 @@ export default function Chat() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro de conexão com o agente.";
       setMessages((prev) => [
         ...prev,
-        { localId: lid(), role: "assistant", content: "⚠️ Erro de conexão com o agente." },
+        { localId: lid(), role: "assistant", content: `⚠️ ${msg}` },
       ]);
       setStep(null);
       setLoading(false);
@@ -173,6 +182,14 @@ export default function Chat() {
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); }
+  }
+
+  function onInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    // auto-resize
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }
 
   const empty = messages.length === 0 && !loading;
@@ -322,12 +339,13 @@ export default function Chat() {
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 placeholder="Pergunte sobre os ativos... (Ctrl+Enter para enviar)"
                 disabled={loading}
                 rows={2}
-                className="flex-1 resize-none bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 disabled:opacity-50 transition-colors"
+                style={{ minHeight: "44px" }}
+                className="flex-1 resize-none bg-secondary border border-border rounded-lg px-3 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 disabled:opacity-50 transition-colors overflow-hidden"
               />
               <Button
                 onClick={() => void send()}
@@ -337,9 +355,16 @@ export default function Chat() {
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-[10px] font-mono text-muted-foreground">
-              Ctrl+Enter para enviar · Histórico persistido automaticamente no banco
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-mono text-muted-foreground">
+                Ctrl+Enter para enviar · Histórico salvo automaticamente
+              </p>
+              {input.length > 0 && (
+                <span className={`text-[10px] font-mono ${input.length > 1000 ? "text-amber-500" : "text-muted-foreground"}`}>
+                  {input.length} chars
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

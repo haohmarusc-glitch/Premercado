@@ -7,7 +7,7 @@ import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, X } from "lucide-react";
 
 // Sector groups matching sector_contagion.py
 const SECTOR_GROUPS = [
@@ -87,14 +87,15 @@ export default function Observations() {
     [observations],
   );
 
-  // Filtered list
+  // Filtered list — uses sectorsWithDynamic so "Outros" includes dynamic tickers
   const filtered = useMemo(() => {
+    const sectorTickers = sectorsWithDynamic.find((g) => g.key === sectorFilter)?.tickers ?? [];
     return (observations ?? []).filter((obs) => {
       if (tickerFilter) return obs.ticker === tickerFilter;
       if (sectorFilter === "all") return true;
-      return activeSector?.tickers.includes(obs.ticker) || dynamicOthers.includes(obs.ticker) && sectorFilter === "other";
+      return sectorTickers.includes(obs.ticker);
     });
-  }, [observations, tickerFilter, sectorFilter, activeSector, dynamicOthers]);
+  }, [observations, tickerFilter, sectorFilter, sectorsWithDynamic]);
 
   // Group by date
   const grouped = useMemo(() => {
@@ -131,6 +132,25 @@ export default function Observations() {
         <p className="text-muted-foreground font-mono text-sm mt-2">
           Memória do agente — insights por ativo e setor
         </p>
+        {observations && observations.length > 0 && (() => {
+          const bull = observations.filter((o) => o.sentiment === "bullish").length;
+          const bear = observations.filter((o) => o.sentiment === "bearish").length;
+          const neu = observations.filter((o) => o.sentiment === "neutral").length;
+          return (
+            <div className="flex gap-3 mt-3">
+              <span className="flex items-center gap-1 text-xs font-mono text-green-500">
+                <TrendingUp className="h-3 w-3" /> {bull} BULL
+              </span>
+              <span className="flex items-center gap-1 text-xs font-mono text-red-500">
+                <TrendingDown className="h-3 w-3" /> {bear} BEAR
+              </span>
+              <span className="flex items-center gap-1 text-xs font-mono text-slate-400">
+                <Minus className="h-3 w-3" /> {neu} NEU
+              </span>
+              <span className="text-xs font-mono text-muted-foreground">· {observations.length} total</span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Sector filter ── */}
@@ -172,7 +192,16 @@ export default function Observations() {
 
         {/* ── Ticker filter within sector ── */}
         {tickersInView.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border/40">
+          <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border/40 items-center">
+            {tickerFilter && (
+              <button
+                type="button"
+                onClick={() => setTickerFilter(undefined)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded font-mono text-xs text-muted-foreground hover:text-foreground border border-dashed border-border/60 hover:border-border transition-colors"
+              >
+                <X className="h-3 w-3" /> limpar
+              </button>
+            )}
             {tickersInView.map((t) => {
               const count = countByTicker[t] ?? 0;
               if (count === 0) return null;
