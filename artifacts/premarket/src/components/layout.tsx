@@ -269,7 +269,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
             {phasesOpen && (
               <div className="mt-2 flex flex-col gap-1">
-                {PHASES.map(({ label, turns, desc }) => (
+                {PHASES.map(({ label, turns, dest, desc }) => (
                   <button
                     key={label}
                     onClick={() => runPhase.mutate({ turns, dest })}
