@@ -72,15 +72,8 @@ router.get("/observations/summary", async (_req, res): Promise<void> => {
   res.json(GetObservationsSummaryResponse.parse(result));
 });
 
-// Delete a single observation by id
-router.delete("/observations/:id", async (req, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(observationsTable).where(eq(observationsTable.id, id));
-  res.status(204).send();
-});
-
 // Delete all observations for a given date (YYYY-MM-DD) — useful to clear bad data
+// Must be declared before /:id to avoid Express matching "by-date" as an id
 router.delete("/observations/by-date/:date", async (req, res): Promise<void> => {
   const date = req.params.date;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "invalid date" }); return; }
@@ -89,6 +82,14 @@ router.delete("/observations/by-date/:date", async (req, res): Promise<void> => 
     .where(eq(observationsTable.date, date))
     .returning({ id: observationsTable.id });
   res.json({ deleted: result.length });
+});
+
+// Delete a single observation by id
+router.delete("/observations/:id", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "invalid id" }); return; }
+  await db.delete(observationsTable).where(eq(observationsTable.id, id));
+  res.status(204).send();
 });
 
 // Internal route used by Python agent to save observations
