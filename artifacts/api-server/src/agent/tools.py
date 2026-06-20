@@ -26,28 +26,41 @@ def get_stock_data(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
-        info = t.info or {}
-        hist = t.history(period="5d")
-        last_close = float(hist["Close"].iloc[-1]) if not hist.empty else None
-        pre_market = info.get("preMarketPrice")
-        regular_market = info.get("regularMarketPrice") or info.get("currentPrice")
-        change_pct = info.get("regularMarketChangePercent")
-        volume = info.get("regularMarketVolume")
-        avg_volume = info.get("averageVolume")
-        fifty_two_week_high = info.get("fiftyTwoWeekHigh")
-        fifty_two_week_low = info.get("fiftyTwoWeekLow")
+        fi = t.fast_info
+
+        price = getattr(fi, "last_price", None)
+        prev_close = getattr(fi, "previous_close", None)
+        volume = getattr(fi, "last_volume", None)
+        year_high = getattr(fi, "year_high", None)
+        year_low = getattr(fi, "year_low", None)
+        currency = getattr(fi, "currency", "USD")
+
+        change_pct = None
+        if price is not None and prev_close and prev_close != 0:
+            change_pct = round((price - prev_close) / prev_close * 100, 4)
+
+        # pre_market via info (best-effort; fast_info doesn't expose it)
+        try:
+            info = t.info or {}
+            pre_market = info.get("preMarketPrice")
+            avg_volume = info.get("averageVolume")
+        except Exception:
+            info = {}
+            pre_market = None
+            avg_volume = None
 
         return {
             "ticker": ticker,
-            "last_close": last_close,
+            "last_close": round(price, 4) if price is not None else None,
+            "previous_close": round(prev_close, 4) if prev_close is not None else None,
             "pre_market_price": pre_market,
-            "regular_market_price": regular_market,
+            "regular_market_price": round(price, 4) if price is not None else None,
             "change_pct": change_pct,
-            "volume": volume,
+            "volume": int(volume) if volume is not None else None,
             "avg_volume": avg_volume,
-            "52w_high": fifty_two_week_high,
-            "52w_low": fifty_two_week_low,
-            "currency": info.get("currency", "USD"),
+            "52w_high": round(year_high, 4) if year_high is not None else None,
+            "52w_low": round(year_low, 4) if year_low is not None else None,
+            "currency": currency,
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
