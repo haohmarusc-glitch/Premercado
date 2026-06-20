@@ -118,6 +118,13 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     },
   });
 
+  const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  const killTimer = setTimeout(() => {
+    logger.warn("Agent timeout (10 min) — killing process");
+    py.kill("SIGTERM");
+    state.currentStep = "Tempo limite atingido — encerrando...";
+  }, TIMEOUT_MS);
+
   let output = "";
   let errorOutput = "";
 
@@ -142,6 +149,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   });
 
   py.on("close", async (code) => {
+    clearTimeout(killTimer);
     state.running = false;
     state.currentStep = null;
 

@@ -15,6 +15,7 @@ import {
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
 function useFiringCount(): number {
   const { data: alerts } = useListAlerts({
@@ -49,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   });
 
   const isRunning = status?.running;
+  const { toast } = useToast();
   const runAgent = useRunAgent();
   const runFastMode = (mode: "portfolio" | "premarket" | "manual", maxTurns?: number) =>
     fetch("/api/agent/run", {
@@ -105,9 +107,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: getGetLatestReportQueryKey() });
       queryClient.invalidateQueries({ queryKey: getListObservationsQueryKey() });
       queryClient.invalidateQueries({ queryKey: getGetObservationsSummaryQueryKey() });
+      toast({ title: "✅ Turno finalizado", description: "Análise concluída. Dados atualizados." });
     }
     wasRunningRef.current = isRunning;
-  }, [isRunning, queryClient]);
+  }, [isRunning, queryClient, toast]);
 
   const handleRun = () => {
     navigate("/");
