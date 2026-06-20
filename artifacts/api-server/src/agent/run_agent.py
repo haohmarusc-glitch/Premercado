@@ -38,6 +38,8 @@ if __name__ == "__main__":
     try:
         if mode == "premarket":
             report = a.run_premarket(progress_callback=progress)
+        elif mode == "portfolio":
+            report = a.run_portfolio(progress_callback=progress)
         else:
             report = a.run(progress_callback=progress)
         print("REPORT:" + report, flush=True)

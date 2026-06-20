@@ -1,8 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase } from "lucide-react";
-import { 
-  useGetAgentStatus, 
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap } from "lucide-react";
+import {
+  useGetAgentStatus,
   getGetAgentStatusQueryKey,
   useRunAgent,
   getGetLatestReportQueryKey,
@@ -14,7 +14,7 @@ import {
   getGetTickerQuotesQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 
 function useFiringCount(): number {
   const { data: alerts } = useListAlerts({
@@ -50,6 +50,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isRunning = status?.running;
   const runAgent = useRunAgent();
+  const runPortfolio = useMutation({
+    mutationFn: () =>
+      fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "portfolio" }),
+      }).then((r) => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+    },
+  });
 
   const wasRunningRef = useRef(isRunning);
   useEffect(() => {
@@ -164,15 +175,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </div>
             )}
           </div>
-          <Button 
-            onClick={handleRun} 
-            disabled={isRunning || runAgent.isPending}
-            className="w-full font-mono font-bold"
-            variant="default"
-          >
-            <Play className="h-4 w-4 mr-2" />
-            {isRunning ? "AGENT ACTIVE" : "RUN AGENT"}
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button
+              onClick={handleRun}
+              disabled={isRunning || runAgent.isPending || runPortfolio.isPending}
+              className="w-full font-mono font-bold"
+              variant="default"
+            >
+              <Play className="h-4 w-4 mr-2" />
+              {isRunning ? "AGENT ACTIVE" : "COMPLETO"}
+            </Button>
+            <Button
+              onClick={() => runPortfolio.mutate()}
+              disabled={isRunning || runAgent.isPending || runPortfolio.isPending}
+              className="w-full font-mono font-bold"
+              variant="outline"
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              RÁPIDO (CARTEIRA)
+            </Button>
+          </div>
         </div>
       </aside>
       <main className="flex-1 flex flex-col h-screen overflow-hidden">

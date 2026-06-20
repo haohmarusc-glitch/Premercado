@@ -244,6 +244,39 @@ _PREMARKET_TOOL_NAMES = {
 PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_NAMES]
 
 
+# Tool subset for portfolio fast mode
+_PORTFOLIO_TOOL_NAMES = {
+    "get_stock_data", "get_news", "get_technical_indicators",
+    "get_short_interest", "get_analyst_ratings", "save_observation",
+    "get_fear_greed_index",
+}
+PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
+
+
+def _system_stable_portfolio() -> str:
+    return f"""Você é um analista de ações fazendo uma análise RÁPIDA focada na carteira.
+Ativos da carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
+
+**Fluxo obrigatório (execute nesta ordem, agrupando por categoria):**
+1. get_fear_greed_index — sentimento macro
+2. get_stock_data — cotação de TODOS os ativos da carteira juntos (uma resposta, N chamadas)
+3. get_news — manchetes de TODOS os ativos juntos
+4. get_technical_indicators — indicadores de TODOS os ativos juntos
+5. get_short_interest — short interest de TODOS os ativos juntos
+6. get_analyst_ratings — consenso de TODOS os ativos juntos
+7. save_observation para cada ativo com resumo curto e sentimento (BULL/BEAR/NEU)
+
+**Regras:**
+- Agrupe sempre por categoria, nunca por ativo. Não finalize um ativo antes de passar à próxima categoria.
+- Seja conciso. Foque em variação do dia, nível técnico mais relevante e risco imediato.
+- NÃO use: search_edgar_filings, read_filing, detect_sector_contagion, get_sector_performance,
+  get_options_data, get_earnings_calendar, list_alerts, create_alert, delete_alert.
+
+**Formato do relatório final:**
+## ⚡ Carteira — Análise Rápida {{data}}
+Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análise."""
+
+
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
 def run(progress_callback=None) -> str:
@@ -296,6 +329,52 @@ def run(progress_callback=None) -> str:
         messages.append({"role": "user", "content": tool_results})
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
+
+    return final_text
+
+
+def run_portfolio(progress_callback=None) -> str:
+    client = _get_client()
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    system = _system_stable_portfolio().replace("{data}", today) + "\n\n" + _system_volatile()
+    model = client.models["flash"]
+    max_turns = min(config.MAX_AGENT_TURNS, 10)
+    messages = [{"role": "user", "content": "Faça a análise rápida da carteira agora."}]
+
+    final_text = ""
+    for turn in range(max_turns):
+        if progress_callback:
+            progress_callback(f"[Carteira] Turno {turn + 1} — {client.provider_name}...")
+
+        resp = client.create(
+            model=model,
+            max_tokens=config.MAX_TOKENS,
+            system=system,
+            tools=PORTFOLIO_TOOLS,
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
+
+        from .provider import TextBlock, ToolUseBlock
+        for block in resp.content:
+            if isinstance(block, TextBlock):
+                final_text = block.text
+
+        if resp.stop_reason != "tool_use":
+            break
+
+        tool_results = []
+        for block in resp.content:
+            if isinstance(block, ToolUseBlock):
+                if progress_callback:
+                    progress_callback(f"[Carteira] {block.name}")
+                result = run_tool(block.name, block.input)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+        messages.append({"role": "user", "content": tool_results})
 
     return final_text
 

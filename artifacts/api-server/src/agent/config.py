@@ -7,7 +7,11 @@ _DEFAULT_TICKERS = [
 ]
 _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
-PORTFOLIO_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
+_env_portfolio = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
+PORTFOLIO_TICKERS = (
+    [t.strip().upper() for t in _env_portfolio.split(",") if t.strip()]
+    or ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
+)
 
 MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-4-6")
 MODEL_FLASH = os.environ.get("ANTHROPIC_MODEL_FLASH", "claude-haiku-4-5")

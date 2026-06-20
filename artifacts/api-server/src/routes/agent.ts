@@ -9,8 +9,12 @@ router.post("/agent/run", async (req, res): Promise<void> => {
     res.status(409).json({ error: "Agent already running" });
     return;
   }
-  runAgent();
-  res.json(RunAgentResponse.parse({ reportId: 0, message: "Agente iniciado. Aguarde a conclusão." }));
+  const mode = req.body?.mode === "portfolio" ? "portfolio" : "manual";
+  runAgent(mode);
+  const message = mode === "portfolio"
+    ? "Análise rápida da carteira iniciada. Aguarde a conclusão."
+    : "Agente iniciado. Aguarde a conclusão.";
+  res.json(RunAgentResponse.parse({ reportId: 0, message }));
 });
 
 router.get("/agent/status", (_req, res): void => {

@@ -5,8 +5,8 @@
 import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
-import { eq } from "drizzle-orm";
-import { db, reportsTable, agentRunsTable, settingsTable } from "@workspace/db";
+import { asc, eq } from "drizzle-orm";
+import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 
@@ -23,6 +23,19 @@ async function getMonitoredTickers(): Promise<string[]> {
     logger.error({ err }, "Failed to read tickers from settings; using defaults");
   }
   return DEFAULT_TICKERS;
+}
+
+async function getPortfolioTickers(): Promise<string[]> {
+  try {
+    const rows = await db
+      .select({ ticker: portfolioPositionsTable.ticker })
+      .from(portfolioPositionsTable)
+      .orderBy(asc(portfolioPositionsTable.createdAt));
+    if (rows.length > 0) return rows.map((r) => r.ticker);
+  } catch (err) {
+    logger.error({ err }, "Failed to read portfolio tickers; using defaults");
+  }
+  return ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"];
 }
 
 const workspaceRoot = process.cwd().endsWith(
@@ -54,16 +67,19 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual"): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" = "manual"): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : "daily";
 
   state.running = true;
-  state.currentStep = trigger === "premarket" ? "Iniciando varredura pré-mercado..." : "Iniciando agente...";
+  state.currentStep =
+    trigger === "premarket" ? "Iniciando varredura pré-mercado..." :
+    trigger === "portfolio" ? "Iniciando análise rápida da carteira..." :
+    "Iniciando agente...";
   state.lastRunAt = new Date().toISOString();
 
   const startedAt = new Date();
@@ -71,7 +87,9 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
 
   void (async () => {
   try {
-  const tickers = await getMonitoredTickers();
+  const tickers = trigger === "portfolio"
+    ? await getPortfolioTickers()
+    : await getMonitoredTickers();
 
   // Insert run record (awaited so runId is set deterministically before the process can close)
   try {
@@ -93,6 +111,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" = "manual
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
+      AGENT_PORTFOLIO_TICKERS: trigger === "portfolio" ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
       AGENT_MODE: mode,
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
