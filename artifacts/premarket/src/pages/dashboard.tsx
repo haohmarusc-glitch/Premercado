@@ -340,7 +340,11 @@ export default function Dashboard() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) ?? [];
 
   const { data: summary, isLoading: loadingSummary } = useGetObservationsSummary({
-    query: { queryKey: getGetObservationsSummaryQueryKey() },
+    query: {
+      queryKey: getGetObservationsSummaryQueryKey(),
+      refetchInterval: 60_000,
+      staleTime: 55_000,
+    },
   });
 
   const filteredSummary = useMemo(() => {

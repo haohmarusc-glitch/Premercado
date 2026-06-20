@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useRef, useEffect } from "react";
 import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase } from "lucide-react";
 import { 
   useGetAgentStatus, 
@@ -49,6 +50,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isRunning = status?.running;
   const runAgent = useRunAgent();
+
+  const wasRunningRef = useRef(isRunning);
+  useEffect(() => {
+    if (wasRunningRef.current && !isRunning) {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetLatestReportQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListObservationsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetObservationsSummaryQueryKey() });
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning, queryClient]);
 
   const handleRun = () => {
     runAgent.mutate(undefined, {
