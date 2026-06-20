@@ -185,48 +185,49 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <div>
-              <Button
-                onClick={handleRun}
+            {[
+              {
+                icon: <Play className="h-4 w-4 shrink-0" />,
+                label: "COMPLETO",
+                desc: "Todos os tickers · notícias · técnicos · short · analistas · alertas",
+                onClick: handleRun,
+                variant: "default" as const,
+              },
+              {
+                icon: <Zap className="h-4 w-4 shrink-0" />,
+                label: "CARTEIRA",
+                desc: "Só seus ativos · técnicos · short · analistas · salva sentimento",
+                onClick: () => runPortfolio.mutate(),
+                variant: "outline" as const,
+              },
+              {
+                icon: <Zap className="h-4 w-4 shrink-0" />,
+                label: "PRÉ-MERCADO",
+                desc: "Flash intradiário · contágio de setor · cotações · opções",
+                onClick: () => runPremarket.mutate(),
+                variant: "outline" as const,
+              },
+            ].map(({ icon, label, desc, onClick, variant }) => (
+              <button
+                key={label}
+                onClick={onClick}
                 disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-                className="w-full font-mono font-bold"
-                variant="default"
+                className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                  ${variant === "default"
+                    ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
+                    : "bg-transparent text-foreground border-border hover:bg-secondary"
+                  }`}
               >
-                <Play className="h-4 w-4 mr-2" />
-                {isRunning ? "AGENT ACTIVE" : "COMPLETO"}
-              </Button>
-              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
-                Análise completa de todos os tickers — notícias, técnicos, short, analistas, alertas.
-              </p>
-            </div>
-            <div>
-              <Button
-                onClick={() => runPortfolio.mutate()}
-                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-                className="w-full font-mono font-bold"
-                variant="outline"
-              >
-                <Zap className="h-4 w-4 mr-2" />
-                CARTEIRA
-              </Button>
-              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
-                Análise rápida só dos ativos da sua carteira. Menos créditos de API.
-              </p>
-            </div>
-            <div>
-              <Button
-                onClick={() => runPremarket.mutate()}
-                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending}
-                className="w-full font-mono font-bold"
-                variant="outline"
-              >
-                <Zap className="h-4 w-4 mr-2" />
-                PRÉ-MERCADO
-              </Button>
-              <p className="text-[10px] text-muted-foreground font-mono mt-1 px-1">
-                Flash intradiário — contágio de setor, cotações e opções dos tickers em movimento.
-              </p>
-            </div>
+                <div className="flex items-center gap-2 font-mono font-bold text-xs">
+                  {icon}
+                  {isRunning && label === "COMPLETO" ? "AGENT ACTIVE" : label}
+                </div>
+                <p className={`text-[10px] font-mono mt-1 leading-tight
+                  ${variant === "default" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                  {desc}
+                </p>
+              </button>
+            ))}
           </div>
         </div>
       </aside>
