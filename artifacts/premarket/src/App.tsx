@@ -15,6 +15,7 @@ import ChatPage from "@/pages/chat";
 import PortfolioPage from "@/pages/portfolio";
 import SectorCoal from "@/pages/sector-coal";
 import SectorAI from "@/pages/sector-ai";
+import CalculatorPage from "@/pages/calculator";
 import LoginPage from "@/pages/login";
 import { Layout } from "@/components/layout";
 
@@ -41,6 +42,7 @@ function Router() {
         <Route path="/portfolio" component={PortfolioPage} />
         <Route path="/setor/carvao" component={SectorCoal} />
         <Route path="/setor/ia" component={SectorAI} />
+        <Route path="/calculadora" component={CalculatorPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

@@ -604,9 +604,10 @@ interface PositionDialogProps {
   onClose: () => void;
   editing?: PortfolioPosition;
   onSaved: () => void;
+  isSimulated?: boolean;
 }
 
-function PositionDialog({ open, onClose, editing, onSaved }: PositionDialogProps) {
+function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: PositionDialogProps) {
   const { toast } = useToast();
   const createPos = useCreatePortfolioPosition();
   const updatePos = useUpdatePortfolioPosition();
@@ -631,6 +632,7 @@ function PositionDialog({ open, onClose, editing, onSaved }: PositionDialogProps
       notes: form.notes || undefined,
       downAlertPcts: parseAlertPcts(form.downAlertPcts),
       upAlertPcts: parseAlertPcts(form.upAlertPcts),
+      ...(isSimulated && !editing ? { isSimulated: true } : {}),
     };
 
     if (!payload.ticker || isNaN(payload.quantity) || isNaN(payload.avgCost) || isNaN(payload.investedAmount) || !payload.firstPurchaseDate) {
@@ -762,8 +764,11 @@ function PositionDialog({ open, onClose, editing, onSaved }: PositionDialogProps
 export default function PortfolioPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [mode, setMode] = useState<"real" | "simulated">("real");
 
-  const { data: positions = [], isLoading } = useListPortfolioPositions();
+  const { data: allPositions = [], isLoading } = useListPortfolioPositions();
+  const positions = (allPositions as Array<typeof allPositions[0] & { isSimulated?: boolean }>)
+    .filter((p) => mode === "simulated" ? p.isSimulated : !p.isSimulated);
   const { data: quotes = [] } = useGetTickerQuotes({
     query: { queryKey: getGetTickerQuotesQueryKey(), refetchInterval: 60_000, staleTime: 55_000 },
   });
@@ -886,11 +891,34 @@ export default function PortfolioPage() {
           </h1>
           <p className="text-xs text-muted-foreground font-mono mt-1">Posições, P&amp;L e alertas</p>
         </div>
-        <Button size="sm" className="font-mono text-xs" onClick={() => setDialogTarget(null)}>
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          Nova posição
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Aba Real / Simulado */}
+          <div className="flex border border-border rounded-md overflow-hidden text-xs font-mono font-bold">
+            <button
+              onClick={() => setMode("real")}
+              className={`px-3 py-1.5 transition-colors ${mode === "real" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary"}`}
+            >
+              REAL
+            </button>
+            <button
+              onClick={() => setMode("simulated")}
+              className={`px-3 py-1.5 transition-colors border-l border-border ${mode === "simulated" ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" : "text-muted-foreground hover:bg-secondary"}`}
+            >
+              PAPER
+            </button>
+          </div>
+          <Button size="sm" className="font-mono text-xs" onClick={() => setDialogTarget(null)}>
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Nova posição
+          </Button>
+        </div>
       </div>
+      {mode === "simulated" && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 text-xs font-mono">
+          <Activity className="h-3.5 w-3.5 shrink-0" />
+          Modo Paper Trading — operações simuladas sem dinheiro real
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-5 gap-3">
@@ -1202,6 +1230,7 @@ export default function PortfolioPage() {
           onClose={() => setDialogTarget(undefined)}
           editing={dialogTarget ?? undefined}
           onSaved={() => qc.invalidateQueries({ queryKey: getListPortfolioPositionsQueryKey() })}
+          isSimulated={mode === "simulated"}
         />
       )}
     </div>

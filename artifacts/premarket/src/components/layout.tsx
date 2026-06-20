@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator } from "lucide-react";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -186,6 +186,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
           {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
           {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
+          {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
 
