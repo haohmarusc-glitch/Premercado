@@ -257,22 +257,27 @@ def _system_stable_portfolio(tickers: list[str]) -> str:
     return f"""Você é um analista de ações fazendo uma análise RÁPIDA focada na carteira.
 Ativos da carteira: {", ".join(tickers)}.
 
-**Fluxo obrigatório (execute nesta ordem, agrupando por categoria):**
+**Fluxo obrigatório — siga EXATAMENTE esta sequência sem pular etapas:**
 1. get_fear_greed_index — sentimento macro
-2. get_stock_data — cotação de TODOS os ativos da carteira juntos (uma resposta, N chamadas)
+2. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
 3. get_news — manchetes de TODOS os ativos juntos
 4. get_technical_indicators — indicadores de TODOS os ativos juntos
 5. get_short_interest — short interest de TODOS os ativos juntos
 6. get_analyst_ratings — consenso de TODOS os ativos juntos
-7. save_observation para cada ativo com resumo curto e sentimento (BULL/BEAR/NEU)
+7. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
+   Você DEVE chamar save_observation {len(tickers)} vezes (uma por ativo: {", ".join(tickers)}).
+   Somente após salvar TODAS as observações escreva o relatório final.
+
+**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 7 (save_observation).
+Se você pular o passo 7, a análise é considerada incompleta e inválida.
 
 **Regras:**
-- Agrupe sempre por categoria, nunca por ativo. Não finalize um ativo antes de passar à próxima categoria.
+- Agrupe por categoria, nunca por ativo.
 - Seja conciso. Foque em variação do dia, nível técnico mais relevante e risco imediato.
 - NÃO use: search_edgar_filings, read_filing, detect_sector_contagion, get_sector_performance,
   get_options_data, get_earnings_calendar, list_alerts, create_alert, delete_alert.
 
-**Formato do relatório final:**
+**Formato do relatório final (escreva APÓS salvar todas as observações):**
 ## ⚡ Carteira — Análise Rápida {{data}}
 Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análise."""
 
@@ -341,7 +346,7 @@ def run_portfolio(progress_callback=None) -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
     model = client.models["flash"]
-    max_turns = min(config.MAX_AGENT_TURNS, 10)
+    max_turns = min(config.MAX_AGENT_TURNS, 15)
     messages = [{"role": "user", "content": "Faça a análise rápida da carteira agora."}]
 
     final_text = ""
