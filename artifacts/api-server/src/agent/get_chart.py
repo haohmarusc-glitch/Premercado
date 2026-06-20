@@ -3,7 +3,6 @@
 Intraday / historical OHLCV fetcher using yfinance.
 Called as: python3 -m agent.get_chart SYMBOL PERIOD
 Periods: 1d  5d  1mo  3mo  6mo  1y
-Outputs a JSON object to stdout.
 """
 import sys
 import json
@@ -18,6 +17,35 @@ PERIOD_MAP = {
     "6mo": {"interval": "1d",  "days": 185},
     "1y":  {"interval": "1wk", "days": 370},
 }
+
+
+def _download(symbol, start, end, interval):
+    """Try download() with and without multi_level_index to support all yfinance versions."""
+    try:
+        return yf.download(
+            symbol, start=str(start), end=str(end),
+            interval=interval, auto_adjust=True,
+            progress=False, multi_level_index=False,
+        )
+    except TypeError:
+        # older yfinance — no multi_level_index param
+        df = yf.download(
+            symbol, start=str(start), end=str(end),
+            interval=interval, auto_adjust=True, progress=False,
+        )
+        # flatten MultiIndex columns if present (yfinance >= 0.2.x returns (Field, Ticker))
+        if isinstance(df.columns, __import__("pandas").MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+
+
+def _row_value(row, key):
+    """Get a value from a row regardless of column casing."""
+    for k in [key, key.lower(), key.upper()]:
+        if k in row.index:
+            return row[k]
+    raise KeyError(key)
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -37,20 +65,14 @@ if __name__ == "__main__":
         end = datetime.date.today() + datetime.timedelta(days=1)
         start = datetime.date.today() - datetime.timedelta(days=params["days"])
 
-        hist = yf.download(
-            symbol,
-            start=str(start),
-            end=str(end),
-            interval=params["interval"],
-            auto_adjust=True,
-            progress=False,
-            multi_level_index=False,
-        )
+        hist = _download(symbol, start, end, params["interval"])
 
         if hist is None or hist.empty:
-            print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}), file=sys.stdout)
-            print(f"[get_chart] empty result for {symbol} {period_key}", file=sys.stderr)
+            print(f"[get_chart] empty for {symbol} {period_key}", file=sys.stderr)
+            print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}))
             sys.exit(0)
+
+        print(f"[get_chart] {symbol} {period_key}: {len(hist)} rows, cols={list(hist.columns)}", file=sys.stderr)
 
         candles = []
         for ts, row in hist.iterrows():
@@ -58,11 +80,11 @@ if __name__ == "__main__":
                 t = int(ts.timestamp() * 1000)
                 candles.append({
                     "t": t,
-                    "o": round(float(row["Open"]), 4),
-                    "h": round(float(row["High"]), 4),
-                    "l": round(float(row["Low"]), 4),
-                    "c": round(float(row["Close"]), 4),
-                    "v": int(row["Volume"]),
+                    "o": round(float(_row_value(row, "Open")),  4),
+                    "h": round(float(_row_value(row, "High")),  4),
+                    "l": round(float(_row_value(row, "Low")),   4),
+                    "c": round(float(_row_value(row, "Close")), 4),
+                    "v": int(_row_value(row, "Volume")),
                 })
             except Exception as e:
                 print(f"[get_chart] skipping row {ts}: {e}", file=sys.stderr)
