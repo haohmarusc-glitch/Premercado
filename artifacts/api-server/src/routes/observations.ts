@@ -42,7 +42,15 @@ router.get("/observations", async (req, res): Promise<void> => {
 });
 
 router.get("/observations/summary", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(observationsTable).orderBy(desc(observationsTable.createdAt));
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  const cutoffDate = cutoff.toISOString().split("T")[0]; // YYYY-MM-DD
+
+  const rows = await db
+    .select()
+    .from(observationsTable)
+    .where(gte(observationsTable.date, cutoffDate))
+    .orderBy(desc(observationsTable.createdAt));
 
   const byTicker: Record<string, { bullish: number; bearish: number; neutral: number; lastSentiment: string; lastDate: string }> = {};
 
