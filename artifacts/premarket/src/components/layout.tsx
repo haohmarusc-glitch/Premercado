@@ -155,7 +155,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen w-full bg-background dark text-foreground">
-      <aside className="w-64 border-r border-border bg-card flex flex-col">
+      <aside className="w-80 border-r border-border bg-card flex flex-col">
         <div className="p-6 border-b border-border">
           <div className="flex items-center gap-2 text-primary font-bold text-xl font-mono tracking-tight">
             <Activity className="h-6 w-6" />
@@ -175,7 +175,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
 
-        <div className="p-4 border-t border-border">
+        <div className="p-4 border-t border-border overflow-y-auto">
           <div className="mb-4">
             <div className="flex items-center justify-between text-xs font-mono mb-2">
               <span className="text-muted-foreground">STATUS</span>
@@ -265,25 +265,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="mt-3">
             <button
               onClick={() => setPhasesOpen((o) => !o)}
-              className="w-full flex items-center justify-between text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors px-1"
+              className="w-full flex items-center justify-between text-xs font-mono font-bold text-muted-foreground hover:text-foreground transition-colors px-1 py-1"
             >
               <span>EXECUTAR POR FASE</span>
-              {phasesOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {phasesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
             {phasesOpen && (
-              <div className="mt-2 flex flex-col gap-1">
+              <div className="mt-2 flex flex-col gap-1.5">
                 {PHASES.map(({ label, turns, dest, desc }) => (
                   <button
                     key={label}
                     onClick={() => runPhase.mutate({ turns, dest })}
                     disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runPhase.isPending}
-                    className="w-full text-left rounded border border-border px-2.5 py-2 hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full text-left rounded border border-border px-3 py-2.5 hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-[10px] text-foreground">{label}</span>
-                      <span className="font-mono text-[9px] text-muted-foreground">≤{turns}t</span>
+                      <span className="font-mono font-bold text-xs text-foreground">{label}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">≤{turns}t</span>
                     </div>
-                    <p className="text-[9px] font-mono text-muted-foreground mt-0.5 leading-tight">{desc}</p>
+                    <p className="text-[10px] font-mono text-muted-foreground mt-1 leading-snug">{desc}</p>
                   </button>
                 ))}
               </div>
