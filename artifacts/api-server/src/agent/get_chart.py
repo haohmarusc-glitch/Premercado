@@ -10,25 +10,35 @@ import datetime
 import yfinance as yf
 
 PERIOD_MAP = {
-    "1d":  {"interval": "5m",  "days": 1},
-    "5d":  {"interval": "30m", "days": 5},
-    "1mo": {"interval": "1d",  "days": 35},
-    "3mo": {"interval": "1d",  "days": 95},
-    "6mo": {"interval": "1d",  "days": 185},
-    "1y":  {"interval": "1wk", "days": 370},
+    "1d":  {"interval": "5m",  "period": "1d",  "days": None},
+    "5d":  {"interval": "30m", "period": "5d",  "days": None},
+    "1mo": {"interval": "1d",  "period": None,  "days": 35},
+    "3mo": {"interval": "1d",  "period": None,  "days": 95},
+    "6mo": {"interval": "1d",  "period": None,  "days": 185},
+    "1y":  {"interval": "1wk", "period": None,  "days": 370},
 }
 
 
-def _fetch(symbol, start, end, interval):
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(start=str(start), end=str(end), interval=interval, auto_adjust=True)
-    # yfinance >= 0.2.x retorna MultiIndex (Field, Ticker) — achata para nomes simples
+def _flatten(df):
+    """Achata MultiIndex de colunas retornado pelo yfinance >= 0.2.x."""
     if hasattr(df.columns, "levels"):
         df.columns = df.columns.get_level_values(0)
-    # remove linhas onde Close é NaN (dados incompletos do dia atual)
+    return df
+
+
+def _fetch(symbol, params):
+    ticker = yf.Ticker(symbol)
+    if params["period"]:
+        # intradiário: period= é obrigatório para 1d/5d com 5m/30m
+        df = ticker.history(period=params["period"], interval=params["interval"], auto_adjust=True)
+    else:
+        end = datetime.date.today() + datetime.timedelta(days=1)
+        start = datetime.date.today() - datetime.timedelta(days=params["days"])
+        df = ticker.history(start=str(start), end=str(end), interval=params["interval"], auto_adjust=True)
+    df = _flatten(df)
     if "Close" in df.columns:
         df = df[df["Close"].notna()]
-    print(f"[get_chart] {symbol} {interval}: shape={df.shape} cols={list(df.columns)}", file=sys.stderr)
+    print(f"[get_chart] {symbol}: shape={df.shape} cols={list(df.columns)}", file=sys.stderr)
     return df
 
 
@@ -47,13 +57,10 @@ if __name__ == "__main__":
     params = PERIOD_MAP[period_key]
 
     try:
-        end = datetime.date.today() + datetime.timedelta(days=1)
-        start = datetime.date.today() - datetime.timedelta(days=params["days"])
-
-        hist = _fetch(symbol, start, end, params["interval"])
+        hist = _fetch(symbol, params)
 
         if hist is None or hist.empty:
-            print(f"[get_chart] EMPTY for {symbol} {period_key} start={start} end={end}", file=sys.stderr)
+            print(f"[get_chart] EMPTY for {symbol} {period_key}", file=sys.stderr)
             print(json.dumps({"symbol": symbol, "period": period_key, "candles": []}))
             sys.exit(0)
 
