@@ -45,6 +45,7 @@ export const observationsTable = pgTable("observations", {
   summary: text("summary").notNull(),
   sentiment: text("sentiment").notNull().default("neutral"),
   priceAtObservation: money("price_at_observation"),
+  userNotes: text("user_notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
@@ -204,3 +205,29 @@ export const portfolioAlertFiringsTable = pgTable("portfolio_alert_firings", {
 ]);
 
 export type PortfolioAlertFiring = typeof portfolioAlertFiringsTable.$inferSelect;
+
+export const watchlistTable = pgTable("watchlist", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull().unique(),
+  notes: text("notes"),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+export type WatchlistItem = typeof watchlistTable.$inferSelect;
+
+export const tradeJournalTable = pgTable("trade_journal", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull(),
+  entryDate: text("entry_date").notNull(),
+  entryPrice: money("entry_price"),
+  stopLoss: money("stop_loss"),
+  targetPrice: money("target_price"),
+  thesis: text("thesis"),
+  emotionalState: text("emotional_state").notNull().default("neutral"),
+  exitDate: text("exit_date"),
+  exitPrice: money("exit_price"),
+  result: text("result"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type TradeJournalEntry = typeof tradeJournalTable.$inferSelect;

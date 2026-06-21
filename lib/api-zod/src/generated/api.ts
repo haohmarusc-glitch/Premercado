@@ -76,6 +76,7 @@ export const ListObservationsResponseItem = zod.object({
   "summary": zod.string(),
   "sentiment": zod.string(),
   "priceAtObservation": zod.coerce.number().nullish(),
+  "userNotes": zod.string().nullish(),
   "createdAt": zod.string()
 })
 export const ListObservationsResponse = zod.array(ListObservationsResponseItem)
@@ -418,4 +419,78 @@ export const PortfolioPurchaseParams = zod.object({
   "purchaseId": zod.coerce.number()
 })
 
+
+/**
+ * @summary Watchlist
+ */
+export const WatchlistItemSchema = zod.object({
+  "id": zod.number(),
+  "ticker": zod.string(),
+  "notes": zod.string().nullable(),
+  "addedAt": zod.string(),
+})
+export const ListWatchlistResponse = zod.array(WatchlistItemSchema)
+
+export const CreateWatchlistBody = zod.object({
+  "ticker": zod.string().min(1).max(10),
+  "notes": zod.string().optional(),
+})
+
+export const WatchlistItemParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary Trade Journal
+ */
+export const TradeJournalEntrySchema = zod.object({
+  "id": zod.number(),
+  "ticker": zod.string(),
+  "entryDate": zod.string(),
+  "entryPrice": zod.coerce.number().nullable(),
+  "stopLoss": zod.coerce.number().nullable(),
+  "targetPrice": zod.coerce.number().nullable(),
+  "thesis": zod.string().nullable(),
+  "emotionalState": zod.string(),
+  "exitDate": zod.string().nullable(),
+  "exitPrice": zod.coerce.number().nullable(),
+  "result": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string(),
+})
+export const ListJournalResponse = zod.array(TradeJournalEntrySchema)
+
+export const CreateJournalEntryBody = zod.object({
+  "ticker": zod.string().min(1).max(10),
+  "entryDate": zod.string(),
+  "entryPrice": zod.number().nullable().optional(),
+  "stopLoss": zod.number().nullable().optional(),
+  "targetPrice": zod.number().nullable().optional(),
+  "thesis": zod.string().optional(),
+  "emotionalState": zod.string().optional(),
+  "exitDate": zod.string().nullable().optional(),
+  "exitPrice": zod.number().nullable().optional(),
+  "result": zod.string().nullable().optional(),
+  "notes": zod.string().optional(),
+})
+
+export const UpdateJournalEntryBody = zod.object({
+  "ticker": zod.string().min(1).max(10).optional(),
+  "entryDate": zod.string().optional(),
+  "entryPrice": zod.number().nullable().optional(),
+  "stopLoss": zod.number().nullable().optional(),
+  "targetPrice": zod.number().nullable().optional(),
+  "thesis": zod.string().nullable().optional(),
+  "emotionalState": zod.string().optional(),
+  "exitDate": zod.string().nullable().optional(),
+  "exitPrice": zod.number().nullable().optional(),
+  "result": zod.string().nullable().optional(),
+  "notes": zod.string().nullable().optional(),
+})
+
+export const JournalEntryParams = zod.object({
+  "id": zod.coerce.number()
+})
 

@@ -31,7 +31,7 @@ router.get("/observations", async (req, res): Promise<void> => {
 
   res.json(
     ListObservationsResponse.parse(
-      rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+      rows.map((row) => ({ ...row, userNotes: row.userNotes ?? null, createdAt: row.createdAt.toISOString() })),
     ),
   );
 });
@@ -77,6 +77,20 @@ router.delete("/observations/by-date/:date", async (req, res): Promise<void> => 
     .where(eq(observationsTable.date, date))
     .returning({ id: observationsTable.id });
   res.json({ deleted: result.length });
+});
+
+// PUT /observations/:id — update userNotes
+router.put("/observations/:id", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "invalid id" }); return; }
+  const { userNotes } = req.body;
+  const [row] = await db
+    .update(observationsTable)
+    .set({ userNotes: userNotes ?? null, updatedAt: new Date() })
+    .where(eq(observationsTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ id: row.id, userNotes: row.userNotes });
 });
 
 // Delete a single observation by id

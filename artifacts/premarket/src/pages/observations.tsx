@@ -6,8 +6,9 @@ import { CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Minus, X } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { TrendingUp, TrendingDown, Minus, X, Pencil } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 // Sector groups matching sector_contagion.py
 const SECTOR_GROUPS = [
@@ -43,6 +44,56 @@ function SentimentBadge({ sentiment }: { sentiment: string }) {
     <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/20 font-mono text-[10px]">
       <Minus className="w-3 h-3 mr-1" /> NEUTRAL
     </Badge>
+  );
+}
+
+function InlineNotes({ obsId, initial }: { obsId: number; initial: string | null | undefined }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [notes, setNotes] = useState(initial ?? "");
+
+  const save = useCallback(async () => {
+    await fetch(`/api/observations/${obsId}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userNotes: notes || null }),
+    });
+    qc.invalidateQueries({ queryKey: getListObservationsQueryKey({ limit: 300 }) });
+    setEditing(false);
+  }, [obsId, notes, qc]);
+
+  if (!editing) {
+    return (
+      <div className="flex items-start gap-2 mt-2 border-t border-border/30 pt-2">
+        <Pencil className="h-3 w-3 text-muted-foreground mt-0.5 shrink-0 cursor-pointer hover:text-primary transition-colors" onClick={() => setEditing(true)} />
+        {notes ? (
+          <p className="text-xs font-mono text-muted-foreground leading-relaxed">{notes}</p>
+        ) : (
+          <span className="text-xs font-mono text-muted-foreground/50 cursor-pointer hover:text-muted-foreground" onClick={() => setEditing(true)}>
+            Adicionar nota...
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 border-t border-border/30 pt-2 space-y-1">
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onBlur={save}
+        autoFocus
+        rows={2}
+        placeholder="Nota pessoal sobre esta observação..."
+        className="w-full bg-secondary/30 border border-primary/30 rounded px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+      />
+      <div className="flex gap-2">
+        <button onClick={save} className="text-[10px] font-mono text-primary hover:underline">Salvar</button>
+        <button onClick={() => { setNotes(initial ?? ""); setEditing(false); }} className="text-[10px] font-mono text-muted-foreground hover:underline">Cancelar</button>
+      </div>
+    </div>
   );
 }
 
@@ -289,6 +340,7 @@ export default function Observations() {
                       <div className="font-mono text-sm leading-relaxed text-foreground border-l-2 border-primary/50 pl-3 py-0.5">
                         {o.summary}
                       </div>
+                      <InlineNotes obsId={o.id} initial={(o as { userNotes?: string | null }).userNotes} />
                     </CardContent>
                   </div>
                 ))}

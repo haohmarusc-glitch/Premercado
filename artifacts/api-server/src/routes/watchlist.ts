@@ -1,0 +1,42 @@
+import { Router, type IRouter } from "express";
+import { asc, eq } from "drizzle-orm";
+import { db, watchlistTable } from "@workspace/db";
+import {
+  ListWatchlistResponse,
+  WatchlistItemSchema,
+  CreateWatchlistBody,
+  WatchlistItemParams,
+} from "@workspace/api-zod";
+
+const router: IRouter = Router();
+
+function ser(r: typeof watchlistTable.$inferSelect) {
+  return { ...r, addedAt: r.addedAt.toISOString() };
+}
+
+// GET /watchlist
+router.get("/watchlist", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(watchlistTable).orderBy(asc(watchlistTable.addedAt));
+  res.json(ListWatchlistResponse.parse(rows.map(ser)));
+});
+
+// POST /watchlist
+router.post("/watchlist", async (req, res): Promise<void> => {
+  const body = CreateWatchlistBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  const [row] = await db
+    .insert(watchlistTable)
+    .values({ ticker: body.data.ticker.toUpperCase(), notes: body.data.notes ?? null })
+    .returning();
+  res.status(201).json(WatchlistItemSchema.parse(ser(row)));
+});
+
+// DELETE /watchlist/:id
+router.delete("/watchlist/:id", async (req, res): Promise<void> => {
+  const p = WatchlistItemParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
+  await db.delete(watchlistTable).where(eq(watchlistTable.id, p.data.id));
+  res.status(204).send();
+});
+
+export default router;

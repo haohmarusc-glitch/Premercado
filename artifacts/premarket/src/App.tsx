@@ -16,6 +16,11 @@ import PortfolioPage from "@/pages/portfolio";
 import SectorCoal from "@/pages/sector-coal";
 import SectorAI from "@/pages/sector-ai";
 import CalculatorPage from "@/pages/calculator";
+import WatchlistPage from "@/pages/watchlist";
+import JournalPage from "@/pages/journal";
+import EarningsPage from "@/pages/earnings";
+import PerformancePage from "@/pages/performance";
+import BacktestPage from "@/pages/backtest";
 import LoginPage from "@/pages/login";
 import { Layout } from "@/components/layout";
 
@@ -43,6 +48,11 @@ function Router() {
         <Route path="/setor/carvao" component={SectorCoal} />
         <Route path="/setor/ia" component={SectorAI} />
         <Route path="/calculadora" component={CalculatorPage} />
+        <Route path="/watchlist" component={WatchlistPage} />
+        <Route path="/journal" component={JournalPage} />
+        <Route path="/earnings" component={EarningsPage} />
+        <Route path="/performance" component={PerformancePage} />
+        <Route path="/backtest" component={BacktestPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
@@ -54,10 +64,6 @@ type AuthState = "loading" | "authenticated" | "unauthenticated";
 function App() {
   const { t } = useTranslation();
   const [authState, setAuthState] = useState<AuthState>("loading");
-
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-  }, []);
 
   useEffect(() => {
     // Criar controller com timeout de 5 segundos

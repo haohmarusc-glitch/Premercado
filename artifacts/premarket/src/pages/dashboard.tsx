@@ -26,7 +26,8 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer } from "lucide-react";
+import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -676,8 +677,17 @@ export default function Dashboard() {
             <CardHeader className="border-b border-border bg-secondary/30 pb-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="font-mono text-lg">{report.date}</CardTitle>
-                <div className="text-xs text-muted-foreground font-mono">
-                  {formatDateTime(report.createdAt)}
+                <div className="flex items-center gap-3">
+                  <div className="text-xs text-muted-foreground font-mono">
+                    {formatDateTime(report.createdAt)}
+                  </div>
+                  <button
+                    onClick={() => exportToPDF(`Relatório ${report.date}`, `<h1>Relatório ${report.date}</h1><pre>${report.content}</pre>`)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 border border-border rounded font-mono text-xs text-muted-foreground hover:text-foreground hover:border-border/80 transition-colors"
+                    title="Exportar PDF"
+                  >
+                    <Printer className="h-3.5 w-3.5" /> Exportar PDF
+                  </button>
                 </div>
               </div>
               <div className="flex gap-2 mt-2">

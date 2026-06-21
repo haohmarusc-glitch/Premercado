@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical } from "lucide-react";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -41,6 +41,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const queryClient = useQueryClient();
   const firingCount = useFiringCount();
+  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("theme") as "dark" | "light") ?? "dark");
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
   const { data: status } = useGetAgentStatus({
     query: {
@@ -168,12 +174,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex min-h-screen w-full bg-background dark text-foreground">
+    <div className="flex min-h-screen w-full bg-background text-foreground">
       <aside className="w-80 border-r border-border bg-card flex flex-col">
         <div className="p-6 border-b border-border">
-          <div className="flex items-center gap-2 text-primary font-bold text-xl font-mono tracking-tight">
-            <Activity className="h-6 w-6" />
-            <span>PRÉ-MERCADO</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-primary font-bold text-xl font-mono tracking-tight">
+              <Activity className="h-6 w-6" />
+              <span>PRÉ-MERCADO</span>
+            </div>
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           </div>
           <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Agent Command Center</p>
         </div>
@@ -186,6 +201,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
           {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
           {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
+          {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
+          {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
+          {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
+          {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
+          {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
           {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
