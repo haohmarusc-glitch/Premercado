@@ -75,7 +75,7 @@ export const ListObservationsResponseItem = zod.object({
   "date": zod.string(),
   "summary": zod.string(),
   "sentiment": zod.string(),
-  "priceAtObservation": zod.number().nullish(),
+  "priceAtObservation": zod.coerce.number().nullish(),
   "createdAt": zod.string()
 })
 export const ListObservationsResponse = zod.array(ListObservationsResponseItem)
@@ -111,8 +111,8 @@ export const ListAlertsResponseItem = zod.object({
   "id": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number().nullish(),
-  "thresholdPrice": zod.number().nullish(),
+  "thresholdPct": zod.coerce.number().nullish(),
+  "thresholdPrice": zod.coerce.number().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -154,8 +154,8 @@ export const ToggleAlertResponse = zod.object({
   "id": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number().nullish(),
-  "thresholdPrice": zod.number().nullish(),
+  "thresholdPct": zod.coerce.number().nullish(),
+  "thresholdPrice": zod.coerce.number().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -184,10 +184,10 @@ export const ListAlertFiringsResponseItem = zod.object({
   "alertId": zod.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
-  "thresholdPct": zod.number().nullish(),
-  "thresholdPrice": zod.number().nullish(),
-  "changePctAtFiring": zod.number().nullish(),
-  "priceAtFiring": zod.number().nullish(),
+  "thresholdPct": zod.coerce.number().nullish(),
+  "thresholdPrice": zod.coerce.number().nullish(),
+  "changePctAtFiring": zod.coerce.number().nullish(),
+  "priceAtFiring": zod.coerce.number().nullish(),
   "firedAt": zod.string()
 })
 export const ListAlertFiringsResponse = zod.array(ListAlertFiringsResponseItem)
@@ -351,9 +351,9 @@ export const GetChatMessagesResponse = zod.array(GetChatMessagesResponseItem)
 export const PortfolioPositionSchema = zod.object({
   "id": zod.number(),
   "ticker": zod.string(),
-  "quantity": zod.number(),
-  "avgCost": zod.number(),
-  "investedAmount": zod.number(),
+  "quantity": zod.coerce.number(),
+  "avgCost": zod.coerce.number(),
+  "investedAmount": zod.coerce.number(),
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().nullable().optional(),
   "downAlertPcts": zod.array(zod.number()),
@@ -393,10 +393,10 @@ export const PortfolioPurchaseSchema = zod.object({
   "id": zod.number(),
   "positionId": zod.number(),
   "purchaseDate": zod.string(),
-  "amount": zod.number(),
-  "purchasePrice": zod.number().nullish(),
+  "amount": zod.coerce.number(),
+  "purchasePrice": zod.coerce.number().nullish(),
   "saleDate": zod.string().nullish(),
-  "salePrice": zod.number().nullish(),
+  "salePrice": zod.coerce.number().nullish(),
   "createdAt": zod.string(),
 })
 export const ListPortfolioPurchasesResponse = zod.array(PortfolioPurchaseSchema)
