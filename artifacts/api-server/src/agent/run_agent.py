@@ -39,6 +39,11 @@ if __name__ == "__main__":
         if mode == "premarket":
             report = a.run_premarket(progress_callback=progress)
         elif mode in ("portfolio", "coal", "ai"):
+            # Garante os tickers corretos mesmo que o Node.js não os passe via env var
+            if mode == "coal" and not os.environ.get("AGENT_PORTFOLIO_TICKERS"):
+                os.environ["AGENT_PORTFOLIO_TICKERS"] = "HCC,AMR,ARCH,CEIX,BTU"
+            elif mode == "ai" and not os.environ.get("AGENT_PORTFOLIO_TICKERS"):
+                os.environ["AGENT_PORTFOLIO_TICKERS"] = "NVDA,ARM,GOOGL,META,MSFT,AMD,PLTR,SMCI"
             report = a.run_portfolio(progress_callback=progress)
         else:
             report = a.run(progress_callback=progress)
