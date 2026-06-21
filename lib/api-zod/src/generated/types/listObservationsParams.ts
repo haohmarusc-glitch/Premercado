@@ -8,5 +8,6 @@
 
 export type ListObservationsParams = {
 ticker?: string;
+tickers?: string;
 limit?: number;
 };
