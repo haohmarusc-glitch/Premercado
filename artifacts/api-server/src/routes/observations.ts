@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, and, gte, lte } from "drizzle-orm";
+import { desc, eq, and, gte, lte, inArray } from "drizzle-orm";
 import { db, observationsTable } from "@workspace/db";
 import {
   ListObservationsQueryParams,
@@ -24,11 +24,16 @@ router.get("/observations", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { ticker, limit } = parsed.data;
+  const { ticker, tickers, limit } = parsed.data;
 
   let query = db.select().from(observationsTable).$dynamic();
   if (ticker) {
     query = query.where(eq(observationsTable.ticker, ticker.toUpperCase()));
+  } else if (tickers) {
+    const tickerList = tickers.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
+    if (tickerList.length > 0) {
+      query = query.where(inArray(observationsTable.ticker, tickerList));
+    }
   }
   const rows = await query
     .orderBy(desc(observationsTable.createdAt))

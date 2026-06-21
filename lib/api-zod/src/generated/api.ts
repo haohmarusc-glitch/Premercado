@@ -65,6 +65,7 @@ export const GetLatestReportResponse = zod.object({
  */
 export const ListObservationsQueryParams = zod.object({
   "ticker": zod.coerce.string().optional(),
+  "tickers": zod.coerce.string().optional(),
   "limit": zod.coerce.number().optional()
 })
 

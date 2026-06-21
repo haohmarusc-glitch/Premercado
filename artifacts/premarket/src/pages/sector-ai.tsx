@@ -53,15 +53,13 @@ export default function SectorAI() {
     },
   });
 
+  const aiTickersParam = AI_TICKERS.join(",");
   const { data: observations, isLoading } = useListObservations(
-    { limit: 300 },
-    { query: { queryKey: getListObservationsQueryKey({ limit: 300 }), refetchInterval: isRunning ? 8000 : false } },
+    { tickers: aiTickersParam, limit: 500 },
+    { query: { queryKey: getListObservationsQueryKey({ tickers: aiTickersParam, limit: 500 }), refetchInterval: isRunning ? 8000 : 30000 } },
   );
 
-  const sectorObs = useMemo(
-    () => (observations ?? []).filter((o) => AI_TICKERS.includes(o.ticker)),
-    [observations],
-  );
+  const sectorObs = useMemo(() => observations ?? [], [observations]);
 
   const filtered = useMemo(
     () => (tickerFilter ? sectorObs.filter((o) => o.ticker === tickerFilter) : sectorObs),
