@@ -363,14 +363,18 @@ def run_portfolio(progress_callback=None) -> str:
     client = _get_client()
     today = datetime.date.today().strftime("%d/%m/%Y")
     system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
+    # Allow more turns and tokens for larger ticker sets (coal=5, ai=8)
+    n = len(tickers)
+    max_turns = max(20, n * 4)
+    max_tokens = max(config.MAX_TOKENS, 8192)
     return _agent_loop(
         client=client,
         model=client.models["flash"],
         system=system,
         tools=PORTFOLIO_TOOLS,
         messages=[{"role": "user", "content": "Faça a análise rápida da carteira agora."}],
-        max_turns=min(config.MAX_AGENT_TURNS, 15),
-        max_tokens=config.MAX_TOKENS,
+        max_turns=max_turns,
+        max_tokens=max_tokens,
         progress_callback=progress_callback,
         step_prefix="[Carteira] ",
     )

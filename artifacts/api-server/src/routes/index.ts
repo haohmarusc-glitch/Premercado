@@ -11,12 +11,14 @@ import alertsRouter from "./alerts";
 import authRouter from "./auth";
 import chatRouter from "./chat";
 import portfolioRouter from "./portfolio";
+import internalRouter from "./internal";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
+router.use(internalRouter); // localhost-only agent routes, no session required
 
 router.use(requireAuth, reportsRouter);
 router.use(requireAuth, quotesRouter);

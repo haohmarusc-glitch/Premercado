@@ -6,17 +6,7 @@ import {
   ListObservationsResponse,
   GetObservationsSummaryResponse,
 } from "@workspace/api-zod";
-import { z } from "zod/v4";
-
 const router: IRouter = Router();
-
-const InternalObservationInput = z.object({
-  ticker: z.string(),
-  date: z.string(),
-  summary: z.string(),
-  sentiment: z.string(),
-  priceAtObservation: z.number().optional().nullable(),
-});
 
 router.get("/observations", async (req, res): Promise<void> => {
   const parsed = ListObservationsQueryParams.safeParse(req.query);
@@ -95,37 +85,6 @@ router.delete("/observations/:id", async (req, res): Promise<void> => {
   if (isNaN(id)) { res.status(400).json({ error: "invalid id" }); return; }
   await db.delete(observationsTable).where(eq(observationsTable.id, id));
   res.status(204).send();
-});
-
-// Internal route used by Python agent to save observations
-router.post("/observations/internal", async (req, res): Promise<void> => {
-  const parsed = InternalObservationInput.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
-    return;
-  }
-  const [row] = await db
-    .insert(observationsTable)
-    .values({
-      ticker: parsed.data.ticker,
-      date: parsed.data.date,
-      summary: parsed.data.summary,
-      sentiment: parsed.data.sentiment,
-      priceAtObservation: parsed.data.priceAtObservation ?? undefined,
-    })
-    .returning();
-  res.status(201).json(row);
-});
-
-// Internal route used by Python memory module to read observations
-router.get("/observations/internal", async (req, res): Promise<void> => {
-  const limit = parseInt(String(req.query.limit ?? "30"), 10);
-  const rows = await db
-    .select()
-    .from(observationsTable)
-    .orderBy(desc(observationsTable.createdAt))
-    .limit(limit);
-  res.json(rows);
 });
 
 export default router;
