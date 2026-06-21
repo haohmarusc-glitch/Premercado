@@ -3,7 +3,7 @@ import { CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus, X, Zap } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -54,10 +54,19 @@ export default function SectorAI() {
   });
 
   const aiTickersParam = AI_TICKERS.join(",");
-  const { data: observations, isLoading } = useListObservations(
+  const obsQueryKey = getListObservationsQueryKey({ tickers: aiTickersParam, limit: 500 });
+  const { data: observations, isLoading, refetch } = useListObservations(
     { tickers: aiTickersParam, limit: 500 },
-    { query: { queryKey: getListObservationsQueryKey({ tickers: aiTickersParam, limit: 500 }), refetchInterval: isRunning ? 8000 : 30000 } },
+    { query: { queryKey: obsQueryKey, refetchInterval: isRunning ? 5000 : false } },
   );
+
+  const wasRunningRef = useRef(isRunning);
+  useEffect(() => {
+    if (wasRunningRef.current && !isRunning) {
+      void refetch();
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning, refetch]);
 
   const sectorObs = useMemo(() => observations ?? [], [observations]);
 
