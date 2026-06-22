@@ -95,6 +95,29 @@ function parseAlertPcts(s: string): number[] {
     .filter((n) => !isNaN(n) && n > 0);
 }
 
+// ── Caixa disponível (USD não investido na corretora) ──────────────────────────
+// Persistido localmente por modo (real/paper). É o "Disponível para investir"
+// da corretora — entra no Patrimônio total mas não conta como investido.
+const CASH_KEY = (mode: "real" | "simulated") => `premercado_cash_${mode}`;
+
+function loadCash(mode: "real" | "simulated"): number {
+  try {
+    const v = localStorage.getItem(CASH_KEY(mode));
+    const n = v != null ? parseFloat(v) : 0;
+    return isNaN(n) ? 0 : n;
+  } catch {
+    return 0;
+  }
+}
+
+function saveCash(mode: "real" | "simulated", value: number) {
+  try {
+    localStorage.setItem(CASH_KEY(mode), String(value));
+  } catch {
+    /* ignora indisponibilidade de localStorage */
+  }
+}
+
 // ── Price chart with period selector ─────────────────────────────────────────
 
 const CHART_PERIODS = [
@@ -831,6 +854,19 @@ export default function PortfolioPage() {
   const [dialogTarget, setDialogTarget] = useState<PortfolioPosition | null | undefined>(undefined);
   const deletePos = useDeletePortfolioPosition();
 
+  // Caixa disponível (USD não investido) — recarrega ao trocar de modo
+  const [cash, setCash] = useState<number>(() => loadCash(mode));
+  const [editingCash, setEditingCash] = useState(false);
+  const [cashDraft, setCashDraft] = useState("");
+  useEffect(() => { setCash(loadCash(mode)); setEditingCash(false); }, [mode]);
+  const commitCash = () => {
+    const n = parseFloat(cashDraft);
+    const val = isNaN(n) ? 0 : n;
+    setCash(val);
+    saveCash(mode, val);
+    setEditingCash(false);
+  };
+
   const priceMap = useMemo(() => {
     const m = new Map<string, number>();
     for (const q of quotes as Array<{ symbol: string; price?: number | null }>) {
@@ -908,6 +944,33 @@ export default function PortfolioPage() {
     return { invested, current, pnl, pnlPct, dailyChange };
   }, [rows]);
 
+  // Lucro realizado das ações vendidas (proceeds já estão refletidos no caixa).
+  const realized = useMemo(() => {
+    let proceeds = 0;
+    let pnl = 0;
+    let invested = 0;
+    for (const p of positions) {
+      const purchases = purchasesMap.get(p.id) ?? [];
+      for (const pur of purchases) {
+        if (pur.saleDate && pur.salePrice && pur.purchasePrice) {
+          const qty = pur.amount / pur.purchasePrice;
+          proceeds += qty * pur.salePrice;
+          pnl += qty * (pur.salePrice - pur.purchasePrice);
+          invested += pur.amount;
+        }
+      }
+    }
+    return { proceeds, pnl, invested };
+  }, [positions, purchasesMap]);
+
+  // Patrimônio total = posições abertas (valor atual) + caixa disponível.
+  // Espelha o "Patrimônio total" da corretora (Ações + Disponível p/ investir).
+  const netWorth = totals.current + cash;
+  // P&L combinado = não realizado (posições abertas) + realizado (vendas).
+  const combinedPnl = totals.pnl + realized.pnl;
+  const combinedInvested = totals.invested + realized.invested;
+  const combinedPnlPct = combinedInvested > 0 ? (combinedPnl / combinedInvested) * 100 : 0;
+
   const hasPrices = quotes.length > 0;
 
   const allocData = useMemo(
@@ -974,7 +1037,7 @@ export default function PortfolioPage() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
@@ -995,10 +1058,59 @@ export default function PortfolioPage() {
             </div>
           </CardContent>
         </Card>
+        {/* Caixa disponível (editável) */}
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Caixa (disponível)</span>
+              {!editingCash && (
+                <button
+                  onClick={() => { setCashDraft(cash ? String(cash) : ""); setEditingCash(true); }}
+                  className="text-muted-foreground hover:text-foreground"
+                  title="Editar saldo em dólar não investido"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {editingCash ? (
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  autoFocus
+                  value={cashDraft}
+                  onChange={(e) => setCashDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitCash(); if (e.key === "Escape") setEditingCash(false); }}
+                  placeholder="0.00"
+                  className="font-mono text-sm h-8"
+                />
+                <Button size="sm" className="h-8 px-2 text-xs font-mono" onClick={commitCash}>OK</Button>
+              </div>
+            ) : (
+              <div className="text-xl font-bold font-mono tabular-nums">{fmt$(cash)}</div>
+            )}
+          </CardContent>
+        </Card>
+        {/* Patrimônio total = valor atual + caixa */}
+        <Card className="border-primary/40 bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-mono text-primary uppercase tracking-wide">Patrimônio total</span>
+              <Wallet className="h-4 w-4 text-primary" />
+            </div>
+            <div className="text-xl font-bold font-mono tabular-nums text-primary">
+              {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash)}
+            </div>
+            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+              ações {hasPrices ? fmt$(totals.current) : "—"} + caixa {fmt$(cash)}
+            </div>
+          </CardContent>
+        </Card>
+        {/* P&L aberto (posições não vendidas) */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="mb-1">
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L ($)</span>
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L aberto ($)</span>
             </div>
             <div className={cn("text-xl font-bold font-mono tabular-nums",
               hasPrices && totals.current > 0
@@ -1009,22 +1121,52 @@ export default function PortfolioPage() {
                 ? `${totals.pnl >= 0 ? "+" : "-"}${fmt$(totals.pnl)}`
                 : "—"}
             </div>
+            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+              {hasPrices && totals.current > 0 ? fmtPct(totals.pnlPct) : ""}
+            </div>
           </CardContent>
         </Card>
+        {/* Lucro realizado (ações vendidas) */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="mb-1">
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L (%)</span>
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Lucro realizado ($)</span>
             </div>
             <div className={cn("text-xl font-bold font-mono tabular-nums",
-              hasPrices && totals.current > 0
-                ? totals.pnlPct >= 0 ? "text-green-400" : "text-red-400"
-                : ""
+              realized.pnl > 0 ? "text-green-400" : realized.pnl < 0 ? "text-red-400" : ""
             )}>
-              {hasPrices && totals.current > 0 ? fmtPct(totals.pnlPct) : "—"}
+              {realized.proceeds > 0
+                ? `${realized.pnl >= 0 ? "+" : "-"}${fmt$(realized.pnl)}`
+                : "—"}
+            </div>
+            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+              {realized.proceeds > 0 ? `recebido ${fmt$(realized.proceeds)}` : ""}
             </div>
           </CardContent>
         </Card>
+        {/* P&L total = aberto + realizado */}
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L total ($)</span>
+            </div>
+            <div className={cn("text-xl font-bold font-mono tabular-nums",
+              hasPrices
+                ? combinedPnl >= 0 ? "text-green-400" : "text-red-400"
+                : ""
+            )}>
+              {hasPrices
+                ? `${combinedPnl >= 0 ? "+" : "-"}${fmt$(combinedPnl)}`
+                : "—"}
+            </div>
+            <div className={cn("text-[10px] font-mono mt-0.5",
+              hasPrices ? (combinedPnlPct >= 0 ? "text-green-400" : "text-red-400") : "text-muted-foreground"
+            )}>
+              {hasPrices ? fmtPct(combinedPnlPct) : ""}
+            </div>
+          </CardContent>
+        </Card>
+        {/* Var. hoje */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
