@@ -21,6 +21,7 @@ import JournalPage from "@/pages/journal";
 import EarningsPage from "@/pages/earnings";
 import PerformancePage from "@/pages/performance";
 import BacktestPage from "@/pages/backtest";
+import TechnicalsPage from "@/pages/technicals";
 import LoginPage from "@/pages/login";
 import { Layout } from "@/components/layout";
 
@@ -53,6 +54,7 @@ function Router() {
         <Route path="/earnings" component={EarningsPage} />
         <Route path="/performance" component={PerformancePage} />
         <Route path="/backtest" component={BacktestPage} />
+        <Route path="/tecnicos" component={TechnicalsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

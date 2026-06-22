@@ -109,7 +109,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { label: "MACRO",     turns: 1,  dest: "/history", desc: "Fear & Greed · setor · earnings · contágio" },
     { label: "COTAÇÕES",  turns: 2,  dest: "/history", desc: "+ cotações de todos os ativos do Grupo A" },
     { label: "NOTÍCIAS",  turns: 3,  dest: "/history", desc: "+ manchetes de todos os ativos" },
-    { label: "TÉCNICOS",  turns: 4,  dest: "/history", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
+    { label: "TÉCNICOS",  turns: 4,  dest: "/tecnicos", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
     { label: "SHORT",     turns: 5,  dest: "/history", desc: "+ exposição short de cada ativo" },
     { label: "ANALISTAS", turns: 6,  dest: "/history", desc: "+ consenso e preço-alvo dos analistas" },
     { label: "OPÇÕES",    turns: 7,  dest: "/history", desc: "+ put/call ratio e volatilidade implícita" },
@@ -206,6 +206,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
           {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
           {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
+          {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
           {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
