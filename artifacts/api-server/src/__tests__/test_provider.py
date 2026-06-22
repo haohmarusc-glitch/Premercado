@@ -80,6 +80,45 @@ class TestExtractLeakedFunctionCalls:
         assert len(blocks) == 2
         assert blocks[0].id != blocks[1].id
 
+    # ── Estilo Python (Gemini): default_api.NOME(kwargs) ──────────────────────
+    def test_python_style_call_recovered(self):
+        text = 'print(default_api.create_alert(symbol = "MU", condition = "above", threshold_pct = 5.0, reason = "momentum"))'
+        blocks, cleaned = _extract_leaked_function_calls(text)
+        assert len(blocks) == 1
+        assert blocks[0].name == "create_alert"
+        assert blocks[0].input == {
+            "symbol": "MU",
+            "condition": "above",
+            "threshold_pct": 5.0,
+            "reason": "momentum",
+        }
+        assert blocks[0].id.startswith("leaked_")
+        assert "default_api" not in cleaned
+
+    def test_python_style_without_print_wrapper(self):
+        text = 'default_api.create_alert(symbol="SMCI", threshold_pct=10)'
+        blocks, _ = _extract_leaked_function_calls(text)
+        assert len(blocks) == 1
+        assert blocks[0].input == {"symbol": "SMCI", "threshold_pct": 10}
+
+    def test_python_style_multiple_calls_in_code_fence(self):
+        text = (
+            "```python\n"
+            'print(default_api.create_alert(symbol = "MU", condition = "above", threshold_pct = 5.0))\n'
+            'print(default_api.create_alert(symbol = "CRDO", condition = "above", threshold_pct = 5.0))\n'
+            "```"
+        )
+        blocks, cleaned = _extract_leaked_function_calls(text)
+        assert len(blocks) == 2
+        assert {b.input["symbol"] for b in blocks} == {"MU", "CRDO"}
+        assert "default_api" not in cleaned
+
+    def test_python_style_preserves_surrounding_report_text(self):
+        text = 'Resumo do dia.\nprint(default_api.create_alert(symbol="MU", threshold_pct=5))\nFim.'
+        blocks, cleaned = _extract_leaked_function_calls(text)
+        assert len(blocks) == 1
+        assert "Resumo do dia." in cleaned and "Fim." in cleaned
+
 
 class TestAnthropicToolsToOpenai:
     def test_basic_conversion(self):

@@ -47,10 +47,63 @@ class NormalizedResponse:
 # abertos sujeitos ao mesmo comportamento.
 _FUNCTION_LEAK_RE = re.compile(r"<function=(\w+)>\s*(\{.*?\})\s*</function>", re.DOTALL)
 
+# Modelos Gemini às vezes vazam a chamada como CÓDIGO PYTHON no texto, no estilo:
+#   print(default_api.create_alert(symbol = "MU", condition = "above", ...))
+# ou direto: default_api.create_alert(...). Capturamos o nome e os kwargs.
+# [^()]* evita parênteses aninhados (as chamadas dessas ferramentas são planas).
+_PYCALL_RE = re.compile(
+    r"(?:print\s*\(\s*)?default_api\.(\w+)\s*\(([^()]*)\)\s*\)?",
+    re.DOTALL,
+)
+_PYKW_RE = re.compile(
+    r"(\w+)\s*=\s*"
+    r"(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|[-+]?\d+\.?\d*|True|False|None)"
+)
+
+
+def _coerce_py_value(raw: str):
+    """Converte um literal Python simples (string/num/bool/None) em valor Python."""
+    if raw in ("True", "False"):
+        return raw == "True"
+    if raw == "None":
+        return None
+    if raw[:1] in ("\"", "'"):
+        try:
+            return raw[1:-1].encode().decode("unicode_escape")
+        except Exception:
+            return raw[1:-1]
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+
+
+def _extract_python_style_calls(text: str) -> tuple[list[ToolUseBlock], str]:
+    """Captura chamadas vazadas no estilo default_api.NOME(kwargs)."""
+    blocks: list[ToolUseBlock] = []
+
+    def _replace(match: "re.Match[str]") -> str:
+        name, raw_args = match.group(1), match.group(2)
+        args = {kw.group(1): _coerce_py_value(kw.group(2)) for kw in _PYKW_RE.finditer(raw_args)}
+        blocks.append(
+            ToolUseBlock(id=f"leaked_{uuid.uuid4().hex[:8]}", name=name, input=args)
+        )
+        return ""  # remove o trecho do texto visível
+
+    cleaned = _PYCALL_RE.sub(_replace, text)
+    # remove cercas de código que tenham ficado vazias após a remoção
+    cleaned = re.sub(r"```(?:python)?\s*```", "", cleaned)
+    return blocks, cleaned
+
 
 def _extract_leaked_function_calls(text: str) -> tuple[list[ToolUseBlock], str]:
     """
-    Procura por chamadas de função vazadas como texto (ver _FUNCTION_LEAK_RE).
+    Procura por chamadas de função vazadas como texto, em dois formatos:
+      1. <function=NOME>{...json...}</function>  (modelos Llama/abertos)
+      2. default_api.NOME(kwargs)                (modelos Gemini)
     Retorna (lista de ToolUseBlock encontrados, texto restante sem essas chamadas).
     Se o JSON de algum match estiver malformado, ele é descartado silenciosamente
     (melhor perder uma tool call do que quebrar o turno inteiro).
@@ -69,6 +122,8 @@ def _extract_leaked_function_calls(text: str) -> tuple[list[ToolUseBlock], str]:
         return ""  # remove o trecho do texto visível
 
     cleaned = _FUNCTION_LEAK_RE.sub(_replace, text)
+    py_blocks, cleaned = _extract_python_style_calls(cleaned)
+    blocks.extend(py_blocks)
     return blocks, cleaned.strip()
 
 
