@@ -96,26 +96,30 @@ function parseAlertPcts(s: string): number[] {
 }
 
 // ── Caixa disponível (USD não investido na corretora) ──────────────────────────
-// Persistido localmente por modo (real/paper). É o "Disponível para investir"
-// da corretora — entra no Patrimônio total mas não conta como investido.
-const CASH_KEY = (mode: "real" | "simulated") => `premercado_cash_${mode}`;
+// Persistido no banco (settings) por modo (real/paper) via /api/portfolio/cash.
+// É o "Disponível para investir" da corretora — entra no Patrimônio total mas
+// não conta como investido.
+type CashByMode = { real: number; simulated: number };
 
-function loadCash(mode: "real" | "simulated"): number {
+async function fetchCash(): Promise<CashByMode> {
   try {
-    const v = localStorage.getItem(CASH_KEY(mode));
-    const n = v != null ? parseFloat(v) : 0;
-    return isNaN(n) ? 0 : n;
+    const r = await fetch("/api/portfolio/cash", { credentials: "include" });
+    if (!r.ok) return { real: 0, simulated: 0 };
+    const d = await r.json();
+    return { real: Number(d.real ?? 0), simulated: Number(d.simulated ?? 0) };
   } catch {
-    return 0;
+    return { real: 0, simulated: 0 };
   }
 }
 
-function saveCash(mode: "real" | "simulated", value: number) {
-  try {
-    localStorage.setItem(CASH_KEY(mode), String(value));
-  } catch {
-    /* ignora indisponibilidade de localStorage */
-  }
+async function persistCash(mode: "real" | "simulated", amount: number): Promise<void> {
+  const r = await fetch("/api/portfolio/cash", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, amount }),
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error("Falha ao salvar caixa");
 }
 
 // ── Price chart with period selector ─────────────────────────────────────────
@@ -854,17 +858,24 @@ export default function PortfolioPage() {
   const [dialogTarget, setDialogTarget] = useState<PortfolioPosition | null | undefined>(undefined);
   const deletePos = useDeletePortfolioPosition();
 
-  // Caixa disponível (USD não investido) — recarrega ao trocar de modo
-  const [cash, setCash] = useState<number>(() => loadCash(mode));
+  // Caixa disponível (USD não investido) — persistido no banco por modo
+  const [cashByMode, setCashByMode] = useState<CashByMode>({ real: 0, simulated: 0 });
   const [editingCash, setEditingCash] = useState(false);
   const [cashDraft, setCashDraft] = useState("");
-  useEffect(() => { setCash(loadCash(mode)); setEditingCash(false); }, [mode]);
-  const commitCash = () => {
+  useEffect(() => { fetchCash().then(setCashByMode); }, []);
+  useEffect(() => { setEditingCash(false); }, [mode]);
+  const cash = mode === "real" ? cashByMode.real : cashByMode.simulated;
+  const commitCash = async () => {
     const n = parseFloat(cashDraft);
-    const val = isNaN(n) ? 0 : n;
-    setCash(val);
-    saveCash(mode, val);
+    const val = isNaN(n) || n < 0 ? 0 : n;
+    setCashByMode((prev) => ({ ...prev, [mode]: val }));
     setEditingCash(false);
+    try {
+      await persistCash(mode, val);
+    } catch {
+      toast({ variant: "destructive", title: "Erro ao salvar caixa" });
+      fetchCash().then(setCashByMode);
+    }
   };
 
   const priceMap = useMemo(() => {

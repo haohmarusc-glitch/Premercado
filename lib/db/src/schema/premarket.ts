@@ -94,6 +94,10 @@ export const settingsTable = pgTable("settings", {
   premarketIntervalMin: integer("premarket_interval_min").notNull().default(60),
   premarketWindowStartHour: integer("premarket_window_start_hour").notNull().default(8),
   premarketWindowEndHour: integer("premarket_window_end_hour").notNull().default(10),
+  // Caixa disponível (USD não investido) por modo de carteira — "Disponível
+  // para investir" da corretora. Entra no Patrimônio total, não no investido.
+  cashReal: money("cash_real").notNull().default(0),
+  cashSimulated: money("cash_simulated").notNull().default(0),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

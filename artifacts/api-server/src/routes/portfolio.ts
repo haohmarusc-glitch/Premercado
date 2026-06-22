@@ -2,7 +2,8 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { asc, eq } from "drizzle-orm";
-import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
+import { db, portfolioPositionsTable, portfolioPurchasesTable, settingsTable } from "@workspace/db";
+import { getOrCreateSettings } from "./settings";
 import { getPythonBin, agentDir } from "../lib/runner";
 import {
   ListPortfolioPositionsResponse,
@@ -103,6 +104,30 @@ export async function seedPortfolioIfEmpty() {
 router.get("/portfolio", async (_req, res): Promise<void> => {
   const rows = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
   res.json(ListPortfolioPositionsResponse.parse(rows.map(serPos)));
+});
+
+// GET /portfolio/cash — saldo em USD não investido por modo (real/paper)
+router.get("/portfolio/cash", async (_req, res): Promise<void> => {
+  const s = await getOrCreateSettings();
+  res.json({ real: Number(s.cashReal ?? 0), simulated: Number(s.cashSimulated ?? 0) });
+});
+
+// PATCH /portfolio/cash — { mode: "real" | "simulated", amount: number }
+router.patch("/portfolio/cash", async (req, res): Promise<void> => {
+  const mode = req.body?.mode;
+  const amount = Number(req.body?.amount);
+  if ((mode !== "real" && mode !== "simulated") || !Number.isFinite(amount) || amount < 0) {
+    res.status(400).json({ error: "mode (real|simulated) e amount >= 0 obrigatórios" });
+    return;
+  }
+  const s = await getOrCreateSettings();
+  const patch = mode === "real" ? { cashReal: amount } : { cashSimulated: amount };
+  const [updated] = await db
+    .update(settingsTable)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(settingsTable.id, s.id))
+    .returning();
+  res.json({ real: Number(updated.cashReal ?? 0), simulated: Number(updated.cashSimulated ?? 0) });
 });
 
 // GET /portfolio/:id/purchases
