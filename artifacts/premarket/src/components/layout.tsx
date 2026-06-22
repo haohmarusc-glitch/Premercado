@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe } from "lucide-react";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -92,33 +92,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
   });
-
-  const runPhase = useMutation({
-    mutationFn: ({ turns, dest }: { turns: number; dest: string }) => {
-      navigate(dest);
-      return runFastMode("manual", turns);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
-    },
-  });
-
-  const [phasesOpen, setPhasesOpen] = useState(false);
-
-  const PHASES = [
-    { label: "MACRO",     turns: 1,  dest: "/macro",    desc: "Fear & Greed · setor · earnings · contágio" },
-    { label: "COTAÇÕES",  turns: 2,  dest: "/cotacoes", desc: "+ cotações de todos os ativos do Grupo A" },
-    { label: "NOTÍCIAS",  turns: 3,  dest: "/noticias", desc: "+ manchetes de todos os ativos" },
-    { label: "TÉCNICOS",  turns: 4,  dest: "/tecnicos", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
-    { label: "SHORT",     turns: 5,  dest: "/short",    desc: "+ exposição short de cada ativo" },
-    { label: "ANALISTAS", turns: 6,  dest: "/analistas", desc: "+ consenso e preço-alvo dos analistas" },
-    { label: "OPÇÕES",    turns: 7,  dest: "/opcoes",   desc: "+ put/call ratio e volatilidade implícita" },
-    { label: "GRUPO B",   turns: 8,  dest: "/cotacoes", desc: "+ cotações rápidas dos tickers restantes" },
-    { label: "RADAR",     turns: 9,  dest: "/alerts",  desc: "+ radar de alertas de mercado" },
-    { label: "EDGAR",     turns: 11, dest: "/history", desc: "+ busca e leitura de filings" },
-    { label: "ALERTAS",   turns: 12, dest: "/alerts",  desc: "+ criação e remoção de alertas técnicos" },
-    { label: "COMPLETO",  turns: 13, dest: "/",        desc: "+ observações salvas + relatório final" },
-  ];
 
   const wasRunningRef = useRef(isRunning);
   useEffect(() => {
@@ -315,35 +288,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 </p>
               </button>
             ))}
-          </div>
-
-          {/* Phase buttons panel */}
-          <div className="mt-3">
-            <button
-              onClick={() => setPhasesOpen((o) => !o)}
-              className="w-full flex items-center justify-between text-xs font-mono font-bold text-muted-foreground hover:text-foreground transition-colors px-1 py-1"
-            >
-              <span>EXECUTAR POR FASE</span>
-              {phasesOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </button>
-            {phasesOpen && (
-              <div className="mt-2 flex flex-col gap-1.5">
-                {PHASES.map(({ label, turns, dest, desc }) => (
-                  <button
-                    key={label}
-                    onClick={() => runPhase.mutate({ turns, dest })}
-                    disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runPhase.isPending}
-                    className="w-full text-left rounded border border-border px-3 py-2.5 hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-xs text-foreground">{label}</span>
-                      <span className="font-mono text-[10px] text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">≤{turns}t</span>
-                    </div>
-                    <p className="text-[10px] font-mono text-muted-foreground mt-1 leading-snug">{desc}</p>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </aside>
