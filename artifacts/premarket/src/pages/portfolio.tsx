@@ -913,6 +913,21 @@ export default function PortfolioPage() {
     }
     return m;
   }, [quotes]);
+  // Pré-mercado / after-hours por ticker (movimento fora do pregão)
+  const extMap = useMemo(() => {
+    const m = new Map<string, { label: string; pct: number }>();
+    for (const q of quotes as Array<{ symbol: string; marketState?: string | null; preMarketPrice?: number | null; preMarketChangePct?: number | null; postMarketPrice?: number | null; postMarketChangePct?: number | null }>) {
+      const st = q.marketState ?? "";
+      let label: string | null = null;
+      let pct: number | null = null;
+      if (st.startsWith("PRE") && q.preMarketPrice != null) { label = "Pré"; pct = q.preMarketChangePct ?? null; }
+      else if (st.startsWith("POST") && q.postMarketPrice != null) { label = "Pós"; pct = q.postMarketChangePct ?? null; }
+      else if (q.postMarketPrice != null) { label = "Pós"; pct = q.postMarketChangePct ?? null; }
+      else if (q.preMarketPrice != null) { label = "Pré"; pct = q.preMarketChangePct ?? null; }
+      if (label != null && pct != null) m.set(q.symbol, { label, pct });
+    }
+    return m;
+  }, [quotes]);
 
   // Fetch purchases for all positions to detect fully-sold ones
   const purchasesQueries = useQueries({
@@ -1294,6 +1309,20 @@ export default function PortfolioPage() {
                             30d+
                           </Badge>
                         )}
+                        {(() => {
+                          const ext = extMap.get(pos.ticker);
+                          if (!ext) return null;
+                          const up = ext.pct >= 0;
+                          return (
+                            <Badge
+                              className={cn("h-4 px-1 text-[9px] font-mono border",
+                                up ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-red-500/15 text-red-400 border-red-500/30")}
+                              title={`Movimento de ${ext.label === "Pré" ? "pré-mercado" : "after-hours"} vs. fechamento`}
+                            >
+                              {ext.label} {up ? "▲+" : "▼"}{ext.pct.toFixed(1)}%
+                            </Badge>
+                          );
+                        })()}
                       </div>
                       {pos.notes && (
                         <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{pos.notes}</div>
