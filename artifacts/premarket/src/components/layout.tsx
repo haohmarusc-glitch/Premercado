@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, ChevronDown, ChevronUp, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe } from "lucide-react";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -106,14 +106,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [phasesOpen, setPhasesOpen] = useState(false);
 
   const PHASES = [
-    { label: "MACRO",     turns: 1,  dest: "/history", desc: "Fear & Greed · setor · earnings · contágio" },
-    { label: "COTAÇÕES",  turns: 2,  dest: "/history", desc: "+ cotações de todos os ativos do Grupo A" },
-    { label: "NOTÍCIAS",  turns: 3,  dest: "/history", desc: "+ manchetes de todos os ativos" },
+    { label: "MACRO",     turns: 1,  dest: "/macro",    desc: "Fear & Greed · setor · earnings · contágio" },
+    { label: "COTAÇÕES",  turns: 2,  dest: "/cotacoes", desc: "+ cotações de todos os ativos do Grupo A" },
+    { label: "NOTÍCIAS",  turns: 3,  dest: "/noticias", desc: "+ manchetes de todos os ativos" },
     { label: "TÉCNICOS",  turns: 4,  dest: "/tecnicos", desc: "+ indicadores técnicos (RSI, MACD, médias)" },
-    { label: "SHORT",     turns: 5,  dest: "/history", desc: "+ exposição short de cada ativo" },
-    { label: "ANALISTAS", turns: 6,  dest: "/history", desc: "+ consenso e preço-alvo dos analistas" },
-    { label: "OPÇÕES",    turns: 7,  dest: "/history", desc: "+ put/call ratio e volatilidade implícita" },
-    { label: "GRUPO B",   turns: 8,  dest: "/history", desc: "+ cotações rápidas dos tickers restantes" },
+    { label: "SHORT",     turns: 5,  dest: "/short",    desc: "+ exposição short de cada ativo" },
+    { label: "ANALISTAS", turns: 6,  dest: "/analistas", desc: "+ consenso e preço-alvo dos analistas" },
+    { label: "OPÇÕES",    turns: 7,  dest: "/opcoes",   desc: "+ put/call ratio e volatilidade implícita" },
+    { label: "GRUPO B",   turns: 8,  dest: "/cotacoes", desc: "+ cotações rápidas dos tickers restantes" },
     { label: "RADAR",     turns: 9,  dest: "/alerts",  desc: "+ radar de alertas de mercado" },
     { label: "EDGAR",     turns: 11, dest: "/history", desc: "+ busca e leitura de filings" },
     { label: "ALERTAS",   turns: 12, dest: "/alerts",  desc: "+ criação e remoção de alertas técnicos" },
@@ -206,7 +206,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
           {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
           {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
+          {navLink("/macro", <Globe className="h-4 w-4" />, "Macro")}
+          {navLink("/cotacoes", <LineChart className="h-4 w-4" />, "Cotações")}
           {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
+          {navLink("/short", <Flame className="h-4 w-4" />, "Short")}
+          {navLink("/analistas", <Users className="h-4 w-4" />, "Analistas")}
+          {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
+          {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
           {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
