@@ -1391,6 +1391,7 @@ export default function PortfolioPage() {
                 <tr className="border-b border-border bg-muted/20 text-muted-foreground text-[11px]">
                   <th className="text-left py-2.5 pl-4">Ticker</th>
                   <th className="text-right pr-3">Investido</th>
+                  <th className="text-right pr-3">Preço compra</th>
                   <th className="text-right pr-3">Preço venda</th>
                   <th className="text-right pr-3">Preço atual</th>
                   <th className="text-right pr-3" title="Variação do preço atual vs. o preço no dia da venda. Negativo = mais barata hoje (candidata a recompra)">Var. vs venda</th>
@@ -1408,8 +1409,10 @@ export default function PortfolioPage() {
                   // Quantidade e receita das compras efetivamente vendidas
                   const soldLots = purchases.filter((p) => p.saleDate && p.salePrice && p.purchasePrice);
                   const totalSoldQty = soldLots.reduce((s, p) => s + p.amount / (p.purchasePrice as number), 0);
+                  const soldInvested = soldLots.reduce((s, p) => s + p.amount, 0);
                   const totalRevenue = soldLots.reduce((s, p) => s + (p.amount / (p.purchasePrice as number)) * (p.salePrice as number), 0);
-                  // Preço médio no dia da venda (ponderado pela quantidade)
+                  // Preço médio de compra e de venda (ponderados pela quantidade)
+                  const avgBuyPrice = totalSoldQty > 0 ? soldInvested / totalSoldQty : null;
                   const avgSalePrice = totalSoldQty > 0 ? totalRevenue / totalSoldQty : null;
                   const curPrice = priceMap.get(pos.ticker) ?? null;
                   // Variação do preço atual vs. preço de venda (negativo = mais barata hoje)
@@ -1425,6 +1428,9 @@ export default function PortfolioPage() {
                     <tr key={pos.id} className="border-b border-border/40 hover:bg-muted/10">
                       <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">{pos.ticker}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmt$(totalInvested)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">
+                        {avgBuyPrice != null ? `$${avgBuyPrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                      </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums font-semibold">
                         {avgSalePrice != null ? `$${avgSalePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
                       </td>
