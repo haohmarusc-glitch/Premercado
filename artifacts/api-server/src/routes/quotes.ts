@@ -28,10 +28,13 @@ function fetchQuotes(tickers: string[]): Promise<unknown[]> {
     let stdout = "";
     let stderr = "";
 
+    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("get_quotes timeout")); }, 90_000);
+
     py.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
     py.on("close", (code) => {
+      clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(`get_quotes exited ${code}: ${stderr}`));
         return;

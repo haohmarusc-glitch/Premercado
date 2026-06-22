@@ -11,7 +11,6 @@ nulos e o restante continua funcionando (fail-open).
 """
 import sys
 import json
-import urllib.request
 import yfinance as yf
 
 
@@ -19,40 +18,29 @@ def _round(v, d=4):
     return round(v, d) if isinstance(v, (int, float)) else None
 
 
-def fetch_extended(symbols: list[str]) -> dict:
-    """Busca marketState e preços de pré/pós-mercado em uma única requisição."""
-    out: dict = {}
-    if not symbols:
-        return out
+def fetch_extended(ticker) -> dict:
+    """marketState + preços de pré/pós-mercado via .info (yfinance trata o crumb).
+
+    Fail-open: se o Yahoo bloquear ou faltar dado, retorna chaves nulas.
+    """
     try:
-        url = (
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols="
-            + ",".join(symbols)
-        )
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        for item in data.get("quoteResponse", {}).get("result", []):
-            sym = item.get("symbol")
-            if not sym:
-                continue
-            out[sym] = {
-                "marketState": item.get("marketState"),
-                "preMarketPrice": _round(item.get("preMarketPrice")),
-                "preMarketChangePct": _round(item.get("preMarketChangePercent")),
-                "postMarketPrice": _round(item.get("postMarketPrice")),
-                "postMarketChangePct": _round(item.get("postMarketChangePercent")),
-            }
+        info = ticker.info or {}
     except Exception:
-        pass  # fail-open: sem dados extended
-    return out
+        info = {}
+    return {
+        "marketState": info.get("marketState"),
+        "preMarketPrice": _round(info.get("preMarketPrice")),
+        "preMarketChangePct": _round(info.get("preMarketChangePercent")),
+        "postMarketPrice": _round(info.get("postMarketPrice")),
+        "postMarketChangePct": _round(info.get("postMarketChangePercent")),
+    }
 
 
-def fetch_quote(symbol: str, ext: dict) -> dict:
-    e = ext.get(symbol, {})
+def fetch_quote(symbol: str) -> dict:
     try:
         ticker = yf.Ticker(symbol)
         fi = ticker.fast_info
+        e = fetch_extended(ticker)
 
         price = getattr(fi, "last_price", None)
         prev_close = getattr(fi, "previous_close", None)
@@ -98,11 +86,11 @@ def fetch_quote(symbol: str, ext: dict) -> dict:
             "dayLow": None,
             "volume": None,
             "marketCap": None,
-            "marketState": e.get("marketState"),
-            "preMarketPrice": e.get("preMarketPrice"),
-            "preMarketChangePct": e.get("preMarketChangePct"),
-            "postMarketPrice": e.get("postMarketPrice"),
-            "postMarketChangePct": e.get("postMarketChangePct"),
+            "marketState": None,
+            "preMarketPrice": None,
+            "preMarketChangePct": None,
+            "postMarketPrice": None,
+            "postMarketChangePct": None,
             "error": str(ex),
         }
 
@@ -113,6 +101,5 @@ if __name__ == "__main__":
         print("[]")
         sys.exit(0)
 
-    ext = fetch_extended(symbols)
-    results = [fetch_quote(s, ext) for s in symbols]
+    results = [fetch_quote(s) for s in symbols]
     print(json.dumps(results))
