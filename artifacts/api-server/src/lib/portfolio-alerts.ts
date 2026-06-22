@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { agentDir, getPythonBin } from "./runner";
-import { sendAlertEmail, sendPortfolioHoldingEmail } from "./mailer";
+import { sendAlertEmail, sendPortfolioHoldingEmail, sendRecompraEmail } from "./mailer";
 import { logger } from "./logger";
 
 const CHECK_INTERVAL_MS = 15 * 60_000; // 15 min
@@ -155,6 +155,50 @@ async function checkPortfolioAlerts(): Promise<void> {
           }
         }
       }
+    }
+  }
+
+  // ── Recompra: ações totalmente vendidas que caíram abaixo do preço de venda ──
+  // Usa os mesmos limiares de baixa (downAlertPcts) da posição. Dispara quando
+  // o preço atual está thr% abaixo do preço médio de venda.
+  const lotsByPos = new Map<number, typeof purchases>();
+  for (const pu of purchases) {
+    const arr = lotsByPos.get(pu.positionId) ?? [];
+    arr.push(pu);
+    lotsByPos.set(pu.positionId, arr);
+  }
+
+  for (const pos of positions) {
+    const lots = lotsByPos.get(pos.id) ?? [];
+    if (lots.length === 0) continue;
+    const soldLots = lots.filter((p) => p.saleDate && p.salePrice != null && p.purchasePrice != null);
+    const openLots = lots.filter((p) => !(p.saleDate && p.salePrice != null));
+    // Só considera posições totalmente encerradas (você não detém mais)
+    if (soldLots.length === 0 || openLots.length > 0) continue;
+
+    const soldQty = soldLots.reduce((s, p) => s + p.amount / (p.purchasePrice as number), 0);
+    const revenue = soldLots.reduce((s, p) => s + (p.amount / (p.purchasePrice as number)) * (p.salePrice as number), 0);
+    const avgSalePrice = soldQty > 0 ? revenue / soldQty : null;
+    const price = priceMap.get(pos.ticker);
+    if (avgSalePrice == null || price == null || avgSalePrice <= 0) continue;
+
+    const dropPct = ((avgSalePrice - price) / avgSalePrice) * 100;
+    if (dropPct <= 0) continue;
+
+    // dispara o MAIOR limiar cruzado (evita e-mails redundantes do mesmo nível)
+    const crossed = pos.downAlertPcts.filter((thr) => dropPct >= thr);
+    if (crossed.length === 0) continue;
+    const thr = Math.max(...crossed);
+    const key = `recompra:${pos.ticker}:${thr}`;
+    if (firedKeys.has(key)) continue;
+
+    try {
+      await sendRecompraEmail({ ticker: pos.ticker, salePrice: avgSalePrice, currentPrice: price, dropPct, thresholdPct: thr });
+      await persistKey(key);
+      firedKeys.add(key);
+      logger.info({ ticker: pos.ticker, dropPct: dropPct.toFixed(2), thr }, "Recompra alert fired");
+    } catch (err) {
+      logger.error({ err, ticker: pos.ticker, thr }, "Failed to send recompra alert email");
     }
   }
 }

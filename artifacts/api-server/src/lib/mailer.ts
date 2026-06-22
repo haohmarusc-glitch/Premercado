@@ -113,6 +113,55 @@ export async function sendPortfolioHoldingEmail(opts: {
   }
 }
 
+export async function sendRecompraEmail(opts: {
+  ticker: string;
+  salePrice: number;
+  currentPrice: number;
+  dropPct: number;       // queda % vs. preço de venda (valor positivo)
+  thresholdPct: number;  // limiar que disparou
+}): Promise<void> {
+  const to = await resolveNotifyEmail();
+  if (!to) { logger.warn("No notify email — skipping recompra alert"); return; }
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
+
+  const subject = `🔄 Recompra? ${opts.ticker} caiu ${opts.dropPct.toFixed(1)}% abaixo do preço de venda`;
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
+  .ticker{font-size:32px;font-weight:bold;color:#ff8c00}
+  .change{font-size:24px;font-weight:bold;color:#22c55e}
+  .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
+  .footer{margin-top:32px;font-size:11px;color:#555}
+</style></head>
+<body>
+<p style="color:#555;font-size:12px;text-transform:uppercase;">Oportunidade de Recompra — Pré-Mercado Agente</p>
+<div class="box">
+  <div class="ticker">${opts.ticker}</div>
+  <div class="change">▼ ${opts.dropPct.toFixed(2)}%</div>
+  <p style="margin:8px 0;color:#aaa">Preço de venda: <strong style="color:#fff">$${opts.salePrice.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Preço atual: <strong style="color:#fff">$${opts.currentPrice.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#666;font-size:12px">
+    Caiu mais de ${opts.thresholdPct}% abaixo do preço em que você vendeu — possível ponto de recompra.
+  </p>
+</div>
+<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Não é recomendação de investimento.</div>
+</body></html>`;
+
+  try {
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"Pré-Mercado Agente" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    logger.info({ to, subject }, "Recompra e-mail sent");
+  } catch (err) {
+    logger.error({ err }, "Failed to send recompra e-mail");
+  }
+}
+
 export async function sendReportEmail(reportContent: string, date: string, tickers?: string[]): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) {
