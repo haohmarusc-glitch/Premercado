@@ -537,6 +537,16 @@ components:
           type: ["integer", "null"]
         marketCap:
           type: ["integer", "null"]
+        marketState:
+          type: ["string", "null"]
+        preMarketPrice:
+          type: ["number", "null"]
+        preMarketChangePct:
+          type: ["number", "null"]
+        postMarketPrice:
+          type: ["number", "null"]
+        postMarketChangePct:
+          type: ["number", "null"]
         error:
           type: ["string", "null"]
 

@@ -27,5 +27,15 @@ export interface TickerQuote {
   /** @nullable */
   marketCap?: number | null;
   /** @nullable */
+  marketState?: string | null;
+  /** @nullable */
+  preMarketPrice?: number | null;
+  /** @nullable */
+  preMarketChangePct?: number | null;
+  /** @nullable */
+  postMarketPrice?: number | null;
+  /** @nullable */
+  postMarketChangePct?: number | null;
+  /** @nullable */
   error?: string | null;
 }

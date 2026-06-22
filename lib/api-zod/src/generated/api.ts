@@ -231,6 +231,11 @@ export const GetTickerQuotesResponseItem = zod.object({
   "dayLow": zod.number().nullish(),
   "volume": zod.number().nullish(),
   "marketCap": zod.number().nullish(),
+  "marketState": zod.string().nullish(),
+  "preMarketPrice": zod.number().nullish(),
+  "preMarketChangePct": zod.number().nullish(),
+  "postMarketPrice": zod.number().nullish(),
+  "postMarketChangePct": zod.number().nullish(),
   "error": zod.string().nullish()
 })
 export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)

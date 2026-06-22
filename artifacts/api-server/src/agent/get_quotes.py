@@ -3,13 +3,53 @@
 Lightweight quote fetcher using yfinance fast_info.
 Called as: python3 -m agent.get_quotes SYMBOL1 SYMBOL2 ...
 Outputs a JSON array to stdout.
+
+Além dos campos do pregão regular (via fast_info), tenta enriquecer com dados
+de pré-mercado / after-hours via uma chamada batch ao endpoint de cotações do
+Yahoo. Se essa chamada falhar (rate limit, bloqueio), os campos extended ficam
+nulos e o restante continua funcionando (fail-open).
 """
 import sys
 import json
+import urllib.request
 import yfinance as yf
 
 
-def fetch_quote(symbol: str) -> dict:
+def _round(v, d=4):
+    return round(v, d) if isinstance(v, (int, float)) else None
+
+
+def fetch_extended(symbols: list[str]) -> dict:
+    """Busca marketState e preços de pré/pós-mercado em uma única requisição."""
+    out: dict = {}
+    if not symbols:
+        return out
+    try:
+        url = (
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols="
+            + ",".join(symbols)
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        for item in data.get("quoteResponse", {}).get("result", []):
+            sym = item.get("symbol")
+            if not sym:
+                continue
+            out[sym] = {
+                "marketState": item.get("marketState"),
+                "preMarketPrice": _round(item.get("preMarketPrice")),
+                "preMarketChangePct": _round(item.get("preMarketChangePercent")),
+                "postMarketPrice": _round(item.get("postMarketPrice")),
+                "postMarketChangePct": _round(item.get("postMarketChangePercent")),
+            }
+    except Exception:
+        pass  # fail-open: sem dados extended
+    return out
+
+
+def fetch_quote(symbol: str, ext: dict) -> dict:
+    e = ext.get(symbol, {})
     try:
         ticker = yf.Ticker(symbol)
         fi = ticker.fast_info
@@ -39,9 +79,14 @@ def fetch_quote(symbol: str) -> dict:
             "dayLow": round(day_low, 4) if day_low is not None else None,
             "volume": int(volume) if volume is not None else None,
             "marketCap": int(market_cap) if market_cap is not None else None,
+            "marketState": e.get("marketState"),
+            "preMarketPrice": e.get("preMarketPrice"),
+            "preMarketChangePct": e.get("preMarketChangePct"),
+            "postMarketPrice": e.get("postMarketPrice"),
+            "postMarketChangePct": e.get("postMarketChangePct"),
             "error": None,
         }
-    except Exception as e:
+    except Exception as ex:
         return {
             "symbol": symbol,
             "price": None,
@@ -53,7 +98,12 @@ def fetch_quote(symbol: str) -> dict:
             "dayLow": None,
             "volume": None,
             "marketCap": None,
-            "error": str(e),
+            "marketState": e.get("marketState"),
+            "preMarketPrice": e.get("preMarketPrice"),
+            "preMarketChangePct": e.get("preMarketChangePct"),
+            "postMarketPrice": e.get("postMarketPrice"),
+            "postMarketChangePct": e.get("postMarketChangePct"),
+            "error": str(ex),
         }
 
 
@@ -63,5 +113,6 @@ if __name__ == "__main__":
         print("[]")
         sys.exit(0)
 
-    results = [fetch_quote(s) for s in symbols]
+    ext = fetch_extended(symbols)
+    results = [fetch_quote(s, ext) for s in symbols]
     print(json.dumps(results))
