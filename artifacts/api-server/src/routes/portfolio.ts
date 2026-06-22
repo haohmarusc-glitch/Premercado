@@ -1,6 +1,9 @@
 import { Router, type IRouter } from "express";
+import { spawn } from "child_process";
+import path from "path";
 import { asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
+import { getPythonBin, agentDir } from "../lib/runner";
 import {
   ListPortfolioPositionsResponse,
   PortfolioPositionSchema,
@@ -16,6 +19,29 @@ import {
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+// Fetch real historical close prices for a ticker on a set of dates (via yfinance)
+function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<string, number>> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(agentDir, "agent", "get_historical_price.py");
+    const py = spawn(getPythonBin(), [scriptPath]);
+    py.stdin.write(JSON.stringify({ ticker, dates }));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) return reject(new Error(err || "Script failed"));
+      try {
+        const parsed = JSON.parse(out) as { prices?: Record<string, number> };
+        resolve(parsed.prices ?? {});
+      } catch { reject(new Error("Parse error")); }
+    });
+  });
+}
 
 function serPos(r: typeof portfolioPositionsTable.$inferSelect) {
   return { ...r, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString() };
@@ -158,6 +184,67 @@ router.delete("/portfolio/purchases/:purchaseId", async (req, res): Promise<void
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
   await db.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
   res.status(204).send();
+});
+
+// GET /portfolio/historical-price?ticker=NVDA&date=2026-03-20 — single real close price
+router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
+  const ticker = String(req.query.ticker ?? "").toUpperCase();
+  const date = String(req.query.date ?? "");
+  if (!ticker || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "ticker and valid date (YYYY-MM-DD) required" });
+    return;
+  }
+  try {
+    const prices = await fetchHistoricalPrices(ticker, [date]);
+    res.json({ ticker, date, price: prices[date] ?? null });
+  } catch (e: unknown) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// POST /portfolio/:id/backfill-prices — corrige purchasePrice de cada compra
+// usando o fechamento real da data (yfinance). Por padrão só preenche compras
+// sem preço; passe { force: true } para sobrescrever todas.
+router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> => {
+  const params = PortfolioPositionParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: "invalid id" }); return; }
+  const force = req.body?.force === true;
+
+  const [pos] = await db
+    .select()
+    .from(portfolioPositionsTable)
+    .where(eq(portfolioPositionsTable.id, params.data.id));
+  if (!pos) { res.status(404).json({ error: "Position not found" }); return; }
+
+  const purchases = await db
+    .select()
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.positionId, params.data.id));
+
+  const targets = force ? purchases : purchases.filter((p) => p.purchasePrice == null);
+  if (targets.length === 0) {
+    res.json({ updated: 0, message: "Nenhuma compra para atualizar" });
+    return;
+  }
+
+  try {
+    const dates = [...new Set(targets.map((p) => p.purchaseDate))];
+    const prices = await fetchHistoricalPrices(pos.ticker, dates);
+
+    let updated = 0;
+    for (const p of targets) {
+      const price = prices[p.purchaseDate];
+      if (price == null) continue;
+      await db
+        .update(portfolioPurchasesTable)
+        .set({ purchasePrice: price })
+        .where(eq(portfolioPurchasesTable.id, p.id));
+      updated++;
+    }
+    res.json({ updated, total: targets.length, prices });
+  } catch (e: unknown) {
+    res.status(500).json({ error: String(e) });
+  }
 });
 
 export default router;

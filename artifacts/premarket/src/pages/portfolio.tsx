@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -270,15 +270,50 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
     });
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!purchaseDate || !amount) return;
+    // Se o preço não foi informado, busca o fechamento real da data (yfinance)
+    let price = purchasePrice ? parseFloat(purchasePrice) : null;
+    if (price == null) {
+      try {
+        const r = await fetch(`/api/portfolio/historical-price?ticker=${encodeURIComponent(ticker)}&date=${purchaseDate}`, { credentials: "include" });
+        const data = await r.json();
+        if (r.ok && data.price != null) price = data.price;
+      } catch { /* segue sem preço */ }
+    }
     createPurchase.mutate(
-      { positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: purchasePrice ? parseFloat(purchasePrice) : null } },
+      { positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: price } },
       {
         onSuccess: () => { invalidate(); setAddOpen(false); setPurchaseDate(""); setPurchasePrice(""); setAmount(""); },
         onError: () => toast({ variant: "destructive", title: "Erro ao adicionar compra" }),
       },
     );
+  };
+
+  const [backfilling, setBackfilling] = useState(false);
+  const handleBackfill = async (force: boolean) => {
+    setBackfilling(true);
+    try {
+      const r = await fetch(`/api/portfolio/${positionId}/backfill-prices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+        credentials: "include",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Falhou");
+      invalidate();
+      toast({
+        title: data.updated > 0 ? "✅ Preços corrigidos" : "Nada a corrigir",
+        description: data.updated > 0
+          ? `${data.updated} compra(s) atualizada(s) com o preço real do dia.`
+          : "Nenhuma compra precisou de ajuste.",
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Erro ao corrigir preços", description: String(e) });
+    } finally {
+      setBackfilling(false);
+    }
   };
 
   const handleSaleOpen = (purchaseId: number) => {
@@ -502,11 +537,22 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
             </div>
           )}
 
-          <Button size="sm" variant="outline" className="mt-3 h-6 text-[11px] font-mono"
-            onClick={() => setAddOpen(true)}>
-            <Plus className="h-3 w-3 mr-1" />
-            Adicionar compra
-          </Button>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" className="h-6 text-[11px] font-mono"
+              onClick={() => setAddOpen(true)}>
+              <Plus className="h-3 w-3 mr-1" />
+              Adicionar compra
+            </Button>
+            <Button size="sm" variant="outline"
+              className="h-6 text-[11px] font-mono text-blue-400 border-blue-500/30 hover:bg-blue-500/10"
+              onClick={() => handleBackfill(true)}
+              disabled={backfilling}
+              title="Busca o preço real de fechamento de cada data (yfinance) e substitui o preço de compra"
+            >
+              <RefreshCw className={cn("h-3 w-3 mr-1", backfilling && "animate-spin")} />
+              {backfilling ? "Corrigindo..." : "Corrigir preços reais"}
+            </Button>
+          </div>
           <PriceChart ticker={ticker} />
         </td>
       </tr>
