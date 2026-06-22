@@ -1,5 +1,25 @@
 import { useState, useMemo } from "react";
-import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle, Activity, PieChart } from "lucide-react";
+
+interface StopAtrResult {
+  ticker: string;
+  currentPrice: number;
+  atr14: number;
+  atrMultiplier: number;
+  suggestedStop: number;
+  stopDistancePct: number;
+  error?: string;
+}
+
+interface ExposureResult {
+  totalPositions: number;
+  totalInvested: number;
+  tickers: { ticker: string; investedAmount: number; pct: number }[];
+  maxSinglePositionPct: number;
+  concentrationRisk: "LOW" | "MEDIUM" | "HIGH";
+  error?: string;
+}
 
 function fmt(n: number, decimals = 2) {
   return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -87,6 +107,33 @@ export default function CalculatorPage() {
   const rrColor = calc?.rrRatio != null
     ? calc.rrRatio >= 2 ? "green" : calc.rrRatio >= 1 ? "yellow" : "red"
     : undefined;
+
+  // Stop por ATR (backend / yfinance)
+  const [atrTicker, setAtrTicker] = useState("NVDA");
+  const [atrMult, setAtrMult] = useState("2");
+  const atrStop = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/risk/stop-distance", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: atrTicker.toUpperCase(), atrMultiplier: parseFloat(atrMult) || 2 }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as StopAtrResult;
+    },
+  });
+
+  // Exposição da carteira (backend / DB)
+  const exposure = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/risk/portfolio-exposure", { credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as ExposureResult;
+    },
+  });
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 max-w-2xl">
@@ -216,6 +263,97 @@ export default function CalculatorPage() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Ferramentas avançadas (backend) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+        {/* Stop por ATR */}
+        <div className="border border-border rounded-lg bg-card p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-mono font-bold text-foreground uppercase tracking-widest">Stop por ATR</h2>
+          </div>
+          <p className="text-xs font-mono text-muted-foreground leading-relaxed">
+            Calcula um stop baseado na volatilidade real (ATR de 14 dias) — distância que respeita o ruído do ativo.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Ticker" value={atrTicker} onChange={(v) => setAtrTicker(v.toUpperCase())} step="1" />
+            <Field label="Multiplicador ATR" value={atrMult} onChange={setAtrMult} step="0.5" min="0.5" />
+          </div>
+          <button
+            onClick={() => atrStop.mutate()}
+            disabled={atrStop.isPending || !atrTicker.trim()}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded font-mono text-xs font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {atrStop.isPending ? "Calculando..." : "Calcular Stop"}
+          </button>
+          {atrStop.isError && <p className="text-xs text-red-400 font-mono">{String(atrStop.error)}</p>}
+          {atrStop.data && !atrStop.data.error && (
+            <div className="border border-border rounded-lg bg-secondary/20 p-3 space-y-0">
+              <ResultRow label="Preço atual" value={`$${fmt(atrStop.data.currentPrice)}`} />
+              <ResultRow label="ATR (14d)" value={`$${fmt(atrStop.data.atr14)}`} />
+              <ResultRow label="Stop sugerido" value={`$${fmt(atrStop.data.suggestedStop)}`} highlight="red" />
+              <ResultRow label="Distância do stop" value={`-${fmt(atrStop.data.stopDistancePct)}%`} highlight="yellow" />
+            </div>
+          )}
+        </div>
+
+        {/* Exposição da carteira */}
+        <div className="border border-border rounded-lg bg-card p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <PieChart className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-mono font-bold text-foreground uppercase tracking-widest">Exposição da Carteira</h2>
+          </div>
+          <p className="text-xs font-mono text-muted-foreground leading-relaxed">
+            Analisa a concentração das suas posições. Concentração alta em um único ativo aumenta o risco.
+          </p>
+          <button
+            onClick={() => exposure.mutate()}
+            disabled={exposure.isPending}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded font-mono text-xs font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {exposure.isPending ? "Analisando..." : "Analisar Carteira"}
+          </button>
+          {exposure.isError && <p className="text-xs text-red-400 font-mono">{String(exposure.error)}</p>}
+          {exposure.data && !exposure.data.error && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between border border-border rounded-lg bg-secondary/20 p-3">
+                <div>
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">Concentração</div>
+                  <div className={`text-lg font-mono font-bold ${
+                    exposure.data.concentrationRisk === "HIGH" ? "text-red-400"
+                    : exposure.data.concentrationRisk === "MEDIUM" ? "text-yellow-400" : "text-green-400"
+                  }`}>
+                    {exposure.data.concentrationRisk}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">Total investido</div>
+                  <div className="text-lg font-mono font-bold text-foreground">${fmt(exposure.data.totalInvested)}</div>
+                </div>
+              </div>
+              <div className="border border-border rounded-lg bg-card p-3 space-y-2">
+                {exposure.data.tickers
+                  .slice()
+                  .sort((a, b) => b.pct - a.pct)
+                  .map((t) => (
+                    <div key={t.ticker} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="font-bold text-foreground">{t.ticker}</span>
+                        <span className="text-muted-foreground">{fmt(t.pct)}% · ${fmt(t.investedAmount)}</span>
+                      </div>
+                      <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${t.pct > 30 ? "bg-red-400" : t.pct > 15 ? "bg-yellow-400" : "bg-green-400"}`}
+                          style={{ width: `${Math.min(t.pct, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

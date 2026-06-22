@@ -16,6 +16,7 @@ import journalRouter from "./journal";
 import earningsRouter from "./earnings";
 import performanceRouter from "./performance";
 import backtestRouter from "./backtest";
+import riskRouter from "./risk";
 import internalRouter from "./internal";
 import { requireAuth } from "../middleware/auth";
 
@@ -40,5 +41,6 @@ router.use(requireAuth, journalRouter);
 router.use(requireAuth, earningsRouter);
 router.use(requireAuth, performanceRouter);
 router.use(requireAuth, backtestRouter);
+router.use(requireAuth, riskRouter);
 
 export default router;

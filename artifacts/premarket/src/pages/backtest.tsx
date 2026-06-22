@@ -4,10 +4,13 @@ import { FlaskConical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface Trade {
-  date: string;
-  price: number;
+  entryDate: string;
+  exitDate: string;
+  entryPrice: number;
+  exitPrice: number;
   pnl: number;
   win: boolean;
+  closedOpen: boolean;
 }
 
 interface BacktestResult {
@@ -19,8 +22,13 @@ interface BacktestResult {
   finalValue: number;
   totalReturn: number;
   buyAndHoldReturn: number;
+  cagr: number;
+  sharpe: number;
+  maxDrawdown: number;
   totalTrades: number;
   winRate: number;
+  avgWin: number;
+  avgLoss: number;
   trades: Trade[];
   error?: string;
 }
@@ -33,6 +41,9 @@ export default function BacktestPage() {
   const [start, setStart] = useState(oneYearAgo);
   const [end, setEnd] = useState(today);
   const [strategy, setStrategy] = useState("rsi");
+  const [positionFraction, setPositionFraction] = useState("1.0");
+  const [commissionPct, setCommissionPct] = useState("0.001");
+  const [slippagePct, setSlippagePct] = useState("0.0005");
   const [result, setResult] = useState<BacktestResult | null>(null);
 
   const run = useMutation({
@@ -41,7 +52,12 @@ export default function BacktestPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: ticker.toUpperCase(), start, end, strategy }),
+        body: JSON.stringify({
+          ticker: ticker.toUpperCase(), start, end, strategy,
+          positionFraction: parseFloat(positionFraction),
+          commissionPct: parseFloat(commissionPct),
+          slippagePct: parseFloat(slippagePct),
+        }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
@@ -102,6 +118,22 @@ export default function BacktestPage() {
             </select>
           </div>
         </div>
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: "Fração Posição (0.1–1.0)", val: positionFraction, set: setPositionFraction, step: "0.1" },
+            { label: "Comissão (ex: 0.001 = 0.1%)", val: commissionPct, set: setCommissionPct, step: "0.0001" },
+            { label: "Slippage (ex: 0.0005)", val: slippagePct, set: setSlippagePct, step: "0.0001" },
+          ].map(({ label, val, set, step }) => (
+            <div key={label} className="flex flex-col gap-1">
+              <label className="text-[10px] font-mono text-muted-foreground uppercase">{label}</label>
+              <input
+                type="number" step={step} value={val}
+                onChange={(e) => set(e.target.value)}
+                className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          ))}
+        </div>
         <button
           onClick={() => run.mutate()}
           disabled={run.isPending || !ticker.trim()}
@@ -134,8 +166,21 @@ export default function BacktestPage() {
               {[
                 { label: "Retorno Total", value: `${result.totalReturn >= 0 ? "+" : ""}${result.totalReturn.toFixed(2)}%`, color: result.totalReturn >= 0 ? "text-green-400" : "text-red-400" },
                 { label: "Buy & Hold", value: `${result.buyAndHoldReturn >= 0 ? "+" : ""}${result.buyAndHoldReturn.toFixed(2)}%`, color: result.buyAndHoldReturn >= 0 ? "text-green-400" : "text-red-400" },
+                { label: "CAGR", value: `${result.cagr >= 0 ? "+" : ""}${result.cagr.toFixed(2)}%`, color: result.cagr >= 0 ? "text-green-400" : "text-red-400" },
+                { label: "Sharpe Ratio", value: result.sharpe.toFixed(2), color: result.sharpe >= 1 ? "text-green-400" : result.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="border border-border rounded-lg bg-card p-4">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
+                  <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Max Drawdown", value: `${result.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
                 { label: "Win Rate", value: `${result.winRate}%`, color: result.winRate > 50 ? "text-green-400" : "text-yellow-400" },
-                { label: "Total Trades", value: String(result.totalTrades), color: "text-foreground" },
+                { label: "Média Ganho", value: `+${result.avgWin.toFixed(2)}%`, color: "text-green-400" },
+                { label: "Média Perda", value: `${result.avgLoss.toFixed(2)}%`, color: "text-red-400" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="border border-border rounded-lg bg-card p-4">
                   <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
@@ -160,7 +205,9 @@ export default function BacktestPage() {
                 <table className="w-full font-mono text-sm">
                   <thead className="bg-secondary/20">
                     <tr>
-                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Data</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Entrada</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Saída</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Preço Entr.</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Preço Saída</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">P&L%</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Resultado</th>
@@ -169,15 +216,20 @@ export default function BacktestPage() {
                   <tbody>
                     {result.trades.map((trade, idx) => (
                       <tr key={idx} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
-                        <td className="px-4 py-2.5 text-muted-foreground">{trade.date}</td>
-                        <td className="px-4 py-2.5 text-foreground">${trade.price.toFixed(2)}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{trade.entryDate}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{trade.exitDate}</td>
+                        <td className="px-4 py-2.5 text-foreground">${trade.entryPrice.toFixed(2)}</td>
+                        <td className="px-4 py-2.5 text-foreground">${trade.exitPrice.toFixed(2)}</td>
                         <td className={`px-4 py-2.5 font-bold ${trade.pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
                           {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}%
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-4 py-2.5 flex items-center gap-1">
                           <Badge variant="outline" className={trade.win ? "text-green-500 border-green-500/30 bg-green-500/10 text-[10px] font-mono" : "text-red-500 border-red-500/30 bg-red-500/10 text-[10px] font-mono"}>
                             {trade.win ? "WIN" : "LOSS"}
                           </Badge>
+                          {trade.closedOpen && (
+                            <Badge variant="outline" className="text-yellow-500 border-yellow-500/30 bg-yellow-500/10 text-[10px] font-mono">ABERTO</Badge>
+                          )}
                         </td>
                       </tr>
                     ))}
