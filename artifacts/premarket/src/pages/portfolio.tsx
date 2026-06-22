@@ -1391,8 +1391,9 @@ export default function PortfolioPage() {
                 <tr className="border-b border-border bg-muted/20 text-muted-foreground text-[11px]">
                   <th className="text-left py-2.5 pl-4">Ticker</th>
                   <th className="text-right pr-3">Investido</th>
+                  <th className="text-right pr-3">Preço venda</th>
                   <th className="text-right pr-3">Preço atual</th>
-                  <th className="text-right pr-3">Valor atual</th>
+                  <th className="text-right pr-3" title="Variação do preço atual vs. o preço no dia da venda. Negativo = mais barata hoje (candidata a recompra)">Var. vs venda</th>
                   <th className="text-right pr-3">Receita total</th>
                   <th className="text-right pr-3">Lucro/Perda</th>
                   <th className="text-right pr-3">Retorno %</th>
@@ -1404,10 +1405,15 @@ export default function PortfolioPage() {
                 {soldRows.map(({ pos }) => {
                   const purchases = purchasesMap.get(pos.id) ?? [];
                   const totalInvested = purchases.reduce((s, p) => s + p.amount, 0);
-                  const totalRevenue = purchases.reduce((s, p) => {
-                    const qty = p.purchasePrice ? p.amount / p.purchasePrice : 0;
-                    return s + qty * (p.salePrice ?? 0);
-                  }, 0);
+                  // Quantidade e receita das compras efetivamente vendidas
+                  const soldLots = purchases.filter((p) => p.saleDate && p.salePrice && p.purchasePrice);
+                  const totalSoldQty = soldLots.reduce((s, p) => s + p.amount / (p.purchasePrice as number), 0);
+                  const totalRevenue = soldLots.reduce((s, p) => s + (p.amount / (p.purchasePrice as number)) * (p.salePrice as number), 0);
+                  // Preço médio no dia da venda (ponderado pela quantidade)
+                  const avgSalePrice = totalSoldQty > 0 ? totalRevenue / totalSoldQty : null;
+                  const curPrice = priceMap.get(pos.ticker) ?? null;
+                  // Variação do preço atual vs. preço de venda (negativo = mais barata hoje)
+                  const sinceSalePct = avgSalePrice && curPrice ? ((curPrice - avgSalePrice) / avgSalePrice) * 100 : null;
                   const pnl = totalRevenue - totalInvested;
                   const pnlPct = totalInvested > 0 ? (pnl / totalInvested) * 100 : 0;
                   const lastSaleDate = purchases
@@ -1419,11 +1425,19 @@ export default function PortfolioPage() {
                     <tr key={pos.id} className="border-b border-border/40 hover:bg-muted/10">
                       <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">{pos.ticker}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmt$(totalInvested)}</td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums text-blue-400 font-semibold">
-                        {priceMap.get(pos.ticker) ? `$${priceMap.get(pos.ticker)!.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                      <td className="py-2.5 pr-3 text-right tabular-nums font-semibold">
+                        {avgSalePrice != null ? `$${avgSalePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums text-blue-400 font-semibold">
-                        {priceMap.get(pos.ticker) ? fmt$(pos.quantity * priceMap.get(pos.ticker)!) : <span className="text-muted-foreground">—</span>}
+                        {curPrice != null ? `$${curPrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
+                        sinceSalePct == null ? "text-muted-foreground"
+                        : sinceSalePct < 0 ? "text-green-400" : "text-red-400"
+                      )} title={sinceSalePct != null && sinceSalePct < 0 ? "Mais barata que no dia da venda — candidata a recompra" : undefined}>
+                        {sinceSalePct != null
+                          ? `${sinceSalePct < 0 ? "▼ " : "▲ +"}${sinceSalePct.toFixed(2)}%`
+                          : "—"}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(totalRevenue)}</td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
