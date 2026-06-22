@@ -88,6 +88,27 @@ function posToForm(p: PortfolioPosition): PosForm {
   };
 }
 
+// Deriva quantidade/investido/custo médio das compras ABERTAS (não vendidas),
+// para a linha da posição refletir sempre as operações registradas. Só deriva
+// quando há compras e todas têm preço; senão usa os valores salvos na posição.
+function derivePosition(
+  pos: { quantity: number; investedAmount: number; avgCost: number },
+  purchases: Array<{ amount: number; purchasePrice?: number | null; saleDate?: string | null; salePrice?: number | null }>,
+): { quantity: number; invested: number; avgCost: number; derived: boolean } {
+  const open = purchases.filter((p) => !(p.saleDate && p.salePrice));
+  const allHavePrice = open.length > 0 && open.every((p) => p.purchasePrice != null && p.purchasePrice > 0);
+  if (!allHavePrice) {
+    return { quantity: pos.quantity, invested: pos.investedAmount, avgCost: pos.avgCost, derived: false };
+  }
+  let quantity = 0;
+  let invested = 0;
+  for (const p of open) {
+    quantity += p.amount / (p.purchasePrice as number);
+    invested += p.amount;
+  }
+  return { quantity, invested, avgCost: quantity > 0 ? invested / quantity : pos.avgCost, derived: true };
+}
+
 function parseAlertPcts(s: string): number[] {
   return s
     .split(",")
@@ -920,32 +941,37 @@ export default function PortfolioPage() {
   }, [positions, purchasesQueries]);
 
   const allRows = useMemo(() => {
-    const totalInvested = positions.reduce((s, p) => s + p.investedAmount, 0);
-    return positions.map((p) => {
+    const derivedAll = positions.map((p) => derivePosition(p, purchasesMap.get(p.id) ?? []));
+    const totalInvested = derivedAll.reduce((s, d) => s + d.invested, 0);
+    return positions.map((p, i) => {
+      const d = derivedAll[i];
+      const quantity = d.quantity;
+      const invested = d.invested;
+      const avgCost = d.avgCost;
       const hasPrice = priceMap.has(p.ticker);
       const price = priceMap.get(p.ticker) ?? 0;
       const entry = changeMap.get(p.ticker);
       const qChange = entry?.change ?? null;
       const qChangePct = entry?.changePct ?? null;
-      const currentValue = hasPrice ? p.quantity * price : 0;
-      const pnlDollar = hasPrice ? currentValue - p.investedAmount : 0;
-      const pnlPct = hasPrice && p.investedAmount > 0 ? (pnlDollar / p.investedAmount) * 100 : 0;
-      const dailyChange = hasPrice && qChange != null ? p.quantity * qChange : null;
+      const currentValue = hasPrice ? quantity * price : 0;
+      const pnlDollar = hasPrice ? currentValue - invested : 0;
+      const pnlPct = hasPrice && invested > 0 ? (pnlDollar / invested) * 100 : 0;
+      const dailyChange = hasPrice && qChange != null ? quantity * qChange : null;
       const dailyChangePct = qChangePct;
-      const weight = totalInvested > 0 ? (p.investedAmount / totalInvested) * 100 : 0;
+      const weight = totalInvested > 0 ? (invested / totalInvested) * 100 : 0;
       const downAlert = hasPrice ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
       const upAlert = hasPrice ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
       const isSoldOut = soldPositionIds.has(p.id);
-      return { pos: p, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut };
+      return { pos: p, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut };
     });
-  }, [positions, priceMap, changeMap, soldPositionIds]);
+  }, [positions, priceMap, changeMap, soldPositionIds, purchasesMap]);
 
   const rows = useMemo(() => allRows.filter((r) => !r.isSoldOut), [allRows]);
   const soldRows = useMemo(() => allRows.filter((r) => r.isSoldOut), [allRows]);
 
   const totals = useMemo(() => {
-    const invested = rows.reduce((s, r) => s + r.pos.investedAmount, 0);
+    const invested = rows.reduce((s, r) => s + r.invested, 0);
     const current = rows.reduce((s, r) => s + r.currentValue, 0);
     const pnl = current - invested;
     const pnlPct = invested > 0 && current > 0 ? (pnl / invested) * 100 : 0;
@@ -1237,7 +1263,7 @@ export default function PortfolioPage() {
                   </td>
                 </tr>
               )}
-              {rows.map(({ pos, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d }) => {
+              {rows.map(({ pos, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d }) => {
                 const expanded = expandedIds.has(pos.id);
                 const hasPrice = price > 0;
                 const pnlPos = pnlPct >= 0;
@@ -1273,12 +1299,12 @@ export default function PortfolioPage() {
                         <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{pos.notes}</div>
                       )}
                     </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(pos.quantity)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.avgCost)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(quantity)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(avgCost)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
                       {hasPrice ? `$${price.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(pos.investedAmount)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(invested)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
                       {hasPrice ? fmt$(currentValue) : <span className="text-muted-foreground">—</span>}
                     </td>
