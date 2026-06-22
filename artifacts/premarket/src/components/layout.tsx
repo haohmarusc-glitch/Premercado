@@ -117,6 +117,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const navSection = (label: string) => (
+    <p key={`section-${label}`} className="px-3 pt-4 pb-1 text-[10px] font-mono font-bold uppercase tracking-widest text-muted-foreground/60">
+      {label}
+    </p>
+  );
+
   const navLink = (href: string, icon: React.ReactNode, label: string, badge?: number) => {
     const active = location === href;
     return (
@@ -166,19 +172,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Agent Command Center</p>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
           {navLink("/history", <History className="h-4 w-4" />, "History")}
           {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
           {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
           {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
           {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
+
+          {navSection("Carteira")}
           {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
           {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
           {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
           {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
           {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
           {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
+          {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
+
+          {navSection("Dados de Mercado")}
           {navLink("/macro", <Globe className="h-4 w-4" />, "Macro")}
           {navLink("/cotacoes", <LineChart className="h-4 w-4" />, "Cotações")}
           {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
@@ -186,7 +197,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {navLink("/analistas", <Users className="h-4 w-4" />, "Analistas")}
           {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
           {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
-          {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
+
+          {navSection("Sistema")}
           {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
         </nav>
 
