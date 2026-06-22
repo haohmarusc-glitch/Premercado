@@ -1424,9 +1424,16 @@ export default function PortfolioPage() {
                     .filter(Boolean)
                     .sort()
                     .pop() ?? "—";
+                  const expanded = expandedIds.has(pos.id);
                   return (
-                    <tr key={pos.id} className="border-b border-border/40 hover:bg-muted/10">
-                      <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">{pos.ticker}</td>
+                    <Fragment key={pos.id}>
+                    <tr className={cn("border-b border-border/40 hover:bg-muted/10", expanded && "bg-muted/10")}>
+                      <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">
+                        <button onClick={() => toggleExpand(pos.id)} className="inline-flex items-center gap-1.5 hover:text-primary">
+                          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                          {pos.ticker}
+                        </button>
+                      </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmt$(totalInvested)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">
                         {avgBuyPrice != null ? `$${avgBuyPrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
@@ -1467,6 +1474,8 @@ export default function PortfolioPage() {
                         </Button>
                       </td>
                     </tr>
+                    {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} currentPrice={priceMap.get(pos.ticker) ?? 0} />}
+                    </Fragment>
                   );
                 })}
               </tbody>
