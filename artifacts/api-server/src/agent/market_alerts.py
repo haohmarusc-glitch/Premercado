@@ -519,6 +519,10 @@ def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
 def check_hcc_setup(ticker: str = "HCC") -> list[Alert]:
     """Checa os niveis do setup de swing definido para HCC contra o ultimo close.
 
+    So dispara UM alerta por direcao (o nivel mais extremo atingido), para
+    evitar alertas duplicados/conflitantes quando o preco rompe mais de um
+    nivel de uma vez (ex: gap que passa direto do stop pela zona de reentrada).
+
     Sem dedup propria (mesmo padrao dos outros checks deste modulo): re-dispara
     a cada execucao enquanto a condicao continuar verdadeira.
     """
@@ -528,21 +532,33 @@ def check_hcc_setup(ticker: str = "HCC") -> list[Alert]:
     last = float(df["Close"].iloc[-1])
 
     out: list[Alert] = []
-    for key, (level, cond, msg) in HCC_LEVELS.items():
+
+    # Lado de baixo: do mais severo (stop) para o menos severo (reentrada)
+    downside_order = ["technical_stop", "reentry_zone"]
+    for key in downside_order:
+        level, cond, msg = HCC_LEVELS[key]
         hit = (
-            (cond == "above" and last > level)
-            or (cond == "below" and last < level)
+            (cond == "below" and last < level)
             or (cond == "at_or_below" and last <= level)
         )
         if hit:
             out.append(Alert(
-                ticker=ticker,
-                category=Category.TECNICO,
-                severity=Severity.ATENCAO,
-                title=f"Setup HCC: {key}",
-                detail=msg,
-                value=round(last, 2),
+                ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+                title=f"Setup HCC: {key}", detail=msg, value=round(last, 2),
             ))
+            break  # so o mais extremo do lado de baixo
+
+    # Lado de cima: do mais extremo (alvo bull) para o menos extremo (rompimento)
+    upside_order = ["bull_target", "resistance_breakout"]
+    for key in upside_order:
+        level, cond, msg = HCC_LEVELS[key]
+        if cond == "above" and last > level:
+            out.append(Alert(
+                ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+                title=f"Setup HCC: {key}", detail=msg, value=round(last, 2),
+            ))
+            break  # so o mais extremo do lado de cima
+
     return out
 
 
