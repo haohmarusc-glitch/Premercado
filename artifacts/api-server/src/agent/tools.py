@@ -502,6 +502,8 @@ _SECTOR_ETFS = {
     "SPY": "SPDR S&P 500 ETF",
     "IWM": "iShares Russell 2000 ETF",
     "XLF": "Financial Select Sector SPDR",
+    "XLV": "Health Care Select Sector SPDR",
+    "IBB": "iShares Biotechnology ETF",
 }
 
 
@@ -1052,9 +1054,9 @@ TOOLS = [
         "name": "get_sector_performance",
         "description": (
             "Retorna a performance do dia e do pré-mercado dos ETFs de setor: "
-            "SMH, SOXX, XLK, QQQ, SPY, IWM, XLF. "
-            "Use para contextualizar se uma queda/alta de MU ou SMCI é idiossincrática "
-            "ou reflexo de movimento amplo do setor/mercado."
+            "SMH, SOXX, XLK, QQQ, SPY, IWM, XLF, XLV, IBB. "
+            "Use para contextualizar se uma queda/alta de um ativo é idiossincrática "
+            "ou reflexo de movimento amplo do setor (semis: SMH/SOXX; saúde: XLV/IBB)."
         ),
         "input_schema": {
             "type": "object",

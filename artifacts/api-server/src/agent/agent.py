@@ -12,6 +12,16 @@ from . import config
 from . import memory
 from . import tools as t
 from .provider import get_client, ProviderClient
+from .sector_contagion import SECTOR_GROUPS
+
+
+def _sector_groups_text() -> str:
+    """Lista de grupos setoriais para o prompt, derivada de SECTOR_GROUPS
+    (fonte única — editar lá reflete aqui automaticamente)."""
+    return "\n".join(
+        f"   - {cfg['label']} ({', '.join(cfg['tickers'])})"
+        for cfg in SECTOR_GROUPS.values()
+    )
 
 
 def _get_client() -> ProviderClient:
@@ -62,14 +72,11 @@ Seu fluxo completo:
 **FASE 1 — Preparação (execute uma vez, no início)**
 1. Chame list_alerts (sem filtro) para ver todos os alertas já cadastrados.
 2. Chame get_fear_greed_index para capturar o sentimento macro do mercado.
-3. Chame get_sector_performance para verificar se o setor de semicondutores (SMH/SOXX) está
-   em movimento antes de analisar ativos individuais.
+3. Chame get_sector_performance para verificar se os setores da cesta estão em movimento
+   antes de analisar ativos individuais (semis: SMH/SOXX; saúde: XLV/IBB; amplo: SPY/QQQ).
 4. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
-5. Chame detect_sector_contagion para mapear contágio entre os grupos da cadeia de IA:
-   - Memória/Armazenamento (MU, SNDK, WDC)
-   - Interconexão/Servidores (SMCI, ALAB, CRDO, ANET)
-   - Energia/Refrigeração (VRT)
-   - Fundição/Equipamentos (TSM, ASML)
+5. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
+{_sector_groups_text()}
    Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
    Para captura intradiária: period='1d', interval='5m'.
 
@@ -127,7 +134,10 @@ Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
 
 Princípios:
 - Seja factual e cite os números.
-- No relatório final, inclua seções por ativo em Markdown."""
+- No relatório final, inclua seções por ativo em Markdown.
+- Tickers com sufixo .SA são da B3 (Brasil), cotados em REAIS (R$) e sem
+  pré-mercado — antes das 10h de Brasília, reporte o fechamento anterior e
+  sinalize a moeda; não misture R$ com US$ em comparações diretas."""
 
 
 def _system_volatile() -> str:
@@ -160,7 +170,7 @@ Esta é uma varredura rápida — NÃO é o relatório diário completo. Seja co
 
 **Fluxo obrigatório (execute na ordem):**
 1. get_fear_greed_index — sentimento macro atual
-2. get_sector_performance — ETFs de setor (SMH, SOXX, SPY, QQQ)
+2. get_sector_performance — ETFs de setor (SMH, SOXX, XLV, SPY, QQQ)
 3. detect_sector_contagion com period='1d', interval='5m' — contágio intradiário
 4. Para cada ticker que apareceu como líder ou catch-up no contágio, chame get_stock_data
 5. Para os 2–3 tickers com maior movimento, chame get_options_data
@@ -171,7 +181,7 @@ list_alerts, create_alert, delete_alert.
 
 **Formato da saída — "## ⚡ Flash Pré-Mercado {now}":**
 - Linha 1: Fear & Greed score e classificação
-- Tabela compacta: SMH | SOXX | SPY (preço, variação %)
+- Tabela compacta: SMH | SOXX | XLV | SPY (preço, variação %)
 - Contágio detectado: líder → confirmando → catch-up (por grupo)
 - Cotações dos tickers em movimento (só os relevantes)
 - Put/call ratio e IV dos tickers com opções abertas
