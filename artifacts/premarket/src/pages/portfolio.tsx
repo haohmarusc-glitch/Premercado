@@ -140,7 +140,7 @@ async function persistCash(mode: "real" | "simulated", amount: number): Promise<
     body: JSON.stringify({ mode, amount }),
     credentials: "include",
   });
-  if (!r.ok) throw new Error("Falha ao salvar caixa");
+  if (!r.ok) throw new Error(`Falha ao salvar caixa (HTTP ${r.status})`);
 }
 
 // ── Price chart with period selector ─────────────────────────────────────────
@@ -893,8 +893,12 @@ export default function PortfolioPage() {
     setEditingCash(false);
     try {
       await persistCash(mode, val);
-    } catch {
-      toast({ variant: "destructive", title: "Erro ao salvar caixa" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao salvar caixa",
+        description: e instanceof Error ? e.message : undefined,
+      });
       fetchCash().then(setCashByMode);
     }
   };
