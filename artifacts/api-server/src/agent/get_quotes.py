@@ -44,6 +44,7 @@ def fetch_quote(symbol: str) -> dict:
 
         price = getattr(fi, "last_price", None)
         prev_close = getattr(fi, "previous_close", None)
+        currency = getattr(fi, "currency", None)
         open_ = getattr(fi, "open", None)
         day_high = getattr(fi, "day_high", None)
         day_low = getattr(fi, "day_low", None)
@@ -58,6 +59,7 @@ def fetch_quote(symbol: str) -> dict:
 
         return {
             "symbol": symbol,
+            "currency": currency,
             "price": round(price, 4) if price is not None else None,
             "change": change,
             "changePct": change_pct,
@@ -77,6 +79,7 @@ def fetch_quote(symbol: str) -> dict:
     except Exception as ex:
         return {
             "symbol": symbol,
+            "currency": None,
             "price": None,
             "change": None,
             "changePct": None,

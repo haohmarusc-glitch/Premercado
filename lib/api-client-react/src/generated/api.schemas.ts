@@ -122,8 +122,14 @@ export interface TickerChart {
   error?: string | null;
 }
 
+export interface FxRate {
+  rate: number;
+}
+
 export interface TickerQuote {
   symbol: string;
+  /** @nullable */
+  currency?: string | null;
   /** @nullable */
   price?: number | null;
   /** @nullable */

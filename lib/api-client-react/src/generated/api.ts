@@ -31,6 +31,7 @@ import type {
   CashUpdate,
   ChatMessage,
   ChatSession,
+  FxRate,
   GetTickerChartParams,
   HealthStatus,
   JournalEntry,
@@ -1200,6 +1201,83 @@ export function useGetTickerQuotes<TData = Awaited<ReturnType<typeof getTickerQu
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetTickerQuotesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetFxUsdBrlUrl = () => {
+
+
+
+
+  return `/api/fx/usdbrl`
+}
+
+/**
+ * @summary Current USD to BRL exchange rate (Yahoo BRL=X)
+ */
+export const getFxUsdBrl = async ( options?: RequestInit): Promise<FxRate> => {
+
+  return customFetch<FxRate>(getGetFxUsdBrlUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFxUsdBrlQueryKey = () => {
+    return [
+    `/api/fx/usdbrl`
+    ] as const;
+    }
+
+
+export const getGetFxUsdBrlQueryOptions = <TData = Awaited<ReturnType<typeof getFxUsdBrl>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFxUsdBrl>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFxUsdBrlQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFxUsdBrl>>> = ({ signal }) => getFxUsdBrl({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFxUsdBrl>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFxUsdBrlQueryResult = NonNullable<Awaited<ReturnType<typeof getFxUsdBrl>>>
+export type GetFxUsdBrlQueryError = ErrorType<void>
+
+
+/**
+ * @summary Current USD to BRL exchange rate (Yahoo BRL=X)
+ */
+
+export function useGetFxUsdBrl<TData = Awaited<ReturnType<typeof getFxUsdBrl>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFxUsdBrl>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFxUsdBrlQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

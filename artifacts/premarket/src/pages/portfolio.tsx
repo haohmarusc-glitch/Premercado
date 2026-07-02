@@ -34,6 +34,12 @@ import { cn } from "@/lib/utils";
 const fmt$ = (n: number) =>
   `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+// Posições da B3 (sufixo .SA no Yahoo) são cotadas e cadastradas em reais;
+// os agregados da carteira convertem para USD pelo câmbio BRL=X ao vivo
+const isB3 = (ticker: string) => ticker.toUpperCase().endsWith(".SA");
+const fmtR$ = (n: number) =>
+  `R$ ${Math.abs(n).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtMoney = (n: number, brl: boolean) => (brl ? fmtR$(n) : fmt$(n));
 const fmtQty = (n: number) =>
   n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 5 });
 
@@ -130,6 +136,17 @@ async function fetchCash(): Promise<CashByMode> {
     return { real: Number(d.real ?? 0), simulated: Number(d.simulated ?? 0) };
   } catch {
     return { real: 0, simulated: 0 };
+  }
+}
+
+async function fetchFxRate(): Promise<number | null> {
+  try {
+    const r = await fetch("/api/fx/usdbrl", { credentials: "include" });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return typeof d.rate === "number" && d.rate > 0 ? d.rate : null;
+  } catch {
+    return null;
   }
 }
 
@@ -889,6 +906,8 @@ export default function PortfolioPage() {
   const [editingCash, setEditingCash] = useState(false);
   const [cashDraft, setCashDraft] = useState("");
   useEffect(() => { fetchCash().then(setCashByMode); }, []);
+  const [fxRate, setFxRate] = useState<number | null>(null);
+  useEffect(() => { fetchFxRate().then(setFxRate); }, []);
   useEffect(() => { setEditingCash(false); }, [mode]);
   const cash = mode === "real" ? cashByMode.real : cashByMode.simulated;
   const commitCash = async () => {
@@ -966,12 +985,18 @@ export default function PortfolioPage() {
 
   const allRows = useMemo(() => {
     const derivedAll = positions.map((p) => derivePosition(p, purchasesMap.get(p.id) ?? []));
-    const totalInvested = derivedAll.reduce((s, d) => s + d.invested, 0);
+    // Valores por linha ficam na moeda da posição (R$ para B3);
+    // os campos *Usd alimentam os agregados em dólar
+    const toUsd = (v: number, brl: boolean) => (brl && fxRate ? v / fxRate : v);
+    const totalInvestedUsd = positions.reduce(
+      (s, p, i) => s + toUsd(derivedAll[i].invested, isB3(p.ticker)), 0,
+    );
     return positions.map((p, i) => {
       const d = derivedAll[i];
       const quantity = d.quantity;
       const invested = d.invested;
       const avgCost = d.avgCost;
+      const isBrl = isB3(p.ticker);
       const hasPrice = priceMap.has(p.ticker);
       const price = priceMap.get(p.ticker) ?? 0;
       const entry = changeMap.get(p.ticker);
@@ -982,25 +1007,29 @@ export default function PortfolioPage() {
       const pnlPct = hasPrice && invested > 0 ? (pnlDollar / invested) * 100 : 0;
       const dailyChange = hasPrice && qChange != null ? quantity * qChange : null;
       const dailyChangePct = qChangePct;
-      const weight = totalInvested > 0 ? (invested / totalInvested) * 100 : 0;
+      const investedUsd = toUsd(invested, isBrl);
+      const currentValueUsd = hasPrice ? toUsd(currentValue, isBrl) : 0;
+      const dailyChangeUsd = dailyChange != null ? toUsd(dailyChange, isBrl) : null;
+      const weight = totalInvestedUsd > 0 ? (investedUsd / totalInvestedUsd) * 100 : 0;
       const downAlert = hasPrice ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
       const upAlert = hasPrice ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
       const isSoldOut = soldPositionIds.has(p.id);
-      return { pos: p, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut };
+      return { pos: p, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut, isBrl, investedUsd, currentValueUsd, dailyChangeUsd };
     });
-  }, [positions, priceMap, changeMap, soldPositionIds, purchasesMap]);
+  }, [positions, priceMap, changeMap, soldPositionIds, purchasesMap, fxRate]);
 
   const rows = useMemo(() => allRows.filter((r) => !r.isSoldOut), [allRows]);
   const soldRows = useMemo(() => allRows.filter((r) => r.isSoldOut), [allRows]);
 
+  // Agregados sempre em USD (posições B3 convertidas pelo câmbio)
   const totals = useMemo(() => {
-    const invested = rows.reduce((s, r) => s + r.invested, 0);
-    const current = rows.reduce((s, r) => s + r.currentValue, 0);
+    const invested = rows.reduce((s, r) => s + r.investedUsd, 0);
+    const current = rows.reduce((s, r) => s + r.currentValueUsd, 0);
     const pnl = current - invested;
     const pnlPct = invested > 0 && current > 0 ? (pnl / invested) * 100 : 0;
-    const dailyChange = rows.some((r) => r.dailyChange != null)
-      ? rows.reduce((s, r) => s + (r.dailyChange ?? 0), 0)
+    const dailyChange = rows.some((r) => r.dailyChangeUsd != null)
+      ? rows.reduce((s, r) => s + (r.dailyChangeUsd ?? 0), 0)
       : null;
     return { invested, current, pnl, pnlPct, dailyChange };
   }, [rows]);
@@ -1011,18 +1040,20 @@ export default function PortfolioPage() {
     let pnl = 0;
     let invested = 0;
     for (const p of positions) {
+      const brl = isB3(p.ticker);
+      const conv = (v: number) => (brl && fxRate ? v / fxRate : v);
       const purchases = purchasesMap.get(p.id) ?? [];
       for (const pur of purchases) {
         if (pur.saleDate && pur.salePrice && pur.purchasePrice) {
           const qty = pur.amount / pur.purchasePrice;
-          proceeds += qty * pur.salePrice;
-          pnl += qty * (pur.salePrice - pur.purchasePrice);
-          invested += pur.amount;
+          proceeds += conv(qty * pur.salePrice);
+          pnl += conv(qty * (pur.salePrice - pur.purchasePrice));
+          invested += conv(pur.amount);
         }
       }
     }
     return { proceeds, pnl, invested };
-  }, [positions, purchasesMap]);
+  }, [positions, purchasesMap, fxRate]);
 
   // Patrimônio total = posições abertas (valor atual) + caixa disponível.
   // Espelha o "Patrimônio total" da corretora (Ações + Disponível p/ investir).
@@ -1035,9 +1066,10 @@ export default function PortfolioPage() {
   const hasPrices = quotes.length > 0;
 
   const allocData = useMemo(
-    () => rows.filter((r) => r.currentValue > 0).map((r) => ({ name: r.pos.ticker, value: r.currentValue })),
+    () => rows.filter((r) => r.currentValueUsd > 0).map((r) => ({ name: r.pos.ticker, value: r.currentValueUsd })),
     [rows],
   );
+  const hasBrl = useMemo(() => allRows.some((r) => r.isBrl), [allRows]);
 
   const toggleExpand = (id: number) =>
     setExpandedIds((prev) => {
@@ -1165,6 +1197,13 @@ export default function PortfolioPage() {
             <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
               ações {hasPrices ? fmt$(totals.current) : "—"} + caixa {fmt$(cash)}
             </div>
+            {hasBrl && (
+              <div className={cn("text-[10px] font-mono mt-0.5", fxRate ? "text-muted-foreground" : "text-yellow-400")}>
+                {fxRate
+                  ? `posições B3 convertidas a R$ ${fxRate.toFixed(2)}/US$`
+                  : "câmbio indisponível — valores B3 sem conversão"}
+              </div>
+            )}
           </CardContent>
         </Card>
         {/* P&L aberto (posições não vendidas) */}
@@ -1287,7 +1326,7 @@ export default function PortfolioPage() {
                   </td>
                 </tr>
               )}
-              {rows.map(({ pos, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d }) => {
+              {rows.map(({ pos, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isBrl }) => {
                 const expanded = expandedIds.has(pos.id);
                 const hasPrice = price > 0;
                 const pnlPos = pnlPct >= 0;
@@ -1313,6 +1352,11 @@ export default function PortfolioPage() {
                     <td className="py-2.5 pl-1">
                       <div className="flex items-center gap-1.5">
                         <span className="font-semibold text-foreground text-sm">{pos.ticker}</span>
+                        {isBrl && (
+                          <Badge className="h-4 px-1 text-[9px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" title="Posição da B3 — valores da linha em reais; totais convertidos pelo câmbio">
+                            BRL
+                          </Badge>
+                        )}
                         {is30d && (
                           <Badge className="h-4 px-1 text-[9px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
                             30d+
@@ -1338,17 +1382,17 @@ export default function PortfolioPage() {
                       )}
                     </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(quantity)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(avgCost)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(avgCost, isBrl)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
-                      {hasPrice ? `$${price.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                      {hasPrice ? fmtMoney(price, isBrl) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(invested)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(invested, isBrl)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
-                      {hasPrice ? fmt$(currentValue) : <span className="text-muted-foreground">—</span>}
+                      {hasPrice ? fmtMoney(currentValue, isBrl) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice && dailyChange != null ? (dayPos ? "text-green-400" : "text-red-400") : "text-muted-foreground")}>
                       {hasPrice && dailyChange != null
-                        ? `${dailyChange >= 0 ? "+" : "-"}${fmt$(dailyChange)}`
+                        ? `${dailyChange >= 0 ? "+" : "-"}${fmtMoney(dailyChange, isBrl)}`
                         : "—"}
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold", hasPrice && dailyChangePct != null ? (dayPos ? "text-green-400" : "text-red-400") : "text-muted-foreground")}>
@@ -1358,7 +1402,7 @@ export default function PortfolioPage() {
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
                       {hasPrice
-                        ? `${pnlDollar >= 0 ? "+" : "-"}${fmt$(pnlDollar)}`
+                        ? `${pnlDollar >= 0 ? "+" : "-"}${fmtMoney(pnlDollar, isBrl)}`
                         : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
@@ -1441,7 +1485,7 @@ export default function PortfolioPage() {
                 </tr>
               </thead>
               <tbody>
-                {soldRows.map(({ pos }) => {
+                {soldRows.map(({ pos, isBrl }) => {
                   const purchases = purchasesMap.get(pos.id) ?? [];
                   const totalInvested = purchases.reduce((s, p) => s + p.amount, 0);
                   // Quantidade e receita das compras efetivamente vendidas
@@ -1472,15 +1516,15 @@ export default function PortfolioPage() {
                           {pos.ticker}
                         </button>
                       </td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmt$(totalInvested)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmtMoney(totalInvested, isBrl)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">
-                        {avgBuyPrice != null ? `$${avgBuyPrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        {avgBuyPrice != null ? fmtMoney(avgBuyPrice, isBrl) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums font-semibold">
-                        {avgSalePrice != null ? `$${avgSalePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        {avgSalePrice != null ? fmtMoney(avgSalePrice, isBrl) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums text-blue-400 font-semibold">
-                        {curPrice != null ? `$${curPrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                        {curPrice != null ? fmtMoney(curPrice, isBrl) : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         sinceSalePct == null ? "text-muted-foreground"
@@ -1490,11 +1534,11 @@ export default function PortfolioPage() {
                           ? `${sinceSalePct < 0 ? "▼ " : "▲ +"}${sinceSalePct.toFixed(2)}%`
                           : "—"}
                       </td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{fmt$(totalRevenue)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(totalRevenue, isBrl)}</td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         pnl >= 0 ? "text-green-400" : "text-red-400"
                       )}>
-                        {pnl >= 0 ? "+" : ""}{fmt$(pnl)}
+                        {pnl >= 0 ? "+" : ""}{fmtMoney(pnl, isBrl)}
                       </td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         pnlPct >= 0 ? "text-green-400" : "text-red-400"

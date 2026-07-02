@@ -222,6 +222,7 @@ export const GetTickerChartResponse = zod.object({
  */
 export const GetTickerQuotesResponseItem = zod.object({
   "symbol": zod.string(),
+  "currency": zod.string().nullish(),
   "price": zod.coerce.number().nullish(),
   "change": zod.coerce.number().nullish(),
   "changePct": zod.coerce.number().nullish(),
@@ -239,6 +240,14 @@ export const GetTickerQuotesResponseItem = zod.object({
   "error": zod.string().nullish()
 })
 export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)
+
+
+/**
+ * @summary Current USD to BRL exchange rate (Yahoo BRL=X)
+ */
+export const GetFxUsdBrlResponse = zod.object({
+  "rate": zod.coerce.number()
+})
 
 
 /**

@@ -303,6 +303,21 @@ paths:
                 items:
                   $ref: "#/components/schemas/TickerQuote"
 
+  /fx/usdbrl:
+    get:
+      operationId: getFxUsdBrl
+      tags: [agent]
+      summary: Current USD to BRL exchange rate (Yahoo BRL=X)
+      responses:
+        "200":
+          description: FX rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FxRate"
+        "502":
+          description: Rate unavailable
+
   /agent/status:
     get:
       operationId: getAgentStatus
@@ -913,12 +928,21 @@ components:
         error:
           type: ["string", "null"]
 
+    FxRate:
+      type: object
+      required: [rate]
+      properties:
+        rate:
+          type: number
+
     TickerQuote:
       type: object
       required: [symbol]
       properties:
         symbol:
           type: string
+        currency:
+          type: ["string", "null"]
         price:
           type: ["number", "null"]
         change:

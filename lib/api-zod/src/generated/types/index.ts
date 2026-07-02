@@ -19,6 +19,7 @@ export * from './cashUpdate';
 export * from './cashUpdateMode';
 export * from './chatMessage';
 export * from './chatSession';
+export * from './fxRate';
 export * from './getTickerChartParams';
 export * from './healthStatus';
 export * from './journalEntry';
