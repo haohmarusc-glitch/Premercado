@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import { agentDir, getPythonBin } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
-import { GetTickerQuotesResponse } from "@workspace/api-zod";
+import { GetTickerQuotesResponse, GetFxUsdBrlResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -47,6 +47,32 @@ function fetchQuotes(tickers: string[]): Promise<unknown[]> {
     });
   });
 }
+
+// GET /fx/usdbrl — cotação USD→BRL (via Yahoo "BRL=X") para converter
+// posições da B3 nos totais em dólar da carteira
+let fxCache: { rate: number; fetchedAt: number } | null = null;
+const FX_CACHE_TTL_MS = 5 * 60_000;
+
+router.get("/fx/usdbrl", async (_req, res): Promise<void> => {
+  const now = Date.now();
+  if (fxCache && now - fxCache.fetchedAt < FX_CACHE_TTL_MS) {
+    res.json(GetFxUsdBrlResponse.parse({ rate: fxCache.rate }));
+    return;
+  }
+  try {
+    const data = (await fetchQuotes(["BRL=X"])) as Array<{ price?: number | null }>;
+    const rate = data[0]?.price;
+    if (rate == null || rate <= 0) {
+      res.status(502).json({ error: "FX rate unavailable" });
+      return;
+    }
+    fxCache = { rate, fetchedAt: now };
+    res.json(GetFxUsdBrlResponse.parse({ rate }));
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch USDBRL rate");
+    res.status(500).json({ error: "Failed to fetch FX rate" });
+  }
+});
 
 router.get("/tickers/quotes", async (req, res): Promise<void> => {
   const now = Date.now();

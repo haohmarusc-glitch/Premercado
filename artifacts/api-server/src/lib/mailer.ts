@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { db, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
 
 function createTransport() {
@@ -13,32 +14,50 @@ function createTransport() {
   });
 }
 
+// Query direta (não getOrCreateSettings) para evitar ciclo de import:
+// routes/settings → lib/scheduler → lib/mailer.
 async function resolveNotifyEmail(): Promise<string | null> {
-  return "jffis@yahoo.com.br";
+  try {
+    const [s] = await db
+      .select({ notifyEmail: settingsTable.notifyEmail })
+      .from(settingsTable)
+      .limit(1);
+    const email = s?.notifyEmail?.trim();
+    if (email) return email;
+  } catch (err) {
+    logger.error({ err }, "Failed to read notify email from settings");
+  }
+  return process.env.NOTIFY_EMAIL?.trim() || null;
 }
 
 export async function sendAlertEmail(opts: {
   symbol: string;
   condition: string;
-  thresholdPct: number;
-  currentChangePct: number;
+  thresholdPct: number | null;
+  thresholdPrice: number | null;
+  currentChangePct: number | null;
   currentPrice: number | null;
 }): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) { logger.warn("No notify email — skipping alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
-  const sign = opts.currentChangePct >= 0 ? "+" : "";
   const direction = opts.condition === "above" ? "subiu acima de" : "caiu abaixo de";
-  const subject = `🚨 Alerta: ${opts.symbol} ${direction} ${opts.thresholdPct > 0 ? "+" : ""}${opts.thresholdPct}%`;
+  const thresholdStr = opts.thresholdPrice != null
+    ? `$${opts.thresholdPrice.toFixed(2)}`
+    : `${(opts.thresholdPct ?? 0) > 0 ? "+" : ""}${opts.thresholdPct}%`;
+  const subject = `🚨 Alerta: ${opts.symbol} ${direction} ${thresholdStr}`;
   const priceStr = opts.currentPrice != null ? `$${opts.currentPrice.toFixed(2)}` : "N/A";
+  const sign = (opts.currentChangePct ?? 0) >= 0 ? "+" : "";
+  const changeStr = opts.currentChangePct != null ? `${sign}${opts.currentChangePct.toFixed(2)}%` : "—";
+  const conditionLabel = opts.thresholdPrice != null ? "preço" : "variação";
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
   .ticker{font-size:32px;font-weight:bold;color:#ff8c00}
-  .change{font-size:24px;font-weight:bold;color:${opts.currentChangePct >= 0 ? "#22c55e" : "#ef4444"}}
+  .change{font-size:24px;font-weight:bold;color:${(opts.currentChangePct ?? 0) >= 0 ? "#22c55e" : "#ef4444"}}
   .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
   .footer{margin-top:32px;font-size:11px;color:#555}
 </style></head>
@@ -46,10 +65,10 @@ export async function sendAlertEmail(opts: {
 <p style="color:#555;font-size:12px;text-transform:uppercase;">Alerta de Preço — Pré-Mercado Agente</p>
 <div class="box">
   <div class="ticker">${opts.symbol}</div>
-  <div class="change">${sign}${opts.currentChangePct.toFixed(2)}%</div>
+  <div class="change">${changeStr}</div>
   <p style="margin:8px 0;color:#aaa">Preço atual: <strong style="color:#fff">${priceStr}</strong></p>
   <p style="margin:4px 0;color:#666;font-size:12px">
-    Condição: variação ${direction} ${opts.thresholdPct > 0 ? "+" : ""}${opts.thresholdPct}%
+    Condição: ${conditionLabel} ${direction} ${thresholdStr}
   </p>
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Cooldown: 4h.</div>

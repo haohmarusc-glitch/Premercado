@@ -89,6 +89,7 @@ async function checkPortfolioAlerts(): Promise<void> {
             symbol: pos.ticker,
             condition: "above",
             thresholdPct: thr,
+            thresholdPrice: null,
             currentChangePct: pct,
             currentPrice: price,
           });
@@ -109,6 +110,7 @@ async function checkPortfolioAlerts(): Promise<void> {
             symbol: pos.ticker,
             condition: "below",
             thresholdPct: -thr,
+            thresholdPrice: null,
             currentChangePct: pct,
             currentPrice: price,
           });

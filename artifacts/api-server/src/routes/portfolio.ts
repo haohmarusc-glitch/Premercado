@@ -6,15 +6,15 @@ import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace
 import { getPythonBin, agentDir } from "../lib/runner";
 import {
   ListPortfolioPositionsResponse,
-  PortfolioPositionSchema,
+  UpdatePortfolioPositionResponse as PortfolioPositionSchema,
   CreatePortfolioPositionBody,
   UpdatePortfolioPositionBody,
-  PortfolioPositionParams,
+  UpdatePortfolioPositionParams as PortfolioPositionParams,
   ListPortfolioPurchasesResponse,
-  PortfolioPurchaseSchema,
+  UpdatePortfolioPurchaseResponse as PortfolioPurchaseSchema,
   CreatePortfolioPurchaseBody,
   UpdatePortfolioPurchaseBody,
-  PortfolioPurchaseParams,
+  UpdatePortfolioPurchaseParams as PortfolioPurchaseParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 

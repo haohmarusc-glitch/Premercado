@@ -5,12 +5,10 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { CashUpdateMode } from './cashUpdateMode';
 
-export interface Report {
-  id: number;
-  date: string;
-  content: string;
-  tickers: string[];
-  mode: string;
-  createdAt: string;
+export interface CashUpdate {
+  mode: CashUpdateMode;
+  /** @minimum 0 */
+  amount: number;
 }

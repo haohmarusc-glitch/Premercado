@@ -9,6 +9,8 @@
 export interface TickerQuote {
   symbol: string;
   /** @nullable */
+  currency?: string | null;
+  /** @nullable */
   price?: number | null;
   /** @nullable */
   change?: number | null;

@@ -31,6 +31,8 @@ function useFiringCount(): number {
 
   return alerts.filter((a) => {
     if (!a.enabled) return false;
+    // Contador baseado em variação — alertas por preço (thresholdPct nulo) ficam de fora
+    if (a.thresholdPct == null) return false;
     const pct = quoteMap.get(a.symbol);
     if (pct == null) return false;
     return a.condition === "above" ? pct >= a.thresholdPct : pct <= a.thresholdPct;

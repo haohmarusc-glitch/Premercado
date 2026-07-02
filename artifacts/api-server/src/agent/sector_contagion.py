@@ -50,6 +50,14 @@ SECTOR_GROUPS: dict[str, dict] = {
         "label": "Fundição/Equipamentos",
         "tickers": ["TSM", "ASML"],
     },
+    "saude_us": {
+        "label": "Saúde EUA (farma/managed care)",
+        "tickers": ["LLY", "JNJ", "ABBV", "MRK", "PFE", "UNH"],
+    },
+    "saude_b3": {
+        "label": "Saúde B3",
+        "tickers": ["RADL3.SA", "HAPV3.SA", "RDOR3.SA", "FLRY3.SA", "ONCO3.SA"],
+    },
 }
 
 # ---------------------------------------------------------------------------

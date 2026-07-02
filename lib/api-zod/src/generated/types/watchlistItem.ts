@@ -6,11 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Report {
+export interface WatchlistItem {
   id: number;
-  date: string;
-  content: string;
-  tickers: string[];
-  mode: string;
-  createdAt: string;
+  ticker: string;
+  /** @nullable */
+  notes: string | null;
+  addedAt: string;
 }

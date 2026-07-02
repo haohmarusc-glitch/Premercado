@@ -61,7 +61,9 @@ export default defineConfig({
             query: ['boolean', 'number', 'string'],
             param: ['boolean', 'number', 'string'],
             body: ['bigint', 'date'],
-            response: ['bigint', 'date'],
+            // 'number' porque colunas numeric do Drizzle chegam como string
+            // e o .parse() das respostas precisa coagir antes de serializar
+            response: ['bigint', 'date', 'number'],
           },
         },
         useDates: true,
