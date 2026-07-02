@@ -33,8 +33,10 @@ def for_ticker(ticker: str) -> dict:
         short_change = None
         if shares_short and shares_short_prior and shares_short_prior > 0:
             short_change = round((shares_short - shares_short_prior) / shares_short_prior * 100, 2)
-        squeeze = ("alto" if short_pct and short_pct > 0.20
-                   else "moderado" if short_pct and short_pct > 0.10 else "baixo")
+        squeeze = None
+        if short_pct is not None:
+            squeeze = ("alto" if short_pct > 0.20
+                       else "moderado" if short_pct > 0.10 else "baixo")
 
         # Analyst ratings
         rec_key = info.get("recommendationKey", "")
