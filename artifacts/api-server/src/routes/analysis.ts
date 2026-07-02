@@ -63,6 +63,7 @@ function makeTickerRoute(routePath: string, script: string, cacheName: string, e
 }
 
 makeTickerRoute("/fundamentals", "get_fundamentals.py", "fundamentals");
+makeTickerRoute("/trend", "get_trend.py", "trend");
 makeTickerRoute("/options", "get_options_chain.py", "options");
 makeTickerRoute("/news", "get_news_feed.py", "news", { maxItems: 5 });
 
