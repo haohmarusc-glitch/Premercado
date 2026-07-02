@@ -10,6 +10,11 @@ const app: Express = express();
 // Determinar se está em produção
 const isProduction = process.env.NODE_ENV === "production";
 
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  throw new Error("SESSION_SECRET environment variable is required but was not provided.");
+}
+
 // Configurar origens permitidas do CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
@@ -48,7 +53,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
     name: "sid",
-    secret: process.env.SESSION_SECRET,
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {

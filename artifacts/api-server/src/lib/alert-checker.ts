@@ -61,14 +61,18 @@ async function checkAlerts(): Promise<void> {
 
   for (const alert of alerts) {
     const quote = quoteMap.get(alert.symbol);
-    if (!quote || quote.changePct == null) continue;
+    if (!quote) continue;
 
+    // Alerta por preço só precisa do preço; por variação, só do changePct
+    // (no pré-mercado o changePct costuma vir nulo — não pode barrar o de preço)
     let triggered = false;
-    if (alert.thresholdPrice != null && quote.price != null) {
+    if (alert.thresholdPrice != null) {
+      if (quote.price == null) continue;
       triggered = alert.condition === "above"
         ? quote.price >= alert.thresholdPrice
         : quote.price <= alert.thresholdPrice;
-    } else if (alert.thresholdPct != null && quote.changePct != null) {
+    } else if (alert.thresholdPct != null) {
+      if (quote.changePct == null) continue;
       triggered = alert.condition === "above"
         ? quote.changePct >= alert.thresholdPct
         : quote.changePct <= alert.thresholdPct;
@@ -88,6 +92,7 @@ async function checkAlerts(): Promise<void> {
         symbol: alert.symbol,
         condition: alert.condition,
         thresholdPct: alert.thresholdPct,
+        thresholdPrice: alert.thresholdPrice,
         currentChangePct: quote.changePct,
         currentPrice: quote.price,
       });
