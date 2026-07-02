@@ -2,8 +2,7 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { asc, eq } from "drizzle-orm";
-import { db, portfolioPositionsTable, portfolioPurchasesTable, settingsTable } from "@workspace/db";
-import { getOrCreateSettings } from "./settings";
+import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import {
   ListPortfolioPositionsResponse,
@@ -57,6 +56,48 @@ function serPur(r: typeof portfolioPurchasesTable.$inferSelect) {
   };
 }
 
+// Recalcula quantity/avgCost/investedAmount de uma posicao a partir dos lotes
+// de compra AINDA NAO VENDIDOS (saleDate IS NULL). Deve ser chamada sempre que
+// uma compra for criada, tiver uma venda registrada, ou for excluida -- para
+// a tabela de posicoes nunca ficar "congelada" desatualizada em relacao as
+// compras reais. Se nao sobrar nenhum lote em aberto, a posicao e removida
+// (fica so o historico em portfolio_purchases, incluindo os lotes vendidos).
+async function recomputePosition(positionId: number): Promise<void> {
+  const purchases = await db
+    .select()
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.positionId, positionId));
+
+  const open = purchases.filter((p) => p.saleDate == null);
+
+  if (open.length === 0) {
+    // Nenhum lote em aberto -- posicao totalmente vendida, nao e mais um holding ativo.
+    await db.delete(portfolioPositionsTable).where(eq(portfolioPositionsTable.id, positionId));
+    return;
+  }
+
+  let totalInvested = 0;
+  let totalShares = 0;
+  for (const p of open) {
+    const amount = Number(p.amount);
+    totalInvested += amount;
+    if (p.purchasePrice != null && Number(p.purchasePrice) > 0) {
+      totalShares += amount / Number(p.purchasePrice);
+    }
+  }
+  const avgCost = totalShares > 0 ? totalInvested / totalShares : 0;
+
+  await db
+    .update(portfolioPositionsTable)
+    .set({
+      quantity: totalShares,
+      avgCost,
+      investedAmount: totalInvested,
+      updatedAt: new Date(),
+    })
+    .where(eq(portfolioPositionsTable.id, positionId));
+}
+
 // Seed initial portfolio data if table is empty
 const SEED_POSITIONS = [
   { ticker: "NVDA", quantity: 5.37435,  avgCost: 208.21, investedAmount: 1119.00, firstPurchaseDate: "2026-03-20" },
@@ -104,30 +145,6 @@ export async function seedPortfolioIfEmpty() {
 router.get("/portfolio", async (_req, res): Promise<void> => {
   const rows = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
   res.json(ListPortfolioPositionsResponse.parse(rows.map(serPos)));
-});
-
-// GET /portfolio/cash — saldo em USD não investido por modo (real/paper)
-router.get("/portfolio/cash", async (_req, res): Promise<void> => {
-  const s = await getOrCreateSettings();
-  res.json({ real: Number(s.cashReal ?? 0), simulated: Number(s.cashSimulated ?? 0) });
-});
-
-// PATCH /portfolio/cash — { mode: "real" | "simulated", amount: number }
-router.patch("/portfolio/cash", async (req, res): Promise<void> => {
-  const mode = req.body?.mode;
-  const amount = Number(req.body?.amount);
-  if ((mode !== "real" && mode !== "simulated") || !Number.isFinite(amount) || amount < 0) {
-    res.status(400).json({ error: "mode (real|simulated) e amount >= 0 obrigatórios" });
-    return;
-  }
-  const s = await getOrCreateSettings();
-  const patch = mode === "real" ? { cashReal: amount } : { cashSimulated: amount };
-  const [updated] = await db
-    .update(settingsTable)
-    .set({ ...patch, updatedAt: new Date() })
-    .where(eq(settingsTable.id, s.id))
-    .returning();
-  res.json({ real: Number(updated.cashReal ?? 0), simulated: Number(updated.cashSimulated ?? 0) });
 });
 
 // GET /portfolio/:id/purchases
@@ -186,6 +203,7 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
     .insert(portfolioPurchasesTable)
     .values({ positionId: params.data.id, ...body.data })
     .returning();
+  await recomputePosition(params.data.id);
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -200,6 +218,7 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
     .returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  await recomputePosition(row.positionId);
   res.json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -207,7 +226,12 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
 router.delete("/portfolio/purchases/:purchaseId", async (req, res): Promise<void> => {
   const p = PortfolioPurchaseParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
+  const [existing] = await db
+    .select({ positionId: portfolioPurchasesTable.positionId })
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
   await db.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
+  if (existing) { await recomputePosition(existing.positionId); }
   res.status(204).send();
 });
 
