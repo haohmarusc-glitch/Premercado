@@ -71,8 +71,16 @@ async function recomputePosition(positionId: number): Promise<void> {
   const open = purchases.filter((p) => p.saleDate == null);
 
   if (open.length === 0) {
-    // Nenhum lote em aberto -- posicao totalmente vendida, nao e mais um holding ativo.
-    await db.delete(portfolioPositionsTable).where(eq(portfolioPositionsTable.id, positionId));
+    // Nenhum lote em aberto -- posicao totalmente vendida. NAO deletamos a
+    // posicao (a FK portfolio_purchases -> portfolio_positions e' ON DELETE
+    // CASCADE, entao deletar aqui apagaria o historico de compra/venda
+    // junto). Em vez disso zeramos os campos: a posicao some da view de
+    // "ativas" (ver filtro em GET /portfolio) mas a linha e o historico
+    // continuam intactos no banco.
+    await db
+      .update(portfolioPositionsTable)
+      .set({ quantity: 0, avgCost: 0, investedAmount: 0, updatedAt: new Date() })
+      .where(eq(portfolioPositionsTable.id, positionId));
     return;
   }
 
@@ -144,7 +152,11 @@ export async function seedPortfolioIfEmpty() {
 // GET /portfolio
 router.get("/portfolio", async (_req, res): Promise<void> => {
   const rows = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
-  res.json(ListPortfolioPositionsResponse.parse(rows.map(serPos)));
+  // Posicoes totalmente vendidas ficam com quantity = 0 (ver recomputePosition)
+  // e nao devem aparecer como holding ativo -- mas a linha continua no banco
+  // preservando o historico de compras/vendas.
+  const active = rows.filter((r) => Number(r.quantity) > 0.00001);
+  res.json(ListPortfolioPositionsResponse.parse(active.map(serPos)));
 });
 
 // GET /portfolio/:id/purchases
