@@ -113,6 +113,11 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
+- `openapi.yaml` é a fonte de verdade dos pacotes gerados (`api-zod`,
+  `api-client-react`) — NUNCA edite os arquivos em `generated/` à mão; altere
+  o spec e rode o codegen. O spec foi ressincronizado em 2026-07-02 depois de
+  um período em que os gerados foram editados manualmente e divergiram.
+
 - O agente Python usa `python3 -m agent.run_agent` (ou `agent.run_chat`) com
   `cwd = artifacts/api-server/src`; `PYTHONPATH` precisa apontar pro mesmo dir
 - `INTERNAL_API_URL` precisa apontar para o servidor Express correto em runtime

@@ -6,11 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Report {
+export interface ChatMessage {
   id: number;
-  date: string;
+  sessionId: number;
+  role: string;
   content: string;
-  tickers: string[];
-  mode: string;
   createdAt: string;
 }

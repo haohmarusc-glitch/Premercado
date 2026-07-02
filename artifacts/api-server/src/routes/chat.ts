@@ -4,7 +4,7 @@ import { asc, desc, eq, sql } from "drizzle-orm";
 import { db, chatSessionsTable, chatMessagesTable } from "@workspace/db";
 import {
   ListChatSessionsResponse,
-  GetChatSessionParams,
+  GetChatMessagesParams as GetChatSessionParams,
   GetChatMessagesResponse,
   DeleteChatSessionParams,
 } from "@workspace/api-zod";

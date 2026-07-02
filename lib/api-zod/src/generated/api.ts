@@ -20,7 +20,7 @@ export const HealthCheckResponse = zod.object({
  * @summary List all pre-market reports
  */
 export const ListReportsResponseItem = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
@@ -38,7 +38,7 @@ export const GetReportParams = zod.object({
 })
 
 export const GetReportResponse = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
@@ -51,7 +51,7 @@ export const GetReportResponse = zod.object({
  * @summary Get today's latest report
  */
 export const GetLatestReportResponse = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "date": zod.string(),
   "content": zod.string(),
   "tickers": zod.array(zod.string()),
@@ -70,7 +70,7 @@ export const ListObservationsQueryParams = zod.object({
 })
 
 export const ListObservationsResponseItem = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "ticker": zod.string(),
   "date": zod.string(),
   "summary": zod.string(),
@@ -87,9 +87,9 @@ export const ListObservationsResponse = zod.array(ListObservationsResponseItem)
  */
 export const GetObservationsSummaryResponseItem = zod.object({
   "ticker": zod.string(),
-  "bullish": zod.number(),
-  "bearish": zod.number(),
-  "neutral": zod.number(),
+  "bullish": zod.coerce.number(),
+  "bearish": zod.coerce.number(),
+  "neutral": zod.coerce.number(),
   "lastSentiment": zod.string(),
   "lastDate": zod.string()
 })
@@ -100,7 +100,7 @@ export const GetObservationsSummaryResponse = zod.array(GetObservationsSummaryRe
  * @summary Trigger the pre-market agent run
  */
 export const RunAgentResponse = zod.object({
-  "reportId": zod.number(),
+  "reportId": zod.coerce.number(),
   "message": zod.string()
 })
 
@@ -109,7 +109,7 @@ export const RunAgentResponse = zod.object({
  * @summary List all price alerts
  */
 export const ListAlertsResponseItem = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
@@ -152,7 +152,7 @@ export const ToggleAlertBody = zod.object({
 })
 
 export const ToggleAlertResponse = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
@@ -167,9 +167,9 @@ export const ToggleAlertResponse = zod.object({
  * @summary Summary counts for alerts and today's firings
  */
 export const GetAlertFiringsSummaryResponse = zod.object({
-  "total": zod.number(),
-  "active": zod.number(),
-  "firingToday": zod.number()
+  "total": zod.coerce.number(),
+  "active": zod.coerce.number(),
+  "firingToday": zod.coerce.number()
 })
 
 
@@ -181,8 +181,8 @@ export const ListAlertFiringsParams = zod.object({
 })
 
 export const ListAlertFiringsResponseItem = zod.object({
-  "id": zod.number(),
-  "alertId": zod.number(),
+  "id": zod.coerce.number(),
+  "alertId": zod.coerce.number(),
   "symbol": zod.string(),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
@@ -206,12 +206,12 @@ export const GetTickerChartResponse = zod.object({
   "symbol": zod.string(),
   "period": zod.string(),
   "candles": zod.array(zod.object({
-  "t": zod.number(),
-  "o": zod.number(),
-  "h": zod.number(),
-  "l": zod.number(),
-  "c": zod.number(),
-  "v": zod.number()
+  "t": zod.coerce.number(),
+  "o": zod.coerce.number(),
+  "h": zod.coerce.number(),
+  "l": zod.coerce.number(),
+  "c": zod.coerce.number(),
+  "v": zod.coerce.number()
 })),
   "error": zod.string().nullish()
 })
@@ -222,20 +222,20 @@ export const GetTickerChartResponse = zod.object({
  */
 export const GetTickerQuotesResponseItem = zod.object({
   "symbol": zod.string(),
-  "price": zod.number().nullish(),
-  "change": zod.number().nullish(),
-  "changePct": zod.number().nullish(),
-  "open": zod.number().nullish(),
-  "previousClose": zod.number().nullish(),
-  "dayHigh": zod.number().nullish(),
-  "dayLow": zod.number().nullish(),
-  "volume": zod.number().nullish(),
-  "marketCap": zod.number().nullish(),
+  "price": zod.coerce.number().nullish(),
+  "change": zod.coerce.number().nullish(),
+  "changePct": zod.coerce.number().nullish(),
+  "open": zod.coerce.number().nullish(),
+  "previousClose": zod.coerce.number().nullish(),
+  "dayHigh": zod.coerce.number().nullish(),
+  "dayLow": zod.coerce.number().nullish(),
+  "volume": zod.coerce.number().nullish(),
+  "marketCap": zod.coerce.number().nullish(),
   "marketState": zod.string().nullish(),
-  "preMarketPrice": zod.number().nullish(),
-  "preMarketChangePct": zod.number().nullish(),
-  "postMarketPrice": zod.number().nullish(),
-  "postMarketChangePct": zod.number().nullish(),
+  "preMarketPrice": zod.coerce.number().nullish(),
+  "preMarketChangePct": zod.coerce.number().nullish(),
+  "postMarketPrice": zod.coerce.number().nullish(),
+  "postMarketChangePct": zod.coerce.number().nullish(),
   "error": zod.string().nullish()
 })
 export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)
@@ -261,13 +261,13 @@ export const ListAgentRunsQueryParams = zod.object({
 })
 
 export const ListAgentRunsResponseItem = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "startedAt": zod.string(),
   "finishedAt": zod.string().nullish(),
   "status": zod.string(),
   "trigger": zod.string(),
   "mode": zod.string(),
-  "durationMs": zod.number().nullish(),
+  "durationMs": zod.coerce.number().nullish(),
   "errorMessage": zod.string().nullish()
 })
 export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
@@ -277,16 +277,16 @@ export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
  * @summary Get current app settings
  */
 export const GetSettingsResponse = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "notifyEmail": zod.string(),
   "scheduleEnabled": zod.boolean(),
-  "scheduleHour": zod.number(),
-  "scheduleMinute": zod.number(),
+  "scheduleHour": zod.coerce.number(),
+  "scheduleMinute": zod.coerce.number(),
   "tickers": zod.array(zod.string()),
   "premarketEnabled": zod.boolean(),
-  "premarketIntervalMin": zod.number(),
-  "premarketWindowStartHour": zod.number(),
-  "premarketWindowEndHour": zod.number(),
+  "premarketIntervalMin": zod.coerce.number(),
+  "premarketWindowStartHour": zod.coerce.number(),
+  "premarketWindowEndHour": zod.coerce.number(),
   "updatedAt": zod.string()
 })
 
@@ -307,150 +307,290 @@ export const UpdateSettingsBody = zod.object({
 })
 
 export const UpdateSettingsResponse = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "notifyEmail": zod.string(),
   "scheduleEnabled": zod.boolean(),
-  "scheduleHour": zod.number(),
-  "scheduleMinute": zod.number(),
+  "scheduleHour": zod.coerce.number(),
+  "scheduleMinute": zod.coerce.number(),
   "tickers": zod.array(zod.string()),
   "premarketEnabled": zod.boolean(),
-  "premarketIntervalMin": zod.number(),
-  "premarketWindowStartHour": zod.number(),
-  "premarketWindowEndHour": zod.number(),
+  "premarketIntervalMin": zod.coerce.number(),
+  "premarketWindowStartHour": zod.coerce.number(),
+  "premarketWindowEndHour": zod.coerce.number(),
   "updatedAt": zod.string()
 })
 
 
 /**
- * @summary Chat sessions
+ * @summary List chat sessions
  */
 export const ListChatSessionsResponseItem = zod.object({
-  "id": zod.number(),
+  "id": zod.coerce.number(),
   "title": zod.string(),
-  "messageCount": zod.number(),
+  "messageCount": zod.coerce.number(),
   "createdAt": zod.string(),
-  "updatedAt": zod.string(),
+  "updatedAt": zod.string()
 })
 export const ListChatSessionsResponse = zod.array(ListChatSessionsResponseItem)
 
-export const GetChatSessionParams = zod.object({
-  "id": zod.coerce.number()
-})
 
-export const DeleteChatSessionParams = zod.object({
+/**
+ * @summary List messages of a chat session
+ */
+export const GetChatMessagesParams = zod.object({
   "id": zod.coerce.number()
 })
 
 export const GetChatMessagesResponseItem = zod.object({
-  "id": zod.number(),
-  "sessionId": zod.number(),
+  "id": zod.coerce.number(),
+  "sessionId": zod.coerce.number(),
   "role": zod.string(),
   "content": zod.string(),
-  "createdAt": zod.string(),
+  "createdAt": zod.string()
 })
 export const GetChatMessagesResponse = zod.array(GetChatMessagesResponseItem)
 
 
 /**
- * @summary Portfolio positions
+ * @summary Delete a chat session
  */
-export const PortfolioPositionSchema = zod.object({
-  "id": zod.number(),
+export const DeleteChatSessionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary List portfolio positions
+ */
+export const ListPortfolioPositionsResponseItem = zod.object({
+  "id": zod.coerce.number(),
   "ticker": zod.string(),
   "quantity": zod.coerce.number(),
   "avgCost": zod.coerce.number(),
   "investedAmount": zod.coerce.number(),
   "firstPurchaseDate": zod.string(),
-  "notes": zod.string().nullable().optional(),
-  "downAlertPcts": zod.array(zod.number()),
-  "upAlertPcts": zod.array(zod.number()),
+  "notes": zod.string().nullish(),
+  "downAlertPcts": zod.array(zod.coerce.number()),
+  "upAlertPcts": zod.array(zod.coerce.number()),
   "createdAt": zod.string(),
-  "updatedAt": zod.string(),
+  "updatedAt": zod.string()
 })
-export const ListPortfolioPositionsResponse = zod.array(PortfolioPositionSchema)
+export const ListPortfolioPositionsResponse = zod.array(ListPortfolioPositionsResponseItem)
+
+
+/**
+ * @summary Create a portfolio position
+ */
+export const createPortfolioPositionBodyTickerMax = 10;
+
+export const createPortfolioPositionBodyQuantityExclusiveMin = 0;
+
+export const createPortfolioPositionBodyAvgCostExclusiveMin = 0;
+
+export const createPortfolioPositionBodyInvestedAmountExclusiveMin = 0;
+
+
 
 export const CreatePortfolioPositionBody = zod.object({
-  "ticker": zod.string().min(1).max(10),
-  "quantity": zod.number().positive(),
-  "avgCost": zod.number().positive(),
-  "investedAmount": zod.number().positive(),
+  "ticker": zod.string().min(1).max(createPortfolioPositionBodyTickerMax),
+  "quantity": zod.number().gt(createPortfolioPositionBodyQuantityExclusiveMin),
+  "avgCost": zod.number().gt(createPortfolioPositionBodyAvgCostExclusiveMin),
+  "investedAmount": zod.number().gt(createPortfolioPositionBodyInvestedAmountExclusiveMin),
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().optional(),
   "downAlertPcts": zod.array(zod.number()).optional(),
-  "upAlertPcts": zod.array(zod.number()).optional(),
+  "upAlertPcts": zod.array(zod.number()).optional()
 })
 
-export const UpdatePortfolioPositionBody = zod.object({
-  "ticker": zod.string().min(1).max(10).optional(),
-  "quantity": zod.number().positive().optional(),
-  "avgCost": zod.number().positive().optional(),
-  "investedAmount": zod.number().positive().optional(),
-  "firstPurchaseDate": zod.string().optional(),
-  "notes": zod.string().nullable().optional(),
-  "downAlertPcts": zod.array(zod.number()).optional(),
-  "upAlertPcts": zod.array(zod.number()).optional(),
-})
 
-export const PortfolioPositionParams = zod.object({
+/**
+ * @summary Update a portfolio position
+ */
+export const UpdatePortfolioPositionParams = zod.object({
   "id": zod.coerce.number()
 })
 
-export const PortfolioPurchaseSchema = zod.object({
-  "id": zod.number(),
-  "positionId": zod.number(),
+export const updatePortfolioPositionBodyTickerMax = 10;
+
+export const updatePortfolioPositionBodyQuantityExclusiveMin = 0;
+
+export const updatePortfolioPositionBodyAvgCostExclusiveMin = 0;
+
+export const updatePortfolioPositionBodyInvestedAmountExclusiveMin = 0;
+
+
+
+export const UpdatePortfolioPositionBody = zod.object({
+  "ticker": zod.string().min(1).max(updatePortfolioPositionBodyTickerMax).optional(),
+  "quantity": zod.number().gt(updatePortfolioPositionBodyQuantityExclusiveMin).optional(),
+  "avgCost": zod.number().gt(updatePortfolioPositionBodyAvgCostExclusiveMin).optional(),
+  "investedAmount": zod.number().gt(updatePortfolioPositionBodyInvestedAmountExclusiveMin).optional(),
+  "firstPurchaseDate": zod.string().optional(),
+  "notes": zod.string().nullish(),
+  "downAlertPcts": zod.array(zod.number()).optional(),
+  "upAlertPcts": zod.array(zod.number()).optional()
+})
+
+export const UpdatePortfolioPositionResponse = zod.object({
+  "id": zod.coerce.number(),
+  "ticker": zod.string(),
+  "quantity": zod.coerce.number(),
+  "avgCost": zod.coerce.number(),
+  "investedAmount": zod.coerce.number(),
+  "firstPurchaseDate": zod.string(),
+  "notes": zod.string().nullish(),
+  "downAlertPcts": zod.array(zod.coerce.number()),
+  "upAlertPcts": zod.array(zod.coerce.number()),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a portfolio position
+ */
+export const DeletePortfolioPositionParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
+ * @summary List purchases of a position
+ */
+export const ListPortfolioPurchasesParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ListPortfolioPurchasesResponseItem = zod.object({
+  "id": zod.coerce.number(),
+  "positionId": zod.coerce.number(),
   "purchaseDate": zod.string(),
   "amount": zod.coerce.number(),
   "purchasePrice": zod.coerce.number().nullish(),
   "saleDate": zod.string().nullish(),
   "salePrice": zod.coerce.number().nullish(),
-  "createdAt": zod.string(),
+  "createdAt": zod.string()
 })
-export const ListPortfolioPurchasesResponse = zod.array(PortfolioPurchaseSchema)
+export const ListPortfolioPurchasesResponse = zod.array(ListPortfolioPurchasesResponseItem)
+
+
+/**
+ * @summary Add a purchase to a position
+ */
+export const CreatePortfolioPurchaseParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const createPortfolioPurchaseBodyAmountExclusiveMin = 0;
+
+
 
 export const CreatePortfolioPurchaseBody = zod.object({
   "purchaseDate": zod.string(),
-  "amount": zod.number().positive(),
+  "amount": zod.number().gt(createPortfolioPurchaseBodyAmountExclusiveMin),
   "purchasePrice": zod.number().nullish(),
   "saleDate": zod.string().nullish(),
-  "salePrice": zod.number().nullish(),
+  "salePrice": zod.number().nullish()
+})
+
+
+/**
+ * @summary Update a purchase (sale fields)
+ */
+export const UpdatePortfolioPurchaseParams = zod.object({
+  "purchaseId": zod.coerce.number()
 })
 
 export const UpdatePortfolioPurchaseBody = zod.object({
   "saleDate": zod.string().nullish(),
-  "salePrice": zod.number().nullish(),
+  "salePrice": zod.number().nullish()
 })
 
-export const PortfolioPurchaseParams = zod.object({
+export const UpdatePortfolioPurchaseResponse = zod.object({
+  "id": zod.coerce.number(),
+  "positionId": zod.coerce.number(),
+  "purchaseDate": zod.string(),
+  "amount": zod.coerce.number(),
+  "purchasePrice": zod.coerce.number().nullish(),
+  "saleDate": zod.string().nullish(),
+  "salePrice": zod.coerce.number().nullish(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a purchase
+ */
+export const DeletePortfolioPurchaseParams = zod.object({
   "purchaseId": zod.coerce.number()
 })
 
 
 /**
- * @summary Watchlist
+ * @summary Get uninvested cash (USD) per portfolio mode
  */
-export const WatchlistItemSchema = zod.object({
-  "id": zod.number(),
+export const GetPortfolioCashResponse = zod.object({
+  "real": zod.coerce.number(),
+  "simulated": zod.coerce.number()
+})
+
+
+/**
+ * @summary Set uninvested cash (USD) for a portfolio mode
+ */
+export const updatePortfolioCashBodyAmountMin = 0;
+
+
+
+export const UpdatePortfolioCashBody = zod.object({
+  "mode": zod.enum(['real', 'simulated']),
+  "amount": zod.number().min(updatePortfolioCashBodyAmountMin)
+})
+
+export const UpdatePortfolioCashResponse = zod.object({
+  "real": zod.coerce.number(),
+  "simulated": zod.coerce.number()
+})
+
+
+/**
+ * @summary List watchlist items
+ */
+export const ListWatchlistResponseItem = zod.object({
+  "id": zod.coerce.number(),
   "ticker": zod.string(),
   "notes": zod.string().nullable(),
-  "addedAt": zod.string(),
+  "addedAt": zod.string()
 })
-export const ListWatchlistResponse = zod.array(WatchlistItemSchema)
+export const ListWatchlistResponse = zod.array(ListWatchlistResponseItem)
+
+
+/**
+ * @summary Add a ticker to the watchlist
+ */
+export const createWatchlistBodyTickerMax = 10;
+
+
 
 export const CreateWatchlistBody = zod.object({
-  "ticker": zod.string().min(1).max(10),
-  "notes": zod.string().optional(),
+  "ticker": zod.string().min(1).max(createWatchlistBodyTickerMax),
+  "notes": zod.string().optional()
 })
 
-export const WatchlistItemParams = zod.object({
+
+/**
+ * @summary Remove a ticker from the watchlist
+ */
+export const DeleteWatchlistItemParams = zod.object({
   "id": zod.coerce.number()
 })
 
 
 /**
- * @summary Trade Journal
+ * @summary List trade journal entries
  */
-export const TradeJournalEntrySchema = zod.object({
-  "id": zod.number(),
+export const ListJournalResponseItem = zod.object({
+  "id": zod.coerce.number(),
   "ticker": zod.string(),
   "entryDate": zod.string(),
   "entryPrice": zod.coerce.number().nullable(),
@@ -463,39 +603,81 @@ export const TradeJournalEntrySchema = zod.object({
   "result": zod.string().nullable(),
   "notes": zod.string().nullable(),
   "createdAt": zod.string(),
-  "updatedAt": zod.string(),
+  "updatedAt": zod.string()
 })
-export const ListJournalResponse = zod.array(TradeJournalEntrySchema)
+export const ListJournalResponse = zod.array(ListJournalResponseItem)
+
+
+/**
+ * @summary Create a journal entry
+ */
+export const createJournalEntryBodyTickerMax = 10;
+
+
 
 export const CreateJournalEntryBody = zod.object({
-  "ticker": zod.string().min(1).max(10),
+  "ticker": zod.string().min(1).max(createJournalEntryBodyTickerMax),
   "entryDate": zod.string(),
-  "entryPrice": zod.number().nullable().optional(),
-  "stopLoss": zod.number().nullable().optional(),
-  "targetPrice": zod.number().nullable().optional(),
+  "entryPrice": zod.number().nullish(),
+  "stopLoss": zod.number().nullish(),
+  "targetPrice": zod.number().nullish(),
   "thesis": zod.string().optional(),
   "emotionalState": zod.string().optional(),
-  "exitDate": zod.string().nullable().optional(),
-  "exitPrice": zod.number().nullable().optional(),
-  "result": zod.string().nullable().optional(),
-  "notes": zod.string().optional(),
+  "exitDate": zod.string().nullish(),
+  "exitPrice": zod.number().nullish(),
+  "result": zod.string().nullish(),
+  "notes": zod.string().optional()
 })
 
-export const UpdateJournalEntryBody = zod.object({
-  "ticker": zod.string().min(1).max(10).optional(),
-  "entryDate": zod.string().optional(),
-  "entryPrice": zod.number().nullable().optional(),
-  "stopLoss": zod.number().nullable().optional(),
-  "targetPrice": zod.number().nullable().optional(),
-  "thesis": zod.string().nullable().optional(),
-  "emotionalState": zod.string().optional(),
-  "exitDate": zod.string().nullable().optional(),
-  "exitPrice": zod.number().nullable().optional(),
-  "result": zod.string().nullable().optional(),
-  "notes": zod.string().nullable().optional(),
-})
 
-export const JournalEntryParams = zod.object({
+/**
+ * @summary Update a journal entry
+ */
+export const UpdateJournalEntryParams = zod.object({
   "id": zod.coerce.number()
 })
+
+export const updateJournalEntryBodyTickerMax = 10;
+
+
+
+export const UpdateJournalEntryBody = zod.object({
+  "ticker": zod.string().min(1).max(updateJournalEntryBodyTickerMax).optional(),
+  "entryDate": zod.string().optional(),
+  "entryPrice": zod.number().nullish(),
+  "stopLoss": zod.number().nullish(),
+  "targetPrice": zod.number().nullish(),
+  "thesis": zod.string().nullish(),
+  "emotionalState": zod.string().optional(),
+  "exitDate": zod.string().nullish(),
+  "exitPrice": zod.number().nullish(),
+  "result": zod.string().nullish(),
+  "notes": zod.string().nullish()
+})
+
+export const UpdateJournalEntryResponse = zod.object({
+  "id": zod.coerce.number(),
+  "ticker": zod.string(),
+  "entryDate": zod.string(),
+  "entryPrice": zod.coerce.number().nullable(),
+  "stopLoss": zod.coerce.number().nullable(),
+  "targetPrice": zod.coerce.number().nullable(),
+  "thesis": zod.string().nullable(),
+  "emotionalState": zod.string(),
+  "exitDate": zod.string().nullable(),
+  "exitPrice": zod.coerce.number().nullable(),
+  "result": zod.string().nullable(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a journal entry
+ */
+export const DeleteJournalEntryParams = zod.object({
+  "id": zod.coerce.number()
+})
+
 

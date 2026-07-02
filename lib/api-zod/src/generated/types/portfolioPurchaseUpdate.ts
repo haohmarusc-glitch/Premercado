@@ -6,11 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Report {
-  id: number;
-  date: string;
-  content: string;
-  tickers: string[];
-  mode: string;
-  createdAt: string;
+export interface PortfolioPurchaseUpdate {
+  /** @nullable */
+  saleDate?: string | null;
+  /** @nullable */
+  salePrice?: number | null;
 }

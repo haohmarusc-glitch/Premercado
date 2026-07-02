@@ -6,11 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Report {
+export interface ChatSession {
   id: number;
-  date: string;
-  content: string;
-  tickers: string[];
-  mode: string;
+  title: string;
+  messageCount: number;
   createdAt: string;
+  updatedAt: string;
 }

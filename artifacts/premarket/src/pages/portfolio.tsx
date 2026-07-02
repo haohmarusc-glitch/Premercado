@@ -25,7 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
-import { useGetTickerChart } from "@workspace/api-client-react";
+import { useGetTickerChart, getGetTickerChartQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -166,7 +166,12 @@ function PriceChart({ ticker }: { ticker: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1d");
   const { data, isLoading } = useGetTickerChart(
     { symbol: ticker, period },
-    { query: { staleTime: period === "1d" ? 60_000 : 5 * 60_000 } },
+    {
+      query: {
+        queryKey: getGetTickerChartQueryKey({ symbol: ticker, period }),
+        staleTime: period === "1d" ? 60_000 : 5 * 60_000,
+      },
+    },
   );
 
   const candles = data?.candles ?? [];
@@ -330,7 +335,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       } catch { /* segue sem preço */ }
     }
     createPurchase.mutate(
-      { positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: price } },
+      { id: positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: price } },
       {
         onSuccess: () => { invalidate(); setAddOpen(false); setPurchaseDate(""); setPurchasePrice(""); setAmount(""); },
         onError: () => toast({ variant: "destructive", title: "Erro ao adicionar compra" }),

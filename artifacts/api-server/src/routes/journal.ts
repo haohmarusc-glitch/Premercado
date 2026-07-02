@@ -3,10 +3,10 @@ import { desc, eq } from "drizzle-orm";
 import { db, tradeJournalTable } from "@workspace/db";
 import {
   ListJournalResponse,
-  TradeJournalEntrySchema,
+  UpdateJournalEntryResponse as TradeJournalEntrySchema,
   CreateJournalEntryBody,
   UpdateJournalEntryBody,
-  JournalEntryParams,
+  UpdateJournalEntryParams as JournalEntryParams,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();

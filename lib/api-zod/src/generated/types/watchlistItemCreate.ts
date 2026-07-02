@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Report {
-  id: number;
-  date: string;
-  content: string;
-  tickers: string[];
-  mode: string;
-  createdAt: string;
+export interface WatchlistItemCreate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker: string;
+  notes?: string;
 }

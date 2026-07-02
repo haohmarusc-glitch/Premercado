@@ -6,15 +6,16 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Observation {
+export interface PortfolioPurchase {
   id: number;
-  ticker: string;
-  date: string;
-  summary: string;
-  sentiment: string;
+  positionId: number;
+  purchaseDate: string;
+  amount: number;
   /** @nullable */
-  priceAtObservation?: number | null;
+  purchasePrice?: number | null;
   /** @nullable */
-  userNotes?: string | null;
+  saleDate?: string | null;
+  /** @nullable */
+  salePrice?: number | null;
   createdAt: string;
 }

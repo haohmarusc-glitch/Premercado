@@ -26,6 +26,8 @@ export interface Observation {
   sentiment: string;
   /** @nullable */
   priceAtObservation?: number | null;
+  /** @nullable */
+  userNotes?: string | null;
   createdAt: string;
 }
 
@@ -58,7 +60,10 @@ export interface PriceAlert {
   id: number;
   symbol: string;
   condition: string;
-  thresholdPct: number;
+  /** @nullable */
+  thresholdPct?: number | null;
+  /** @nullable */
+  thresholdPrice?: number | null;
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
@@ -68,7 +73,10 @@ export interface PriceAlert {
 export interface AlertCreateInput {
   symbol: string;
   condition: string;
-  thresholdPct: number;
+  /** @nullable */
+  thresholdPct?: number | null;
+  /** @nullable */
+  thresholdPrice?: number | null;
 }
 
 export interface AlertToggleInput {
@@ -86,8 +94,12 @@ export interface AlertFiring {
   alertId: number;
   symbol: string;
   condition: string;
-  thresholdPct: number;
-  changePctAtFiring: number;
+  /** @nullable */
+  thresholdPct?: number | null;
+  /** @nullable */
+  thresholdPrice?: number | null;
+  /** @nullable */
+  changePctAtFiring?: number | null;
   /** @nullable */
   priceAtFiring?: number | null;
   firedAt: string;
@@ -131,6 +143,16 @@ export interface TickerQuote {
   /** @nullable */
   marketCap?: number | null;
   /** @nullable */
+  marketState?: string | null;
+  /** @nullable */
+  preMarketPrice?: number | null;
+  /** @nullable */
+  preMarketChangePct?: number | null;
+  /** @nullable */
+  postMarketPrice?: number | null;
+  /** @nullable */
+  postMarketChangePct?: number | null;
+  /** @nullable */
   error?: string | null;
 }
 
@@ -155,6 +177,10 @@ export interface Settings {
   scheduleHour: number;
   scheduleMinute: number;
   tickers: string[];
+  premarketEnabled: boolean;
+  premarketIntervalMin: number;
+  premarketWindowStartHour: number;
+  premarketWindowEndHour: number;
   updatedAt: string;
 }
 
@@ -164,6 +190,10 @@ export interface SettingsUpdate {
   scheduleHour?: number;
   scheduleMinute?: number;
   tickers?: string[];
+  premarketEnabled?: boolean;
+  premarketIntervalMin?: number;
+  premarketWindowStartHour?: number;
+  premarketWindowEndHour?: number;
 }
 
 export interface ChatSession {
@@ -189,6 +219,7 @@ export interface PortfolioPosition {
   avgCost: number;
   investedAmount: number;
   firstPurchaseDate: string;
+  /** @nullable */
   notes?: string | null;
   downAlertPcts: number[];
   upAlertPcts: number[];
@@ -196,12 +227,185 @@ export interface PortfolioPosition {
   updatedAt: string;
 }
 
+export interface PortfolioPositionCreate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker: string;
+  /** @exclusiveMinimum 0 */
+  quantity: number;
+  /** @exclusiveMinimum 0 */
+  avgCost: number;
+  /** @exclusiveMinimum 0 */
+  investedAmount: number;
+  firstPurchaseDate: string;
+  notes?: string;
+  downAlertPcts?: number[];
+  upAlertPcts?: number[];
+}
+
+export interface PortfolioPositionUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker?: string;
+  /** @exclusiveMinimum 0 */
+  quantity?: number;
+  /** @exclusiveMinimum 0 */
+  avgCost?: number;
+  /** @exclusiveMinimum 0 */
+  investedAmount?: number;
+  firstPurchaseDate?: string;
+  /** @nullable */
+  notes?: string | null;
+  downAlertPcts?: number[];
+  upAlertPcts?: number[];
+}
+
 export interface PortfolioPurchase {
   id: number;
   positionId: number;
   purchaseDate: string;
   amount: number;
+  /** @nullable */
+  purchasePrice?: number | null;
+  /** @nullable */
+  saleDate?: string | null;
+  /** @nullable */
+  salePrice?: number | null;
   createdAt: string;
+}
+
+export interface PortfolioPurchaseCreate {
+  purchaseDate: string;
+  /** @exclusiveMinimum 0 */
+  amount: number;
+  /** @nullable */
+  purchasePrice?: number | null;
+  /** @nullable */
+  saleDate?: string | null;
+  /** @nullable */
+  salePrice?: number | null;
+}
+
+export interface PortfolioPurchaseUpdate {
+  /** @nullable */
+  saleDate?: string | null;
+  /** @nullable */
+  salePrice?: number | null;
+}
+
+export interface CashBalance {
+  real: number;
+  simulated: number;
+}
+
+export type CashUpdateMode = typeof CashUpdateMode[keyof typeof CashUpdateMode];
+
+
+export const CashUpdateMode = {
+  real: 'real',
+  simulated: 'simulated',
+} as const;
+
+export interface CashUpdate {
+  mode: CashUpdateMode;
+  /** @minimum 0 */
+  amount: number;
+}
+
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  /** @nullable */
+  notes: string | null;
+  addedAt: string;
+}
+
+export interface WatchlistItemCreate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker: string;
+  notes?: string;
+}
+
+export interface JournalEntry {
+  id: number;
+  ticker: string;
+  entryDate: string;
+  /** @nullable */
+  entryPrice: number | null;
+  /** @nullable */
+  stopLoss: number | null;
+  /** @nullable */
+  targetPrice: number | null;
+  /** @nullable */
+  thesis: string | null;
+  emotionalState: string;
+  /** @nullable */
+  exitDate: string | null;
+  /** @nullable */
+  exitPrice: number | null;
+  /** @nullable */
+  result: string | null;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JournalEntryCreate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker: string;
+  entryDate: string;
+  /** @nullable */
+  entryPrice?: number | null;
+  /** @nullable */
+  stopLoss?: number | null;
+  /** @nullable */
+  targetPrice?: number | null;
+  thesis?: string;
+  emotionalState?: string;
+  /** @nullable */
+  exitDate?: string | null;
+  /** @nullable */
+  exitPrice?: number | null;
+  /** @nullable */
+  result?: string | null;
+  notes?: string;
+}
+
+export interface JournalEntryUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker?: string;
+  entryDate?: string;
+  /** @nullable */
+  entryPrice?: number | null;
+  /** @nullable */
+  stopLoss?: number | null;
+  /** @nullable */
+  targetPrice?: number | null;
+  /** @nullable */
+  thesis?: string | null;
+  emotionalState?: string;
+  /** @nullable */
+  exitDate?: string | null;
+  /** @nullable */
+  exitPrice?: number | null;
+  /** @nullable */
+  result?: string | null;
+  /** @nullable */
+  notes?: string | null;
 }
 
 export type ListObservationsParams = {

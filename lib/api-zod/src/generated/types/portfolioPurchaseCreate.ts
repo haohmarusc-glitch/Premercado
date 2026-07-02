@@ -6,16 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AgentRun {
-  id: number;
-  startedAt: string;
+export interface PortfolioPurchaseCreate {
+  purchaseDate: string;
+  /** @exclusiveMinimum 0 */
+  amount: number;
   /** @nullable */
-  finishedAt?: string | null;
-  status: string;
-  trigger: string;
-  mode: string;
+  purchasePrice?: number | null;
   /** @nullable */
-  durationMs?: number | null;
+  saleDate?: string | null;
   /** @nullable */
-  errorMessage?: string | null;
+  salePrice?: number | null;
 }

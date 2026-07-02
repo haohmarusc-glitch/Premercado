@@ -3,9 +3,9 @@ import { asc, eq } from "drizzle-orm";
 import { db, watchlistTable } from "@workspace/db";
 import {
   ListWatchlistResponse,
-  WatchlistItemSchema,
+  ListWatchlistResponseItem as WatchlistItemSchema,
   CreateWatchlistBody,
-  WatchlistItemParams,
+  DeleteWatchlistItemParams as WatchlistItemParams,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();

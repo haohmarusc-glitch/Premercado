@@ -15,6 +15,14 @@ tags:
     description: Agent memory observations
   - name: agent
     description: Agent execution
+  - name: chat
+    description: Conversational chat sessions
+  - name: portfolio
+    description: Portfolio positions, purchases and cash
+  - name: watchlist
+    description: Ticker watchlist
+  - name: journal
+    description: Trade journal
 
 paths:
   /healthz:
@@ -88,6 +96,11 @@ paths:
       summary: List recent observations (agent memory)
       parameters:
         - name: ticker
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: tickers
           in: query
           required: false
           schema:
@@ -356,6 +369,386 @@ paths:
         "400":
           description: Invalid input
 
+  /chat/sessions:
+    get:
+      operationId: listChatSessions
+      tags: [chat]
+      summary: List chat sessions
+      responses:
+        "200":
+          description: Chat sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatSession"
+
+  /chat/sessions/{id}/messages:
+    get:
+      operationId: getChatMessages
+      tags: [chat]
+      summary: List messages of a chat session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Chat messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatMessage"
+        "404":
+          description: Not found
+
+  /chat/sessions/{id}:
+    delete:
+      operationId: deleteChatSession
+      tags: [chat]
+      summary: Delete a chat session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /portfolio:
+    get:
+      operationId: listPortfolioPositions
+      tags: [portfolio]
+      summary: List portfolio positions
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PortfolioPosition"
+    post:
+      operationId: createPortfolioPosition
+      tags: [portfolio]
+      summary: Create a portfolio position
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioPositionCreate"
+      responses:
+        "201":
+          description: Created position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioPosition"
+        "400":
+          description: Invalid input
+
+  /portfolio/{id}:
+    put:
+      operationId: updatePortfolioPosition
+      tags: [portfolio]
+      summary: Update a portfolio position
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioPositionUpdate"
+      responses:
+        "200":
+          description: Updated position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioPosition"
+        "404":
+          description: Not found
+    delete:
+      operationId: deletePortfolioPosition
+      tags: [portfolio]
+      summary: Delete a portfolio position
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /portfolio/{id}/purchases:
+    get:
+      operationId: listPortfolioPurchases
+      tags: [portfolio]
+      summary: List purchases of a position
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Purchases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PortfolioPurchase"
+        "400":
+          description: Invalid id
+    post:
+      operationId: createPortfolioPurchase
+      tags: [portfolio]
+      summary: Add a purchase to a position
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioPurchaseCreate"
+      responses:
+        "201":
+          description: Created purchase
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioPurchase"
+        "400":
+          description: Invalid input
+
+  /portfolio/purchases/{purchaseId}:
+    patch:
+      operationId: updatePortfolioPurchase
+      tags: [portfolio]
+      summary: Update a purchase (sale fields)
+      parameters:
+        - name: purchaseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortfolioPurchaseUpdate"
+      responses:
+        "200":
+          description: Updated purchase
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioPurchase"
+        "404":
+          description: Not found
+    delete:
+      operationId: deletePortfolioPurchase
+      tags: [portfolio]
+      summary: Delete a purchase
+      parameters:
+        - name: purchaseId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /portfolio/cash:
+    get:
+      operationId: getPortfolioCash
+      tags: [portfolio]
+      summary: Get uninvested cash (USD) per portfolio mode
+      responses:
+        "200":
+          description: Cash per mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashBalance"
+    patch:
+      operationId: updatePortfolioCash
+      tags: [portfolio]
+      summary: Set uninvested cash (USD) for a portfolio mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashUpdate"
+      responses:
+        "200":
+          description: Updated cash per mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashBalance"
+        "400":
+          description: Invalid input
+
+  /watchlist:
+    get:
+      operationId: listWatchlist
+      tags: [watchlist]
+      summary: List watchlist items
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WatchlistItem"
+    post:
+      operationId: createWatchlist
+      tags: [watchlist]
+      summary: Add a ticker to the watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistItemCreate"
+      responses:
+        "201":
+          description: Created watchlist item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistItem"
+        "400":
+          description: Invalid input
+
+  /watchlist/{id}:
+    delete:
+      operationId: deleteWatchlistItem
+      tags: [watchlist]
+      summary: Remove a ticker from the watchlist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /journal:
+    get:
+      operationId: listJournal
+      tags: [journal]
+      summary: List trade journal entries
+      responses:
+        "200":
+          description: Journal entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JournalEntry"
+    post:
+      operationId: createJournalEntry
+      tags: [journal]
+      summary: Create a journal entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JournalEntryCreate"
+      responses:
+        "201":
+          description: Created entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JournalEntry"
+        "400":
+          description: Invalid input
+
+  /journal/{id}:
+    put:
+      operationId: updateJournalEntry
+      tags: [journal]
+      summary: Update a journal entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JournalEntryUpdate"
+      responses:
+        "200":
+          description: Updated entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JournalEntry"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteJournalEntry
+      tags: [journal]
+      summary: Delete a journal entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
 components:
   schemas:
     HealthStatus:
@@ -367,7 +760,7 @@ components:
 
     Report:
       type: object
-      required: [id, date, content, tickers, createdAt]
+      required: [id, date, content, tickers, mode, createdAt]
       properties:
         id:
           type: integer
@@ -379,6 +772,8 @@ components:
           type: array
           items:
             type: string
+        mode:
+          type: string
         createdAt:
           type: string
 
@@ -398,6 +793,8 @@ components:
           type: string
         priceAtObservation:
           type: ["number", "null"]
+        userNotes:
+          type: ["string", "null"]
         createdAt:
           type: string
 
@@ -444,23 +841,25 @@ components:
 
     PriceAlert:
       type: object
-      required: [id, symbol, condition, thresholdPct, enabled, createdAt]
+      required: [id, symbol, condition, enabled, createdAt]
       properties:
         id: { type: integer }
         symbol: { type: string }
         condition: { type: string }
-        thresholdPct: { type: number }
+        thresholdPct: { type: ["number", "null"] }
+        thresholdPrice: { type: ["number", "null"] }
         enabled: { type: boolean }
         lastTriggeredAt: { type: ["string", "null"] }
         createdAt: { type: string }
 
     AlertCreateInput:
       type: object
-      required: [symbol, condition, thresholdPct]
+      required: [symbol, condition]
       properties:
         symbol: { type: string }
         condition: { type: string }
-        thresholdPct: { type: number }
+        thresholdPct: { type: ["number", "null"] }
+        thresholdPrice: { type: ["number", "null"] }
 
     AlertToggleInput:
       type: object
@@ -478,14 +877,15 @@ components:
 
     AlertFiring:
       type: object
-      required: [id, alertId, symbol, condition, thresholdPct, changePctAtFiring, firedAt]
+      required: [id, alertId, symbol, condition, firedAt]
       properties:
         id: { type: integer }
         alertId: { type: integer }
         symbol: { type: string }
         condition: { type: string }
-        thresholdPct: { type: number }
-        changePctAtFiring: { type: number }
+        thresholdPct: { type: ["number", "null"] }
+        thresholdPrice: { type: ["number", "null"] }
+        changePctAtFiring: { type: ["number", "null"] }
         priceAtFiring: { type: ["number", "null"] }
         firedAt: { type: string }
 
@@ -552,7 +952,7 @@ components:
 
     AgentRun:
       type: object
-      required: [id, startedAt, status, trigger]
+      required: [id, startedAt, status, trigger, mode]
       properties:
         id:
           type: integer
@@ -564,6 +964,8 @@ components:
           type: string
         trigger:
           type: string
+        mode:
+          type: string
         durationMs:
           type: ["integer", "null"]
         errorMessage:
@@ -571,7 +973,20 @@ components:
 
     Settings:
       type: object
-      required: [id, notifyEmail, scheduleEnabled, scheduleHour, scheduleMinute, tickers, updatedAt]
+      required:
+        [
+          id,
+          notifyEmail,
+          scheduleEnabled,
+          scheduleHour,
+          scheduleMinute,
+          tickers,
+          premarketEnabled,
+          premarketIntervalMin,
+          premarketWindowStartHour,
+          premarketWindowEndHour,
+          updatedAt,
+        ]
       properties:
         id:
           type: integer
@@ -587,6 +1002,14 @@ components:
           type: array
           items:
             type: string
+        premarketEnabled:
+          type: boolean
+        premarketIntervalMin:
+          type: integer
+        premarketWindowStartHour:
+          type: integer
+        premarketWindowEndHour:
+          type: integer
         updatedAt:
           type: string
 
@@ -605,3 +1028,231 @@ components:
           type: array
           items:
             type: string
+        premarketEnabled:
+          type: boolean
+        premarketIntervalMin:
+          type: integer
+        premarketWindowStartHour:
+          type: integer
+        premarketWindowEndHour:
+          type: integer
+
+    ChatSession:
+      type: object
+      required: [id, title, messageCount, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        messageCount: { type: integer }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    ChatMessage:
+      type: object
+      required: [id, sessionId, role, content, createdAt]
+      properties:
+        id: { type: integer }
+        sessionId: { type: integer }
+        role: { type: string }
+        content: { type: string }
+        createdAt: { type: string }
+
+    PortfolioPosition:
+      type: object
+      required:
+        [
+          id,
+          ticker,
+          quantity,
+          avgCost,
+          investedAmount,
+          firstPurchaseDate,
+          downAlertPcts,
+          upAlertPcts,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        quantity: { type: number }
+        avgCost: { type: number }
+        investedAmount: { type: number }
+        firstPurchaseDate: { type: string }
+        notes: { type: ["string", "null"] }
+        downAlertPcts:
+          type: array
+          items:
+            type: number
+        upAlertPcts:
+          type: array
+          items:
+            type: number
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    PortfolioPositionCreate:
+      type: object
+      required: [ticker, quantity, avgCost, investedAmount, firstPurchaseDate]
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        avgCost: { type: number, exclusiveMinimum: 0 }
+        investedAmount: { type: number, exclusiveMinimum: 0 }
+        firstPurchaseDate: { type: string }
+        notes: { type: string }
+        downAlertPcts:
+          type: array
+          items:
+            type: number
+        upAlertPcts:
+          type: array
+          items:
+            type: number
+
+    PortfolioPositionUpdate:
+      type: object
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        avgCost: { type: number, exclusiveMinimum: 0 }
+        investedAmount: { type: number, exclusiveMinimum: 0 }
+        firstPurchaseDate: { type: string }
+        notes: { type: ["string", "null"] }
+        downAlertPcts:
+          type: array
+          items:
+            type: number
+        upAlertPcts:
+          type: array
+          items:
+            type: number
+
+    PortfolioPurchase:
+      type: object
+      required: [id, positionId, purchaseDate, amount, createdAt]
+      properties:
+        id: { type: integer }
+        positionId: { type: integer }
+        purchaseDate: { type: string }
+        amount: { type: number }
+        purchasePrice: { type: ["number", "null"] }
+        saleDate: { type: ["string", "null"] }
+        salePrice: { type: ["number", "null"] }
+        createdAt: { type: string }
+
+    PortfolioPurchaseCreate:
+      type: object
+      required: [purchaseDate, amount]
+      properties:
+        purchaseDate: { type: string }
+        amount: { type: number, exclusiveMinimum: 0 }
+        purchasePrice: { type: ["number", "null"] }
+        saleDate: { type: ["string", "null"] }
+        salePrice: { type: ["number", "null"] }
+
+    PortfolioPurchaseUpdate:
+      type: object
+      properties:
+        saleDate: { type: ["string", "null"] }
+        salePrice: { type: ["number", "null"] }
+
+    CashBalance:
+      type: object
+      required: [real, simulated]
+      properties:
+        real: { type: number }
+        simulated: { type: number }
+
+    CashUpdate:
+      type: object
+      required: [mode, amount]
+      properties:
+        mode:
+          type: string
+          enum: [real, simulated]
+        amount:
+          type: number
+          minimum: 0
+
+    WatchlistItem:
+      type: object
+      required: [id, ticker, notes, addedAt]
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        notes: { type: ["string", "null"] }
+        addedAt: { type: string }
+
+    WatchlistItemCreate:
+      type: object
+      required: [ticker]
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        notes: { type: string }
+
+    JournalEntry:
+      type: object
+      required:
+        [
+          id,
+          ticker,
+          entryDate,
+          entryPrice,
+          stopLoss,
+          targetPrice,
+          thesis,
+          emotionalState,
+          exitDate,
+          exitPrice,
+          result,
+          notes,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        entryDate: { type: string }
+        entryPrice: { type: ["number", "null"] }
+        stopLoss: { type: ["number", "null"] }
+        targetPrice: { type: ["number", "null"] }
+        thesis: { type: ["string", "null"] }
+        emotionalState: { type: string }
+        exitDate: { type: ["string", "null"] }
+        exitPrice: { type: ["number", "null"] }
+        result: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    JournalEntryCreate:
+      type: object
+      required: [ticker, entryDate]
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        entryDate: { type: string }
+        entryPrice: { type: ["number", "null"] }
+        stopLoss: { type: ["number", "null"] }
+        targetPrice: { type: ["number", "null"] }
+        thesis: { type: string }
+        emotionalState: { type: string }
+        exitDate: { type: ["string", "null"] }
+        exitPrice: { type: ["number", "null"] }
+        result: { type: ["string", "null"] }
+        notes: { type: string }
+
+    JournalEntryUpdate:
+      type: object
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        entryDate: { type: string }
+        entryPrice: { type: ["number", "null"] }
+        stopLoss: { type: ["number", "null"] }
+        targetPrice: { type: ["number", "null"] }
+        thesis: { type: ["string", "null"] }
+        emotionalState: { type: string }
+        exitDate: { type: ["string", "null"] }
+        exitPrice: { type: ["number", "null"] }
+        result: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
