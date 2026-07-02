@@ -1,0 +1,158 @@
+import { useMemo, useState } from "react";
+
+// ─── CandleChart ─────────────────────────────────────────────────────────────
+// Candlestick em SVG puro (sem dependências externas).
+// Verde = fechamento >= abertura; vermelho = fechamento < abertura.
+
+export interface Candle {
+  t: number; // timestamp ms
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+interface CandleChartProps {
+  candles: Candle[];
+  height?: number;
+  labelFor: (ts: number) => string;
+}
+
+const UP = "#22c55e";
+const DOWN = "#ef4444";
+
+function fmtPrice(n: number) {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function CandleChart({ candles, height = 200, labelFor }: CandleChartProps) {
+  const [hover, setHover] = useState<number | null>(null);
+
+  const W = 1000; // viewBox width — escala junto com o container
+  const H = height;
+  const PAD_L = 8;
+  const PAD_R = 64; // espaço pro eixo Y à direita
+  const PAD_T = 8;
+  const PAD_B = 22; // espaço pros labels do eixo X
+
+  const geom = useMemo(() => {
+    if (!candles.length) return null;
+    const lows = candles.map((c) => c.l);
+    const highs = candles.map((c) => c.h);
+    const minP = Math.min(...lows);
+    const maxP = Math.max(...highs);
+    const pad = (maxP - minP) * 0.05 || 1;
+    const lo = minP - pad;
+    const hi = maxP + pad;
+
+    const plotW = W - PAD_L - PAD_R;
+    const plotH = H - PAD_T - PAD_B;
+    const step = plotW / candles.length;
+    const bodyW = Math.max(1.5, Math.min(14, step * 0.65));
+
+    const y = (p: number) => PAD_T + plotH * (1 - (p - lo) / (hi - lo));
+    const x = (i: number) => PAD_L + step * i + step / 2;
+
+    // ~4 ticks no eixo Y
+    const ticks: number[] = [];
+    for (let k = 0; k <= 3; k++) ticks.push(lo + ((hi - lo) * k) / 3);
+
+    // ~5 labels no eixo X
+    const xIdx: number[] = [];
+    const n = Math.min(5, candles.length);
+    for (let k = 0; k < n; k++) xIdx.push(Math.round((candles.length - 1) * (k / Math.max(1, n - 1))));
+
+    return { lo, hi, y, x, step, bodyW, ticks, xIdx, plotH };
+  }, [candles, H]);
+
+  if (!geom || !candles.length) return null;
+
+  const { y, x, bodyW, ticks, xIdx } = geom;
+  const hovered = hover != null ? candles[hover] : null;
+
+  return (
+    <div className="relative w-full select-none">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ height }}
+        preserveAspectRatio="none"
+        onMouseLeave={() => setHover(null)}
+      >
+        {/* linhas de grade + eixo Y */}
+        {ticks.map((p, i) => (
+          <g key={i}>
+            <line x1={PAD_L} x2={W - PAD_R} y1={y(p)} y2={y(p)} stroke="#27272a" strokeWidth={0.5} />
+            <text
+              x={W - PAD_R + 6}
+              y={y(p) + 3}
+              fontSize={10}
+              fontFamily="monospace"
+              fill="#6b7280"
+            >
+              ${fmtPrice(p)}
+            </text>
+          </g>
+        ))}
+
+        {/* velas */}
+        {candles.map((c, i) => {
+          const up = c.c >= c.o;
+          const color = up ? UP : DOWN;
+          const cx = x(i);
+          const top = y(Math.max(c.o, c.c));
+          const bot = y(Math.min(c.o, c.c));
+          const bodyH = Math.max(1, bot - top);
+          return (
+            <g key={c.t} opacity={hover == null || hover === i ? 1 : 0.45}>
+              {/* pavio */}
+              <line x1={cx} x2={cx} y1={y(c.h)} y2={y(c.l)} stroke={color} strokeWidth={1} />
+              {/* corpo */}
+              <rect x={cx - bodyW / 2} y={top} width={bodyW} height={bodyH} fill={color} rx={0.5} />
+              {/* área de hover invisível */}
+              <rect
+                x={cx - geom.step / 2}
+                y={PAD_T}
+                width={geom.step}
+                height={geom.plotH}
+                fill="transparent"
+                onMouseEnter={() => setHover(i)}
+                onTouchStart={() => setHover(i)}
+              />
+            </g>
+          );
+        })}
+
+        {/* labels eixo X */}
+        {xIdx.map((i) => (
+          <text
+            key={i}
+            x={x(i)}
+            y={H - 6}
+            fontSize={10}
+            fontFamily="monospace"
+            fill="#6b7280"
+            textAnchor="middle"
+          >
+            {labelFor(candles[i].t)}
+          </text>
+        ))}
+      </svg>
+
+      {/* tooltip */}
+      {hovered && (
+        <div
+          className="absolute top-1 left-1 rounded-md border px-2 py-1 font-mono text-[11px] leading-4 pointer-events-none"
+          style={{ background: "hsl(var(--card))", borderColor: "hsl(var(--border))" }}
+        >
+          <div className="text-muted-foreground">{labelFor(hovered.t)}</div>
+          <div>A <span style={{ color: hovered.c >= hovered.o ? UP : DOWN }}>${fmtPrice(hovered.o)}</span></div>
+          <div>M ${fmtPrice(hovered.h)} · m ${fmtPrice(hovered.l)}</div>
+          <div>F <span style={{ color: hovered.c >= hovered.o ? UP : DOWN }}>${fmtPrice(hovered.c)}</span></div>
+          <div className="text-muted-foreground">Vol {hovered.v.toLocaleString("en-US")}</div>
+        </div>
+      )}
+    </div>
+  );
+}
