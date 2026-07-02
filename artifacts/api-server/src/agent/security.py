@@ -32,10 +32,11 @@ def sanitize_for_llm(text):
 def sanitize_ticker(ticker):
     if not ticker or not isinstance(ticker, str):
         raise ValueError("Ticker invalido")
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", ticker)
-    if len(cleaned) < 1 or len(cleaned) > 10:
+    cleaned = re.sub(r"[^A-Za-z0-9.\-]", "", ticker).upper()
+    # Base (ex: NVDA, RADL3) + sufixo opcional de bolsa/classe (ex: .SA, -B)
+    if not re.fullmatch(r"[A-Z0-9]{1,8}(?:[.\-][A-Z0-9]{1,4})?", cleaned):
         raise ValueError(f"Ticker invalido: {ticker}")
-    return cleaned.upper()
+    return cleaned
 
 
 def sanitize_url(url):
