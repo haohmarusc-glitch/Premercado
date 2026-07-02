@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer } from "lucide-react";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
+import { CandleChart } from "@/components/candle-chart";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -225,6 +226,7 @@ function QuoteCard({
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
 function PriceChart({ symbol, period }: { symbol: string; period: string }) {
+  const [mode, setMode] = useState<"line" | "candle">("line");
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
     {
@@ -265,7 +267,36 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
     );
   }
 
+  const toggle = (
+    <div className="flex justify-end gap-1 mb-1">
+      {([["line", "Linha"], ["candle", "Velas"]] as const).map(([key, label]) => (
+        <button
+          key={key}
+          onClick={() => setMode(key)}
+          className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
+            mode === key
+              ? "bg-primary text-primary-foreground border-primary"
+              : "text-muted-foreground border-border hover:text-foreground"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (mode === "candle") {
+    return (
+      <div>
+        {toggle}
+        <CandleChart candles={candles} height={200} labelFor={(ts) => fmtLabel(ts, period)} />
+      </div>
+    );
+  }
+
   return (
+    <div>
+    {toggle}
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
         <defs>
@@ -313,6 +344,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
         />
       </AreaChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
