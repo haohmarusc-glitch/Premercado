@@ -11,9 +11,32 @@ Filosofia: calculadora, não decisor — expõe os componentes, não dá ordem d
 Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
-import sys, json, re
+import sys, json, re, os, time
 import yfinance as yf
 import pandas as pd
+
+# ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
+#    então não pode importar agent/cache.py que usa import relativo).
+#    Mesmo padrão: JSON em /tmp, falha aberta. TTL 30min — tendência sobre
+#    candle diário não muda a cada minuto, e o Yahoo rate-limita IP do Replit.
+_CACHE_PATH = os.environ.get("TREND_CACHE_PATH", "/tmp/premercado_trend_cache.json")
+_TTL_SECONDS = int(os.environ.get("TREND_CACHE_TTL", "1800"))
+
+def _cache_load() -> dict:
+    try:
+        if os.path.exists(_CACHE_PATH):
+            with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _cache_save(cache: dict) -> None:
+    try:
+        with open(_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception:
+        pass  # disco cheio/sem permissão: segue sem cache
 
 def sanitize_ticker(t: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
@@ -197,5 +220,32 @@ def for_ticker(ticker: str) -> dict:
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     tickers = args.get("tickers", [])
-    items = [for_ticker(t) for t in tickers]
+    cache = _cache_load()
+    now = time.time()
+    items = []
+    dirty = False
+    for t in tickers:
+        key = f"trend:{str(t).upper()}"
+        entry = cache.get(key)
+        # 1) Cache fresco → usa direto, sem tocar no Yahoo
+        if entry and (now - entry[0]) < _TTL_SECONDS:
+            items.append(entry[1])
+            continue
+        # 2) Busca ao vivo
+        result = for_ticker(t)
+        if "error" not in result:
+            cache[key] = [now, result]
+            dirty = True
+            items.append(result)
+        elif entry:
+            # 3) Stale-if-error: Yahoo falhou (ex: rate limit) mas há resultado
+            #    antigo → serve o antigo marcado como stale, melhor que erro.
+            stale = dict(entry[1])
+            stale["stale"] = True
+            stale["staleAgeSeconds"] = int(now - entry[0])
+            items.append(stale)
+        else:
+            items.append(result)
+    if dirty:
+        _cache_save(cache)
     print(json.dumps({"items": items}, ensure_ascii=False))
