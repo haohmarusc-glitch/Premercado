@@ -103,12 +103,19 @@ TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 1. Cotação e pré-mercado — get_stock_data
 2. Manchetes — get_news
 3. Indicadores técnicos — get_technical_indicators
-4. Exposição short — get_short_interest
-5. Consenso de analistas — get_analyst_ratings
-6. Put/call ratio e IV — get_options_data
-7. Se houver catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
-8. Compare cada ativo com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
-9. Chame save_observation para cada ativo, com resumo curto e sentimento.
+4. Padrões de candlestick — detect_candle_patterns
+5. Exposição short — get_short_interest
+6. Consenso de analistas — get_analyst_ratings
+7. Put/call ratio e IV — get_options_data
+8. Se houver catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
+9. Cruze candle × notícia: se detect_candle_patterns achou um padrão de
+   reversão (Engolfo, Martelo/Enforcado, Estrela da Manhã/Noite etc.) na
+   MESMA data ou 1 dia antes/depois de uma manchete relevante do get_news,
+   destaque essa coincidência explicitamente no resumo do ativo — é um
+   sinal mais forte que técnico ou notícia isolados. Padrão sem notícia
+   correspondente (ou vice-versa) tem peso normal, sem destaque especial.
+10. Compare cada ativo com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
+11. Chame save_observation para cada ativo, com resumo curto e sentimento.
 
 OBRIGATÓRIO — agrupe tool calls por categoria, não por ativo:
 Se o Grupo A tem N ativos, a categoria 1 (get_stock_data) deve ser UMA
@@ -207,7 +214,7 @@ def build_chat_prompt() -> str:
 Ativos monitorados: {", ".join(config.TICKERS)}.
 
 Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
-get_fear_greed_index, get_sector_performance, get_short_interest,
+detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
 get_analyst_ratings, get_options_data.
 
 Regras:
@@ -249,7 +256,7 @@ def _resp_to_history_content(resp) -> list:
 
 _CHAT_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
-    "get_fear_greed_index", "get_sector_performance",
+    "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
@@ -267,8 +274,8 @@ PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_N
 # Tool subset for portfolio fast mode
 _PORTFOLIO_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
-    "get_short_interest", "get_analyst_ratings", "save_observation",
-    "get_fear_greed_index",
+    "detect_candle_patterns", "get_short_interest", "get_analyst_ratings",
+    "save_observation", "get_fear_greed_index",
 }
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
 
@@ -282,14 +289,17 @@ Ativos da carteira: {", ".join(tickers)}.
 2. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
 3. get_news — manchetes de TODOS os ativos juntos
 4. get_technical_indicators — indicadores de TODOS os ativos juntos
-5. get_short_interest — short interest de TODOS os ativos juntos
-6. get_analyst_ratings — consenso de TODOS os ativos juntos
-7. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
+5. detect_candle_patterns — padrões de vela de TODOS os ativos juntos. Se um
+   padrão de reversão coincidir (mesma data ou ±1 dia) com uma manchete do
+   get_news, destaque isso no resumo — é sinal mais forte que qualquer um isolado.
+6. get_short_interest — short interest de TODOS os ativos juntos
+7. get_analyst_ratings — consenso de TODOS os ativos juntos
+8. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
    Você DEVE chamar save_observation {len(tickers)} vezes (uma por ativo: {", ".join(tickers)}).
    Somente após salvar TODAS as observações escreva o relatório final.
 
-**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 7 (save_observation).
-Se você pular o passo 7, a análise é considerada incompleta e inválida.
+**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 8 (save_observation).
+Se você pular o passo 8, a análise é considerada incompleta e inválida.
 
 **Regras:**
 - Agrupe por categoria, nunca por ativo.
