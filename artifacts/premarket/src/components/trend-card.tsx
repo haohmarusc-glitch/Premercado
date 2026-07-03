@@ -23,7 +23,7 @@ interface TrendNews {
   destaques: { title: string; tone: string; ts?: number | null }[];
 }
 
-interface TrendItem {
+export interface TrendItem {
   ticker: string;
   price?: number;
   trend?: string;
@@ -43,6 +43,16 @@ async function fetchTrend(symbol: string): Promise<TrendItem | null> {
   if (!res.ok) throw new Error(`trend ${res.status}`);
   const data = (await res.json()) as { items?: TrendItem[] };
   return data.items?.[0] ?? null;
+}
+
+// Busca o sinal de tendência de TODA a cesta de tickers configurada de uma
+// vez (mesmo endpoint, sem o parametro `tickers` -> backend usa
+// settings.tickers). Usado pelo Swing Screener.
+export async function fetchTrendBasket(): Promise<TrendItem[]> {
+  const res = await fetch(`/api/trend`, { credentials: "include" });
+  if (!res.ok) throw new Error(`trend ${res.status}`);
+  const data = (await res.json()) as { items?: TrendItem[] };
+  return data.items ?? [];
 }
 
 function trendVisual(trend?: string) {
