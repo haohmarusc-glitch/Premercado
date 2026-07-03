@@ -10,11 +10,16 @@ export interface AlertFiring {
   id: number;
   alertId: number;
   symbol: string;
+  indicator?: string;
   condition: string;
   /** @nullable */
   thresholdPct?: number | null;
   /** @nullable */
   thresholdPrice?: number | null;
+  /** @nullable */
+  thresholdValue?: number | null;
+  /** @nullable */
+  valueAtFiring?: number | null;
   /** @nullable */
   changePctAtFiring?: number | null;
   /** @nullable */

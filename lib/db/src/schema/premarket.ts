@@ -107,9 +107,15 @@ export type Settings = typeof settingsTable.$inferSelect;
 export const alertsTable = pgTable("alerts", {
   id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
+  // 'price' (usa thresholdPrice ou thresholdPct, comportamento original) |
+  // 'rsi' (usa thresholdValue como nivel de RSI 0-100) |
+  // 'macd' (condition 'above' = histograma bullish, 'below' = bearish, sem threshold) |
+  // 'sma20' | 'sma50' (condition 'above'/'below' = preco cruzou a media, sem threshold)
+  indicator: text("indicator").notNull().default("price"),
   condition: text("condition").notNull(), // 'above' | 'below'
   thresholdPct: money("threshold_pct"),
   thresholdPrice: money("threshold_price"),
+  thresholdValue: money("threshold_value"), // generico: nivel de RSI etc.
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -127,9 +133,12 @@ export const alertFiringsTable = pgTable("alert_firings", {
     .notNull()
     .references(() => alertsTable.id, { onDelete: "cascade" }),
   symbol: text("symbol").notNull(),
+  indicator: text("indicator").notNull().default("price"),
   condition: text("condition").notNull(),
   thresholdPct: money("threshold_pct"),
   thresholdPrice: money("threshold_price"),
+  thresholdValue: money("threshold_value"),
+  valueAtFiring: money("value_at_firing"), // valor do indicador tecnico no momento do disparo (ex: RSI)
   changePctAtFiring: money("change_pct_at_firing"),
   priceAtFiring: money("price_at_firing"),
   firedAt: timestamp("fired_at").defaultNow().notNull(),

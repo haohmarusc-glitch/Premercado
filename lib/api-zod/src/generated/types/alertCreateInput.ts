@@ -8,9 +8,13 @@
 
 export interface AlertCreateInput {
   symbol: string;
+  /** 'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50' */
+  indicator?: string;
   condition: string;
   /** @nullable */
   thresholdPct?: number | null;
   /** @nullable */
   thresholdPrice?: number | null;
+  /** @nullable */
+  thresholdValue?: number | null;
 }
