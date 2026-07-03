@@ -78,3 +78,25 @@ export function NewsMarkerShape({ x, y, width, payload }: NewsMarkerShapeProps) 
     </g>
   );
 }
+
+// Variante para <ReferenceDot shape={...}> — usada no modo vela. NÃO usar um
+// segundo <Bar> com stackId ali: empilhar a barra "range" ([low, high], usada
+// pelo CandleShape) com uma segunda série de Bar quebra o cálculo de domínio
+// do eixo Y do recharts (visto em produção: eixo colapsou para 0–200 em vez
+// de ~192–200). ReferenceDot é uma anotação independente de série — não
+// participa desse cálculo, então não tem esse efeito colateral.
+export function newsDotShape(items: NewsItem[]) {
+  return function NewsDot({ cx, cy }: { cx?: number; cy?: number }) {
+    if (cx == null || cy == null) return <g />;
+    const title = items
+      .slice(0, 3)
+      .map((n) => n.title + (n.summary ? ` — ${n.summary}` : ""))
+      .join("\n\n");
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={4} fill="#facc15" stroke="#78350f" strokeWidth={1} />
+        <title>{title}</title>
+      </g>
+    );
+  };
+}

@@ -19,6 +19,7 @@ import {
   Area,
   ComposedChart,
   Bar,
+  ReferenceDot,
   XAxis,
   YAxis,
   Tooltip,
@@ -31,7 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, LineChart as LineChartIcon, CandlestickChart } from "lucide-react";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
-import { attachNewsMarkers, NewsMarkerShape } from "@/components/news-markers";
+import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 
@@ -292,7 +293,8 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
     const candleData = attachNewsMarkers(
       toCandleRangeData(candles).map((c) => ({ ...c, label: fmtLabel(c.t, period) })),
       newsItems,
-    ).map((c) => ({ ...c, newsY: c.newsItems.length ? candleDomainRange[1] : null }));
+    );
+    const candleNewsMarkers = candleData.filter((c) => c.newsItems.length > 0);
     return (
       <ResponsiveContainer width="100%" height={200}>
         <ComposedChart data={candleData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -321,18 +323,22 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
               fontSize: "12px",
             }}
             labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
-            formatter={(_val: unknown, name: string, item: { payload?: { o: number; h: number; l: number; c: number; newsItems?: { title: string }[] } }) => {
+            formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
               const p = item?.payload;
-              if (name === "newsY") {
-                const items = p?.newsItems ?? [];
-                return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
-              }
               if (!p) return ["—", "OHLC"];
               return [`O ${fmt(p.o)} · H ${fmt(p.h)} · L ${fmt(p.l)} · C ${fmt(p.c)}`, "OHLC"];
             }}
           />
-          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} stackId="candle" />
-          <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} stackId="candle" />
+          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+          {candleNewsMarkers.map((m) => (
+            <ReferenceDot
+              key={m.t}
+              x={m.label}
+              y={candleDomainRange[1]}
+              ifOverflow="visible"
+              shape={newsDotShape(m.newsItems)}
+            />
+          ))}
         </ComposedChart>
       </ResponsiveContainer>
     );

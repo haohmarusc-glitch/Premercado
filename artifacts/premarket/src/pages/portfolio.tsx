@@ -24,12 +24,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon } from "lucide-react";
-import { Line, ComposedChart, Bar, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
-import { attachNewsMarkers, NewsMarkerShape } from "@/components/news-markers";
+import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -222,10 +222,8 @@ function PriceChart({ ticker }: { ticker: string }) {
     newsY: c.newsItems.length ? max : null,
   }));
   const candleDomainRange = candleDomain(candles);
-  const candleData = attachNewsMarkers(toCandleRangeData(candles), newsItemsList).map((c) => ({
-    ...c,
-    newsY: c.newsItems.length ? candleDomainRange[1] : null,
-  }));
+  const candleData = attachNewsMarkers(toCandleRangeData(candles), newsItemsList);
+  const candleNewsMarkers = candleData.filter((c) => c.newsItems.length > 0);
 
   return (
     <div className="w-full mt-3">
@@ -307,12 +305,8 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <RechartsTooltip
-              formatter={(_val: unknown, name: string, item: { payload?: { o: number; h: number; l: number; c: number; newsItems?: { title: string }[] } }) => {
+              formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
                 const p = item?.payload;
-                if (name === "newsY") {
-                  const items = p?.newsItems ?? [];
-                  return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
-                }
                 if (!p) return ["—", "OHLC"];
                 return [`O ${p.o.toFixed(2)} · H ${p.h.toFixed(2)} · L ${p.l.toFixed(2)} · C ${p.c.toFixed(2)}`, ticker];
               }}
@@ -323,8 +317,16 @@ function PriceChart({ ticker }: { ticker: string }) {
               }}
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
             />
-            <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} stackId="candle" />
-            <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} stackId="candle" />
+            <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+            {candleNewsMarkers.map((m) => (
+              <ReferenceDot
+                key={m.t}
+                x={m.t}
+                y={candleDomainRange[1]}
+                ifOverflow="visible"
+                shape={newsDotShape(m.newsItems)}
+              />
+            ))}
           </ComposedChart>
         </ResponsiveContainer>
       ) : (
