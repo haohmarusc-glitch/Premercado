@@ -16,6 +16,8 @@ import {
 import {
   AreaChart,
   Area,
+  ComposedChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -26,7 +28,8 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, LineChart as LineChartIcon, CandlestickChart } from "lucide-react";
+import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 
@@ -224,13 +227,19 @@ function QuoteCard({
 
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
-function PriceChart({ symbol, period }: { symbol: string; period: string }) {
+type ChartVisual = "area" | "candle";
+
+function PriceChart({ symbol, period, visual }: { symbol: string; period: string; visual: ChartVisual }) {
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
     {
       query: {
         queryKey: getGetTickerChartQueryKey({ symbol, period }),
         staleTime: 55_000,
+        // Só faz sentido reconsultar automaticamente no intraday (1D) — o
+        // backend também cacheia 5D+ por vários minutos/hora (chart.ts TTL),
+        // então repolling mais frequente nesses períodos não traria dado novo.
+        refetchInterval: period === "1d" ? 60_000 : false,
       },
     },
   );
@@ -242,7 +251,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
   const minP = prices.length ? Math.min(...prices) : 0;
   const maxP = prices.length ? Math.max(...prices) : 0;
   const pad = (maxP - minP) * 0.05 || 1;
-  const domain: [number, number] = [minP - pad, maxP + pad];
+  const areaDomain: [number, number] = [minP - pad, maxP + pad];
 
   const first = prices[0];
   const last = prices[prices.length - 1];
@@ -265,6 +274,48 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
     );
   }
 
+  if (visual === "candle") {
+    const candleData = toCandleRangeData(candles).map((c) => ({ ...c, label: fmtLabel(c.t, period) }));
+    return (
+      <ResponsiveContainer width="100%" height={200}>
+        <ComposedChart data={candleData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+            tickLine={false}
+            axisLine={false}
+            interval="preserveStartEnd"
+            minTickGap={60}
+          />
+          <YAxis
+            domain={candleDomain(candles)}
+            tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+            tickLine={false}
+            axisLine={false}
+            width={60}
+            tickFormatter={(v: number) => `$${fmt(v)}`}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "hsl(var(--card))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: "6px",
+              fontFamily: "monospace",
+              fontSize: "12px",
+            }}
+            labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
+            formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
+              const p = item?.payload;
+              if (!p) return ["—", "OHLC"];
+              return [`O ${fmt(p.o)} · H ${fmt(p.h)} · L ${fmt(p.l)} · C ${fmt(p.c)}`, "OHLC"];
+            }}
+          />
+          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    );
+  }
+
   return (
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -283,7 +334,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
           minTickGap={60}
         />
         <YAxis
-          domain={domain}
+          domain={areaDomain}
           tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
           tickLine={false}
           axisLine={false}
@@ -321,6 +372,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
 export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
+  const [chartVisual, setChartVisual] = useState<ChartVisual>("area");
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
   const [sectorTab, setSectorTab] = useState<string>("all");
 
@@ -496,29 +548,61 @@ export default function Dashboard() {
               {activeSymbol} — Histórico de preço
             </span>
 
-            {/* Period selector */}
-            <div className="flex items-center gap-1">
-              {PERIODS.map((p) => (
+            <div className="flex items-center gap-3">
+              {/* Chart visual toggle */}
+              <div className="flex items-center gap-1 border border-border rounded p-0.5">
                 <button
-                  key={p.key}
                   type="button"
-                  onClick={() => setPeriod(p.key)}
-                  className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
-                    period === p.key
+                  onClick={() => setChartVisual("area")}
+                  title="Área"
+                  className={`p-1 rounded transition-colors ${
+                    chartVisual === "area"
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   }`}
-                  data-testid={`period-btn-${p.key}`}
+                  data-testid="chart-visual-area"
                 >
-                  {p.label}
+                  <LineChartIcon className="h-3.5 w-3.5" />
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setChartVisual("candle")}
+                  title="Vela"
+                  className={`p-1 rounded transition-colors ${
+                    chartVisual === "candle"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  }`}
+                  data-testid="chart-visual-candle"
+                >
+                  <CandlestickChart className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Period selector */}
+              <div className="flex items-center gap-1">
+                {PERIODS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setPeriod(p.key)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
+                      period === p.key
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    }`}
+                    data-testid={`period-btn-${p.key}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Chart body */}
           <div className="p-4">
-            <PriceChart symbol={activeSymbol} period={period} />
+            <PriceChart symbol={activeSymbol} period={period} visual={chartVisual} />
           </div>
         </div>
       )}

@@ -23,11 +23,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon } from "lucide-react";
+import { LineChart, Line, ComposedChart, Bar, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -179,14 +180,18 @@ function formatXTick(ts: number, period: ChartPeriod): string {
   return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
+type PortfolioChartVisual = "line" | "candle";
+
 function PriceChart({ ticker }: { ticker: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1d");
+  const [visual, setVisual] = useState<PortfolioChartVisual>("line");
   const { data, isLoading } = useGetTickerChart(
     { symbol: ticker, period },
     {
       query: {
         queryKey: getGetTickerChartQueryKey({ symbol: ticker, period }),
         staleTime: period === "1d" ? 60_000 : 5 * 60_000,
+        refetchInterval: period === "1d" ? 60_000 : false,
       },
     },
   );
@@ -200,6 +205,7 @@ function PriceChart({ ticker }: { ticker: string }) {
   const min = chartData.length ? Math.min(...chartData.map((d) => d.v)) * 0.998 : 0;
   const max = chartData.length ? Math.max(...chartData.map((d) => d.v)) * 1.002 : 100;
   const tickCount = Math.min(6, candles.length);
+  const candleData = toCandleRangeData(candles);
 
   return (
     <div className="w-full mt-3">
@@ -207,21 +213,49 @@ function PriceChart({ ticker }: { ticker: string }) {
         <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
           {ticker} — histórico
         </span>
-        <div className="flex gap-1">
-          {CHART_PERIODS.map(({ label, value }) => (
+        <div className="flex items-center gap-2">
+          <div className="flex gap-0.5 border border-border rounded p-0.5">
             <button
-              key={value}
-              onClick={() => setPeriod(value)}
+              onClick={() => setVisual("line")}
+              title="Linha"
               className={cn(
-                "text-[10px] font-mono px-2 py-0.5 rounded border transition-colors",
-                period === value
-                  ? "border-primary text-primary bg-primary/10"
-                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40",
+                "p-0.5 rounded transition-colors",
+                visual === "line"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary",
               )}
             >
-              {label}
+              <LineChartIcon className="h-3 w-3" />
             </button>
-          ))}
+            <button
+              onClick={() => setVisual("candle")}
+              title="Vela"
+              className={cn(
+                "p-0.5 rounded transition-colors",
+                visual === "candle"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+              )}
+            >
+              <CandlestickChartIcon className="h-3 w-3" />
+            </button>
+          </div>
+          <div className="flex gap-1">
+            {CHART_PERIODS.map(({ label, value }) => (
+              <button
+                key={value}
+                onClick={() => setPeriod(value)}
+                className={cn(
+                  "text-[10px] font-mono px-2 py-0.5 rounded border transition-colors",
+                  period === value
+                    ? "border-primary text-primary bg-primary/10"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/40",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -233,6 +267,41 @@ function PriceChart({ ticker }: { ticker: string }) {
         <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
           sem dados
         </div>
+      ) : visual === "candle" ? (
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={candleData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+            <XAxis
+              dataKey="t"
+              tickFormatter={(v) => formatXTick(v as number, period)}
+              tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+              tickCount={tickCount}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              domain={candleDomain(candles)}
+              tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+              tickFormatter={(v) => `$${(v as number).toFixed(0)}`}
+              width={42}
+              axisLine={false}
+              tickLine={false}
+            />
+            <RechartsTooltip
+              formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
+                const p = item?.payload;
+                if (!p) return ["—", "OHLC"];
+                return [`O ${p.o.toFixed(2)} · H ${p.h.toFixed(2)} · L ${p.l.toFixed(2)} · C ${p.c.toFixed(2)}`, ticker];
+              }}
+              labelFormatter={(label) => {
+                const d = new Date(label as number);
+                if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+                return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+              }}
+              contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+            />
+            <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
       ) : (
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
