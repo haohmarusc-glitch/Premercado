@@ -14,6 +14,11 @@ alertas de preço e chat conversacional.
 - `pnpm --filter @workspace/api-server test` — testes do servidor (vitest)
 - Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPERATOR_API_KEY`
 - Opcional (fallback chain): `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`
+- Opcional (dados alternativos "smart money" — sem a chave, a seção correspondente
+  some/mostra como ativar em vez de quebrar): `QUIVER_API_KEY` (negociações do
+  Congresso via Quiver Quant), `UNUSUAL_WHALES_API_KEY` (dark pool/opções não-usuais
+  via Unusual Whales), `INSTITUTIONAL_CIKS` (lista de gestores 13F acompanhados,
+  formato `cik:Rótulo,cik:Rótulo` — tem default sem precisar configurar)
 
 ## Stack
 

@@ -9,6 +9,7 @@ import Observations from "@/pages/observations";
 import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
 import AlertsPage from "@/pages/alerts";
+import ScreenerPage from "@/pages/screener";
 import ChatPage from "@/pages/chat";
 import PortfolioPage from "@/pages/portfolio";
 import SectorCoal from "@/pages/sector-coal";
@@ -47,6 +48,7 @@ function Router() {
         <Route path="/settings" component={SettingsPage} />
         <Route path="/runs" component={RunsPage} />
         <Route path="/alerts" component={AlertsPage} />
+        <Route path="/screener" component={ScreenerPage} />
         <Route path="/chat" component={ChatPage} />
         <Route path="/portfolio" component={PortfolioPage} />
         <Route path="/setor/carvao" component={SectorCoal} />

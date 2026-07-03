@@ -32,9 +32,12 @@ async function resolveNotifyEmail(): Promise<string | null> {
 
 export async function sendAlertEmail(opts: {
   symbol: string;
+  indicator?: string; // 'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50'
   condition: string;
   thresholdPct: number | null;
   thresholdPrice: number | null;
+  thresholdValue?: number | null; // ex: nivel de RSI
+  valueAtFiring?: number | null; // valor do indicador tecnico no disparo
   currentChangePct: number | null;
   currentPrice: number | null;
 }): Promise<void> {
@@ -42,15 +45,36 @@ export async function sendAlertEmail(opts: {
   if (!to) { logger.warn("No notify email — skipping alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
+  const indicator = opts.indicator ?? "price";
   const direction = opts.condition === "above" ? "subiu acima de" : "caiu abaixo de";
-  const thresholdStr = opts.thresholdPrice != null
-    ? `$${opts.thresholdPrice.toFixed(2)}`
-    : `${(opts.thresholdPct ?? 0) > 0 ? "+" : ""}${opts.thresholdPct}%`;
-  const subject = `🚨 Alerta: ${opts.symbol} ${direction} ${thresholdStr}`;
+
+  let subject: string;
+  let conditionSentence: string; // frase completa pra "Condição: <isso>" no corpo do email
+  if (indicator === "rsi") {
+    const dir = opts.condition === "above" ? "acima de" : "abaixo de";
+    conditionSentence = `RSI(14) ${dir} ${opts.thresholdValue ?? "—"} (atual: ${opts.valueAtFiring ?? "—"})`;
+    subject = `🚨 Alerta: ${opts.symbol} RSI(14) ${dir} ${opts.thresholdValue ?? "—"}`;
+  } else if (indicator === "macd") {
+    const trend = opts.condition === "above" ? "bullish" : "bearish";
+    conditionSentence = `MACD virou ${trend} (histograma ${opts.condition === "above" ? ">" : "<"} 0)`;
+    subject = `🚨 Alerta: ${opts.symbol} MACD virou ${trend}`;
+  } else if (indicator === "sma20" || indicator === "sma50") {
+    const period = indicator === "sma20" ? "SMA20" : "SMA50";
+    const dir = opts.condition === "above" ? "cruzou acima da" : "cruzou abaixo da";
+    conditionSentence = `preço ${dir} ${period}`;
+    subject = `🚨 Alerta: ${opts.symbol} preço ${dir} ${period}`;
+  } else {
+    const thresholdStr = opts.thresholdPrice != null
+      ? `$${opts.thresholdPrice.toFixed(2)}`
+      : `${(opts.thresholdPct ?? 0) > 0 ? "+" : ""}${opts.thresholdPct}%`;
+    const conditionLabel = opts.thresholdPrice != null ? "preço" : "variação";
+    conditionSentence = `${conditionLabel} ${direction} ${thresholdStr}`;
+    subject = `🚨 Alerta: ${opts.symbol} ${direction} ${thresholdStr}`;
+  }
+
   const priceStr = opts.currentPrice != null ? `$${opts.currentPrice.toFixed(2)}` : "N/A";
   const sign = (opts.currentChangePct ?? 0) >= 0 ? "+" : "";
   const changeStr = opts.currentChangePct != null ? `${sign}${opts.currentChangePct.toFixed(2)}%` : "—";
-  const conditionLabel = opts.thresholdPrice != null ? "preço" : "variação";
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -68,7 +92,7 @@ export async function sendAlertEmail(opts: {
   <div class="change">${changeStr}</div>
   <p style="margin:8px 0;color:#aaa">Preço atual: <strong style="color:#fff">${priceStr}</strong></p>
   <p style="margin:4px 0;color:#666;font-size:12px">
-    Condição: ${conditionLabel} ${direction} ${thresholdStr}
+    Condição: ${conditionSentence}
   </p>
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Cooldown: 4h.</div>

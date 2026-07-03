@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar } from "lucide-react";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -176,6 +176,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
+          {navLink("/screener", <Radar className="h-4 w-4" />, "Screener")}
           {navLink("/history", <History className="h-4 w-4" />, "History")}
           {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
           {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}

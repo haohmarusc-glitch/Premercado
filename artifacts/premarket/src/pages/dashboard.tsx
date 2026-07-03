@@ -23,7 +23,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MarkdownContent } from "@/components/markdown";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, todayBRTDateString } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer } from "lucide-react";
@@ -31,6 +31,7 @@ import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
+import { SmartMoneyCard } from "@/components/smart-money-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -362,7 +363,7 @@ export default function Dashboard() {
     query: { queryKey: getGetLatestReportQueryKey(), retry: false },
   });
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayBRTDateString();
   const { data: allReports } = useListReports({
     query: {
       queryKey: getListReportsQueryKey(),
@@ -559,6 +560,9 @@ export default function Dashboard() {
 
       {/* ── Trend (confluência técnico + notícias) ── */}
       {activeSymbol && <TrendCard symbol={activeSymbol} />}
+
+      {/* ── Smart Money (Congresso + dark pool — opcional, precisa de chave) ── */}
+      {activeSymbol && <SmartMoneyCard symbol={activeSymbol} />}
 
       {/* ── Sentiment summary ── */}
       <div>

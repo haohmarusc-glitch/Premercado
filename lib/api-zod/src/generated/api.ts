@@ -111,9 +111,11 @@ export const RunAgentResponse = zod.object({
 export const ListAlertsResponseItem = zod.object({
   "id": zod.coerce.number(),
   "symbol": zod.string(),
+  "indicator": zod.string().describe('\'price\' | \'rsi\' | \'macd\' | \'sma20\' | \'sma50\''),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
   "thresholdPrice": zod.coerce.number().nullish(),
+  "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -126,9 +128,11 @@ export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
  */
 export const CreateAlertBody = zod.object({
   "symbol": zod.string(),
+  "indicator": zod.string().optional().describe('\'price\' (default) | \'rsi\' | \'macd\' | \'sma20\' | \'sma50\''),
   "condition": zod.string(),
   "thresholdPct": zod.number().nullish(),
-  "thresholdPrice": zod.number().nullish()
+  "thresholdPrice": zod.number().nullish(),
+  "thresholdValue": zod.number().nullish()
 })
 
 
@@ -154,9 +158,11 @@ export const ToggleAlertBody = zod.object({
 export const ToggleAlertResponse = zod.object({
   "id": zod.coerce.number(),
   "symbol": zod.string(),
+  "indicator": zod.string().describe('\'price\' | \'rsi\' | \'macd\' | \'sma20\' | \'sma50\''),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
   "thresholdPrice": zod.coerce.number().nullish(),
+  "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "createdAt": zod.string()
@@ -184,9 +190,12 @@ export const ListAlertFiringsResponseItem = zod.object({
   "id": zod.coerce.number(),
   "alertId": zod.coerce.number(),
   "symbol": zod.string(),
+  "indicator": zod.string().optional(),
   "condition": zod.string(),
   "thresholdPct": zod.coerce.number().nullish(),
   "thresholdPrice": zod.coerce.number().nullish(),
+  "thresholdValue": zod.coerce.number().nullish(),
+  "valueAtFiring": zod.coerce.number().nullish(),
   "changePctAtFiring": zod.coerce.number().nullish(),
   "priceAtFiring": zod.coerce.number().nullish(),
   "firedAt": zod.string()
