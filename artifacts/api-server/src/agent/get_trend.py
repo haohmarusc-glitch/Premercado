@@ -12,6 +12,7 @@ Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
 import sys, json, re, os, time
+import requests
 import yfinance as yf
 import pandas as pd
 
@@ -58,6 +59,30 @@ NEGATIVE = [
     "bearish", "warning", "warns", "layoffs", "slump", "tumbles", "fraud",
 ]
 
+# ── Tradução via endpoint gratuito do Google Translate (sem API key) ─────────
+# Mesma abordagem de get_news_feed.py — só as headlines destacadas (ao usuário)
+# são traduzidas; a classificação de sentimento usa o título original em inglês.
+def _translate_join(texts: list[str]) -> list[str]:
+    if not texts:
+        return texts
+    joined = "\n".join(texts)
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
+        )
+        r.raise_for_status()
+        data = r.json()
+        translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
+        lines = translated.split("\n")
+        if len(lines) == len(texts):
+            return [ln.strip() for ln in lines]
+    except Exception:
+        pass
+    return texts
+
 def news_sentiment(ticker: str, max_items: int = 8) -> dict:
     try:
         news = yf.Ticker(ticker).news or []
@@ -67,7 +92,8 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
     scored = []
     for item in news[:max_items]:
         content = item.get("content", {}) if isinstance(item.get("content"), dict) else {}
-        title = str(content.get("title", item.get("title", "")) or "").lower()
+        raw_title = str(content.get("title", item.get("title", "")) or "")
+        title = raw_title.lower()
         if not title:
             continue
         # Timestamp de publicação (ms) — usado pelos marcadores no gráfico de velas
@@ -84,18 +110,24 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
         n = sum(1 for w in NEGATIVE if w in title)
         if p > n:
             pos += 1
-            scored.append({"title": title[:120], "tone": "positivo", "ts": ts})
+            scored.append({"title": raw_title[:120], "tone": "positivo", "ts": ts})
         elif n > p:
             neg += 1
-            scored.append({"title": title[:120], "tone": "negativo", "ts": ts})
+            scored.append({"title": raw_title[:120], "tone": "negativo", "ts": ts})
     total = pos + neg
     if total == 0:
         label, score = "neutro", 0.0
     else:
         score = round((pos - neg) / total, 2)
         label = "positivo" if score > 0.25 else "negativo" if score < -0.25 else "misto"
+    # Traduz só as headlines exibidas ao usuário (destaques), pt-BR
+    destaques = scored[:4]
+    if destaques:
+        translated = _translate_join([d["title"] for d in destaques])
+        for d, tr in zip(destaques, translated):
+            d["title"] = tr
     return {"label": label, "score": score, "positivas": pos, "negativas": neg,
-            "analisadas": len(news[:max_items]), "destaques": scored[:4]}
+            "analisadas": len(news[:max_items]), "destaques": destaques}
 
 # ── Estrutura de preço: topos/fundos via pivôs simples ───────────────────────
 def price_structure(close: pd.Series, lookback: int = 60, window: int = 3) -> str:
