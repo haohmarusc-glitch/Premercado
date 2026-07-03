@@ -4,6 +4,7 @@ import path from "path";
 import { asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
+import { computeOpenLotTotals } from "../lib/portfolio-math";
 import {
   ListPortfolioPositionsResponse,
   UpdatePortfolioPositionResponse as PortfolioPositionSchema,
@@ -84,25 +85,13 @@ async function recomputePosition(positionId: number): Promise<void> {
     return;
   }
 
-  let totalInvested = 0;
-  let totalShares = 0;
-  for (const p of open) {
-    const amount = Number(p.amount);
-    totalInvested += amount;
-    if (p.purchasePrice != null && Number(p.purchasePrice) > 0) {
-      totalShares += amount / Number(p.purchasePrice);
-    }
-  }
-  const avgCost = totalShares > 0 ? totalInvested / totalShares : 0;
+  const totals = computeOpenLotTotals(
+    open.map((p) => ({ amount: Number(p.amount), purchasePrice: p.purchasePrice != null ? Number(p.purchasePrice) : null })),
+  );
 
   await db
     .update(portfolioPositionsTable)
-    .set({
-      quantity: totalShares,
-      avgCost,
-      investedAmount: totalInvested,
-      updatedAt: new Date(),
-    })
+    .set({ ...totals, updatedAt: new Date() })
     .where(eq(portfolioPositionsTable.id, positionId));
 }
 
@@ -137,11 +126,28 @@ export async function seedPortfolioIfEmpty() {
     for (const pos of SEED_POSITIONS) {
       const [inserted] = await db.insert(portfolioPositionsTable).values(pos).returning();
       const purchases = SEED_PURCHASES[pos.ticker] ?? [];
-      if (purchases.length > 0) {
-        await db.insert(portfolioPurchasesTable).values(
-          purchases.map((p) => ({ positionId: inserted.id, ...p })),
-        );
+      if (purchases.length === 0) continue;
+
+      // Os totais da posicao ja vem corretos e fixos em SEED_POSITIONS (nao
+      // dependem de recompute aqui). Mas os lotes individuais nascem sem
+      // purchasePrice -- backfill best-effort pra que qualquer edicao futura
+      // (que dispara recomputePosition) parta de dados completos em vez de
+      // lotes "sem preco" (ver bug corrigido em recomputePosition).
+      let prices: Record<string, number> = {};
+      try {
+        const dates = [...new Set(purchases.map((p) => p.purchaseDate))];
+        prices = await fetchHistoricalPrices(pos.ticker, dates);
+      } catch (err) {
+        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill seed purchase prices");
       }
+
+      await db.insert(portfolioPurchasesTable).values(
+        purchases.map((p) => ({
+          positionId: inserted.id,
+          ...p,
+          purchasePrice: prices[p.purchaseDate] ?? null,
+        })),
+      );
     }
     logger.info("Portfolio seeded with initial positions");
   } catch (err) {
@@ -211,9 +217,32 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const params = PortfolioPositionParams.safeParse(req.params);
   const body = CreatePortfolioPurchaseBody.safeParse(req.body);
   if (!params.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
+
+  // Se o cliente nao mandou preco, tenta buscar o fechamento real da data
+  // (yfinance) aqui tambem -- o frontend ja tenta isso antes de chamar essa
+  // rota, mas essa e' a defesa de verdade: sem isso o lote fica com
+  // purchasePrice null e distorce avgCost/quantity da posicao (ver
+  // recomputePosition). Falha ao buscar preco nao bloqueia a compra --
+  // fica null e o usuario pode rodar backfill-prices depois.
+  let purchasePrice = body.data.purchasePrice ?? null;
+  if (purchasePrice == null) {
+    const [pos] = await db
+      .select({ ticker: portfolioPositionsTable.ticker })
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.id, params.data.id));
+    if (pos) {
+      try {
+        const prices = await fetchHistoricalPrices(pos.ticker, [body.data.purchaseDate]);
+        purchasePrice = prices[body.data.purchaseDate] ?? null;
+      } catch (err) {
+        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill purchase price at insert time");
+      }
+    }
+  }
+
   const [row] = await db
     .insert(portfolioPurchasesTable)
-    .values({ positionId: params.data.id, ...body.data })
+    .values({ positionId: params.data.id, ...body.data, purchasePrice })
     .returning();
   await recomputePosition(params.data.id);
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));

@@ -11,6 +11,7 @@ import {
   GetAlertFiringsSummaryResponse,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { startOfTodayBRT } from "../lib/timezone";
 
 const router: IRouter = Router();
 
@@ -23,8 +24,7 @@ function serializeAlert(a: typeof alertsTable.$inferSelect) {
 }
 
 router.get("/alerts/firings/summary", async (_req, res): Promise<void> => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = startOfTodayBRT();
 
   const [allAlerts, todayFirings] = await Promise.all([
     db.select({ id: alertsTable.id, enabled: alertsTable.enabled }).from(alertsTable),
