@@ -86,6 +86,16 @@ Seu fluxo completo:
   • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
 
+**Regra de economia (dias calmos):** se detect_sector_contagion NÃO apontar
+nenhum líder/catch_up, restrinja a análise COMPLETA às posições da carteira
+que atendam a pelo menos um destes critérios:
+  • |variação| ≥ 2% no dia ou no pré-mercado (get_stock_data)
+  • resultados em ≤ 14 dias (get_earnings_calendar da FASE 1)
+As demais posições da carteira recebem análise REDUZIDA: apenas get_stock_data
++ get_news, e então save_observation baseada na cotação e nas manchetes
+(sentimento neutro se nada relevante). NUNCA pule o save_observation de uma
+posição da carteira — o que a regra corta são as categorias 3–7, não o registro.
+
 Para o Grupo A, colete estas categorias de dados — NÃO finalize um ativo
 antes de passar ao próximo; em vez disso, complete uma CATEGORIA para
 TODOS os ativos do Grupo A antes de seguir para a próxima categoria:

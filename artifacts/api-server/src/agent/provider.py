@@ -6,10 +6,94 @@ and Anthropic into a single interface that agent.py can use transparently.
 import json
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 from .security import mask_sensitive_data
+
+# ── Preços por modelo (US$ por 1M tokens; referência 2026-07) ─────────────────
+# cache_read/cache_write só se aplicam a provedores com prompt caching faturado
+# à parte (Anthropic: write 1.25x, read ~0.1x; OpenAI: cached input a 50%).
+# Modelos ausentes daqui têm custo reportado como None (desconhecido), não 0.
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
+    "gpt-4o": {"input": 2.50, "output": 10.00, "cache_read": 1.25},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
+    "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
+    "moonshot-v1-32k": {"input": 1.00, "output": 3.00},
+    "moonshot-v1-8k": {"input": 0.20, "output": 2.00},
+}
+
+
+def _call_cost_usd(model: str, input_tokens: int, output_tokens: int,
+                   cache_read: int, cache_write: int) -> float | None:
+    p = MODEL_PRICING.get(model)
+    if p is None:
+        return None
+    cost = (
+        input_tokens * p["input"]
+        + output_tokens * p["output"]
+        + cache_read * p.get("cache_read", p["input"])
+        + cache_write * p.get("cache_write", p["input"])
+    ) / 1_000_000
+    return cost
+
+
+class RunUsage:
+    """Acumula tokens/custo de todas as chamadas de LLM desta run (todos os
+    provedores, incluindo trocas de fallback no meio). Singleton do processo —
+    cada run do agente é um processo Python novo, então zera naturalmente."""
+
+    def __init__(self):
+        self._by_model: dict[tuple[str, str], dict] = {}
+
+    def record(self, provider: str, model: str, *, input_tokens: int = 0,
+               output_tokens: int = 0, cache_read: int = 0, cache_write: int = 0) -> None:
+        key = (provider, model)
+        entry = self._by_model.setdefault(key, {
+            "provider": provider, "model": model, "calls": 0,
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_write_tokens": 0,
+        })
+        entry["calls"] += 1
+        entry["input_tokens"] += input_tokens
+        entry["output_tokens"] += output_tokens
+        entry["cache_read_tokens"] += cache_read
+        entry["cache_write_tokens"] += cache_write
+
+    def summary(self) -> dict:
+        providers = []
+        totals = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
+                  "cache_read_tokens": 0, "cache_write_tokens": 0}
+        total_cost: float | None = 0.0
+        for entry in self._by_model.values():
+            cost = _call_cost_usd(
+                entry["model"], entry["input_tokens"], entry["output_tokens"],
+                entry["cache_read_tokens"], entry["cache_write_tokens"],
+            )
+            providers.append({**entry, "cost_usd": cost})
+            for k in totals:
+                totals[k] += entry[k]
+            if cost is None:
+                total_cost = None  # algum modelo sem preço conhecido → total indeterminado
+            elif total_cost is not None:
+                total_cost += cost
+        return {
+            **totals,
+            "total_cost_usd": round(total_cost, 6) if total_cost is not None else None,
+            "providers": providers,
+        }
+
+
+_run_usage = RunUsage()
+
+
+def get_run_usage() -> dict:
+    return _run_usage.summary()
 
 # ── Normalized response types ─────────────────────────────────────────────────
 
@@ -424,6 +508,42 @@ class ProviderClient:
                 messages=messages,
             )
 
+    @staticmethod
+    def _with_history_cache(messages: list) -> list:
+        """
+        Cache incremental do HISTÓRICO (Anthropic): marca o último bloco das duas
+        últimas mensagens com cache_control, sem mutar a lista original — o
+        agent.py reutiliza `messages` entre turnos, e mutá-la acumularia
+        breakpoints além do máximo de 4 por request.
+
+        Por que DUAS mensagens: o lookback do cache é de no máx. 20 blocos, e um
+        turno agrupado (ex.: 17 tool_use + 17 tool_result) passa disso; com um
+        breakpoint também na penúltima mensagem o espaçamento fica dentro do
+        limite. Total de breakpoints: 1 (system) + 1 (tools) + 2 (histórico) = 4.
+        """
+        out = list(messages)
+        marked = 0
+        for i in range(len(out) - 1, -1, -1):
+            if marked == 2:
+                break
+            msg = out[i]
+            content = msg.get("content")
+            if isinstance(content, str):
+                if not content.strip():
+                    continue
+                content = [{"type": "text", "text": content}]
+            elif isinstance(content, list) and content:
+                content = list(content)
+            else:
+                continue
+            last_block = content[-1]
+            if not isinstance(last_block, dict):
+                continue
+            content[-1] = {**last_block, "cache_control": {"type": "ephemeral"}}
+            out[i] = {**msg, "content": content}
+            marked += 1
+        return out
+
     def _call_anthropic(
         self, *, model, max_tokens, system, tools, messages
     ) -> NormalizedResponse:
@@ -446,8 +566,17 @@ class ProviderClient:
             max_tokens=max_tokens,
             system=system,
             tools=cached_tools,
-            messages=messages,
+            messages=self._with_history_cache(messages),
         )
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            _run_usage.record(
+                "anthropic", model,
+                input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                cache_read=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                cache_write=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            )
         content = []
         for block in resp.content:
             if block.type == "text":
@@ -476,6 +605,18 @@ class ProviderClient:
             if recovered is not None:
                 return recovered
             raise
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            prompt = getattr(usage, "prompt_tokens", 0) or 0
+            details = getattr(usage, "prompt_tokens_details", None)
+            cached = (getattr(details, "cached_tokens", 0) or 0) if details else 0
+            _run_usage.record(
+                self.provider_name, model,
+                # prompt_tokens INCLUI os cacheados — separa para precificar cada parte
+                input_tokens=max(prompt - cached, 0),
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                cache_read=cached,
+            )
         return _openai_response_to_normalized(resp)
 
     def _normalized_to_anthropic_content(self, resp: NormalizedResponse) -> list:
@@ -517,6 +658,35 @@ def _has_key(provider_name: str) -> bool:
     if not cfg:
         return False
     return bool(os.environ.get(cfg["api_key_env"], "").strip())
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """Erro que tende a passar em segundos/minutos (vale re-tentar no MESMO
+    provedor antes de cair para o próximo): 503 de capacidade (visto em produção
+    com gemini-2.5-flash-lite pago, 'high demand') e rate-limit temporário
+    upstream do OpenRouter ('temporarily rate-limited', Retry-After ~30s).
+    Falta de crédito/quota mensal NÃO é transitório — cai direto no fallback."""
+    msg = str(exc).lower()
+    return any(
+        k in msg
+        for k in [
+            "503",
+            "unavailable",
+            "overloaded",
+            "high demand",
+            "temporarily rate-limited",
+            "try again later",
+        ]
+    )
+
+
+_RETRY_AFTER_RE = re.compile(r"[Rr]etry[-_][Aa]fter[^0-9]{0,20}(\d{1,3})")
+
+
+def _retry_after_seconds(exc: Exception) -> int | None:
+    """Extrai Retry-After/retry_after_seconds do corpo do erro, se presente."""
+    m = _RETRY_AFTER_RE.search(str(exc))
+    return int(m.group(1)) if m else None
 
 
 def _is_quota_error(exc: Exception) -> bool:
@@ -616,27 +786,48 @@ class FallbackClient:
             else:
                 resolved_messages = messages
 
-            try:
-                result = c.create(
-                    model=resolved_model,
-                    max_tokens=max_tokens,
-                    system=resolved_system,
-                    tools=resolved_tools,
-                    messages=resolved_messages,
-                )
-                if idx != self._current_idx:
-                    print(f"[provider] switched to {name}", flush=True)
-                    self._current_idx = idx
-                return result
-            except Exception as exc:
-                safe_exc = mask_sensitive_data(str(exc))
-                print(f"[provider] {name} failed: {safe_exc}", flush=True)
-                if idx + 1 < len(self._order):
-                    print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
-                else:
-                    raise RuntimeError(
-                        f"All providers exhausted. Last error: {safe_exc}"
-                    ) from exc
+            # Erros transitórios (503 de capacidade, rate-limit com Retry-After)
+            # merecem novas tentativas no MESMO provedor antes do fallback —
+            # sem isso, um pico de demanda do Gemini pago derruba a run inteira
+            # para os provedores gratuitos. Backoff limitado para não estourar
+            # o timeout de 10 min da run.
+            transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "2"))
+            last_exc: Exception | None = None
+            for attempt in range(transient_retries + 1):
+                try:
+                    result = c.create(
+                        model=resolved_model,
+                        max_tokens=max_tokens,
+                        system=resolved_system,
+                        tools=resolved_tools,
+                        messages=resolved_messages,
+                    )
+                    if idx != self._current_idx:
+                        print(f"[provider] switched to {name}", flush=True)
+                        self._current_idx = idx
+                    return result
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < transient_retries and _is_transient_error(exc):
+                        delay = min(_retry_after_seconds(exc) or 5 * (attempt + 1), 30)
+                        print(
+                            f"[provider] {name} erro transitório "
+                            f"(tentativa {attempt + 1}/{transient_retries + 1}) — "
+                            f"aguardando {delay}s antes de re-tentar...",
+                            flush=True,
+                        )
+                        time.sleep(delay)
+                        continue
+                    break
+
+            safe_exc = mask_sensitive_data(str(last_exc))
+            print(f"[provider] {name} failed: {safe_exc}", flush=True)
+            if idx + 1 < len(self._order):
+                print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
+            else:
+                raise RuntimeError(
+                    f"All providers exhausted. Last error: {safe_exc}"
+                ) from last_exc
         raise RuntimeError("No providers available")
 
 
