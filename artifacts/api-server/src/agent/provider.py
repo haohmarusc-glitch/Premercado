@@ -21,8 +21,12 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
     "gpt-4o": {"input": 2.50, "output": 10.00, "cache_read": 1.25},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
-    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
-    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
+    # Cache implícito do Gemini 2.5: 90% de desconto nos tokens servidos do
+    # cache (automático, sem custo de escrita/armazenamento) — confirmado
+    # contra o faturamento real do Google Cloud em 03/07 (estimativa antiga,
+    # sem esse desconto, veio ~40% acima do valor cobrado).
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40, "cache_read": 0.01},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50, "cache_read": 0.03},
     "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
     "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
     "moonshot-v1-32k": {"input": 1.00, "output": 3.00},
