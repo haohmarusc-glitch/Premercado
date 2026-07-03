@@ -70,14 +70,24 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
         title = str(content.get("title", item.get("title", "")) or "").lower()
         if not title:
             continue
+        # Timestamp de publicação (ms) — usado pelos marcadores no gráfico de velas
+        ts = None
+        pub = content.get("pubDate") or item.get("pubDate") or item.get("providerPublishTime")
+        try:
+            if isinstance(pub, (int, float)):  # epoch em segundos
+                ts = int(pub) * 1000
+            elif isinstance(pub, str) and pub:  # ISO 8601, ex: 2026-07-02T14:30:00Z
+                ts = int(pd.Timestamp(pub).timestamp() * 1000)
+        except Exception:
+            ts = None
         p = sum(1 for w in POSITIVE if w in title)
         n = sum(1 for w in NEGATIVE if w in title)
         if p > n:
             pos += 1
-            scored.append({"title": title[:120], "tone": "positivo"})
+            scored.append({"title": title[:120], "tone": "positivo", "ts": ts})
         elif n > p:
             neg += 1
-            scored.append({"title": title[:120], "tone": "negativo"})
+            scored.append({"title": title[:120], "tone": "negativo", "ts": ts})
     total = pos + neg
     if total == 0:
         label, score = "neutro", 0.0
@@ -205,6 +215,21 @@ def for_ticker(ticker: str) -> dict:
         else:
             confluence = f"{trend} com DIVERGÊNCIA — notícias {news['label']} contradizem o técnico (cautela)"
 
+        # ── Sinal objetivo (regras transparentes; ferramenta, não recomendação) ──
+        # compra:   técnico de alta forte (>=60) sem notícias contra, ou alta (>=25) confirmada por notícias
+        # venda:    espelho para baixa
+        # aguardar: lateral, sinais fracos ou divergência técnico × notícias
+        if score >= 60 and news_dir >= 0:
+            sinal, sinal_motivo = "compra", "técnico de alta forte sem notícias contrárias"
+        elif score >= 25 and news_dir > 0:
+            sinal, sinal_motivo = "compra", "técnico de alta confirmado por notícias positivas"
+        elif score <= -60 and news_dir <= 0:
+            sinal, sinal_motivo = "venda", "técnico de baixa forte sem notícias favoráveis"
+        elif score <= -25 and news_dir < 0:
+            sinal, sinal_motivo = "venda", "técnico de baixa confirmado por notícias negativas"
+        else:
+            sinal, sinal_motivo = "aguardar", ("divergência técnico × notícias" if tech_dir != 0 and news_dir != 0 and tech_dir != news_dir else "sinais insuficientes")
+
         return {
             "ticker": ticker,
             "price": round(price, 2),
@@ -213,6 +238,8 @@ def for_ticker(ticker: str) -> dict:
             "components": comp,
             "news": news,
             "confluence": confluence,
+            "sinal": sinal,
+            "sinalMotivo": sinal_motivo,
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
