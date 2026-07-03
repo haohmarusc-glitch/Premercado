@@ -30,7 +30,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRi
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
-import { TrendCard } from "@/components/trend-card";
+import { TrendCard, useTrend } from "@/components/trend-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -228,6 +228,7 @@ function QuoteCard({
 
 function PriceChart({ symbol, period }: { symbol: string; period: string }) {
   const [mode, setMode] = useState<"line" | "candle">("line");
+  const { data: trendData } = useTrend(symbol);
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
     {
@@ -290,7 +291,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
     return (
       <div>
         {toggle}
-        <CandleChart candles={candles} height={200} labelFor={(ts) => fmtLabel(ts, period)} />
+        <CandleChart candles={candles} height={200} labelFor={(ts) => fmtLabel(ts, period)} markers={trendData?.news?.destaques} />
       </div>
     );
   }

@@ -20,7 +20,7 @@ interface TrendNews {
   positivas: number;
   negativas: number;
   analisadas: number;
-  destaques: { title: string; tone: string }[];
+  destaques: { title: string; tone: string; ts?: number | null }[];
 }
 
 interface TrendItem {
@@ -31,6 +31,8 @@ interface TrendItem {
   components?: TrendComponents;
   news?: TrendNews;
   confluence?: string;
+  sinal?: string;
+  sinalMotivo?: string;
   error?: string;
 }
 
@@ -61,13 +63,17 @@ function ComponentPill({ label, value, good }: { label: string; value: string; g
   );
 }
 
-export function TrendCard({ symbol }: { symbol: string }) {
-  const { data, isLoading, isError } = useQuery({
+export function useTrend(symbol: string) {
+  return useQuery({
     queryKey: ["trend", symbol],
     queryFn: () => fetchTrend(symbol),
     staleTime: 5 * 60_000, // técnico diário não muda a cada segundo
     retry: 1,
   });
+}
+
+export function TrendCard({ symbol }: { symbol: string }) {
+  const { data, isLoading, isError } = useTrend(symbol);
 
   if (isLoading) {
     return (
@@ -109,7 +115,21 @@ export function TrendCard({ symbol }: { symbol: string }) {
             </span>
           )}
         </div>
-        <span className="text-[10px] font-mono text-muted-foreground uppercase">Tendência</span>
+        {data.sinal ? (
+          <span
+            className="text-[11px] font-mono font-bold px-2 py-1 rounded uppercase tracking-wider"
+            title={data.sinalMotivo}
+            style={{
+              background: data.sinal === "compra" ? "#22c55e22" : data.sinal === "venda" ? "#ef444422" : "transparent",
+              color: data.sinal === "compra" ? "#22c55e" : data.sinal === "venda" ? "#ef4444" : "#9ca3af",
+              border: `1px solid ${data.sinal === "compra" ? "#22c55e" : data.sinal === "venda" ? "#ef4444" : "#3f3f46"}`,
+            }}
+          >
+            {data.sinal}
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono text-muted-foreground uppercase">Tendência</span>
+        )}
       </div>
 
       <div className="p-4 space-y-3">
@@ -120,7 +140,12 @@ export function TrendCard({ symbol }: { symbol: string }) {
           }`}
         >
           {diverge && <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
-          <span>{data.confluence}</span>
+          <span>
+            {data.confluence}
+            {data.sinalMotivo && (
+              <span className="block text-muted-foreground mt-0.5">Sinal: {data.sinalMotivo}.</span>
+            )}
+          </span>
         </div>
 
         {/* Componentes técnicos */}
