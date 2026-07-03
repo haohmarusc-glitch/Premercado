@@ -95,6 +95,65 @@ def portfolio_exposure(positions: list) -> dict:
         "concentrationRisk": concentration_risk,
     }
 
+def correlation(tickers: list, period: str = "6mo") -> dict:
+    """Correlacao de Pearson entre os retornos diarios dos tickers informados.
+    Objetivo: expor concentracao de risco "escondida" -- posicoes dolarizadas
+    de forma diversificada podem estar todas apostando na mesma coisa se os
+    retornos sao altamente correlacionados (comum numa cesta de
+    semicondutores/IA)."""
+    try:
+        clean = []
+        seen = set()
+        for t in tickers:
+            try:
+                s = sanitize_ticker(t)
+            except ValueError:
+                continue
+            if s not in seen:
+                seen.add(s)
+                clean.append(s)
+        if len(clean) < 2:
+            return {"error": "Precisa de pelo menos 2 tickers válidos"}
+
+        data = yf.download(clean, period=period, interval="1d", auto_adjust=True, progress=False)
+        closes = data["Close"] if "Close" in data else data
+        if hasattr(closes, "columns") is False:
+            return {"error": "Dados insuficientes"}
+
+        returns = closes.pct_change().dropna(how="all")
+        available = [t for t in clean if t in returns.columns and returns[t].notna().sum() >= 20]
+        if len(available) < 2:
+            return {"error": "Dados insuficientes para calcular correlação"}
+
+        corr = returns[available].corr(min_periods=20)
+
+        matrix = [[
+            round(float(corr.loc[a, b]), 3) if not pd.isna(corr.loc[a, b]) else None
+            for b in available
+        ] for a in available]
+
+        pairs = []
+        for i, a in enumerate(available):
+            for b in available[i + 1:]:
+                v = corr.loc[a, b]
+                if pd.isna(v):
+                    continue
+                pairs.append({"a": a, "b": b, "correlation": round(float(v), 3)})
+        pairs.sort(key=lambda p: -abs(p["correlation"]))
+
+        high = [p for p in pairs if abs(p["correlation"]) >= 0.8]
+
+        skipped = [t for t in clean if t not in available]
+        return {
+            "tickers": available,
+            "matrix": matrix,
+            "pairs": pairs,
+            "highCorrelationPairs": high,
+            "skipped": skipped,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     action = args.get("action")
@@ -113,6 +172,8 @@ if __name__ == "__main__":
         )
     elif action == "portfolio_exposure":
         result = portfolio_exposure(args.get("positions", []))
+    elif action == "correlation":
+        result = correlation(args.get("tickers", []), args.get("period", "6mo"))
     else:
         result = {"error": f"Unknown action: {action}"}
     print(json.dumps(result))
