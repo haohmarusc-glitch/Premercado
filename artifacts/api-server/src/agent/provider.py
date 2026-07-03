@@ -22,6 +22,7 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o": {"input": 2.50, "output": 10.00, "cache_read": 1.25},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
     "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
     "moonshot-v1-32k": {"input": 1.00, "output": 3.00},
@@ -238,10 +239,12 @@ PROVIDERS = {
         "api_key_env": "GEMINI_API_KEY",
         "models": {
             # gemini-2.0-flash foi desativado pelo Google em 01/06/2026 (404
-            # em produção). gemini-2.5-flash-lite é o substituto de preço
-            # equivalente; note que o próprio 2.5-flash tem desligamento
-            # anunciado para 16/10/2026 — vale checar de novo nessa época.
-            "full": "gemini-2.5-flash-lite",
+            # em produção). No tier "full" usamos o 2.5-flash (não-lite):
+            # o flash-lite abandona o fluxo multi-turno no meio (visto em
+            # produção em 03/07 — parou no turno 7 sem save_observation).
+            # Custo ~3x maior, ainda ~US$0.13/run diária. Nota: o 2.5-flash
+            # tem desligamento anunciado para 16/10/2026 — checar nessa época.
+            "full": "gemini-2.5-flash",
             "flash": "gemini-2.5-flash-lite",
             "chat": "gemini-2.5-flash-lite",
         },

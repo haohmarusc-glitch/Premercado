@@ -314,10 +314,13 @@ def _agent_loop(
     max_tokens: int,
     progress_callback=None,
     step_prefix: str = "",
+    require_observations: bool = False,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
     final_text = ""
+    observations_saved = 0
+    nudges_left = 2  # cobranças de save_observation antes de aceitar o fim da run
     for turn in range(max_turns):
         if progress_callback:
             label = f"{step_prefix}Turno {turn + 1} — consultando {client.provider_name}..."
@@ -337,6 +340,21 @@ def _agent_loop(
                 final_text = block.text
 
         if resp.stop_reason != "tool_use":
+            # Modelos mais fracos (visto em produção com gemini-2.5-flash-lite)
+            # encerram no meio do fluxo sem registrar observações — a run sai
+            # "success" mas a memória do agente não avança. Cobra a conclusão
+            # antes de aceitar o relatório final.
+            if require_observations and observations_saved == 0 and nudges_left > 0:
+                nudges_left -= 1
+                if progress_callback:
+                    progress_callback(f"{step_prefix}Cobrando save_observation pendente...")
+                messages.append({"role": "user", "content": (
+                    "Você encerrou SEM chamar save_observation. A análise só é "
+                    "válida após registrar as observações. Chame save_observation "
+                    "AGORA para cada ativo analisado (resumo curto + sentimento) "
+                    "e só então escreva o relatório final."
+                )})
+                continue
             break
 
         tool_results = []
@@ -345,6 +363,8 @@ def _agent_loop(
                 if progress_callback:
                     progress_callback(f"Executando ferramenta: {block.name}")
                 result = run_tool(block.name, block.input)
+                if block.name == "save_observation" and not result.startswith("[erro"):
+                    observations_saved += 1
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -354,6 +374,8 @@ def _agent_loop(
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
+    if require_observations and observations_saved == 0:
+        final_text += "\n\n[Aviso: nenhuma observação foi salva nesta execução.]"
     return final_text
 
 
@@ -374,6 +396,7 @@ def run(progress_callback=None) -> str:
         max_turns=config.MAX_AGENT_TURNS,
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
+        require_observations=True,
     )
 
 
@@ -397,6 +420,7 @@ def run_portfolio(progress_callback=None) -> str:
         max_tokens=max_tokens,
         progress_callback=progress_callback,
         step_prefix="[Carteira] ",
+        require_observations=True,
     )
 
 
