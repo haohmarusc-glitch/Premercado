@@ -277,7 +277,14 @@ export const ListAgentRunsResponseItem = zod.object({
   "trigger": zod.string(),
   "mode": zod.string(),
   "durationMs": zod.coerce.number().nullish(),
-  "errorMessage": zod.string().nullish()
+  "errorMessage": zod.string().nullish(),
+  "inputTokens": zod.coerce.number().nullish(),
+  "outputTokens": zod.coerce.number().nullish(),
+  "cacheReadTokens": zod.coerce.number().nullish(),
+  "cacheWriteTokens": zod.coerce.number().nullish(),
+  "costUsd": zod.coerce.number().nullish(),
+  "llmProvider": zod.string().nullish(),
+  "llmModel": zod.string().nullish()
 })
 export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
 

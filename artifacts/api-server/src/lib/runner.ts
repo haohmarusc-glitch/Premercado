@@ -166,12 +166,43 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     const finishedAt = new Date();
     const durationMs = finishedAt.getTime() - startedAt.getTime();
 
+    // Linha USAGE:{json} emitida pelo agente (antes de REPORT:, inclusive em falhas)
+    // com tokens agregados e custo estimado da run.
+    interface RunUsage {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_tokens?: number;
+      cache_write_tokens?: number;
+      total_cost_usd?: number | null;
+      providers?: Array<{ provider?: string; model?: string }>;
+    }
+    let usageFields: Partial<typeof agentRunsTable.$inferInsert> = {};
+    const usageMatch = output.match(/^USAGE:(\{.*\})\s*$/m);
+    if (usageMatch) {
+      try {
+        const u = JSON.parse(usageMatch[1]) as RunUsage;
+        const providers = u.providers ?? [];
+        usageFields = {
+          inputTokens: u.input_tokens ?? null,
+          outputTokens: u.output_tokens ?? null,
+          cacheReadTokens: u.cache_read_tokens ?? null,
+          cacheWriteTokens: u.cache_write_tokens ?? null,
+          costUsd: u.total_cost_usd ?? null,
+          llmProvider: providers.map((p) => p.provider).filter(Boolean).join(",") || null,
+          llmModel: providers.map((p) => p.model).filter(Boolean).join(",") || null,
+        };
+        logger.info({ usage: u }, "Agent run usage");
+      } catch (err) {
+        logger.warn({ err }, "Failed to parse agent USAGE line");
+      }
+    }
+
     if (code !== 0) {
       logger.error({ code, errorOutput }, "Agent process exited with error");
       if (runId !== null) {
         await db
           .update(agentRunsTable)
-          .set({ status: "failed", finishedAt, durationMs, errorMessage: errorOutput.slice(0, 2000) })
+          .set({ status: "failed", finishedAt, durationMs, errorMessage: errorOutput.slice(0, 2000), ...usageFields })
           .where(eq(agentRunsTable.id, runId))
           .catch((err) => logger.error({ err }, "Failed to update failed run record"));
       }
@@ -212,7 +243,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     if (runId !== null) {
       await db
         .update(agentRunsTable)
-        .set({ status: "success", finishedAt, durationMs })
+        .set({ status: "success", finishedAt, durationMs, ...usageFields })
         .where(eq(agentRunsTable.id, runId))
         .catch((err) => logger.error({ err }, "Failed to update success run record"));
     }
