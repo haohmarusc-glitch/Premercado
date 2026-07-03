@@ -363,8 +363,22 @@ def _agent_loop(
                 if progress_callback:
                     progress_callback(f"Executando ferramenta: {block.name}")
                 result = run_tool(block.name, block.input)
-                if block.name == "save_observation" and not result.startswith("[erro"):
-                    observations_saved += 1
+                if block.name == "save_observation":
+                    # save_observation NUNCA levanta exceção — em falha (rede,
+                    # validação no server, etc.) ela retorna {"saved": False,
+                    # "error": ...} normalmente. Checar só a ausência de
+                    # "[erro" contava falhas como sucesso e destravava a
+                    # cobrança sem nada persistido de fato (bug visto em
+                    # produção em 03/07 — run completa, zero observações).
+                    saved_ok = False
+                    try:
+                        saved_ok = _json.loads(result).get("saved") is True
+                    except Exception:
+                        pass
+                    if saved_ok:
+                        observations_saved += 1
+                    else:
+                        print(f"[agent] save_observation falhou: {result}", flush=True)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
