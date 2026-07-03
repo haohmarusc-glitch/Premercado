@@ -66,6 +66,11 @@ makeTickerRoute("/fundamentals", "get_fundamentals.py", "fundamentals");
 makeTickerRoute("/trend", "get_trend.py", "trend");
 makeTickerRoute("/options", "get_options_chain.py", "options");
 makeTickerRoute("/news", "get_news_feed.py", "news", { maxItems: 5 });
+// Congress trading (Quiver Quant) + dark pool (Unusual Whales) — cada seção
+// funciona só se a env var de chave correspondente estiver configurada
+// (QUIVER_API_KEY / UNUSUAL_WHALES_API_KEY); sem chave, volta
+// {configured: false} em vez de erro.
+makeTickerRoute("/alt-data", "get_alt_data.py", "alt-data");
 
 // Macro — no tickers, single cache
 router.get("/macro", async (_req, res): Promise<void> => {

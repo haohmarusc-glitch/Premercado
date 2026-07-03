@@ -31,6 +31,7 @@ import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
+import { SmartMoneyCard } from "@/components/smart-money-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -559,6 +560,9 @@ export default function Dashboard() {
 
       {/* ── Trend (confluência técnico + notícias) ── */}
       {activeSymbol && <TrendCard symbol={activeSymbol} />}
+
+      {/* ── Smart Money (Congresso + dark pool — opcional, precisa de chave) ── */}
+      {activeSymbol && <SmartMoneyCard symbol={activeSymbol} />}
 
       {/* ── Sentiment summary ── */}
       <div>
