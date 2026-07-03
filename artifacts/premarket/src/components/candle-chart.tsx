@@ -13,10 +13,17 @@ export interface Candle {
   v: number;
 }
 
+export interface NewsMarker {
+  ts?: number | null; // timestamp de publicação (ms)
+  tone: string; // "positivo" | "negativo"
+  title: string;
+}
+
 interface CandleChartProps {
   candles: Candle[];
   height?: number;
   labelFor: (ts: number) => string;
+  markers?: NewsMarker[];
 }
 
 const UP = "#22c55e";
@@ -26,8 +33,9 @@ function fmtPrice(n: number) {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function CandleChart({ candles, height = 200, labelFor }: CandleChartProps) {
+export function CandleChart({ candles, height = 200, labelFor, markers }: CandleChartProps) {
   const [hover, setHover] = useState<number | null>(null);
+  const [openMarker, setOpenMarker] = useState<number | null>(null);
 
   const W = 1000; // viewBox width — escala junto com o container
   const H = height;
@@ -70,6 +78,24 @@ export function CandleChart({ candles, height = 200, labelFor }: CandleChartProp
 
   const { y, x, bodyW, ticks, xIdx } = geom;
   const hovered = hover != null ? candles[hover] : null;
+
+  // ── Marcadores de notícia: posiciona sobre a vela mais próxima da data ─────
+  // Renderizados como divs HTML (não SVG): o preserveAspectRatio="none" do SVG
+  // distorceria círculos em elipses; divs por % ficam redondas e "tocáveis".
+  const markerDots = (markers ?? [])
+    .filter((m) => m.ts != null && m.ts >= candles[0].t - 86_400_000)
+    .map((m) => {
+      let best = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < candles.length; i++) {
+        const d = Math.abs(candles[i].t - (m.ts as number));
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      return { ...m, idx: best, leftPct: (x(best) / W) * 100, topPct: (y(candles[best].h) / H) * 100 };
+    });
 
   return (
     <div className="relative w-full select-none">
@@ -139,6 +165,39 @@ export function CandleChart({ candles, height = 200, labelFor }: CandleChartProp
           </text>
         ))}
       </svg>
+
+      {/* Marcadores de notícia — bolinhas grandes, tocáveis */}
+      {markerDots.map((m, i) => (
+        <button
+          key={i}
+          onClick={() => setOpenMarker(openMarker === i ? null : i)}
+          className="absolute z-10 rounded-full border-2 shadow-md"
+          style={{
+            left: `${m.leftPct}%`,
+            top: `${m.topPct}%`,
+            transform: "translate(-50%, -130%)",
+            width: 18,
+            height: 18,
+            background: m.tone === "positivo" ? UP : DOWN,
+            borderColor: "#0a0a0a",
+          }}
+          aria-label={`Notícia: ${m.title}`}
+        />
+      ))}
+
+      {/* Headline do marcador tocado */}
+      {openMarker != null && markerDots[openMarker] && (
+        <div
+          className="absolute bottom-7 left-1 right-1 z-20 rounded-md border px-3 py-2 font-mono text-[11px] leading-4"
+          style={{ background: "hsl(var(--card))", borderColor: "hsl(var(--border))" }}
+          onClick={() => setOpenMarker(null)}
+        >
+          <span style={{ color: markerDots[openMarker].tone === "positivo" ? UP : DOWN }}>
+            {markerDots[openMarker].tone === "positivo" ? "▲ " : "▼ "}
+          </span>
+          {markerDots[openMarker].title}
+        </div>
+      )}
 
       {/* tooltip */}
       {hovered && (
