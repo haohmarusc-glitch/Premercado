@@ -30,6 +30,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRi
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
+import { TrendCard } from "@/components/trend-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -554,6 +555,9 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* ── Trend (confluência técnico + notícias) ── */}
+      {activeSymbol && <TrendCard symbol={activeSymbol} />}
 
       {/* ── Sentiment summary ── */}
       <div>
