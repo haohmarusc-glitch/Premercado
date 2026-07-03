@@ -24,11 +24,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon } from "lucide-react";
-import { LineChart, Line, ComposedChart, Bar, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
-import { useGetTickerChart, getGetTickerChartQueryKey } from "@workspace/api-client-react";
+import { Line, ComposedChart, Bar, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
+import { attachNewsMarkers, NewsMarkerShape } from "@/components/news-markers";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -196,16 +197,35 @@ function PriceChart({ ticker }: { ticker: string }) {
     },
   );
 
+  const { data: newsData } = useGetNews(
+    { tickers: ticker },
+    {
+      query: {
+        queryKey: getGetNewsQueryKey({ tickers: ticker }),
+        staleTime: 5 * 60_000,
+      },
+    },
+  );
+  const newsItemsList = newsData?.items?.[0]?.news ?? [];
+
   const candles = data?.candles ?? [];
-  const chartData = candles.map((c) => ({ t: c.t, v: c.c }));
+  const chartDataBase = candles.map((c) => ({ t: c.t, v: c.c }));
   const isUp = candles.length >= 2
     ? (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0)
     : true;
   const color = isUp ? "#4ade80" : "#f87171";
-  const min = chartData.length ? Math.min(...chartData.map((d) => d.v)) * 0.998 : 0;
-  const max = chartData.length ? Math.max(...chartData.map((d) => d.v)) * 1.002 : 100;
+  const min = chartDataBase.length ? Math.min(...chartDataBase.map((d) => d.v)) * 0.998 : 0;
+  const max = chartDataBase.length ? Math.max(...chartDataBase.map((d) => d.v)) * 1.002 : 100;
   const tickCount = Math.min(6, candles.length);
-  const candleData = toCandleRangeData(candles);
+  const chartData = attachNewsMarkers(chartDataBase, newsItemsList).map((c) => ({
+    ...c,
+    newsY: c.newsItems.length ? max : null,
+  }));
+  const candleDomainRange = candleDomain(candles);
+  const candleData = attachNewsMarkers(toCandleRangeData(candles), newsItemsList).map((c) => ({
+    ...c,
+    newsY: c.newsItems.length ? candleDomainRange[1] : null,
+  }));
 
   return (
     <div className="w-full mt-3">
@@ -279,7 +299,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <YAxis
-              domain={candleDomain(candles)}
+              domain={candleDomainRange}
               tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
               tickFormatter={(v) => `$${(v as number).toFixed(0)}`}
               width={42}
@@ -287,8 +307,12 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <RechartsTooltip
-              formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
+              formatter={(_val: unknown, name: string, item: { payload?: { o: number; h: number; l: number; c: number; newsItems?: { title: string }[] } }) => {
                 const p = item?.payload;
+                if (name === "newsY") {
+                  const items = p?.newsItems ?? [];
+                  return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
+                }
                 if (!p) return ["—", "OHLC"];
                 return [`O ${p.o.toFixed(2)} · H ${p.h.toFixed(2)} · L ${p.l.toFixed(2)} · C ${p.c.toFixed(2)}`, ticker];
               }}
@@ -299,12 +323,13 @@ function PriceChart({ ticker }: { ticker: string }) {
               }}
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
             />
-            <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+            <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} stackId="candle" />
+            <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} stackId="candle" />
           </ComposedChart>
         </ResponsiveContainer>
       ) : (
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+          <ComposedChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             <XAxis
               dataKey="t"
               tickFormatter={(v) => formatXTick(v as number, period)}
@@ -322,7 +347,13 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <RechartsTooltip
-              formatter={(value) => [`$${(value as number).toFixed(2)}`, ticker]}
+              formatter={(value: number, name: string, item: { payload?: { newsItems?: { title: string }[] } }) => {
+                if (name === "newsY") {
+                  const items = item?.payload?.newsItems ?? [];
+                  return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
+                }
+                return [`$${value.toFixed(2)}`, ticker];
+              }}
               labelFormatter={(label) => {
                 const d = new Date(label as number);
                 if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -331,7 +362,8 @@ function PriceChart({ ticker }: { ticker: string }) {
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
             />
             <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
-          </LineChart>
+            <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} />
+          </ComposedChart>
         </ResponsiveContainer>
       )}
     </div>

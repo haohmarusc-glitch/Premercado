@@ -190,6 +190,26 @@ export interface AgentRun {
   llmModel?: string | null;
 }
 
+export interface NewsItem {
+  title: string;
+  published?: string | number;
+  /** @nullable */
+  summary?: string | null;
+  /** @nullable */
+  source?: string | null;
+}
+
+export interface TickerNews {
+  ticker: string;
+  news?: NewsItem[];
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface NewsFeedResponse {
+  items: TickerNews[];
+}
+
 export interface Settings {
   id: number;
   notifyEmail: string;
@@ -441,5 +461,12 @@ period?: string;
 
 export type ListAgentRunsParams = {
 limit?: number;
+};
+
+export type GetNewsParams = {
+/**
+ * Tickers separados por vírgula. Se omitido, usa os tickers monitorados em Settings.
+ */
+tickers?: string;
 };
 

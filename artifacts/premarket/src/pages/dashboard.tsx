@@ -12,9 +12,10 @@ import {
   getGetAlertFiringsSummaryQueryKey,
   useListReports,
   getListReportsQueryKey,
+  useGetNews,
+  getGetNewsQueryKey,
 } from "@workspace/api-client-react";
 import {
-  AreaChart,
   Area,
   ComposedChart,
   Bar,
@@ -30,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, LineChart as LineChartIcon, CandlestickChart } from "lucide-react";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
+import { attachNewsMarkers, NewsMarkerShape } from "@/components/news-markers";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 
@@ -244,6 +246,17 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
     },
   );
 
+  const { data: newsData } = useGetNews(
+    { tickers: symbol },
+    {
+      query: {
+        queryKey: getGetNewsQueryKey({ tickers: symbol }),
+        staleTime: 5 * 60_000,
+      },
+    },
+  );
+  const newsItems = newsData?.items?.[0]?.news ?? [];
+
   const candles = data?.candles ?? [];
   const chartData = candles.map((c) => ({ t: c.t, price: c.c, label: fmtLabel(c.t, period) }));
 
@@ -275,7 +288,11 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
   }
 
   if (visual === "candle") {
-    const candleData = toCandleRangeData(candles).map((c) => ({ ...c, label: fmtLabel(c.t, period) }));
+    const candleDomainRange = candleDomain(candles);
+    const candleData = attachNewsMarkers(
+      toCandleRangeData(candles).map((c) => ({ ...c, label: fmtLabel(c.t, period) })),
+      newsItems,
+    ).map((c) => ({ ...c, newsY: c.newsItems.length ? candleDomainRange[1] : null }));
     return (
       <ResponsiveContainer width="100%" height={200}>
         <ComposedChart data={candleData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -288,7 +305,7 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
             minTickGap={60}
           />
           <YAxis
-            domain={candleDomain(candles)}
+            domain={candleDomainRange}
             tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
             tickLine={false}
             axisLine={false}
@@ -304,21 +321,31 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
               fontSize: "12px",
             }}
             labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
-            formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
+            formatter={(_val: unknown, name: string, item: { payload?: { o: number; h: number; l: number; c: number; newsItems?: { title: string }[] } }) => {
               const p = item?.payload;
+              if (name === "newsY") {
+                const items = p?.newsItems ?? [];
+                return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
+              }
               if (!p) return ["—", "OHLC"];
               return [`O ${fmt(p.o)} · H ${fmt(p.h)} · L ${fmt(p.l)} · C ${fmt(p.c)}`, "OHLC"];
             }}
           />
-          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} stackId="candle" />
+          <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} stackId="candle" />
         </ComposedChart>
       </ResponsiveContainer>
     );
   }
 
+  const chartDataWithNews = attachNewsMarkers(chartData, newsItems).map((c) => ({
+    ...c,
+    newsY: c.newsItems.length ? areaDomain[1] : null,
+  }));
+
   return (
     <ResponsiveContainer width="100%" height={200}>
-      <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+      <ComposedChart data={chartDataWithNews} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.25} />
@@ -351,7 +378,13 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
           }}
           labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
           itemStyle={{ color }}
-          formatter={(val: number) => [`$${fmt(val)}`, "Price"]}
+          formatter={(val: number, name: string, item: { payload?: { newsItems?: { title: string }[] } }) => {
+            if (name === "newsY") {
+              const items = item?.payload?.newsItems ?? [];
+              return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
+            }
+            return [`$${fmt(val)}`, "Price"];
+          }}
         />
         <Area
           type="monotone"
@@ -362,7 +395,8 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
           dot={false}
           activeDot={{ r: 3, fill: color }}
         />
-      </AreaChart>
+        <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} />
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }

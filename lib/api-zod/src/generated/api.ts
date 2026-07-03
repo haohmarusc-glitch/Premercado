@@ -290,6 +290,27 @@ export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
 
 
 /**
+ * @summary Manchetes recentes por ativo (yfinance, traduzidas para pt-BR)
+ */
+export const GetNewsQueryParams = zod.object({
+  "tickers": zod.coerce.string().optional().describe('Tickers separados por vírgula. Se omitido, usa os tickers monitorados em Settings.')
+})
+
+export const GetNewsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "ticker": zod.string(),
+  "news": zod.array(zod.object({
+  "title": zod.string(),
+  "published": zod.union([zod.string(),zod.coerce.number()]).optional(),
+  "summary": zod.string().nullish(),
+  "source": zod.string().nullish()
+})).optional(),
+  "error": zod.string().nullish()
+}))
+})
+
+
+/**
  * @summary Get current app settings
  */
 export const GetSettingsResponse = zod.object({
