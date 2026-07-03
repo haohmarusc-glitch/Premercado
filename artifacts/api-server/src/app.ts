@@ -1,19 +1,10 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
-import session from "express-session";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
-
-// Determinar se está em produção
-const isProduction = process.env.NODE_ENV === "production";
-
-const sessionSecret = process.env.SESSION_SECRET;
-if (!sessionSecret) {
-  throw new Error("SESSION_SECRET environment variable is required but was not provided.");
-}
 
 // Configurar origens permitidas do CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -49,21 +40,6 @@ app.use(
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-app.use(
-  session({
-    name: "sid",
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: isProduction,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    },
-  }),
-);
 
 app.use("/api", router);
 

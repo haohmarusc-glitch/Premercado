@@ -12,13 +12,13 @@ alertas de preço e chat conversacional.
 - `pnpm --filter @workspace/api-spec run codegen` — regenerar hooks e schemas do OpenAPI
 - `pnpm --filter @workspace/db run push` — aplicar schema no banco (dev only)
 - `pnpm --filter @workspace/api-server test` — testes do servidor (vitest)
-- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `SESSION_SECRET`, `OPERATOR_API_KEY`
+- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPERATOR_API_KEY`
 - Opcional (fallback chain): `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5, sessão via `express-session` (cookie `httpOnly`/`sameSite=strict`)
+- API: Express 5, sem autenticação (acesso aberto — não expor a URL publicamente)
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod, drizzle-zod
 - API codegen: Orval (a partir do OpenAPI spec)
