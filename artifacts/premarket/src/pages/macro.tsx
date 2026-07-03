@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Globe, RefreshCw } from "lucide-react";
+import { Globe, RefreshCw, Building2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FearGreed {
@@ -14,6 +14,29 @@ interface FearGreed {
 }
 interface Sector { name: string; ticker: string; changePct?: number | null; }
 
+interface Filing { filingDate: string; accessionNumber: string; url: string }
+interface InstitutionalFiler {
+  cik: string;
+  label: string;
+  name?: string;
+  latestFiling?: Filing;
+  previousFiling?: Filing | null;
+  error?: string;
+}
+
+function useInstitutionalFilings() {
+  return useQuery({
+    queryKey: ["institutional-filings"],
+    queryFn: async () => {
+      const r = await fetch("/api/institutional-filings", { credentials: "include" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Falha");
+      return j as { filers: InstitutionalFiler[] };
+    },
+    staleTime: 30 * 60_000,
+  });
+}
+
 function gaugeColor(s?: number | null) {
   if (s == null) return "text-muted-foreground";
   if (s <= 25) return "text-red-500";
@@ -21,6 +44,15 @@ function gaugeColor(s?: number | null) {
   if (s <= 55) return "text-yellow-400";
   if (s <= 75) return "text-green-400";
   return "text-green-500";
+}
+
+function fmtFilingDate(d?: string) {
+  if (!d) return "—";
+  try {
+    return new Date(`${d}T00:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return d;
+  }
 }
 
 export default function MacroPage() {
@@ -33,9 +65,11 @@ export default function MacroPage() {
       return j as { fearGreed: FearGreed; sectors: Sector[] };
     },
   });
+  const { data: filingsData, isLoading: filingsLoading } = useInstitutionalFilings();
 
   const fg = data?.fearGreed;
   const sectors = data?.sectors ?? [];
+  const filers = filingsData?.filers ?? [];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -105,6 +139,54 @@ export default function MacroPage() {
           </div>
         </div>
       )}
+
+      {/* Filings 13F — gestores institucionais acompanhados */}
+      <div className="border border-border rounded-lg bg-card p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <Building2 className="h-4 w-4 text-primary" />
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+            Filings 13F — Smart Money
+          </p>
+        </div>
+        <p className="text-xs font-mono text-muted-foreground mb-4">
+          Data do último Form 13F-HR (holdings trimestrais) arquivado por cada gestor na SEC.
+          Não é um diff de posições — é um lembrete pra ir ler o filing quando sair um novo.
+          Lista configurável via env <code className="text-[10px]">INSTITUTIONAL_CIKS</code>.
+        </p>
+        {filingsLoading ? (
+          <p className="text-xs font-mono text-muted-foreground animate-pulse">Carregando...</p>
+        ) : filers.length === 0 ? (
+          <p className="text-xs font-mono text-muted-foreground">Nenhum gestor configurado.</p>
+        ) : (
+          <div className="space-y-2">
+            {filers.map((f) => (
+              <div key={f.cik} className="flex items-center justify-between gap-3 border border-border/40 rounded-md px-3 py-2">
+                <div className="min-w-0">
+                  <div className="font-mono text-sm font-bold text-foreground truncate">{f.name ?? f.label}</div>
+                  {f.error ? (
+                    <div className="text-[11px] font-mono text-muted-foreground italic">{f.error}</div>
+                  ) : (
+                    <div className="text-[11px] font-mono text-muted-foreground">
+                      Último: {fmtFilingDate(f.latestFiling?.filingDate)}
+                      {f.previousFiling && ` · Anterior: ${fmtFilingDate(f.previousFiling.filingDate)}`}
+                    </div>
+                  )}
+                </div>
+                {f.latestFiling && (
+                  <a
+                    href={f.latestFiling.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-[11px] font-mono text-primary hover:underline shrink-0"
+                  >
+                    Ver filing <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

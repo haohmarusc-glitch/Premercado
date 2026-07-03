@@ -81,4 +81,20 @@ router.get("/macro", async (_req, res): Promise<void> => {
   }
 });
 
+// Filings 13F de gestores institucionais acompanhados — no tickers, mesmo
+// cache de 60s dos demais endpoints desta rota (o dado em si só muda a cada
+// trimestre, o cache aqui é só pra não bater na SEC a cada clique).
+router.get("/institutional-filings", async (_req, res): Promise<void> => {
+  try {
+    const hit = cached("institutional-filings", "_");
+    if (hit) { res.json(hit); return; }
+    const data = await runPython("get_institutional_filings.py", {});
+    setCache("institutional-filings", "_", data);
+    res.json(data);
+  } catch (err) {
+    logger.error({ err }, "Failed: /institutional-filings");
+    res.status(500).json({ error: "Failed to fetch institutional filings" });
+  }
+});
+
 export default router;
