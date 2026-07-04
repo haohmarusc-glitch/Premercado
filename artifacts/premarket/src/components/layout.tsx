@@ -1,6 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu } from "lucide-react";
+import { useViewMode } from "@/lib/view-mode";
+import { cn } from "@/lib/utils";
 import {
   useGetAgentStatus,
   getGetAgentStatusQueryKey,
@@ -44,11 +46,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const firingCount = useFiringCount();
   const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("theme") as "dark" | "light") ?? "dark");
+  const { viewMode, toggleViewMode } = useViewMode();
+  const isMobile = viewMode === "mobile";
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location]);
 
   const { data: status } = useGetAgentStatus({
     query: {
@@ -156,20 +165,46 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">
-      <aside className="w-80 border-r border-border bg-card flex flex-col">
+      {isMobile && drawerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60"
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={cn(
+          "w-80 border-r border-border bg-card flex flex-col",
+          isMobile && "fixed inset-y-0 left-0 z-50 transition-transform duration-200",
+          isMobile && (drawerOpen ? "translate-x-0" : "-translate-x-full"),
+        )}
+      >
         <div className="p-6 border-b border-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-primary font-bold text-xl font-mono tracking-tight">
               <Activity className="h-6 w-6" />
               <span>PRÉ-MERCADO</span>
             </div>
-            <button
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              title={theme === "dark" ? "Modo claro" : "Modo escuro"}
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  if (!isMobile) setDrawerOpen(true);
+                  toggleViewMode();
+                }}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                title={isMobile ? "Mudar para modo Computador" : "Mudar para modo Celular"}
+                data-testid="button-toggle-view-mode"
+              >
+                {isMobile ? <Monitor className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Agent Command Center</p>
         </div>
@@ -306,8 +341,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </aside>
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-8">
+      <main className="flex-1 flex flex-col h-screen overflow-hidden min-w-0">
+        {isMobile && (
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              aria-label="Abrir menu"
+              data-testid="button-open-drawer"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-2 text-primary font-bold text-sm font-mono tracking-tight">
+              <Activity className="h-4 w-4" />
+              <span>PRÉ-MERCADO</span>
+            </div>
+          </div>
+        )}
+        <div className={cn("flex-1 overflow-y-auto", isMobile ? "p-4" : "p-8")}>
           <div className="max-w-6xl mx-auto">
             {children}
           </div>

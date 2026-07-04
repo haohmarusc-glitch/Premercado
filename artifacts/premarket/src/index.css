@@ -110,3 +110,18 @@
     @apply font-sans antialiased bg-background text-foreground selection:bg-primary selection:text-primary-foreground;
   }
 }
+
+/* ── Modo Celular ──────────────────────────────────────────────────────────
+   Como quase todo o espaçamento/tipografia do Tailwind é definido em rem,
+   aumentar o font-size da raiz escala texto E área de toque de botões
+   proporcionalmente em todo o app, sem precisar sobrescrever componente
+   por componente. */
+html.mobile-mode {
+  font-size: 118%;
+}
+
+html.mobile-mode input,
+html.mobile-mode select,
+html.mobile-mode textarea {
+  font-size: 16px; /* evita zoom automático do iOS ao focar um campo */
+}

@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
 import { TradingViewChart } from "@/components/tradingview-chart";
+import { useViewMode } from "@/lib/view-mode";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -435,6 +436,8 @@ function AllocationChart({ data }: { data: AllocEntry[] }) {
 // ── Purchases sub-table ───────────────────────────────────────────────────────
 
 function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number; ticker: string; currentPrice: number }) {
+  const { viewMode } = useViewMode();
+  const isMobile = viewMode === "mobile";
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: purchases = [], isLoading } = useListPortfolioPurchases(positionId);
@@ -548,13 +551,11 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       }, 0)
     : null;
 
-  return (
+  const body = (
     <>
-      <tr>
-        <td colSpan={13} className="px-6 py-4 bg-muted/20 border-b border-border/50">
-          <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-3 uppercase tracking-widest">
-            Operações — {ticker}
-          </div>
+      <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-3 uppercase tracking-widest">
+        Operações — {ticker}
+      </div>
 
           {isLoading ? (
             <div className="text-xs text-muted-foreground font-mono">Carregando...</div>
@@ -752,8 +753,18 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
             </Button>
           </div>
           <PriceChart ticker={ticker} />
-        </td>
-      </tr>
+    </>
+  );
+
+  return (
+    <>
+      {isMobile ? (
+        <div className="px-4 py-4 bg-muted/20 border-b border-border/50 rounded-b-md">{body}</div>
+      ) : (
+        <tr>
+          <td colSpan={13} className="px-6 py-4 bg-muted/20 border-b border-border/50">{body}</td>
+        </tr>
+      )}
 
       {/* Dialog — Nova compra */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -1008,6 +1019,8 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
 export default function PortfolioPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { viewMode } = useViewMode();
+  const isMobile = viewMode === "mobile";
   const [mode, setMode] = useState<"real" | "simulated">("real");
 
   const { data: allPositions = [], isLoading } = useListPortfolioPositions();
@@ -1413,6 +1426,131 @@ export default function PortfolioPage() {
       {/* Positions table */}
       <Card className="border-border bg-card overflow-hidden">
         <CardContent className="p-0">
+          {isMobile ? (
+            <div className="divide-y divide-border">
+              {isLoading && (
+                <div className="py-10 text-center text-muted-foreground text-xs font-mono">Carregando...</div>
+              )}
+              {!isLoading && rows.length === 0 && (
+                <div className="py-10 text-center text-muted-foreground text-xs font-mono">Nenhuma posição cadastrada.</div>
+              )}
+              {rows.map(({ pos, quantity, invested, price, currentValue, pnlDollar, pnlPct, weight, downAlert, upAlert, is30d, isBrl }) => {
+                const expanded = expandedIds.has(pos.id);
+                const hasPrice = price > 0;
+                const pnlPos = pnlPct >= 0;
+                return (
+                  <Fragment key={pos.id}>
+                    <div className={cn("p-3", expanded && "bg-muted/10")}>
+                      <div className="flex items-start justify-between gap-2">
+                        <button
+                          onClick={() => toggleExpand(pos.id)}
+                          className="flex items-center gap-1.5 text-left flex-1 min-w-0 flex-wrap"
+                        >
+                          {expanded
+                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                          <span className="font-semibold text-foreground text-sm">{pos.ticker}</span>
+                          {isBrl && (
+                            <Badge className="h-4 px-1 text-[9px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              BRL
+                            </Badge>
+                          )}
+                          {is30d && (
+                            <Badge className="h-4 px-1 text-[9px] font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                              30d+
+                            </Badge>
+                          )}
+                          {(() => {
+                            const ext = extMap.get(pos.ticker);
+                            if (!ext) return null;
+                            const up = ext.pct >= 0;
+                            return (
+                              <Badge
+                                className={cn("h-4 px-1 text-[9px] font-mono border",
+                                  up ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-red-500/15 text-red-400 border-red-500/30")}
+                              >
+                                {ext.label} {up ? "▲+" : "▼"}{ext.pct.toFixed(1)}%
+                              </Badge>
+                            );
+                          })()}
+                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => setDialogTarget(pos)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleDelete(pos.id, pos.ticker)}
+                            disabled={deletePos.isPending}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      {pos.notes && (
+                        <div className="text-[10px] text-muted-foreground truncate mt-0.5 ml-5">{pos.notes}</div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-2 text-xs font-mono ml-5">
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Preço atual</div>
+                          <div className="font-semibold text-blue-400 tabular-nums">{hasPrice ? fmtMoney(price, isBrl) : "—"}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Qtde</div>
+                          <div className="tabular-nums">{fmtQty(quantity)}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Investido</div>
+                          <div className="tabular-nums">{fmtMoney(invested, isBrl)}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Valor atual</div>
+                          <div className="font-semibold text-blue-400 tabular-nums">{hasPrice ? fmtMoney(currentValue, isBrl) : "—"}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">P&amp;L $</div>
+                          <div className={cn("font-semibold tabular-nums", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
+                            {hasPrice ? `${pnlDollar >= 0 ? "+" : "-"}${fmtMoney(pnlDollar, isBrl)}` : "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">P&amp;L %</div>
+                          <div className={cn("font-semibold tabular-nums", hasPrice ? (pnlPos ? "text-green-400" : "text-red-400") : "")}>
+                            {hasPrice ? fmtPct(pnlPct) : "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(downAlert != null || upAlert != null || weight > 0) && (
+                        <div className="flex items-center gap-1.5 mt-2 ml-5">
+                          {downAlert != null && (
+                            <Badge className="h-4 px-1 text-[9px] font-mono bg-red-500/20 text-red-400 border border-red-500/30">
+                              -{downAlert}%
+                            </Badge>
+                          )}
+                          {upAlert != null && (
+                            <Badge className="h-4 px-1 text-[9px] font-mono bg-green-500/20 text-green-400 border border-green-500/30">
+                              +{upAlert}%
+                            </Badge>
+                          )}
+                          <span className="text-[10px] text-muted-foreground ml-auto">Peso {weight.toFixed(1)}%</span>
+                        </div>
+                      )}
+                    </div>
+                    {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} currentPrice={price} />}
+                  </Fragment>
+                );
+              })}
+            </div>
+          ) : (
           <table className="w-full text-xs font-mono">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-muted-foreground text-[11px]">
@@ -1574,6 +1712,7 @@ export default function PortfolioPage() {
               })}
             </tbody>
           </table>
+          )}
         </CardContent>
       </Card>
 
