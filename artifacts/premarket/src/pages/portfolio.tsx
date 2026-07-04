@@ -23,13 +23,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
+import { TradingViewChart } from "@/components/tradingview-chart";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -181,7 +182,7 @@ function formatXTick(ts: number, period: ChartPeriod): string {
   return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
-type PortfolioChartVisual = "line" | "candle";
+type PortfolioChartVisual = "line" | "candle" | "tradingview";
 
 function PriceChart({ ticker }: { ticker: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1d");
@@ -257,7 +258,20 @@ function PriceChart({ ticker }: { ticker: string }) {
             >
               <CandlestickChartIcon className="h-3 w-3" />
             </button>
+            <button
+              onClick={() => setVisual("tradingview")}
+              title="TradingView"
+              className={cn(
+                "p-0.5 rounded transition-colors",
+                visual === "tradingview"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+              )}
+            >
+              <GlobeIcon className="h-3 w-3" />
+            </button>
           </div>
+          {visual !== "tradingview" && (
           <div className="flex gap-1">
             {CHART_PERIODS.map(({ label, value }) => (
               <button
@@ -274,10 +288,13 @@ function PriceChart({ ticker }: { ticker: string }) {
               </button>
             ))}
           </div>
+          )}
         </div>
       </div>
 
-      {isLoading ? (
+      {visual === "tradingview" ? (
+        <TradingViewChart symbol={ticker} height={480} />
+      ) : isLoading ? (
         <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
           carregando...
         </div>
