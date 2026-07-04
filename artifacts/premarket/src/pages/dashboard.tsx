@@ -26,7 +26,7 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime, todayBRTDateString } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, Maximize2, Minimize2 } from "lucide-react";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
@@ -228,7 +228,7 @@ function QuoteCard({
 
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
-function PriceChart({ symbol, period }: { symbol: string; period: string }) {
+function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: string; height?: number }) {
   const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
   const { data: trendData } = useTrend(symbol);
   const { data, isLoading } = useGetTickerChart(
@@ -279,7 +279,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
     return (
       <div>
         {toggle}
-        <TradingViewChart symbol={symbol} height={400} />
+        <TradingViewChart symbol={symbol} height={height * 2} />
       </div>
     );
   }
@@ -310,7 +310,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
     return (
       <div>
         {toggle}
-        <CandleChart candles={candles} height={200} labelFor={(ts) => fmtLabel(ts, period)} markers={trendData?.news?.destaques} />
+        <CandleChart candles={candles} height={height} labelFor={(ts) => fmtLabel(ts, period)} markers={trendData?.news?.destaques} />
       </div>
     );
   }
@@ -318,7 +318,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
   return (
     <div>
     {toggle}
-    <ResponsiveContainer width="100%" height={200}>
+    <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
@@ -374,6 +374,7 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
 export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
+  const [chartExpanded, setChartExpanded] = useState(false);
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
   const [sectorTab, setSectorTab] = useState<string>("all");
 
@@ -460,6 +461,66 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── Chart (seletor de ticker aqui em cima -- não precisa rolar até os
+           cards de cotação pra trocar de ativo) ── */}
+      {activeSymbol && (
+        <div className="border border-border rounded-lg overflow-hidden bg-card">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-secondary/30">
+            <div className="flex items-center gap-2">
+              <select
+                value={activeSymbol}
+                onChange={(e) => setSelectedSymbol(e.target.value)}
+                className="bg-background border border-border rounded px-2 py-1 font-mono font-bold text-primary text-sm tracking-widest focus:outline-none focus:ring-1 focus:ring-primary"
+                aria-label="Selecionar ticker"
+              >
+                {(quotes ?? []).map((q) => (
+                  <option key={q.symbol} value={q.symbol}>{q.symbol}</option>
+                ))}
+              </select>
+              <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">— Histórico de preço</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Period selector */}
+              <div className="flex items-center gap-1">
+                {PERIODS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setPeriod(p.key)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
+                      period === p.key
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    }`}
+                    data-testid={`period-btn-${p.key}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Expandir/recolher gráfico */}
+              <button
+                type="button"
+                onClick={() => setChartExpanded((v) => !v)}
+                className="p-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                aria-label={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
+                title={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
+              >
+                {chartExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Chart body */}
+          <div className="p-4">
+            <PriceChart symbol={activeSymbol} period={period} height={chartExpanded ? 420 : 200} />
+          </div>
+        </div>
+      )}
+
       {/* ── Quote cards (selectable) ── */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -538,42 +599,6 @@ export default function Dashboard() {
             </div>
           </div>
         </Link>
-      )}
-
-      {/* ── Chart ── */}
-      {activeSymbol && (
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary/30">
-            <span className="font-mono font-bold text-primary text-sm tracking-widest">
-              {activeSymbol} — Histórico de preço
-            </span>
-
-            {/* Period selector */}
-            <div className="flex items-center gap-1">
-              {PERIODS.map((p) => (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => setPeriod(p.key)}
-                  className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
-                    period === p.key
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}
-                  data-testid={`period-btn-${p.key}`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Chart body */}
-          <div className="p-4">
-            <PriceChart symbol={activeSymbol} period={period} />
-          </div>
-        </div>
       )}
 
       {/* ── Trend (confluência técnico + notícias) ── */}
