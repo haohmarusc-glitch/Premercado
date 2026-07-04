@@ -2,8 +2,6 @@ import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import History from "@/pages/history";
@@ -11,6 +9,7 @@ import Observations from "@/pages/observations";
 import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
 import AlertsPage from "@/pages/alerts";
+import ScreenerPage from "@/pages/screener";
 import ChatPage from "@/pages/chat";
 import PortfolioPage from "@/pages/portfolio";
 import SectorCoal from "@/pages/sector-coal";
@@ -28,7 +27,6 @@ import AnalystsPage from "@/pages/analysts";
 import OptionsPage from "@/pages/options";
 import NewsPage from "@/pages/news";
 import MacroPage from "@/pages/macro";
-import LoginPage from "@/pages/login";
 import { Layout } from "@/components/layout";
 
 const queryClient = new QueryClient({
@@ -50,6 +48,7 @@ function Router() {
         <Route path="/settings" component={SettingsPage} />
         <Route path="/runs" component={RunsPage} />
         <Route path="/alerts" component={AlertsPage} />
+        <Route path="/screener" component={ScreenerPage} />
         <Route path="/chat" component={ChatPage} />
         <Route path="/portfolio" component={PortfolioPage} />
         <Route path="/setor/carvao" component={SectorCoal} />
@@ -73,50 +72,7 @@ function Router() {
   );
 }
 
-type AuthState = "loading" | "authenticated" | "unauthenticated";
-
 function App() {
-  const { t } = useTranslation();
-  const [authState, setAuthState] = useState<AuthState>("loading");
-
-  useEffect(() => {
-    // Criar controller com timeout de 5 segundos
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    fetch("/api/auth/me", { credentials: "include", signal: controller.signal })
-      .then((r) => r.json())
-      .then((data: { authenticated: boolean }) => {
-        setAuthState(data.authenticated ? "authenticated" : "unauthenticated");
-      })
-      .catch((err) => {
-        if (err instanceof Error && err.name !== "AbortError") {
-          console.error(t("common.errorCheckingAuth"), err);
-        }
-        setAuthState("unauthenticated");
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-      });
-  }, []);
-
-  if (authState === "loading") {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground text-sm">{t("common.loading")}</div>
-      </div>
-    );
-  }
-
-  if (authState === "unauthenticated") {
-    return (
-      <QueryClientProvider client={queryClient}>
-        <LoginPage onSuccess={() => setAuthState("authenticated")} />
-        <Toaster />
-      </QueryClientProvider>
-    );
-  }
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

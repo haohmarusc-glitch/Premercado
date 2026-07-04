@@ -416,6 +416,13 @@ def _agent_loop(
 
 def run(progress_callback=None) -> str:
     client = _get_client()
+    # Escala o teto de turnos com o tamanho da carteira coberta, seguindo o
+    # mesmo padrao de run_portfolio(). O Grupo A (FASE 1) so e' conhecido em
+    # tempo de execucao (depende do detect_sector_contagion), entao usamos o
+    # tamanho da carteira fixa como piso minimo + margem para os candidatos
+    # de catch_up que costumam entrar no Grupo A.
+    n_min = len(config.PORTFOLIO_TICKERS)
+    max_turns = max(config.MAX_AGENT_TURNS, n_min * 2 + 6)
     return _agent_loop(
         client=client,
         model=client.models["full"],
@@ -426,7 +433,7 @@ def run(progress_callback=None) -> str:
             "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
             "as observações do dia ao final."
         )}],
-        max_turns=config.MAX_AGENT_TURNS,
+        max_turns=max_turns,
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
         require_observations=True,

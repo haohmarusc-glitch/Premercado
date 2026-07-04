@@ -12,14 +12,10 @@ import {
   getGetAlertFiringsSummaryQueryKey,
   useListReports,
   getListReportsQueryKey,
-  useGetNews,
-  getGetNewsQueryKey,
 } from "@workspace/api-client-react";
 import {
   Area,
-  ComposedChart,
-  Bar,
-  ReferenceDot,
+  AreaChart,
   XAxis,
   YAxis,
   Tooltip,
@@ -27,14 +23,16 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MarkdownContent } from "@/components/markdown";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, todayBRTDateString } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, LineChart as LineChartIcon, CandlestickChart } from "lucide-react";
-import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
-import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, Maximize2, Minimize2 } from "lucide-react";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
+import { CandleChart } from "@/components/candle-chart";
+import { TradingViewChart } from "@/components/tradingview-chart";
+import { TrendCard, useTrend } from "@/components/trend-card";
+import { SmartMoneyCard } from "@/components/smart-money-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -230,9 +228,9 @@ function QuoteCard({
 
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
-type ChartVisual = "area" | "candle";
-
-function PriceChart({ symbol, period, visual }: { symbol: string; period: string; visual: ChartVisual }) {
+function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: string; height?: number }) {
+  const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
+  const { data: trendData } = useTrend(symbol);
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
     {
@@ -246,17 +244,6 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
       },
     },
   );
-
-  const { data: newsData } = useGetNews(
-    { tickers: symbol },
-    {
-      query: {
-        queryKey: getGetNewsQueryKey({ tickers: symbol }),
-        staleTime: 5 * 60_000,
-      },
-    },
-  );
-  const newsItems = newsData?.items?.[0]?.news ?? [];
 
   const candles = data?.candles ?? [];
   const chartData = candles.map((c) => ({ t: c.t, price: c.c, label: fmtLabel(c.t, period) }));
@@ -272,86 +259,71 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
   const up = last != null && first != null && last >= first;
   const color = up ? "#22c55e" : "#ef4444";
 
+  const toggle = (
+    <div className="flex justify-end gap-1 mb-1">
+      {([["line", "Linha"], ["candle", "Velas"], ["tradingview", "TradingView"]] as const).map(([key, label]) => (
+        <button
+          key={key}
+          onClick={() => setMode(key)}
+          className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
+            mode === key
+              ? "bg-primary text-primary-foreground border-primary"
+              : "text-muted-foreground border-border hover:text-foreground"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Modo TradingView busca os próprios dados no iframe deles -- não depende
+  // do carregamento/disponibilidade do nosso /api/ticker-chart.
+  if (mode === "tradingview") {
+    return (
+      <div>
+        {toggle}
+        <TradingViewChart symbol={symbol} height={height * 2} />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-48">
-        <span className="text-xs font-mono text-muted-foreground animate-pulse">Carregando gráfico...</span>
+      <div>
+        {toggle}
+        <div className="flex items-center justify-center h-48">
+          <span className="text-xs font-mono text-muted-foreground animate-pulse">Carregando gráfico...</span>
+        </div>
       </div>
     );
   }
 
   if (!chartData.length) {
     return (
-      <div className="flex items-center justify-center h-48">
-        <span className="text-xs font-mono text-muted-foreground">Sem dados para este período.</span>
+      <div>
+        {toggle}
+        <div className="flex items-center justify-center h-48">
+          <span className="text-xs font-mono text-muted-foreground">Sem dados para este período.</span>
+        </div>
       </div>
     );
   }
 
-  if (visual === "candle") {
-    const candleDomainRange = candleDomain(candles);
-    const candleData = attachNewsMarkers(
-      toCandleRangeData(candles).map((c) => ({ ...c, label: fmtLabel(c.t, period) })),
-      newsItems,
-    );
-    const candleNewsMarkers = candleData.filter((c) => c.newsItems.length > 0);
+  if (mode === "candle") {
     return (
-      <ResponsiveContainer width="100%" height={200}>
-        <ComposedChart data={candleData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
-            tickLine={false}
-            axisLine={false}
-            interval="preserveStartEnd"
-            minTickGap={60}
-          />
-          <YAxis
-            domain={candleDomainRange}
-            tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
-            tickLine={false}
-            axisLine={false}
-            width={60}
-            tickFormatter={(v: number) => `$${fmt(v)}`}
-          />
-          <Tooltip
-            contentStyle={{
-              background: "hsl(var(--card))",
-              border: "1px solid hsl(var(--border))",
-              borderRadius: "6px",
-              fontFamily: "monospace",
-              fontSize: "12px",
-            }}
-            labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
-            formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
-              const p = item?.payload;
-              if (!p) return ["—", "OHLC"];
-              return [`O ${fmt(p.o)} · H ${fmt(p.h)} · L ${fmt(p.l)} · C ${fmt(p.c)}`, "OHLC"];
-            }}
-          />
-          <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
-          {candleNewsMarkers.map((m) => (
-            <ReferenceDot
-              key={m.t}
-              x={m.label}
-              y={candleDomainRange[1]}
-              ifOverflow="visible"
-              shape={newsDotShape(m.newsItems)}
-            />
-          ))}
-        </ComposedChart>
-      </ResponsiveContainer>
+      <div>
+        {toggle}
+        <CandleChart candles={candles} height={height} labelFor={(ts) => fmtLabel(ts, period)} markers={trendData?.news?.destaques} />
+      </div>
     );
   }
 
-  const chartDataWithNews = attachNewsMarkers(chartData, newsItems).map((c) => ({
-    ...c,
-    newsY: c.newsItems.length ? areaDomain[1] : null,
-  }));
-
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <ComposedChart data={chartDataWithNews} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+    <div>
+    {toggle}
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.25} />
@@ -384,13 +356,7 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
           }}
           labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
           itemStyle={{ color }}
-          formatter={(val: number, name: string, item: { payload?: { newsItems?: { title: string }[] } }) => {
-            if (name === "newsY") {
-              const items = item?.payload?.newsItems ?? [];
-              return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
-            }
-            return [`$${fmt(val)}`, "Price"];
-          }}
+          formatter={(val: number) => [`$${fmt(val)}`, "Price"]}
         />
         <Area
           type="monotone"
@@ -401,9 +367,9 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
           dot={false}
           activeDot={{ r: 3, fill: color }}
         />
-        <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} />
-      </ComposedChart>
+      </AreaChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -412,7 +378,7 @@ function PriceChart({ symbol, period, visual }: { symbol: string; period: string
 export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
-  const [chartVisual, setChartVisual] = useState<ChartVisual>("area");
+  const [chartExpanded, setChartExpanded] = useState(false);
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
   const [sectorTab, setSectorTab] = useState<string>("all");
 
@@ -420,7 +386,7 @@ export default function Dashboard() {
     query: { queryKey: getGetLatestReportQueryKey(), retry: false },
   });
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayBRTDateString();
   const { data: allReports } = useListReports({
     query: {
       queryKey: getListReportsQueryKey(),
@@ -498,6 +464,66 @@ export default function Dashboard() {
           </p>
         </div>
       </div>
+
+      {/* ── Chart (seletor de ticker aqui em cima -- não precisa rolar até os
+           cards de cotação pra trocar de ativo) ── */}
+      {activeSymbol && (
+        <div className="border border-border rounded-lg overflow-hidden bg-card">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-secondary/30">
+            <div className="flex items-center gap-2">
+              <select
+                value={activeSymbol}
+                onChange={(e) => setSelectedSymbol(e.target.value)}
+                className="bg-background border border-border rounded px-2 py-1 font-mono font-bold text-primary text-sm tracking-widest focus:outline-none focus:ring-1 focus:ring-primary"
+                aria-label="Selecionar ticker"
+              >
+                {(quotes ?? []).map((q) => (
+                  <option key={q.symbol} value={q.symbol}>{q.symbol}</option>
+                ))}
+              </select>
+              <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">— Histórico de preço</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Period selector */}
+              <div className="flex items-center gap-1">
+                {PERIODS.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setPeriod(p.key)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
+                      period === p.key
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    }`}
+                    data-testid={`period-btn-${p.key}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Expandir/recolher gráfico */}
+              <button
+                type="button"
+                onClick={() => setChartExpanded((v) => !v)}
+                className="p-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                aria-label={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
+                title={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
+              >
+                {chartExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Chart body */}
+          <div className="p-4">
+            <PriceChart symbol={activeSymbol} period={period} height={chartExpanded ? 420 : 200} />
+          </div>
+        </div>
+      )}
 
       {/* ── Quote cards (selectable) ── */}
       <div>
@@ -579,73 +605,11 @@ export default function Dashboard() {
         </Link>
       )}
 
-      {/* ── Chart ── */}
-      {activeSymbol && (
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary/30">
-            <span className="font-mono font-bold text-primary text-sm tracking-widest">
-              {activeSymbol} — Histórico de preço
-            </span>
+      {/* ── Trend (confluência técnico + notícias) ── */}
+      {activeSymbol && <TrendCard symbol={activeSymbol} />}
 
-            <div className="flex items-center gap-3">
-              {/* Chart visual toggle */}
-              <div className="flex items-center gap-1 border border-border rounded p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setChartVisual("area")}
-                  title="Área"
-                  className={`p-1 rounded transition-colors ${
-                    chartVisual === "area"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}
-                  data-testid="chart-visual-area"
-                >
-                  <LineChartIcon className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChartVisual("candle")}
-                  title="Vela"
-                  className={`p-1 rounded transition-colors ${
-                    chartVisual === "candle"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}
-                  data-testid="chart-visual-candle"
-                >
-                  <CandlestickChart className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              {/* Period selector */}
-              <div className="flex items-center gap-1">
-                {PERIODS.map((p) => (
-                  <button
-                    key={p.key}
-                    type="button"
-                    onClick={() => setPeriod(p.key)}
-                    className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors ${
-                      period === p.key
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                    }`}
-                    data-testid={`period-btn-${p.key}`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Chart body */}
-          <div className="p-4">
-            <PriceChart symbol={activeSymbol} period={period} visual={chartVisual} />
-          </div>
-        </div>
-      )}
+      {/* ── Smart Money (Congresso + dark pool — opcional, precisa de chave) ── */}
+      {activeSymbol && <SmartMoneyCard symbol={activeSymbol} />}
 
       {/* ── Sentiment summary ── */}
       <div>

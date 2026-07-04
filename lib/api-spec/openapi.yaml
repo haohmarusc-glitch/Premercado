@@ -876,13 +876,15 @@ components:
 
     PriceAlert:
       type: object
-      required: [id, symbol, condition, enabled, createdAt]
+      required: [id, symbol, indicator, condition, enabled, createdAt]
       properties:
         id: { type: integer }
         symbol: { type: string }
+        indicator: { type: string, description: "'price' | 'rsi' | 'macd' | 'sma20' | 'sma50'" }
         condition: { type: string }
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
+        thresholdValue: { type: ["number", "null"], description: "Threshold generico (ex: nivel de RSI). Nao usado por macd/sma20/sma50." }
         enabled: { type: boolean }
         lastTriggeredAt: { type: ["string", "null"] }
         createdAt: { type: string }
@@ -892,9 +894,11 @@ components:
       required: [symbol, condition]
       properties:
         symbol: { type: string }
+        indicator: { type: string, description: "'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50'" }
         condition: { type: string }
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
+        thresholdValue: { type: ["number", "null"] }
 
     AlertToggleInput:
       type: object
@@ -917,9 +921,12 @@ components:
         id: { type: integer }
         alertId: { type: integer }
         symbol: { type: string }
+        indicator: { type: string }
         condition: { type: string }
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
+        thresholdValue: { type: ["number", "null"] }
+        valueAtFiring: { type: ["number", "null"] }
         changePctAtFiring: { type: ["number", "null"] }
         priceAtFiring: { type: ["number", "null"] }
         firedAt: { type: string }

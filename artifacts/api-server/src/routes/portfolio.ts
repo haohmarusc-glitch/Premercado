@@ -2,9 +2,9 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { asc, eq } from "drizzle-orm";
-import { db, portfolioPositionsTable, portfolioPurchasesTable, settingsTable } from "@workspace/db";
-import { getOrCreateSettings } from "./settings";
+import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
+import { computeOpenLotTotals } from "../lib/portfolio-math";
 import {
   ListPortfolioPositionsResponse,
   UpdatePortfolioPositionResponse as PortfolioPositionSchema,
@@ -57,6 +57,44 @@ function serPur(r: typeof portfolioPurchasesTable.$inferSelect) {
   };
 }
 
+// Recalcula quantity/avgCost/investedAmount de uma posicao a partir dos lotes
+// de compra AINDA NAO VENDIDOS (saleDate IS NULL). Deve ser chamada sempre que
+// uma compra for criada, tiver uma venda registrada, ou for excluida -- para
+// a tabela de posicoes nunca ficar "congelada" desatualizada em relacao as
+// compras reais. Se nao sobrar nenhum lote em aberto, a posicao e removida
+// (fica so o historico em portfolio_purchases, incluindo os lotes vendidos).
+async function recomputePosition(positionId: number): Promise<void> {
+  const purchases = await db
+    .select()
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.positionId, positionId));
+
+  const open = purchases.filter((p) => p.saleDate == null);
+
+  if (open.length === 0) {
+    // Nenhum lote em aberto -- posicao totalmente vendida. NAO deletamos a
+    // posicao (a FK portfolio_purchases -> portfolio_positions e' ON DELETE
+    // CASCADE, entao deletar aqui apagaria o historico de compra/venda
+    // junto). Em vez disso zeramos os campos: a posicao some da view de
+    // "ativas" (ver filtro em GET /portfolio) mas a linha e o historico
+    // continuam intactos no banco.
+    await db
+      .update(portfolioPositionsTable)
+      .set({ quantity: 0, avgCost: 0, investedAmount: 0, updatedAt: new Date() })
+      .where(eq(portfolioPositionsTable.id, positionId));
+    return;
+  }
+
+  const totals = computeOpenLotTotals(
+    open.map((p) => ({ amount: Number(p.amount), purchasePrice: p.purchasePrice != null ? Number(p.purchasePrice) : null })),
+  );
+
+  await db
+    .update(portfolioPositionsTable)
+    .set({ ...totals, updatedAt: new Date() })
+    .where(eq(portfolioPositionsTable.id, positionId));
+}
+
 // Seed initial portfolio data if table is empty
 const SEED_POSITIONS = [
   { ticker: "NVDA", quantity: 5.37435,  avgCost: 208.21, investedAmount: 1119.00, firstPurchaseDate: "2026-03-20" },
@@ -88,11 +126,28 @@ export async function seedPortfolioIfEmpty() {
     for (const pos of SEED_POSITIONS) {
       const [inserted] = await db.insert(portfolioPositionsTable).values(pos).returning();
       const purchases = SEED_PURCHASES[pos.ticker] ?? [];
-      if (purchases.length > 0) {
-        await db.insert(portfolioPurchasesTable).values(
-          purchases.map((p) => ({ positionId: inserted.id, ...p })),
-        );
+      if (purchases.length === 0) continue;
+
+      // Os totais da posicao ja vem corretos e fixos em SEED_POSITIONS (nao
+      // dependem de recompute aqui). Mas os lotes individuais nascem sem
+      // purchasePrice -- backfill best-effort pra que qualquer edicao futura
+      // (que dispara recomputePosition) parta de dados completos em vez de
+      // lotes "sem preco" (ver bug corrigido em recomputePosition).
+      let prices: Record<string, number> = {};
+      try {
+        const dates = [...new Set(purchases.map((p) => p.purchaseDate))];
+        prices = await fetchHistoricalPrices(pos.ticker, dates);
+      } catch (err) {
+        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill seed purchase prices");
       }
+
+      await db.insert(portfolioPurchasesTable).values(
+        purchases.map((p) => ({
+          positionId: inserted.id,
+          ...p,
+          purchasePrice: prices[p.purchaseDate] ?? null,
+        })),
+      );
     }
     logger.info("Portfolio seeded with initial positions");
   } catch (err) {
@@ -103,31 +158,11 @@ export async function seedPortfolioIfEmpty() {
 // GET /portfolio
 router.get("/portfolio", async (_req, res): Promise<void> => {
   const rows = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
-  res.json(ListPortfolioPositionsResponse.parse(rows.map(serPos)));
-});
-
-// GET /portfolio/cash — saldo em USD não investido por modo (real/paper)
-router.get("/portfolio/cash", async (_req, res): Promise<void> => {
-  const s = await getOrCreateSettings();
-  res.json({ real: Number(s.cashReal ?? 0), simulated: Number(s.cashSimulated ?? 0) });
-});
-
-// PATCH /portfolio/cash — { mode: "real" | "simulated", amount: number }
-router.patch("/portfolio/cash", async (req, res): Promise<void> => {
-  const mode = req.body?.mode;
-  const amount = Number(req.body?.amount);
-  if ((mode !== "real" && mode !== "simulated") || !Number.isFinite(amount) || amount < 0) {
-    res.status(400).json({ error: "mode (real|simulated) e amount >= 0 obrigatórios" });
-    return;
-  }
-  const s = await getOrCreateSettings();
-  const patch = mode === "real" ? { cashReal: amount } : { cashSimulated: amount };
-  const [updated] = await db
-    .update(settingsTable)
-    .set({ ...patch, updatedAt: new Date() })
-    .where(eq(settingsTable.id, s.id))
-    .returning();
-  res.json({ real: Number(updated.cashReal ?? 0), simulated: Number(updated.cashSimulated ?? 0) });
+  // Posicoes totalmente vendidas ficam com quantity = 0 (ver recomputePosition)
+  // e nao devem aparecer como holding ativo -- mas a linha continua no banco
+  // preservando o historico de compras/vendas.
+  const active = rows.filter((r) => Number(r.quantity) > 0.00001);
+  res.json(ListPortfolioPositionsResponse.parse(active.map(serPos)));
 });
 
 // GET /portfolio/:id/purchases
@@ -182,10 +217,34 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const params = PortfolioPositionParams.safeParse(req.params);
   const body = CreatePortfolioPurchaseBody.safeParse(req.body);
   if (!params.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
+
+  // Se o cliente nao mandou preco, tenta buscar o fechamento real da data
+  // (yfinance) aqui tambem -- o frontend ja tenta isso antes de chamar essa
+  // rota, mas essa e' a defesa de verdade: sem isso o lote fica com
+  // purchasePrice null e distorce avgCost/quantity da posicao (ver
+  // recomputePosition). Falha ao buscar preco nao bloqueia a compra --
+  // fica null e o usuario pode rodar backfill-prices depois.
+  let purchasePrice = body.data.purchasePrice ?? null;
+  if (purchasePrice == null) {
+    const [pos] = await db
+      .select({ ticker: portfolioPositionsTable.ticker })
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.id, params.data.id));
+    if (pos) {
+      try {
+        const prices = await fetchHistoricalPrices(pos.ticker, [body.data.purchaseDate]);
+        purchasePrice = prices[body.data.purchaseDate] ?? null;
+      } catch (err) {
+        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill purchase price at insert time");
+      }
+    }
+  }
+
   const [row] = await db
     .insert(portfolioPurchasesTable)
-    .values({ positionId: params.data.id, ...body.data })
+    .values({ positionId: params.data.id, ...body.data, purchasePrice })
     .returning();
+  await recomputePosition(params.data.id);
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -200,6 +259,7 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
     .returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  await recomputePosition(row.positionId);
   res.json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -207,7 +267,12 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
 router.delete("/portfolio/purchases/:purchaseId", async (req, res): Promise<void> => {
   const p = PortfolioPurchaseParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
+  const [existing] = await db
+    .select({ positionId: portfolioPurchasesTable.positionId })
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
   await db.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
+  if (existing) { await recomputePosition(existing.positionId); }
   res.status(204).send();
 });
 

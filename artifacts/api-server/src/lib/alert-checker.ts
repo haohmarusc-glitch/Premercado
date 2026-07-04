@@ -1,14 +1,17 @@
 /**
  * Background job that checks price alerts every 5 minutes.
- * For each enabled alert, fetches the current changePct and fires an email
- * if the threshold is crossed (with a 4-hour cooldown per alert).
+ * For each enabled alert, fetches the current changePct/price (indicator
+ * 'price') or RSI/MACD/SMA (demais indicadores) and fires an email if the
+ * condition is met (with a 4-hour cooldown per alert).
  */
 import { spawn } from "child_process";
-import { eq, and } from "drizzle-orm";
-import { db, alertsTable, alertFiringsTable, settingsTable } from "@workspace/db";
+import path from "path";
+import { eq } from "drizzle-orm";
+import { db, alertsTable, alertFiringsTable, type Alert } from "@workspace/db";
 import { agentDir, getPythonBin } from "./runner";
 import { sendAlertEmail } from "./mailer";
 import { logger } from "./logger";
+import { evalTechnical, type Technicals } from "./alert-technical-eval";
 
 const CHECK_INTERVAL_MS = 5 * 60_000; // 5 min
 const COOLDOWN_MS = 4 * 60 * 60_000; // 4 hours
@@ -36,6 +39,78 @@ function fetchQuotes(tickers: string[]): Promise<Quote[]> {
   });
 }
 
+function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
+    const py = spawn(getPythonBin(), [scriptPath]);
+    py.stdin.write(JSON.stringify({ tickers }));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) { reject(new Error(err || "get_technicals: script failed")); return; }
+      try {
+        const parsed = JSON.parse(out) as { items?: Technicals[] };
+        resolve(parsed.items ?? []);
+      } catch { reject(new Error(`Bad JSON: ${out}`)); }
+    });
+  });
+}
+
+async function fireAlert(
+  alert: Alert,
+  now: Date,
+  opts: {
+    currentPrice: number | null;
+    currentChangePct: number | null;
+    valueAtFiring: number | null;
+  },
+): Promise<void> {
+  try {
+    await sendAlertEmail({
+      symbol: alert.symbol,
+      indicator: alert.indicator,
+      condition: alert.condition,
+      thresholdPct: alert.thresholdPct,
+      thresholdPrice: alert.thresholdPrice,
+      thresholdValue: alert.thresholdValue,
+      valueAtFiring: opts.valueAtFiring,
+      currentChangePct: opts.currentChangePct,
+      currentPrice: opts.currentPrice,
+    });
+
+    await db
+      .update(alertsTable)
+      .set({ lastTriggeredAt: now })
+      .where(eq(alertsTable.id, alert.id));
+
+    await db.insert(alertFiringsTable).values({
+      alertId: alert.id,
+      symbol: alert.symbol,
+      indicator: alert.indicator,
+      condition: alert.condition,
+      thresholdPct: alert.thresholdPct,
+      thresholdPrice: alert.thresholdPrice,
+      thresholdValue: alert.thresholdValue,
+      valueAtFiring: opts.valueAtFiring,
+      changePctAtFiring: opts.currentChangePct,
+      priceAtFiring: opts.currentPrice,
+      firedAt: now,
+    });
+
+    logger.info(
+      { symbol: alert.symbol, indicator: alert.indicator, condition: alert.condition },
+      "Alert triggered",
+    );
+  } catch (err) {
+    logger.error({ err, alertId: alert.id }, "Failed to send alert email");
+  }
+}
+
 async function checkAlerts(): Promise<void> {
   // Get all enabled alerts
   const alerts = await db
@@ -45,80 +120,71 @@ async function checkAlerts(): Promise<void> {
 
   if (!alerts.length) return;
 
-  // Get distinct symbols
-  const symbols = [...new Set(alerts.map((a) => a.symbol))];
-
-  let quotes: Quote[];
-  try {
-    quotes = await fetchQuotes(symbols);
-  } catch (err) {
-    logger.warn({ err }, "Alert checker: failed to fetch quotes");
-    return;
-  }
-
-  const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
+  const priceAlerts = alerts.filter((a) => a.indicator === "price");
+  const technicalAlerts = alerts.filter((a) => a.indicator !== "price");
   const now = new Date();
 
-  for (const alert of alerts) {
-    const quote = quoteMap.get(alert.symbol);
-    if (!quote) continue;
+  const withinCooldown = (alert: Alert): boolean => {
+    if (!alert.lastTriggeredAt) return false;
+    return now.getTime() - new Date(alert.lastTriggeredAt).getTime() < COOLDOWN_MS;
+  };
 
-    // Alerta por preço só precisa do preço; por variação, só do changePct
-    // (no pré-mercado o changePct costuma vir nulo — não pode barrar o de preço)
-    let triggered = false;
-    if (alert.thresholdPrice != null) {
-      if (quote.price == null) continue;
-      triggered = alert.condition === "above"
-        ? quote.price >= alert.thresholdPrice
-        : quote.price <= alert.thresholdPrice;
-    } else if (alert.thresholdPct != null) {
-      if (quote.changePct == null) continue;
-      triggered = alert.condition === "above"
-        ? quote.changePct >= alert.thresholdPct
-        : quote.changePct <= alert.thresholdPct;
-    }
-
-    if (!triggered) continue;
-
-    // Cooldown check
-    if (alert.lastTriggeredAt) {
-      const elapsed = now.getTime() - new Date(alert.lastTriggeredAt).getTime();
-      if (elapsed < COOLDOWN_MS) continue;
-    }
-
-    // Fire notification
+  // ── Alertas de preco/variacao (comportamento original) ──────────────────
+  if (priceAlerts.length) {
+    const symbols = [...new Set(priceAlerts.map((a) => a.symbol))];
+    let quotes: Quote[] = [];
     try {
-      await sendAlertEmail({
-        symbol: alert.symbol,
-        condition: alert.condition,
-        thresholdPct: alert.thresholdPct,
-        thresholdPrice: alert.thresholdPrice,
-        currentChangePct: quote.changePct,
-        currentPrice: quote.price,
-      });
-
-      await db
-        .update(alertsTable)
-        .set({ lastTriggeredAt: now })
-        .where(eq(alertsTable.id, alert.id));
-
-      await db.insert(alertFiringsTable).values({
-        alertId: alert.id,
-        symbol: alert.symbol,
-        condition: alert.condition,
-        thresholdPct: alert.thresholdPct,
-        thresholdPrice: alert.thresholdPrice,
-        changePctAtFiring: quote.changePct,
-        priceAtFiring: quote.price,
-        firedAt: now,
-      });
-
-      logger.info(
-        { symbol: alert.symbol, changePct: quote.changePct, threshold: alert.thresholdPct },
-        "Price alert triggered",
-      );
+      quotes = await fetchQuotes(symbols);
     } catch (err) {
-      logger.error({ err, alertId: alert.id }, "Failed to send alert email");
+      logger.warn({ err }, "Alert checker: failed to fetch quotes");
+    }
+    const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
+
+    for (const alert of priceAlerts) {
+      const quote = quoteMap.get(alert.symbol);
+      if (!quote) continue;
+
+      // Alerta por preço só precisa do preço; por variação, só do changePct
+      // (no pré-mercado o changePct costuma vir nulo — não pode barrar o de preço)
+      let triggered = false;
+      let valueAtFiring: number | null = null;
+      if (alert.thresholdPrice != null) {
+        if (quote.price == null) continue;
+        triggered = alert.condition === "above"
+          ? quote.price >= alert.thresholdPrice
+          : quote.price <= alert.thresholdPrice;
+        valueAtFiring = quote.price;
+      } else if (alert.thresholdPct != null) {
+        if (quote.changePct == null) continue;
+        triggered = alert.condition === "above"
+          ? quote.changePct >= alert.thresholdPct
+          : quote.changePct <= alert.thresholdPct;
+        valueAtFiring = quote.changePct;
+      }
+
+      if (!triggered || withinCooldown(alert)) continue;
+      await fireAlert(alert, now, { currentPrice: quote.price, currentChangePct: quote.changePct, valueAtFiring });
+    }
+  }
+
+  // ── Alertas por condicao tecnica (RSI/MACD/SMA) ──────────────────────────
+  if (technicalAlerts.length) {
+    const symbols = [...new Set(technicalAlerts.map((a) => a.symbol))];
+    let technicals: Technicals[] = [];
+    try {
+      technicals = await fetchTechnicals(symbols);
+    } catch (err) {
+      logger.warn({ err }, "Alert checker: failed to fetch technicals");
+    }
+    const techMap = new Map(technicals.map((t) => [t.ticker, t]));
+
+    for (const alert of technicalAlerts) {
+      const t = techMap.get(alert.symbol);
+      if (!t || t.error) continue;
+
+      const valueAtFiring = evalTechnical(alert, t);
+      if (valueAtFiring == null || withinCooldown(alert)) continue;
+      await fireAlert(alert, now, { currentPrice: t.price ?? null, currentChangePct: null, valueAtFiring });
     }
   }
 }

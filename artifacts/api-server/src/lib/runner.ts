@@ -9,6 +9,7 @@ import { asc, eq } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
+import { todayBRTDateString } from "./timezone";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -224,7 +225,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       return;
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayBRTDateString();
 
     // Save report to DB
     try {

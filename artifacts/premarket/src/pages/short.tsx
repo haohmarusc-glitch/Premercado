@@ -68,6 +68,10 @@ export default function ShortPage() {
                   <td className="px-3 py-2.5 font-bold text-primary">{it.ticker}</td>
                   {it.error || !it.short ? (
                     <td colSpan={6} className="px-3 py-2.5 text-muted-foreground italic text-xs">{it.error ?? "sem dados"}</td>
+                  ) : it.short.shortPctOfFloat == null && it.short.daysToCover == null && it.short.sharesShort == null ? (
+                    <td colSpan={6} className="px-3 py-2.5 text-muted-foreground italic text-xs">
+                      ${fmt(it.price)} · short interest não disponível (mercado não coberto pela fonte de dados)
+                    </td>
                   ) : (
                     <>
                       <td className="px-3 py-2.5 text-right tabular-nums">${fmt(it.price)}</td>

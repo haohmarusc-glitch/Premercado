@@ -72,4 +72,22 @@ router.get("/risk/portfolio-exposure", async (req, res): Promise<void> => {
   }
 });
 
+// GET /risk/portfolio-correlation — correlação de Pearson entre os retornos
+// diários das posições atuais (peso em dólar não conta como diversificação
+// se os ativos se movem juntos).
+router.get("/risk/portfolio-correlation", async (req, res): Promise<void> => {
+  try {
+    const positions = await db.select({ ticker: portfolioPositionsTable.ticker }).from(portfolioPositionsTable);
+    const tickers = [...new Set(positions.map((p) => p.ticker))];
+    if (tickers.length < 2) {
+      res.json({ error: "Precisa de pelo menos 2 posições na carteira" });
+      return;
+    }
+    const period = typeof req.query.period === "string" ? req.query.period : "6mo";
+    res.json(await runPython({ action: "correlation", tickers, period }));
+  } catch (e: unknown) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 export default router;

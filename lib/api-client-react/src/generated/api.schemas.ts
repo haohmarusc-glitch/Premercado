@@ -59,11 +59,18 @@ export interface AgentStatus {
 export interface PriceAlert {
   id: number;
   symbol: string;
+  /** 'price' | 'rsi' | 'macd' | 'sma20' | 'sma50' */
+  indicator: string;
   condition: string;
   /** @nullable */
   thresholdPct?: number | null;
   /** @nullable */
   thresholdPrice?: number | null;
+  /**
+     * Threshold generico (ex: nivel de RSI). Nao usado por macd/sma20/sma50.
+     * @nullable
+     */
+  thresholdValue?: number | null;
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
@@ -72,11 +79,15 @@ export interface PriceAlert {
 
 export interface AlertCreateInput {
   symbol: string;
+  /** 'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50' */
+  indicator?: string;
   condition: string;
   /** @nullable */
   thresholdPct?: number | null;
   /** @nullable */
   thresholdPrice?: number | null;
+  /** @nullable */
+  thresholdValue?: number | null;
 }
 
 export interface AlertToggleInput {
@@ -93,11 +104,16 @@ export interface AlertFiring {
   id: number;
   alertId: number;
   symbol: string;
+  indicator?: string;
   condition: string;
   /** @nullable */
   thresholdPct?: number | null;
   /** @nullable */
   thresholdPrice?: number | null;
+  /** @nullable */
+  thresholdValue?: number | null;
+  /** @nullable */
+  valueAtFiring?: number | null;
   /** @nullable */
   changePctAtFiring?: number | null;
   /** @nullable */

@@ -5,7 +5,8 @@ import { logger } from "./logger";
 // Garante no boot as colunas exigidas por features novas quando o banco ainda
 // não recebeu `pnpm --filter db push` (ex.: processo reiniciado sem o
 // post-merge hook rodar). Statements idempotentes — espelham
-// lib/db/migrations/0008_settings_cash.sql e 0009_agent_runs_usage.sql.
+// lib/db/migrations/0008_settings_cash.sql, 0009_agent_runs_usage.sql e
+// 0009_alerts_technical_indicator.sql.
 export async function ensureSchema(): Promise<void> {
   try {
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_real numeric(15,4) NOT NULL DEFAULT 0`);
@@ -14,6 +15,7 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (cash columns)");
   }
+
   try {
     await db.execute(sql`ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS input_tokens integer`);
     await db.execute(sql`ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS output_tokens integer`);
@@ -25,5 +27,16 @@ export async function ensureSchema(): Promise<void> {
     logger.info("Schema check ok (agent_runs usage/cost columns)");
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (agent_runs usage columns)");
+  }
+
+  try {
+    await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS indicator text NOT NULL DEFAULT 'price'`);
+    await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS threshold_value numeric(15,4)`);
+    await db.execute(sql`ALTER TABLE alert_firings ADD COLUMN IF NOT EXISTS indicator text NOT NULL DEFAULT 'price'`);
+    await db.execute(sql`ALTER TABLE alert_firings ADD COLUMN IF NOT EXISTS threshold_value numeric(15,4)`);
+    await db.execute(sql`ALTER TABLE alert_firings ADD COLUMN IF NOT EXISTS value_at_firing numeric(15,4)`);
+    logger.info("Schema check ok (alerts technical indicator columns)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (alerts technical indicator columns)");
   }
 }

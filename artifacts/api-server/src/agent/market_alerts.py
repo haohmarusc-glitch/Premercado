@@ -100,6 +100,27 @@ POSITIVE_KW = [
     "beats", "raises guidance", "raised guidance", "upgrade", "qualificada",
 ]
 
+# Setup de swing HCC (Warrior Met Coal) -- definido em 01/07/2026
+# entrada ~$82-83, stop tecnico $73, alvos $90.60 e $103
+HCC_LEVELS: dict[str, tuple[float, str, str]] = {
+    "reentry_zone": (
+        81.0, "at_or_below",
+        "HCC na zona MM200/suporte ($80-81) -- reavaliar entrada do swing.",
+    ),
+    "resistance_breakout": (
+        90.60, "above",
+        "HCC rompeu resistencia tecnica $90,60 -- confirmacao de forca, R:R melhora.",
+    ),
+    "bull_target": (
+        103.0, "above",
+        "HCC atingiu zona de consenso dos analistas (~$103) -- considerar realizacao parcial.",
+    ),
+    "technical_stop": (
+        73.0, "below",
+        "HCC rompeu stop tecnico ($73) -- invalida o setup, risco de continuacao para o cenario bear.",
+    ),
+}
+
 
 # =============================================================================
 # ESTRUTURA DO ALERTA
@@ -495,6 +516,52 @@ def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
     return alerts
 
 
+def check_hcc_setup(ticker: str = "HCC") -> list[Alert]:
+    """Checa os niveis do setup de swing definido para HCC contra o ultimo close.
+
+    So dispara UM alerta por direcao (o nivel mais extremo atingido), para
+    evitar alertas duplicados/conflitantes quando o preco rompe mais de um
+    nivel de uma vez (ex: gap que passa direto do stop pela zona de reentrada).
+
+    Sem dedup propria (mesmo padrao dos outros checks deste modulo): re-dispara
+    a cada execucao enquanto a condicao continuar verdadeira.
+    """
+    df = _history(ticker, period="5d")
+    if df is None or df.empty:
+        return []
+    last = float(df["Close"].iloc[-1])
+
+    out: list[Alert] = []
+
+    # Lado de baixo: do mais severo (stop) para o menos severo (reentrada)
+    downside_order = ["technical_stop", "reentry_zone"]
+    for key in downside_order:
+        level, cond, msg = HCC_LEVELS[key]
+        hit = (
+            (cond == "below" and last < level)
+            or (cond == "at_or_below" and last <= level)
+        )
+        if hit:
+            out.append(Alert(
+                ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+                title=f"Setup HCC: {key}", detail=msg, value=round(last, 2),
+            ))
+            break  # so o mais extremo do lado de baixo
+
+    # Lado de cima: do mais extremo (alvo bull) para o menos extremo (rompimento)
+    upside_order = ["bull_target", "resistance_breakout"]
+    for key in upside_order:
+        level, cond, msg = HCC_LEVELS[key]
+        if cond == "above" and last > level:
+            out.append(Alert(
+                ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+                title=f"Setup HCC: {key}", detail=msg, value=round(last, 2),
+            ))
+            break  # so o mais extremo do lado de cima
+
+    return out
+
+
 def check_overbought(ticker: str) -> list[Alert]:
     alerts: list[Alert] = []
 
@@ -809,6 +876,8 @@ def run_all_alerts(tickers: list[str],
         alerts += check_overbought(t)
         alerts += check_volume_gap(t)
         alerts += check_earnings_proximity(t, today)
+        if t == "HCC":
+            alerts += check_hcc_setup(t)
         alerts += check_analyst_changes(t, heads)
         alerts += check_sell_the_news(t, heads)
         alerts += check_geopolitical_news(t, heads)

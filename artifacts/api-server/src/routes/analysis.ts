@@ -63,8 +63,14 @@ function makeTickerRoute(routePath: string, script: string, cacheName: string, e
 }
 
 makeTickerRoute("/fundamentals", "get_fundamentals.py", "fundamentals");
+makeTickerRoute("/trend", "get_trend.py", "trend");
 makeTickerRoute("/options", "get_options_chain.py", "options");
 makeTickerRoute("/news", "get_news_feed.py", "news", { maxItems: 5 });
+// Congress trading (Quiver Quant) + dark pool (Unusual Whales) — cada seção
+// funciona só se a env var de chave correspondente estiver configurada
+// (QUIVER_API_KEY / UNUSUAL_WHALES_API_KEY); sem chave, volta
+// {configured: false} em vez de erro.
+makeTickerRoute("/alt-data", "get_alt_data.py", "alt-data");
 
 // Macro — no tickers, single cache
 router.get("/macro", async (_req, res): Promise<void> => {
@@ -77,6 +83,22 @@ router.get("/macro", async (_req, res): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "Failed: /macro");
     res.status(500).json({ error: "Failed to fetch macro" });
+  }
+});
+
+// Filings 13F de gestores institucionais acompanhados — no tickers, mesmo
+// cache de 60s dos demais endpoints desta rota (o dado em si só muda a cada
+// trimestre, o cache aqui é só pra não bater na SEC a cada clique).
+router.get("/institutional-filings", async (_req, res): Promise<void> => {
+  try {
+    const hit = cached("institutional-filings", "_");
+    if (hit) { res.json(hit); return; }
+    const data = await runPython("get_institutional_filings.py", {});
+    setCache("institutional-filings", "_", data);
+    res.json(data);
+  } catch (err) {
+    logger.error({ err }, "Failed: /institutional-filings");
+    res.status(500).json({ error: "Failed to fetch institutional filings" });
   }
 });
 

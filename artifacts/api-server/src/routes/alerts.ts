@@ -11,6 +11,8 @@ import {
   GetAlertFiringsSummaryResponse,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { startOfTodayBRT } from "../lib/timezone";
+import { isAlertIndicator } from "../lib/alert-indicators";
 
 const router: IRouter = Router();
 
@@ -23,8 +25,7 @@ function serializeAlert(a: typeof alertsTable.$inferSelect) {
 }
 
 router.get("/alerts/firings/summary", async (_req, res): Promise<void> => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = startOfTodayBRT();
 
   const [allAlerts, todayFirings] = await Promise.all([
     db.select({ id: alertsTable.id, enabled: alertsTable.enabled }).from(alertsTable),
@@ -49,18 +50,33 @@ router.post("/alerts", async (req, res): Promise<void> => {
   const parsed = CreateAlertBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  const { symbol, condition, thresholdPct, thresholdPrice } = parsed.data;
+  const { symbol, condition, thresholdPct, thresholdPrice, thresholdValue } = parsed.data;
+  const indicator = parsed.data.indicator ?? "price";
+  if (!isAlertIndicator(indicator)) {
+    res.status(400).json({ error: `indicator must be one of: price, rsi, macd, sma20, sma50` });
+    return;
+  }
   if (condition !== "above" && condition !== "below") {
     res.status(400).json({ error: "condition must be 'above' or 'below'" });
     return;
   }
-  if (thresholdPct == null && thresholdPrice == null) {
-    res.status(400).json({ error: "thresholdPct or thresholdPrice is required" });
-    return;
+
+  if (indicator === "price") {
+    if (thresholdPct == null && thresholdPrice == null) {
+      res.status(400).json({ error: "thresholdPct or thresholdPrice is required for indicator 'price'" });
+      return;
+    }
+  } else if (indicator === "rsi") {
+    if (thresholdValue == null) {
+      res.status(400).json({ error: "thresholdValue (nivel de RSI) is required for indicator 'rsi'" });
+      return;
+    }
   }
+  // macd/sma20/sma50 nao usam threshold: 'above'/'below' ja descreve a condicao
+  // (macd: histograma bullish/bearish; sma: preco acima/abaixo da media).
 
   const [row] = await db.insert(alertsTable)
-    .values({ symbol: symbol.toUpperCase(), condition, thresholdPct, thresholdPrice })
+    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue })
     .returning();
   res.status(201).json(ListAlertsResponseItem.parse(serializeAlert(row)));
 });

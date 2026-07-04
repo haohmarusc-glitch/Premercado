@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle, Activity, PieChart } from "lucide-react";
+import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle, Activity, PieChart, Grid3x3 } from "lucide-react";
 
 interface StopAtrResult {
   ticker: string;
@@ -19,6 +19,23 @@ interface ExposureResult {
   maxSinglePositionPct: number;
   concentrationRisk: "LOW" | "MEDIUM" | "HIGH";
   error?: string;
+}
+
+interface CorrelationResult {
+  tickers: string[];
+  matrix: (number | null)[][];
+  pairs: { a: string; b: string; correlation: number }[];
+  highCorrelationPairs: { a: string; b: string; correlation: number }[];
+  skipped: string[];
+  error?: string;
+}
+
+export function correlationColor(v: number | null): string {
+  if (v == null) return "text-muted-foreground";
+  const abs = Math.abs(v);
+  if (abs >= 0.8) return v > 0 ? "text-red-400" : "text-blue-400";
+  if (abs >= 0.5) return v > 0 ? "text-yellow-400" : "text-cyan-400";
+  return "text-muted-foreground";
 }
 
 function fmt(n: number, decimals = 2) {
@@ -132,6 +149,16 @@ export default function CalculatorPage() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
       return data as ExposureResult;
+    },
+  });
+
+  // Correlação entre os retornos das posições da carteira (backend / yfinance)
+  const correlation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/risk/portfolio-correlation", { credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as CorrelationResult;
     },
   });
 
@@ -352,6 +379,75 @@ export default function CalculatorPage() {
                     </div>
                   ))}
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Matriz de correlação da carteira */}
+        <div className="border border-border rounded-lg bg-card p-5 space-y-4 md:col-span-2">
+          <div className="flex items-center gap-2">
+            <Grid3x3 className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-mono font-bold text-foreground uppercase tracking-widest">Correlação da Carteira</h2>
+          </div>
+          <p className="text-xs font-mono text-muted-foreground leading-relaxed">
+            Diversificação por peso em dólar não é diversificação de risco se os ativos se movem juntos.
+            Correlação de Pearson entre os retornos diários (6 meses) das posições atuais.
+          </p>
+          <button
+            onClick={() => correlation.mutate()}
+            disabled={correlation.isPending}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded font-mono text-xs font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {correlation.isPending ? "Calculando..." : "Calcular Correlação"}
+          </button>
+          {correlation.isError && <p className="text-xs text-red-400 font-mono">{String(correlation.error)}</p>}
+          {correlation.data?.error && <p className="text-xs text-red-400 font-mono">{correlation.data.error}</p>}
+          {correlation.data && !correlation.data.error && (
+            <div className="space-y-4">
+              {correlation.data.highCorrelationPairs.length > 0 && (
+                <div className="flex items-start gap-2 text-xs font-mono rounded px-3 py-2 border border-yellow-600/50 bg-yellow-500/5 text-yellow-500">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    {correlation.data.highCorrelationPairs.length} par(es) com |correlação| ≥ 0.8 —
+                    {" "}{correlation.data.highCorrelationPairs.map((p) => `${p.a}×${p.b} (${fmt(p.correlation)})`).join(", ")}.
+                    Essas posições tendem a subir/cair juntas: o risco real da carteira é maior do que a soma das partes sugere.
+                  </span>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="text-xs font-mono border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="p-2 text-muted-foreground"></th>
+                      {correlation.data.tickers.map((t) => (
+                        <th key={t} className="p-2 text-muted-foreground font-bold">{t}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correlation.data.matrix.map((row, i) => (
+                      <tr key={correlation.data!.tickers[i]}>
+                        <td className="p-2 text-muted-foreground font-bold">{correlation.data!.tickers[i]}</td>
+                        {row.map((v, j) => (
+                          <td
+                            key={j}
+                            className={`p-2 text-center border border-border/40 ${correlationColor(v)} ${i === j ? "bg-secondary/30" : ""}`}
+                          >
+                            {v != null ? fmt(v) : "—"}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {correlation.data.skipped.length > 0 && (
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  Sem dados suficientes para: {correlation.data.skipped.join(", ")}.
+                </p>
+              )}
             </div>
           )}
         </div>
