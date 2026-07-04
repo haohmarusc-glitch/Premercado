@@ -623,7 +623,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                           : unrealizedPnl >= 0 ? "text-green-400" : "text-red-400"
                         )}>
                           {unrealizedPnl != null ? (
-                            <span>{unrealizedPnl >= 0 ? "+" : ""}{fmt$(unrealizedPnl)}<br/>
+                            <span>{unrealizedPnl >= 0 ? "+" : "-"}{fmt$(unrealizedPnl)}<br/>
                             <span className="text-[10px] font-normal">{unrealizedPct! >= 0 ? "+" : ""}{unrealizedPct!.toFixed(2)}%</span></span>
                           ) : isSold ? <span className="text-muted-foreground text-[10px]">vendida</span> : "—"}
                         </td>
@@ -644,7 +644,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                           : realizedPnl >= 0 ? "text-green-400" : "text-red-400"
                         )}>
                           {realizedPnl != null ? (
-                            <span>{realizedPnl >= 0 ? "+" : ""}{fmt$(realizedPnl)}<br/>
+                            <span>{realizedPnl >= 0 ? "+" : "-"}{fmt$(realizedPnl)}<br/>
                             <span className="text-[10px] font-normal">{realizedPct! >= 0 ? "+" : ""}{realizedPct!.toFixed(2)}%</span></span>
                           ) : "—"}
                         </td>
@@ -711,7 +711,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                         : totalUnrealizedPnl >= 0 ? "text-green-400" : "text-red-400"
                       )}>
                         {totalUnrealizedPnl != null
-                          ? `${totalUnrealizedPnl >= 0 ? "+" : ""}${fmt$(totalUnrealizedPnl)}`
+                          ? `${totalUnrealizedPnl >= 0 ? "+" : "-"}${fmt$(totalUnrealizedPnl)}`
                           : "—"}
                       </td>
                       <td className="px-3 py-2" />
@@ -723,7 +723,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                         : totalRealizedPnl > 0 ? "text-green-400" : "text-red-400"
                       )}>
                         {totalRealizedPnl !== 0
-                          ? `${totalRealizedPnl >= 0 ? "+" : ""}${fmt$(totalRealizedPnl)}`
+                          ? `${totalRealizedPnl >= 0 ? "+" : "-"}${fmt$(totalRealizedPnl)}`
                           : "—"}
                       </td>
                       <td className="px-3 py-2" colSpan={2} />
@@ -819,7 +819,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                     <div className="flex justify-between border-t border-border pt-1">
                       <span className="text-muted-foreground">Lucro/Perda</span>
                       <span className={pnl >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
-                        {pnl >= 0 ? "+" : ""}${Math.abs(pnl).toFixed(2)}
+                        {pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}
                         {purchaseCost ? ` (${((pnl / purchaseCost) * 100).toFixed(1)}%)` : ""}
                       </span>
                     </div>
@@ -1658,7 +1658,7 @@ export default function PortfolioPage() {
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         pnl >= 0 ? "text-green-400" : "text-red-400"
                       )}>
-                        {pnl >= 0 ? "+" : ""}{fmtMoney(pnl, isBrl)}
+                        {pnl >= 0 ? "+" : "-"}{fmtMoney(pnl, isBrl)}
                       </td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         pnlPct >= 0 ? "text-green-400" : "text-red-400"
