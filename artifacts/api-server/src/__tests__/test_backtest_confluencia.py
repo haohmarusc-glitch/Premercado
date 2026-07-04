@@ -212,3 +212,109 @@ class TestRunBasketBacktest:
         assert result["tickersOk"] == 1
         assert len(result["failed"]) == 1
         assert result["failed"][0]["ticker"] == "BAD"
+
+    def test_groups_results_by_sector(self, monkeypatch):
+        up = _sawtooth_uptrend(400)
+        down = _sawtooth_downtrend(400)
+
+        # MU e WDC -> setor "memory"; TSLA nao esta em nenhum grupo -> "other"
+        class DispatchingFakeTicker:
+            def __init__(self, ticker):
+                self._ticker = ticker
+            def history(self, start, end, interval, auto_adjust):
+                return _mock_history_df(up if self._ticker in ("MU", "WDC") else down)
+
+        monkeypatch.setattr(bt.yf, "Ticker", DispatchingFakeTicker)
+
+        result = bt.run_basket_backtest(["MU", "WDC", "TSLA"], "2024-08-01", "2025-06-01", strategy="confluencia")
+
+        by_sector = {s["sector"]: s for s in result["bySector"]}
+        assert set(by_sector.keys()) == {"memory", "other"}
+        assert by_sector["memory"]["tickerCount"] == 2
+        assert by_sector["memory"]["label"] == "Memória"
+        assert by_sector["other"]["tickerCount"] == 1
+        assert by_sector["other"]["label"] == "Outros"
+
+
+class TestSensitivityAnalysis:
+    def test_fetches_data_only_once_regardless_of_variation_count(self, monkeypatch):
+        close = _sawtooth_uptrend(400)
+        fetch_count = {"n": 0}
+
+        class FakeTicker:
+            def __init__(self, ticker):
+                pass
+            def history(self, start, end, interval, auto_adjust):
+                fetch_count["n"] += 1
+                return _mock_history_df(close)
+
+        monkeypatch.setattr(bt.yf, "Ticker", FakeTicker)
+        result = bt.run_sensitivity_analysis("NVDA", "2024-08-01", "2025-06-01", strategy="rsi")
+
+        assert "error" not in result
+        assert fetch_count["n"] == 1
+
+    def test_rsi_strategy_varies_rsi_thresholds_and_sl_tp(self, monkeypatch):
+        close = _sawtooth_uptrend(400)
+
+        class FakeTicker:
+            def __init__(self, ticker):
+                pass
+            def history(self, start, end, interval, auto_adjust):
+                return _mock_history_df(close)
+
+        monkeypatch.setattr(bt.yf, "Ticker", FakeTicker)
+        result = bt.run_sensitivity_analysis("NVDA", "2024-08-01", "2025-06-01", strategy="rsi")
+
+        params_tested = {v["param"] for v in result["variations"]}
+        assert params_tested == {"rsiOversold", "rsiOverbought", "stopLossPct", "takeProfitPct"}
+        assert "scoreThreshold" not in params_tested
+        assert "totalReturn" in result["baseline"]
+        for v in result["variations"]:
+            assert "totalReturn" in v
+            assert "param" in v and "value" in v
+
+    def test_confluencia_strategy_varies_score_threshold_instead_of_rsi(self, monkeypatch):
+        close = _sawtooth_uptrend(400)
+
+        class FakeTicker:
+            def __init__(self, ticker):
+                pass
+            def history(self, start, end, interval, auto_adjust):
+                return _mock_history_df(close)
+
+        monkeypatch.setattr(bt.yf, "Ticker", FakeTicker)
+        result = bt.run_sensitivity_analysis("NVDA", "2024-08-01", "2025-06-01", strategy="confluencia")
+
+        params_tested = {v["param"] for v in result["variations"]}
+        assert "scoreThreshold" in params_tested
+        assert "rsiOversold" not in params_tested
+        assert "rsiOverbought" not in params_tested
+
+    def test_reports_error_when_fetch_fails_entirely(self, monkeypatch):
+        class FakeTicker:
+            def __init__(self, ticker):
+                pass
+            def history(self, start, end, interval, auto_adjust):
+                return pd.DataFrame()
+
+        monkeypatch.setattr(bt.yf, "Ticker", FakeTicker)
+        result = bt.run_sensitivity_analysis("NEWCO", "2024-08-01", "2025-06-01", strategy="rsi")
+        assert "error" in result
+
+    def test_baseline_reports_error_when_requested_window_has_too_little_data(self, monkeypatch):
+        # 65 dias passam no minimo do fetch (50), mas o recorte pro periodo
+        # pedido fica abaixo do minimo de 20 dias que _simulate exige -- o
+        # erro aparece dentro de cada run (baseline/variations), nao no topo.
+        close = _sawtooth_uptrend(400)
+
+        class FakeTicker:
+            def __init__(self, ticker):
+                pass
+            def history(self, start, end, interval, auto_adjust):
+                return _mock_history_df(close.iloc[:65])
+
+        monkeypatch.setattr(bt.yf, "Ticker", FakeTicker)
+        result = bt.run_sensitivity_analysis("NEWCO", "2024-08-01", "2025-06-01", strategy="rsi")
+        assert "error" not in result
+        assert "error" in result["baseline"]
