@@ -55,6 +55,39 @@ router.post("/backtest", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/backtest/sensitivity", async (req, res): Promise<void> => {
+  const { ticker, start, end, strategy } = req.body;
+  if (!ticker || !start || !end) {
+    res.status(400).json({ error: "ticker, start, end are required" });
+    return;
+  }
+
+  const positionFraction = clamp(req.body.positionFraction, 0.1, 1.0, 1.0);
+  const commissionPct    = clamp(req.body.commissionPct,    0,   0.05, 0.001);
+  const slippagePct      = clamp(req.body.slippagePct,      0,   0.05, 0.0005);
+  const stopLossPct      = optionalPct(req.body.stopLossPct);
+  const takeProfitPct    = optionalPct(req.body.takeProfitPct);
+  const rsiOversold      = clamp(req.body.rsiOversold,   1,  49, 30);
+  const rsiOverbought    = clamp(req.body.rsiOverbought, 51, 99, 70);
+  const scoreThreshold   = clamp(req.body.scoreThreshold, 5, 100, 60);
+
+  try {
+    // 21 simulações no pior caso (5 variações x 4 parâmetros + baseline), mas
+    // o fetch do yfinance roda só uma vez -- timeout um pouco maior que o do
+    // backtest simples só por segurança, não porque cada variação seja cara.
+    const data = await runBacktestScript({
+      mode: "sensitivity",
+      ticker: String(ticker).toUpperCase(), start, end,
+      strategy: strategy ?? "rsi",
+      positionFraction, commissionPct, slippagePct,
+      stopLossPct, takeProfitPct, rsiOversold, rsiOverbought, scoreThreshold,
+    }, 120_000);
+    res.json(data);
+  } catch (e: unknown) {
+    res.status(500).json({ error: String((e as Error)?.message ?? e) });
+  }
+});
+
 // POST /backtest/basket — roda a mesma simulação pra cesta inteira de uma vez
 // (default: tickers configurados em Settings), pensado pra estratégia
 // "confluencia" (o sinal técnico do Screener/TrendCard sem a camada de

@@ -49,6 +49,53 @@ const EXIT_REASON_LABEL: Record<string, string> = {
   period_end: "fim período",
 };
 
+interface SensitivityRun {
+  param?: string;
+  value?: number;
+  totalReturn: number;
+  buyAndHoldReturn: number;
+  cagr: number;
+  sharpe: number;
+  maxDrawdown: number;
+  totalTrades: number;
+  winRate: number;
+  error?: string;
+}
+
+interface SensitivityResult {
+  ticker: string;
+  strategy: string;
+  start: string;
+  end: string;
+  baseline: SensitivityRun;
+  variations: SensitivityRun[];
+  error?: string;
+}
+
+const SENSITIVITY_PARAM_LABEL: Record<string, string> = {
+  rsiOversold: "RSI Sobrevendido",
+  rsiOverbought: "RSI Sobrecomprado",
+  scoreThreshold: "Threshold do Score",
+  stopLossPct: "Stop Loss",
+  takeProfitPct: "Take Profit",
+};
+
+function formatSensitivityValue(param: string, value: number): string {
+  if (param === "stopLossPct" || param === "takeProfitPct") return `${(value * 100).toFixed(0)}%`;
+  return String(value);
+}
+
+interface SectorAggregate {
+  sector: string;
+  label: string;
+  tickerCount: number;
+  avgTotalReturn: number;
+  avgBuyAndHoldReturn: number;
+  avgWinRate: number;
+  totalTrades: number;
+  beatBuyAndHoldCount: number;
+}
+
 interface BasketResult {
   strategy: string;
   start: string;
@@ -62,6 +109,7 @@ interface BasketResult {
     totalTrades: number;
     beatBuyAndHoldCount: number;
   };
+  bySector?: SectorAggregate[];
   results: BacktestResult[];
   failed: { ticker: string; error: string }[];
   error?: string;
@@ -87,6 +135,7 @@ export default function BacktestPage() {
   const [scoreThreshold, setScoreThreshold] = useState("60");
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [basketResult, setBasketResult] = useState<BasketResult | null>(null);
+  const [sensitivityResult, setSensitivityResult] = useState<SensitivityResult | null>(null);
 
   function switchToBasket() {
     setMode("basket");
@@ -140,6 +189,21 @@ export default function BacktestPage() {
       return data as BasketResult;
     },
     onSuccess: (data) => setBasketResult(data),
+  });
+
+  const runSensitivity = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/backtest/sensitivity", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: ticker.toUpperCase(), start, end, strategy, ...riskParams() }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as SensitivityResult;
+    },
+    onSuccess: (data) => setSensitivityResult(data),
   });
 
   return (
@@ -292,25 +356,46 @@ export default function BacktestPage() {
             </div>
           )}
         </div>
-        <button
-          onClick={() => mode === "basket" ? runBasket.mutate() : run.mutate()}
-          disabled={mode === "basket" ? runBasket.isPending : (run.isPending || !ticker.trim())}
-          className="px-6 py-2 bg-primary text-primary-foreground rounded font-mono text-sm font-bold disabled:opacity-50 flex items-center gap-2"
-        >
-          {(mode === "basket" ? runBasket.isPending : run.isPending) ? (
-            <>
-              <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full" />
-              Executando...
-            </>
-          ) : (
-            <><FlaskConical className="h-4 w-4" /> Executar</>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => mode === "basket" ? runBasket.mutate() : run.mutate()}
+            disabled={mode === "basket" ? runBasket.isPending : (run.isPending || !ticker.trim())}
+            className="px-6 py-2 bg-primary text-primary-foreground rounded font-mono text-sm font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {(mode === "basket" ? runBasket.isPending : run.isPending) ? (
+              <>
+                <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full" />
+                Executando...
+              </>
+            ) : (
+              <><FlaskConical className="h-4 w-4" /> Executar</>
+            )}
+          </button>
+          {mode === "ticker" && (
+            <button
+              onClick={() => runSensitivity.mutate()}
+              disabled={runSensitivity.isPending || !ticker.trim()}
+              className="px-6 py-2 border border-border rounded font-mono text-sm font-bold text-foreground disabled:opacity-50 flex items-center gap-2 hover:border-primary/50"
+            >
+              {runSensitivity.isPending ? (
+                <>
+                  <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-border border-t-foreground rounded-full" />
+                  Testando...
+                </>
+              ) : (
+                "Análise de Sensibilidade"
+              )}
+            </button>
           )}
-        </button>
+        </div>
         {mode === "ticker" && run.isError && (
           <p className="text-sm text-red-400 font-mono">{String(run.error)}</p>
         )}
         {mode === "basket" && runBasket.isError && (
           <p className="text-sm text-red-400 font-mono">{String(runBasket.error)}</p>
+        )}
+        {mode === "ticker" && runSensitivity.isError && (
+          <p className="text-sm text-red-400 font-mono">{String(runSensitivity.error)}</p>
         )}
       </div>
 
@@ -377,6 +462,44 @@ export default function BacktestPage() {
                 </tbody>
               </table>
             </div>
+
+            {basketResult.bySector && basketResult.bySector.length > 0 && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
+                  Por setor (ordenado por retorno médio)
+                </div>
+                <table className="w-full font-mono text-sm">
+                  <thead className="bg-secondary/20">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Setor</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Tickers</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Retorno Médio</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Buy&Hold Médio</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Trades</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Win Rate</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Bateu B&H</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {basketResult.bySector.map((s, idx) => (
+                      <tr key={s.sector} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
+                        <td className="px-4 py-2.5 font-bold text-primary">{s.label}</td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground">{s.tickerCount}</td>
+                        <td className={`px-4 py-2.5 text-right font-bold ${s.avgTotalReturn >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {s.avgTotalReturn >= 0 ? "+" : ""}{s.avgTotalReturn.toFixed(2)}%
+                        </td>
+                        <td className={`px-4 py-2.5 text-right ${s.avgBuyAndHoldReturn >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {s.avgBuyAndHoldReturn >= 0 ? "+" : ""}{s.avgBuyAndHoldReturn.toFixed(2)}%
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground">{s.totalTrades}</td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground">{s.totalTrades > 0 ? `${s.avgWinRate}%` : "—"}</td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground">{s.beatBuyAndHoldCount}/{s.tickerCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {basketResult.failed.length > 0 && (
               <p className="text-xs font-mono text-muted-foreground">
@@ -526,6 +649,77 @@ export default function BacktestPage() {
                 </table>
               </div>
             )}
+          </div>
+        )
+      )}
+
+      {/* Sensitivity analysis */}
+      {mode === "ticker" && sensitivityResult && (
+        sensitivityResult.error ? (
+          <div className="p-6 border border-red-500/30 rounded-lg bg-red-500/5 font-mono text-red-400 text-sm">
+            {sensitivityResult.error}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground flex gap-4 flex-wrap">
+              <span>Sensibilidade — {sensitivityResult.ticker} · {sensitivityResult.strategy.toUpperCase()}</span>
+              <span>{sensitivityResult.start} → {sensitivityResult.end}</span>
+              {!sensitivityResult.baseline.error && (
+                <span>
+                  Config. atual: <span className={sensitivityResult.baseline.totalReturn >= 0 ? "text-green-400" : "text-red-400"}>
+                    {sensitivityResult.baseline.totalReturn >= 0 ? "+" : ""}{sensitivityResult.baseline.totalReturn.toFixed(2)}%
+                  </span>
+                </span>
+              )}
+            </div>
+
+            {Object.entries(
+              sensitivityResult.variations.reduce<Record<string, SensitivityRun[]>>((acc, v) => {
+                const key = v.param ?? "?";
+                (acc[key] ??= []).push(v);
+                return acc;
+              }, {})
+            ).map(([param, rows]) => (
+              <div key={param} className="border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
+                  {SENSITIVITY_PARAM_LABEL[param] ?? param}
+                </div>
+                <table className="w-full font-mono text-sm">
+                  <thead className="bg-secondary/20">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Valor</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Retorno</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Sharpe</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Max DD</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Trades</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Win Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, idx) => (
+                      <tr key={idx} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
+                        <td className="px-4 py-2.5 font-bold text-primary">
+                          {formatSensitivityValue(param, row.value ?? 0)}
+                        </td>
+                        {row.error ? (
+                          <td colSpan={5} className="px-4 py-2.5 text-muted-foreground">{row.error}</td>
+                        ) : (
+                          <>
+                            <td className={`px-4 py-2.5 text-right font-bold ${row.totalReturn >= 0 ? "text-green-400" : "text-red-400"}`}>
+                              {row.totalReturn >= 0 ? "+" : ""}{row.totalReturn.toFixed(2)}%
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-muted-foreground">{row.sharpe.toFixed(2)}</td>
+                            <td className="px-4 py-2.5 text-right text-red-400">{row.maxDrawdown.toFixed(2)}%</td>
+                            <td className="px-4 py-2.5 text-right text-muted-foreground">{row.totalTrades}</td>
+                            <td className="px-4 py-2.5 text-right text-muted-foreground">{row.totalTrades > 0 ? `${row.winRate}%` : "—"}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         )
       )}
