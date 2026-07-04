@@ -325,6 +325,7 @@ def _agent_loop(
     progress_callback=None,
     step_prefix: str = "",
     require_observations: bool = False,
+    min_observations: int = 1,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
@@ -353,16 +354,21 @@ def _agent_loop(
             # Modelos mais fracos (visto em produção com gemini-2.5-flash-lite)
             # encerram no meio do fluxo sem registrar observações — a run sai
             # "success" mas a memória do agente não avança. Cobra a conclusão
-            # antes de aceitar o relatório final.
-            if require_observations and observations_saved == 0 and nudges_left > 0:
+            # antes de aceitar o relatório final. Compara contra min_observations
+            # (não só "== 0"): um modelo que salva 1 de 5 tickers e para também
+            # deixa a análise incompleta — checar só "zero" deixava esse caso
+            # passar em silêncio (bug visto em produção em runs de carteira).
+            missing = min_observations - observations_saved
+            if require_observations and missing > 0 and nudges_left > 0:
                 nudges_left -= 1
                 if progress_callback:
                     progress_callback(f"{step_prefix}Cobrando save_observation pendente...")
                 messages.append({"role": "user", "content": (
-                    "Você encerrou SEM chamar save_observation. A análise só é "
-                    "válida após registrar as observações. Chame save_observation "
-                    "AGORA para cada ativo analisado (resumo curto + sentimento) "
-                    "e só então escreva o relatório final."
+                    f"Você encerrou COM APENAS {observations_saved} de pelo menos "
+                    f"{min_observations} save_observation esperadas. A análise só é "
+                    "válida após registrar a observação de CADA ativo restante. "
+                    "Chame save_observation AGORA para os ativos que faltam "
+                    "(resumo curto + sentimento) e só então escreva o relatório final."
                 )})
                 continue
             break
@@ -398,8 +404,11 @@ def _agent_loop(
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
-    if require_observations and observations_saved == 0:
-        final_text += "\n\n[Aviso: nenhuma observação foi salva nesta execução.]"
+    if require_observations and observations_saved < min_observations:
+        final_text += (
+            f"\n\n[Aviso: apenas {observations_saved} de pelo menos "
+            f"{min_observations} observações esperadas foram salvas nesta execução.]"
+        )
     return final_text
 
 
@@ -421,6 +430,11 @@ def run(progress_callback=None) -> str:
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
         require_observations=True,
+        # Piso seguro: as posições da carteira SEMPRE recebem save_observation
+        # (completa ou reduzida, pela regra de economia) — os líderes de
+        # contágio fora da carteira somam mais chamadas, mas sua contagem
+        # exata só é conhecida em runtime, então não entram no piso.
+        min_observations=len(config.PORTFOLIO_TICKERS),
     )
 
 
@@ -445,6 +459,7 @@ def run_portfolio(progress_callback=None) -> str:
         progress_callback=progress_callback,
         step_prefix="[Carteira] ",
         require_observations=True,
+        min_observations=n,
     )
 
 

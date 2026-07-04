@@ -480,19 +480,31 @@ class ProviderClient:
         self.models = cfg["models"]
         api_key = os.environ.get(cfg["api_key_env"], "")
 
+        # AGENT_MAX_RETRIES é o retry INTERNO do SDK (backoff curto, ~0.5-8s,
+        # para blips rápidos de rede/servidor) — deliberadamente baixo porque
+        # FallbackClient.create já tem seu PRÓPRIO retry para erros
+        # transitórios sustentados (AGENT_TRANSIENT_RETRIES, backoff de
+        # 5-30s). As duas camadas empilham (o outer loop chama c.create(),
+        # que já esgotou o retry do SDK antes de levantar a exceção) — um
+        # default alto aqui multiplicava tentativas e atraso sem coordenação
+        # (visto em produção: até 3x4=12 tentativas, >100s, arriscando o
+        # timeout de 10 min da run). Aplicado nos dois clientes (Anthropic e
+        # OpenAI-compatível) para não ter dois orçamentos de retry divergentes.
+        sdk_max_retries = int(os.environ.get("AGENT_MAX_RETRIES", "1"))
+
         if self.provider_name == "anthropic":
             import anthropic
 
             self._anthropic = anthropic.Anthropic(
                 api_key=api_key,
                 timeout=float(os.environ.get("API_TIMEOUT_SECONDS", "60")),
-                max_retries=int(os.environ.get("AGENT_MAX_RETRIES", "3")),
+                max_retries=sdk_max_retries,
             )
             self._openai = None
         else:
             from openai import OpenAI
 
-            self._openai = OpenAI(api_key=api_key, base_url=cfg["base_url"])
+            self._openai = OpenAI(api_key=api_key, base_url=cfg["base_url"], max_retries=sdk_max_retries)
             self._anthropic = None
 
     def create(
@@ -797,8 +809,11 @@ class FallbackClient:
             # merecem novas tentativas no MESMO provedor antes do fallback —
             # sem isso, um pico de demanda do Gemini pago derruba a run inteira
             # para os provedores gratuitos. Backoff limitado para não estourar
-            # o timeout de 10 min da run.
-            transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "2"))
+            # o timeout de 10 min da run. Default baixo (1) porque isso já
+            # empilha com o retry interno do SDK (AGENT_MAX_RETRIES, também
+            # default 1) — pior caso agora é 2x2=4 tentativas totais em vez
+            # de até 3x4=12.
+            transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "1"))
             last_exc: Exception | None = None
             for attempt in range(transient_retries + 1):
                 try:

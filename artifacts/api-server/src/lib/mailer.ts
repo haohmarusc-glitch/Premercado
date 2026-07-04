@@ -160,6 +160,7 @@ export async function sendRecompraEmail(opts: {
   const salePrice = toNum(opts.salePrice) ?? 0;
   const currentPrice = toNum(opts.currentPrice) ?? 0;
   const dropPct = toNum(opts.dropPct) ?? 0;
+  const thresholdPct = toNum(opts.thresholdPct) ?? 0;
 
   const subject = `🔄 Recompra? ${opts.ticker} caiu ${dropPct.toFixed(1)}% abaixo do preço de venda`;
   const html = `<!DOCTYPE html>
@@ -179,7 +180,7 @@ export async function sendRecompraEmail(opts: {
   <p style="margin:8px 0;color:#aaa">Preço de venda: <strong style="color:#fff">$${salePrice.toFixed(2)}</strong></p>
   <p style="margin:4px 0;color:#aaa">Preço atual: <strong style="color:#fff">$${currentPrice.toFixed(2)}</strong></p>
   <p style="margin:4px 0;color:#666;font-size:12px">
-    Caiu mais de ${opts.thresholdPct}% abaixo do preço em que você vendeu — possível ponto de recompra.
+    Caiu mais de ${thresholdPct}% abaixo do preço em que você vendeu — possível ponto de recompra.
   </p>
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Não é recomendação de investimento.</div>
