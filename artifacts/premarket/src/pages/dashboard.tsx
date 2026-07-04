@@ -278,12 +278,15 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   );
 
   // Modo TradingView busca os próprios dados no iframe deles -- não depende
-  // do carregamento/disponibilidade do nosso /api/ticker-chart.
+  // do carregamento/disponibilidade do nosso /api/ticker-chart. Usa uma altura
+  // bem maior que os outros modos, já que o widget tem toolbar própria e fica
+  // apertado em alturas pequenas.
   if (mode === "tradingview") {
+    const tvHeight = height > 300 ? 900 : 480;
     return (
       <div>
         {toggle}
-        <TradingViewChart symbol={symbol} height={height * 2} />
+        <TradingViewChart symbol={symbol} height={tvHeight} />
       </div>
     );
   }
