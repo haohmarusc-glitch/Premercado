@@ -495,8 +495,11 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
 def detect_candle_patterns(ticker: str, period: str = "1mo", lookback: int = 5) -> dict:
     """
     Detecta padrões clássicos de candlestick nos últimos `lookback` candles
-    diários: Doji, Martelo/Enforcado, Estrela Cadente/Martelo Invertido,
-    Engolfo de Alta/Baixa e Estrela da Manhã/Noite.
+    diários (dentro da janela `period`, ex.: '1mo', '3mo', '6mo', '1y', '2y'):
+    Doji, Martelo/Enforcado, Estrela Cadente/Martelo Invertido, Engolfo de
+    Alta/Baixa e Estrela da Manhã/Noite. Para analisar o período inteiro
+    (ex.: o ano todo com period='1y'), passe um `lookback` alto o bastante
+    para cobrir todos os candles do período.
 
     Regras heurísticas padrão de OHLC (sem TA-Lib): tamanho do corpo relativo
     ao range do candle, tamanho dos pavios, e contexto de tendência dos ~4
@@ -1197,11 +1200,18 @@ TOOLS = [
                 "ticker": {"type": "string"},
                 "period": {
                     "type": "string",
-                    "description": "Período histórico buscado: '1mo', '3mo'. Default: '1mo'.",
+                    "description": "Período histórico buscado: '1mo', '3mo', '6mo', '1y', '2y'. Default: '1mo'.",
                 },
                 "lookback": {
                     "type": "integer",
-                    "description": "Quantos candles recentes escanear em busca de padrões. Default: 5.",
+                    "description": (
+                        "Quantos candles recentes (a partir do mais recente) escanear em "
+                        "busca de padrões. Default: 5. Para cobrir o período inteiro "
+                        "buscado (ex.: analisar o ano todo com period='1y'), use um "
+                        "lookback alto o bastante para cobrir todos os candles do período "
+                        "(aprox. 21 candles/mês: ~21 para '1mo', ~63 para '3mo', ~126 para "
+                        "'6mo', ~252 para '1y')."
+                    ),
                 },
             },
             "required": ["ticker"],
