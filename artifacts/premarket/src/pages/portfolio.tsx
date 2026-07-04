@@ -228,11 +228,11 @@ function PriceChart({ ticker }: { ticker: string }) {
 
   return (
     <div className="w-full mt-3">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
           {ticker} — histórico
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex gap-0.5 border border-border rounded p-0.5">
             <button
               onClick={() => setVisual("line")}
