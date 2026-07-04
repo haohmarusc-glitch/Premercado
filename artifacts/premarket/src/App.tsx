@@ -28,6 +28,7 @@ import OptionsPage from "@/pages/options";
 import NewsPage from "@/pages/news";
 import MacroPage from "@/pages/macro";
 import { Layout } from "@/components/layout";
+import { ViewModeProvider } from "@/lib/view-mode";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -75,12 +76,14 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
+      <ViewModeProvider>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </ViewModeProvider>
     </QueryClientProvider>
   );
 }
