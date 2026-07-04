@@ -30,6 +30,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRi
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
+import { TradingViewChart } from "@/components/tradingview-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
 
@@ -228,7 +229,7 @@ function QuoteCard({
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
 function PriceChart({ symbol, period }: { symbol: string; period: string }) {
-  const [mode, setMode] = useState<"line" | "candle">("line");
+  const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
   const { data: trendData } = useTrend(symbol);
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
@@ -254,25 +255,9 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
   const up = last != null && first != null && last >= first;
   const color = up ? "#22c55e" : "#ef4444";
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-48">
-        <span className="text-xs font-mono text-muted-foreground animate-pulse">Carregando gráfico...</span>
-      </div>
-    );
-  }
-
-  if (!chartData.length) {
-    return (
-      <div className="flex items-center justify-center h-48">
-        <span className="text-xs font-mono text-muted-foreground">Sem dados para este período.</span>
-      </div>
-    );
-  }
-
   const toggle = (
     <div className="flex justify-end gap-1 mb-1">
-      {([["line", "Linha"], ["candle", "Velas"]] as const).map(([key, label]) => (
+      {([["line", "Linha"], ["candle", "Velas"], ["tradingview", "TradingView"]] as const).map(([key, label]) => (
         <button
           key={key}
           onClick={() => setMode(key)}
@@ -287,6 +272,39 @@ function PriceChart({ symbol, period }: { symbol: string; period: string }) {
       ))}
     </div>
   );
+
+  // Modo TradingView busca os próprios dados no iframe deles -- não depende
+  // do carregamento/disponibilidade do nosso /api/ticker-chart.
+  if (mode === "tradingview") {
+    return (
+      <div>
+        {toggle}
+        <TradingViewChart symbol={symbol} height={400} />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div>
+        {toggle}
+        <div className="flex items-center justify-center h-48">
+          <span className="text-xs font-mono text-muted-foreground animate-pulse">Carregando gráfico...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!chartData.length) {
+    return (
+      <div>
+        {toggle}
+        <div className="flex items-center justify-center h-48">
+          <span className="text-xs font-mono text-muted-foreground">Sem dados para este período.</span>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === "candle") {
     return (
