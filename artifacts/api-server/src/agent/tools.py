@@ -492,6 +492,137 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
+def detect_candle_patterns(ticker: str, period: str = "1mo", lookback: int = 5) -> dict:
+    """
+    Detecta padrões clássicos de candlestick nos últimos `lookback` candles
+    diários: Doji, Martelo/Enforcado, Estrela Cadente/Martelo Invertido,
+    Engolfo de Alta/Baixa e Estrela da Manhã/Noite.
+
+    Regras heurísticas padrão de OHLC (sem TA-Lib): tamanho do corpo relativo
+    ao range do candle, tamanho dos pavios, e contexto de tendência dos ~4
+    candles anteriores para distinguir padrões de mesma forma mas sinal
+    oposto (ex.: Martelo em fundo de baixa vs. Enforcado em topo de alta).
+    Use junto com get_news do mesmo ticker para cruzar reversão técnica com
+    o motivo por trás dela (ex.: engolfo de baixa no mesmo dia de notícia
+    negativa de guidance é sinal mais forte que qualquer um isolado).
+    """
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    try:
+        t = yf.Ticker(ticker)
+        hist = t.history(period=period)
+        if hist.empty or len(hist) < 5:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
+
+        o, h, l, c = hist["Open"], hist["High"], hist["Low"], hist["Close"]
+        n = len(hist)
+        # Precisa de pelo menos 3 candles de contexto antes do início da janela
+        # (para o padrão de 3 candles e o cálculo de tendência).
+        start = max(3, n - lookback)
+
+        def body(i: int) -> float:
+            return abs(c.iloc[i] - o.iloc[i])
+
+        def rng(i: int) -> float:
+            r = h.iloc[i] - l.iloc[i]
+            return r if r > 0 else 1e-9
+
+        def upper_wick(i: int) -> float:
+            return h.iloc[i] - max(o.iloc[i], c.iloc[i])
+
+        def lower_wick(i: int) -> float:
+            return min(o.iloc[i], c.iloc[i]) - l.iloc[i]
+
+        def is_bullish(i: int) -> bool:
+            return c.iloc[i] > o.iloc[i]
+
+        def is_bearish(i: int) -> bool:
+            return c.iloc[i] < o.iloc[i]
+
+        def trend_before(i: int) -> str:
+            ref = max(0, i - 4)
+            return "down" if c.iloc[i - 1] < c.iloc[ref] else "up"
+
+        found: list[dict] = []
+        for i in range(start, n):
+            date = hist.index[i].strftime("%Y-%m-%d")
+            b, r = body(i), rng(i)
+            body_pct = b / r
+
+            if body_pct < 0.1:
+                found.append({
+                    "date": date, "pattern": "Doji", "direction": "neutral",
+                    "note": "Indecisão — corpo minúsculo, pode antecipar reversão.",
+                })
+            elif lower_wick(i) >= 2 * b and upper_wick(i) <= b * 0.5 and body_pct < 0.4:
+                if trend_before(i) == "down":
+                    found.append({
+                        "date": date, "pattern": "Martelo", "direction": "bullish",
+                        "note": "Pavio inferior longo após queda — possível reversão para alta.",
+                    })
+                else:
+                    found.append({
+                        "date": date, "pattern": "Enforcado", "direction": "bearish",
+                        "note": "Mesma forma do martelo, mas após alta — possível reversão para baixa; confirmar no próximo candle.",
+                    })
+            elif upper_wick(i) >= 2 * b and lower_wick(i) <= b * 0.5 and body_pct < 0.4:
+                if trend_before(i) == "up":
+                    found.append({
+                        "date": date, "pattern": "Estrela Cadente", "direction": "bearish",
+                        "note": "Pavio superior longo após alta — possível reversão para baixa.",
+                    })
+                else:
+                    found.append({
+                        "date": date, "pattern": "Martelo Invertido", "direction": "bullish",
+                        "note": "Mesma forma da estrela cadente, mas após queda — possível reversão para alta; confirmar no próximo candle.",
+                    })
+
+            if i >= 1:
+                if is_bearish(i - 1) and is_bullish(i) and o.iloc[i] <= c.iloc[i - 1] and c.iloc[i] >= o.iloc[i - 1]:
+                    found.append({
+                        "date": date, "pattern": "Engolfo de Alta", "direction": "bullish",
+                        "note": "Corpo de alta engole o corpo de baixa do candle anterior — reversão forte.",
+                    })
+                elif is_bullish(i - 1) and is_bearish(i) and o.iloc[i] >= c.iloc[i - 1] and c.iloc[i] <= o.iloc[i - 1]:
+                    found.append({
+                        "date": date, "pattern": "Engolfo de Baixa", "direction": "bearish",
+                        "note": "Corpo de baixa engole o corpo de alta do candle anterior — reversão forte.",
+                    })
+
+            if i >= 2:
+                long0 = body(i - 2) / rng(i - 2) > 0.5
+                small1 = body(i - 1) / rng(i - 1) < 0.35
+                mid0 = (o.iloc[i - 2] + c.iloc[i - 2]) / 2
+                if long0 and is_bearish(i - 2) and small1 and is_bullish(i) and c.iloc[i] > mid0:
+                    found.append({
+                        "date": date, "pattern": "Estrela da Manhã", "direction": "bullish",
+                        "note": "3 candles: queda forte, indecisão, retomada de alta — reversão clássica de fundo.",
+                    })
+                elif long0 and is_bullish(i - 2) and small1 and is_bearish(i) and c.iloc[i] < mid0:
+                    found.append({
+                        "date": date, "pattern": "Estrela da Noite", "direction": "bearish",
+                        "note": "3 candles: alta forte, indecisão, queda — reversão clássica de topo.",
+                    })
+
+        return {
+            "ticker": ticker,
+            "period": period,
+            "patterns": found,
+            "latest_candle": {
+                "date": hist.index[-1].strftime("%Y-%m-%d"),
+                "o": round(float(o.iloc[-1]), 2),
+                "h": round(float(h.iloc[-1]), 2),
+                "l": round(float(l.iloc[-1]), 2),
+                "c": round(float(c.iloc[-1]), 2),
+            },
+            "note": None if found else f"Nenhum padrão clássico detectado nos últimos {lookback} candles.",
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
 # ── Performance de ETFs de setor ──────────────────────────────────────────────
 
 _SECTOR_ETFS = {
@@ -1051,6 +1182,32 @@ TOOLS = [
         },
     },
     {
+        "name": "detect_candle_patterns",
+        "description": (
+            "Detecta padrões clássicos de candlestick (velas) nos candles diários "
+            "recentes do ticker: Doji, Martelo/Enforcado, Estrela Cadente/Martelo "
+            "Invertido, Engolfo de Alta/Baixa, Estrela da Manhã/Noite. Cruze a data "
+            "de cada padrão encontrado com as manchetes de get_news do mesmo "
+            "período — um padrão de reversão coincidindo com notícia relevante é "
+            "sinal mais forte do que qualquer um isolado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "period": {
+                    "type": "string",
+                    "description": "Período histórico buscado: '1mo', '3mo'. Default: '1mo'.",
+                },
+                "lookback": {
+                    "type": "integer",
+                    "description": "Quantos candles recentes escanear em busca de padrões. Default: 5.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
         "name": "get_sector_performance",
         "description": (
             "Retorna a performance do dia e do pré-mercado dos ETFs de setor: "
@@ -1251,6 +1408,7 @@ DISPATCH = {
     "check_market_alerts": check_market_alerts,
     "get_options_data": get_options_data,
     "get_technical_indicators": get_technical_indicators,
+    "detect_candle_patterns": detect_candle_patterns,
     "get_sector_performance": get_sector_performance,
     "get_short_interest": get_short_interest,
     "get_earnings_calendar": get_earnings_calendar,

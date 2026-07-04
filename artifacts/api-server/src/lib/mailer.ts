@@ -30,20 +30,41 @@ async function resolveNotifyEmail(): Promise<string | null> {
   return process.env.NOTIFY_EMAIL?.trim() || null;
 }
 
+// Colunas numeric do Postgres chegam como STRING via drizzle (apesar do
+// $type<number>) — coage na borda antes de formatar, senão .toFixed lança
+// TypeError e o e-mail nunca sai (visto em produção nos alertas 89/97).
+function toNum(v: number | string | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function sendAlertEmail(opts: {
   symbol: string;
   indicator?: string; // 'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50'
   condition: string;
-  thresholdPct: number | null;
-  thresholdPrice: number | null;
-  thresholdValue?: number | null; // ex: nivel de RSI
-  valueAtFiring?: number | null; // valor do indicador tecnico no disparo
-  currentChangePct: number | null;
-  currentPrice: number | null;
+  thresholdPct: number | string | null;
+  thresholdPrice: number | string | null;
+  thresholdValue?: number | string | null; // ex: nivel de RSI
+  valueAtFiring?: number | string | null; // valor do indicador tecnico no disparo
+  currentChangePct: number | string | null;
+  currentPrice: number | string | null;
 }): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) { logger.warn("No notify email — skipping alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
+
+  // Todos os campos numeric do drizzle (thresholdPrice/Pct/Value, valueAtFiring,
+  // currentPrice/ChangePct) chegam como STRING — coage antes de qualquer
+  // .toFixed()/comparação, senão o e-mail nunca sai (mesma classe de bug
+  // corrigida nos alertas de preço simples, agora estendida aos indicadores
+  // tecnicos adicionados pela sessao mobile).
+  const thresholdPrice = toNum(opts.thresholdPrice);
+  const thresholdPct = toNum(opts.thresholdPct);
+  const thresholdValue = toNum(opts.thresholdValue);
+  const valueAtFiring = toNum(opts.valueAtFiring);
+  const currentPrice = toNum(opts.currentPrice);
+  const currentChangePct = toNum(opts.currentChangePct);
 
   const indicator = opts.indicator ?? "price";
   const direction = opts.condition === "above" ? "subiu acima de" : "caiu abaixo de";
@@ -52,8 +73,10 @@ export async function sendAlertEmail(opts: {
   let conditionSentence: string; // frase completa pra "Condição: <isso>" no corpo do email
   if (indicator === "rsi") {
     const dir = opts.condition === "above" ? "acima de" : "abaixo de";
-    conditionSentence = `RSI(14) ${dir} ${opts.thresholdValue ?? "—"} (atual: ${opts.valueAtFiring ?? "—"})`;
-    subject = `🚨 Alerta: ${opts.symbol} RSI(14) ${dir} ${opts.thresholdValue ?? "—"}`;
+    const thresholdStr = thresholdValue != null ? thresholdValue.toFixed(0) : "—";
+    const currentStr = valueAtFiring != null ? valueAtFiring.toFixed(1) : "—";
+    conditionSentence = `RSI(14) ${dir} ${thresholdStr} (atual: ${currentStr})`;
+    subject = `🚨 Alerta: ${opts.symbol} RSI(14) ${dir} ${thresholdStr}`;
   } else if (indicator === "macd") {
     const trend = opts.condition === "above" ? "bullish" : "bearish";
     conditionSentence = `MACD virou ${trend} (histograma ${opts.condition === "above" ? ">" : "<"} 0)`;
@@ -64,24 +87,24 @@ export async function sendAlertEmail(opts: {
     conditionSentence = `preço ${dir} ${period}`;
     subject = `🚨 Alerta: ${opts.symbol} preço ${dir} ${period}`;
   } else {
-    const thresholdStr = opts.thresholdPrice != null
-      ? `$${opts.thresholdPrice.toFixed(2)}`
-      : `${(opts.thresholdPct ?? 0) > 0 ? "+" : ""}${opts.thresholdPct}%`;
-    const conditionLabel = opts.thresholdPrice != null ? "preço" : "variação";
+    const thresholdStr = thresholdPrice != null
+      ? `$${thresholdPrice.toFixed(2)}`
+      : `${(thresholdPct ?? 0) > 0 ? "+" : ""}${thresholdPct}%`;
+    const conditionLabel = thresholdPrice != null ? "preço" : "variação";
     conditionSentence = `${conditionLabel} ${direction} ${thresholdStr}`;
     subject = `🚨 Alerta: ${opts.symbol} ${direction} ${thresholdStr}`;
   }
 
-  const priceStr = opts.currentPrice != null ? `$${opts.currentPrice.toFixed(2)}` : "N/A";
-  const sign = (opts.currentChangePct ?? 0) >= 0 ? "+" : "";
-  const changeStr = opts.currentChangePct != null ? `${sign}${opts.currentChangePct.toFixed(2)}%` : "—";
+  const priceStr = currentPrice != null ? `$${currentPrice.toFixed(2)}` : "N/A";
+  const sign = (currentChangePct ?? 0) >= 0 ? "+" : "";
+  const changeStr = currentChangePct != null ? `${sign}${currentChangePct.toFixed(2)}%` : "—";
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
   .ticker{font-size:32px;font-weight:bold;color:#ff8c00}
-  .change{font-size:24px;font-weight:bold;color:${(opts.currentChangePct ?? 0) >= 0 ? "#22c55e" : "#ef4444"}}
+  .change{font-size:24px;font-weight:bold;color:${(currentChangePct ?? 0) >= 0 ? "#22c55e" : "#ef4444"}}
   .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
   .footer{margin-top:32px;font-size:11px;color:#555}
 </style></head>
@@ -116,7 +139,7 @@ export async function sendPortfolioHoldingEmail(opts: {
   ticker: string;
   purchaseDate: string;
   milestone: number;
-  amount: number;
+  amount: number | string;
 }): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) { logger.warn("No notify email — skipping holding alert"); return; }
@@ -137,7 +160,7 @@ export async function sendPortfolioHoldingEmail(opts: {
   <div class="ticker">${opts.ticker}</div>
   <p style="margin:8px 0;color:#aaa">Lote de <strong style="color:#fff">${opts.milestone} dias</strong> atingido</p>
   <p style="margin:4px 0;color:#aaa">Data da compra: <strong style="color:#fff">${opts.purchaseDate}</strong></p>
-  <p style="margin:4px 0;color:#aaa">Valor investido: <strong style="color:#fff">$${opts.amount.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Valor investido: <strong style="color:#fff">$${(toNum(opts.amount) ?? 0).toFixed(2)}</strong></p>
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente.</div>
 </body></html>`;
@@ -158,16 +181,21 @@ export async function sendPortfolioHoldingEmail(opts: {
 
 export async function sendRecompraEmail(opts: {
   ticker: string;
-  salePrice: number;
-  currentPrice: number;
-  dropPct: number;       // queda % vs. preço de venda (valor positivo)
-  thresholdPct: number;  // limiar que disparou
+  salePrice: number | string;
+  currentPrice: number | string;
+  dropPct: number | string;       // queda % vs. preço de venda (valor positivo)
+  thresholdPct: number | string;  // limiar que disparou
 }): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) { logger.warn("No notify email — skipping recompra alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
-  const subject = `🔄 Recompra? ${opts.ticker} caiu ${opts.dropPct.toFixed(1)}% abaixo do preço de venda`;
+  const salePrice = toNum(opts.salePrice) ?? 0;
+  const currentPrice = toNum(opts.currentPrice) ?? 0;
+  const dropPct = toNum(opts.dropPct) ?? 0;
+  const thresholdPct = toNum(opts.thresholdPct) ?? 0;
+
+  const subject = `🔄 Recompra? ${opts.ticker} caiu ${dropPct.toFixed(1)}% abaixo do preço de venda`;
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
@@ -181,11 +209,11 @@ export async function sendRecompraEmail(opts: {
 <p style="color:#555;font-size:12px;text-transform:uppercase;">Oportunidade de Recompra — Pré-Mercado Agente</p>
 <div class="box">
   <div class="ticker">${opts.ticker}</div>
-  <div class="change">▼ ${opts.dropPct.toFixed(2)}%</div>
-  <p style="margin:8px 0;color:#aaa">Preço de venda: <strong style="color:#fff">$${opts.salePrice.toFixed(2)}</strong></p>
-  <p style="margin:4px 0;color:#aaa">Preço atual: <strong style="color:#fff">$${opts.currentPrice.toFixed(2)}</strong></p>
+  <div class="change">▼ ${dropPct.toFixed(2)}%</div>
+  <p style="margin:8px 0;color:#aaa">Preço de venda: <strong style="color:#fff">$${salePrice.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Preço atual: <strong style="color:#fff">$${currentPrice.toFixed(2)}</strong></p>
   <p style="margin:4px 0;color:#666;font-size:12px">
-    Caiu mais de ${opts.thresholdPct}% abaixo do preço em que você vendeu — possível ponto de recompra.
+    Caiu mais de ${thresholdPct}% abaixo do preço em que você vendeu — possível ponto de recompra.
   </p>
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Não é recomendação de investimento.</div>

@@ -7,15 +7,29 @@ AGENT_MODE env var controls the run type:
   premarket           — fast intraday flash scan
 """
 
+import json
 import os
 import sys
 
 from . import agent as a
 from . import config
+from .provider import get_run_usage
 
 
 def progress(step: str) -> None:
     print(f"STEP:{step}", flush=True)
+
+
+def emit_usage() -> None:
+    """Emite USAGE:{json} no stdout com tokens/custo acumulados da run.
+    Impressa ANTES de REPORT: (o runner captura tudo após 'REPORT:'), e também
+    em caso de erro — chamadas parciais já custaram dinheiro."""
+    try:
+        usage = get_run_usage()
+        if usage["calls"] > 0:
+            print("USAGE:" + json.dumps(usage, ensure_ascii=False), flush=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
@@ -47,8 +61,10 @@ if __name__ == "__main__":
             report = a.run_portfolio(progress_callback=progress)
         else:
             report = a.run(progress_callback=progress)
+        emit_usage()
         print("REPORT:" + report, flush=True)
         sys.exit(0)
     except Exception as e:
+        emit_usage()
         print(f"ERROR: {e}", file=sys.stderr, flush=True)
         sys.exit(1)

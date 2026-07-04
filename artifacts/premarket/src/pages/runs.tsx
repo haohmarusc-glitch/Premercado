@@ -10,6 +10,36 @@ function formatDuration(ms: number | null | undefined): string {
   return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
 }
 
+function formatCost(costUsd: number | null | undefined): string {
+  if (costUsd == null) return "—";
+  if (costUsd === 0) return "$0";
+  if (costUsd < 0.01) return `$${costUsd.toFixed(4)}`;
+  return `$${costUsd.toFixed(2)}`;
+}
+
+function formatTokens(n: number | null | undefined): string {
+  if (n == null) return "0";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function usageTooltip(run: {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  llmProvider?: string | null;
+  llmModel?: string | null;
+}): string {
+  if (run.inputTokens == null && run.outputTokens == null) return "";
+  return [
+    `entrada: ${formatTokens(run.inputTokens)}`,
+    `saída: ${formatTokens(run.outputTokens)}`,
+    `cache lido: ${formatTokens(run.cacheReadTokens)}`,
+    `cache gravado: ${formatTokens(run.cacheWriteTokens)}`,
+    run.llmModel ? `modelo: ${run.llmModel}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
 function StatusBadge({ status }: { status: string }) {
   if (status === "success") {
     return (
@@ -86,6 +116,8 @@ export default function Runs() {
 
   const successCount = runs?.filter((r) => r.status === "success").length ?? 0;
   const failedCount = runs?.filter((r) => r.status === "failed").length ?? 0;
+  const totalCost = runs?.reduce((sum, r) => sum + (r.costUsd ?? 0), 0) ?? 0;
+  const hasCostData = runs?.some((r) => r.costUsd != null) ?? false;
   const avgDuration =
     runs && runs.length > 0
       ? Math.round(
@@ -107,7 +139,7 @@ export default function Runs() {
 
       {/* Summary stats */}
       {runs && runs.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-4 gap-4 mb-8">
           <div className="border border-border rounded-lg p-4 bg-card">
             <div className="text-xs font-mono text-muted-foreground uppercase mb-1">Total</div>
             <div className="text-2xl font-bold font-mono" data-testid="text-total-runs">{runs.length}</div>
@@ -119,6 +151,12 @@ export default function Runs() {
           <div className="border border-red-900/40 rounded-lg p-4 bg-red-950/20">
             <div className="text-xs font-mono text-muted-foreground uppercase mb-1">Falhas</div>
             <div className="text-2xl font-bold font-mono text-red-400" data-testid="text-failed-count">{failedCount}</div>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <div className="text-xs font-mono text-muted-foreground uppercase mb-1">Custo (listado)</div>
+            <div className="text-2xl font-bold font-mono text-primary" data-testid="text-total-cost">
+              {hasCostData ? formatCost(totalCost) : "—"}
+            </div>
           </div>
         </div>
       )}
@@ -147,6 +185,7 @@ export default function Runs() {
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Duração</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Gatilho</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Modo</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Custo</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground uppercase tracking-widest">Erro</th>
               </tr>
             </thead>
@@ -178,6 +217,18 @@ export default function Runs() {
                   </td>
                   <td className="px-4 py-3">
                     <ModeBadge mode={run.mode} />
+                  </td>
+                  <td
+                    className="px-4 py-3 text-foreground text-xs whitespace-nowrap"
+                    title={usageTooltip(run)}
+                    data-testid={`text-cost-${run.id}`}
+                  >
+                    {formatCost(run.costUsd)}
+                    {run.inputTokens != null && (
+                      <span className="text-muted-foreground ml-1.5">
+                        ({formatTokens((run.inputTokens ?? 0) + (run.cacheReadTokens ?? 0) + (run.cacheWriteTokens ?? 0))}↓ {formatTokens(run.outputTokens)}↑)
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-red-400 text-xs max-w-xs truncate" title={run.errorMessage ?? ""}>
                     {run.errorMessage ? run.errorMessage.slice(0, 80) + (run.errorMessage.length > 80 ? "…" : "") : "—"}

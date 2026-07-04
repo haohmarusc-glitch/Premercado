@@ -86,6 +86,16 @@ Seu fluxo completo:
   • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
 
+**Regra de economia (dias calmos):** se detect_sector_contagion NÃO apontar
+nenhum líder/catch_up, restrinja a análise COMPLETA às posições da carteira
+que atendam a pelo menos um destes critérios:
+  • |variação| ≥ 2% no dia ou no pré-mercado (get_stock_data)
+  • resultados em ≤ 14 dias (get_earnings_calendar da FASE 1)
+As demais posições da carteira recebem análise REDUZIDA: apenas get_stock_data
++ get_news, e então save_observation baseada na cotação e nas manchetes
+(sentimento neutro se nada relevante). NUNCA pule o save_observation de uma
+posição da carteira — o que a regra corta são as categorias 3–7, não o registro.
+
 Para o Grupo A, colete estas categorias de dados — NÃO finalize um ativo
 antes de passar ao próximo; em vez disso, complete uma CATEGORIA para
 TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
@@ -93,12 +103,19 @@ TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 1. Cotação e pré-mercado — get_stock_data
 2. Manchetes — get_news
 3. Indicadores técnicos — get_technical_indicators
-4. Exposição short — get_short_interest
-5. Consenso de analistas — get_analyst_ratings
-6. Put/call ratio e IV — get_options_data
-7. Se houver catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
-8. Compare cada ativo com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
-9. Chame save_observation para cada ativo, com resumo curto e sentimento.
+4. Padrões de candlestick — detect_candle_patterns
+5. Exposição short — get_short_interest
+6. Consenso de analistas — get_analyst_ratings
+7. Put/call ratio e IV — get_options_data
+8. Se houver catalisador (resultados, guidance, contrato): search_edgar_filings + read_filing
+9. Cruze candle × notícia: se detect_candle_patterns achou um padrão de
+   reversão (Engolfo, Martelo/Enforcado, Estrela da Manhã/Noite etc.) na
+   MESMA data ou 1 dia antes/depois de uma manchete relevante do get_news,
+   destaque essa coincidência explicitamente no resumo do ativo — é um
+   sinal mais forte que técnico ou notícia isolados. Padrão sem notícia
+   correspondente (ou vice-versa) tem peso normal, sem destaque especial.
+10. Compare cada ativo com a MEMÓRIA DOS DIAS ANTERIORES — o que mudou?
+11. Chame save_observation para cada ativo, com resumo curto e sentimento.
 
 OBRIGATÓRIO — agrupe tool calls por categoria, não por ativo:
 Se o Grupo A tem N ativos, a categoria 1 (get_stock_data) deve ser UMA
@@ -197,7 +214,7 @@ def build_chat_prompt() -> str:
 Ativos monitorados: {", ".join(config.TICKERS)}.
 
 Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
-get_fear_greed_index, get_sector_performance, get_short_interest,
+detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
 get_analyst_ratings, get_options_data.
 
 Regras:
@@ -239,7 +256,7 @@ def _resp_to_history_content(resp) -> list:
 
 _CHAT_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
-    "get_fear_greed_index", "get_sector_performance",
+    "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
@@ -257,8 +274,8 @@ PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_N
 # Tool subset for portfolio fast mode
 _PORTFOLIO_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
-    "get_short_interest", "get_analyst_ratings", "save_observation",
-    "get_fear_greed_index",
+    "detect_candle_patterns", "get_short_interest", "get_analyst_ratings",
+    "save_observation", "get_fear_greed_index",
 }
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
 
@@ -272,14 +289,17 @@ Ativos da carteira: {", ".join(tickers)}.
 2. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
 3. get_news — manchetes de TODOS os ativos juntos
 4. get_technical_indicators — indicadores de TODOS os ativos juntos
-5. get_short_interest — short interest de TODOS os ativos juntos
-6. get_analyst_ratings — consenso de TODOS os ativos juntos
-7. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
+5. detect_candle_patterns — padrões de vela de TODOS os ativos juntos. Se um
+   padrão de reversão coincidir (mesma data ou ±1 dia) com uma manchete do
+   get_news, destaque isso no resumo — é sinal mais forte que qualquer um isolado.
+6. get_short_interest — short interest de TODOS os ativos juntos
+7. get_analyst_ratings — consenso de TODOS os ativos juntos
+8. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
    Você DEVE chamar save_observation {len(tickers)} vezes (uma por ativo: {", ".join(tickers)}).
    Somente após salvar TODAS as observações escreva o relatório final.
 
-**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 7 (save_observation).
-Se você pular o passo 7, a análise é considerada incompleta e inválida.
+**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 8 (save_observation).
+Se você pular o passo 8, a análise é considerada incompleta e inválida.
 
 **Regras:**
 - Agrupe por categoria, nunca por ativo.
@@ -304,10 +324,14 @@ def _agent_loop(
     max_tokens: int,
     progress_callback=None,
     step_prefix: str = "",
+    require_observations: bool = False,
+    min_observations: int = 1,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
     final_text = ""
+    observations_saved = 0
+    nudges_left = 2  # cobranças de save_observation antes de aceitar o fim da run
     for turn in range(max_turns):
         if progress_callback:
             label = f"{step_prefix}Turno {turn + 1} — consultando {client.provider_name}..."
@@ -327,6 +351,26 @@ def _agent_loop(
                 final_text = block.text
 
         if resp.stop_reason != "tool_use":
+            # Modelos mais fracos (visto em produção com gemini-2.5-flash-lite)
+            # encerram no meio do fluxo sem registrar observações — a run sai
+            # "success" mas a memória do agente não avança. Cobra a conclusão
+            # antes de aceitar o relatório final. Compara contra min_observations
+            # (não só "== 0"): um modelo que salva 1 de 5 tickers e para também
+            # deixa a análise incompleta — checar só "zero" deixava esse caso
+            # passar em silêncio (bug visto em produção em runs de carteira).
+            missing = min_observations - observations_saved
+            if require_observations and missing > 0 and nudges_left > 0:
+                nudges_left -= 1
+                if progress_callback:
+                    progress_callback(f"{step_prefix}Cobrando save_observation pendente...")
+                messages.append({"role": "user", "content": (
+                    f"Você encerrou COM APENAS {observations_saved} de pelo menos "
+                    f"{min_observations} save_observation esperadas. A análise só é "
+                    "válida após registrar a observação de CADA ativo restante. "
+                    "Chame save_observation AGORA para os ativos que faltam "
+                    "(resumo curto + sentimento) e só então escreva o relatório final."
+                )})
+                continue
             break
 
         tool_results = []
@@ -335,6 +379,22 @@ def _agent_loop(
                 if progress_callback:
                     progress_callback(f"Executando ferramenta: {block.name}")
                 result = run_tool(block.name, block.input)
+                if block.name == "save_observation":
+                    # save_observation NUNCA levanta exceção — em falha (rede,
+                    # validação no server, etc.) ela retorna {"saved": False,
+                    # "error": ...} normalmente. Checar só a ausência de
+                    # "[erro" contava falhas como sucesso e destravava a
+                    # cobrança sem nada persistido de fato (bug visto em
+                    # produção em 03/07 — run completa, zero observações).
+                    saved_ok = False
+                    try:
+                        saved_ok = _json.loads(result).get("saved") is True
+                    except Exception:
+                        pass
+                    if saved_ok:
+                        observations_saved += 1
+                    else:
+                        print(f"[agent] save_observation falhou: {result}", flush=True)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -344,6 +404,11 @@ def _agent_loop(
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
+    if require_observations and observations_saved < min_observations:
+        final_text += (
+            f"\n\n[Aviso: apenas {observations_saved} de pelo menos "
+            f"{min_observations} observações esperadas foram salvas nesta execução.]"
+        )
     return final_text
 
 
@@ -371,6 +436,12 @@ def run(progress_callback=None) -> str:
         max_turns=max_turns,
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
+        require_observations=True,
+        # Piso seguro: as posições da carteira SEMPRE recebem save_observation
+        # (completa ou reduzida, pela regra de economia) — os líderes de
+        # contágio fora da carteira somam mais chamadas, mas sua contagem
+        # exata só é conhecida em runtime, então não entram no piso.
+        min_observations=len(config.PORTFOLIO_TICKERS),
     )
 
 
@@ -394,6 +465,8 @@ def run_portfolio(progress_callback=None) -> str:
         max_tokens=max_tokens,
         progress_callback=progress_callback,
         step_prefix="[Carteira] ",
+        require_observations=True,
+        min_observations=n,
     )
 
 

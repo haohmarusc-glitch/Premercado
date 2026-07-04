@@ -72,6 +72,14 @@ export const agentRunsTable = pgTable("agent_runs", {
   mode: text("mode").notNull().default("daily"), // daily | premarket
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
+  // Uso de LLM da run (agregado de todos os provedores/modelos, via linha USAGE: do agente)
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  cacheReadTokens: integer("cache_read_tokens"),
+  cacheWriteTokens: integer("cache_write_tokens"),
+  costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).$type<number>(),
+  llmProvider: text("llm_provider"),
+  llmModel: text("llm_model"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_agent_runs_status").on(t.status),

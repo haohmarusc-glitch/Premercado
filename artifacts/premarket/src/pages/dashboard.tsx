@@ -14,8 +14,8 @@ import {
   getListReportsQueryKey,
 } from "@workspace/api-client-react";
 import {
-  AreaChart,
   Area,
+  AreaChart,
   XAxis,
   YAxis,
   Tooltip,
@@ -237,6 +237,10 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
       query: {
         queryKey: getGetTickerChartQueryKey({ symbol, period }),
         staleTime: 55_000,
+        // Só faz sentido reconsultar automaticamente no intraday (1D) — o
+        // backend também cacheia 5D+ por vários minutos/hora (chart.ts TTL),
+        // então repolling mais frequente nesses períodos não traria dado novo.
+        refetchInterval: period === "1d" ? 60_000 : false,
       },
     },
   );
@@ -248,7 +252,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   const minP = prices.length ? Math.min(...prices) : 0;
   const maxP = prices.length ? Math.max(...prices) : 0;
   const pad = (maxP - minP) * 0.05 || 1;
-  const domain: [number, number] = [minP - pad, maxP + pad];
+  const areaDomain: [number, number] = [minP - pad, maxP + pad];
 
   const first = prices[0];
   const last = prices[prices.length - 1];
@@ -335,7 +339,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
           minTickGap={60}
         />
         <YAxis
-          domain={domain}
+          domain={areaDomain}
           tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
           tickLine={false}
           axisLine={false}

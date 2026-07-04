@@ -190,6 +190,40 @@ export interface AgentRun {
   durationMs?: number | null;
   /** @nullable */
   errorMessage?: string | null;
+  /** @nullable */
+  inputTokens?: number | null;
+  /** @nullable */
+  outputTokens?: number | null;
+  /** @nullable */
+  cacheReadTokens?: number | null;
+  /** @nullable */
+  cacheWriteTokens?: number | null;
+  /** @nullable */
+  costUsd?: number | null;
+  /** @nullable */
+  llmProvider?: string | null;
+  /** @nullable */
+  llmModel?: string | null;
+}
+
+export interface NewsItem {
+  title: string;
+  published?: string | number;
+  /** @nullable */
+  summary?: string | null;
+  /** @nullable */
+  source?: string | null;
+}
+
+export interface TickerNews {
+  ticker: string;
+  news?: NewsItem[];
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface NewsFeedResponse {
+  items: TickerNews[];
 }
 
 export interface Settings {
@@ -443,5 +477,12 @@ period?: string;
 
 export type ListAgentRunsParams = {
 limit?: number;
+};
+
+export type GetNewsParams = {
+/**
+ * Tickers separados por vírgula. Se omitido, usa os tickers monitorados em Settings.
+ */
+tickers?: string;
 };
 

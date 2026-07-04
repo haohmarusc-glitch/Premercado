@@ -40,7 +40,17 @@ def recent_context(days: int = 7) -> str:
                 continue
             if obs_date < cutoff:
                 continue
-            price_str = f" | Preço: ${obs['priceAtObservation']:.2f}" if obs.get("priceAtObservation") else ""
+            # priceAtObservation vem da API interna sem coerção (coluna numeric
+            # do Postgres chega como string) — converte com segurança em vez de
+            # deixar o :.2f estourar TypeError e derrubar TODA a memória (não
+            # só a observação com o valor problemático).
+            price_str = ""
+            raw_price = obs.get("priceAtObservation")
+            if raw_price is not None:
+                try:
+                    price_str = f" | Preço: ${float(raw_price):.2f}"
+                except (TypeError, ValueError):
+                    pass
             lines.append(
                 f"[{obs['date']}] {obs['ticker']} ({obs['sentiment'].upper()}){price_str}: {obs['summary']}"
             )
