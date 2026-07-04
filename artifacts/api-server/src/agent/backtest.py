@@ -43,7 +43,7 @@ def _rsi_wilder_series(close: pd.Series, period: int = 14) -> pd.Series:
     rsi = rsi.where(avg_loss != 0, 100.0)
     return rsi
 
-def _confluence_signals(close: pd.Series) -> tuple[pd.Series, pd.Series]:
+def _confluence_signals(close: pd.Series, score_threshold: float = 60.0) -> tuple[pd.Series, pd.Series]:
     """Reproduz dia-a-dia o score técnico de get_trend.py (SMA20x50, preço x
     SMA200, estrutura, MACD, ajuste de RSI) SEM a camada de notícias -- a
     fórmula real (`sinal`) só confirma compra/venda nos thresholds fortes
@@ -80,12 +80,14 @@ def _confluence_signals(close: pd.Series) -> tuple[pd.Series, pd.Series]:
         scores[i] = score
 
     score_series = pd.Series(scores, index=close.index)
-    buy_signal = score_series >= 60
-    sell_signal = score_series <= -60
+    buy_signal = score_series >= score_threshold
+    sell_signal = score_series <= -score_threshold
     return buy_signal, sell_signal
 
 def run_backtest(ticker, start, end, strategy="rsi",
-                 position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005):
+                 position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005,
+                 stop_loss_pct=None, take_profit_pct=None,
+                 rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
     # Busca com "aquecimento" (~320 dias corridos) antes de `start` pra
     # indicadores de janela longa (SMA200, estrutura de 60 pregões) já
     # estarem válidos no primeiro dia do período pedido -- sem isso, um
@@ -107,10 +109,10 @@ def run_backtest(ticker, start, end, strategy="rsi",
         loss = (-delta.clip(upper=0)).rolling(14).mean()
         rs = gain / loss.where(loss != 0, other=float("nan"))
         rsi = 100 - (100 / (1 + rs))
-        buy_signal_full = rsi.fillna(50) < 30
-        sell_signal_full = rsi.fillna(50) > 70
+        buy_signal_full = rsi.fillna(50) < rsi_oversold
+        sell_signal_full = rsi.fillna(50) > rsi_overbought
     elif strategy == "confluencia":
-        buy_signal_full, sell_signal_full = _confluence_signals(close_full)
+        buy_signal_full, sell_signal_full = _confluence_signals(close_full, score_threshold)
     else:  # ma_cross
         ma20 = close_full.rolling(20).mean()
         ma50 = close_full.rolling(50).mean()
@@ -135,10 +137,27 @@ def run_backtest(ticker, start, end, strategy="rsi",
     entry_price = 0.0
     entry_date = ""
     trades = []
+    equity_curve = []  # mark-to-market diário: {date, equity, buyHoldEquity}
+    bh_shares = initial_capital / float(close.iloc[0])
 
     def fill_price(price, is_buy):
         slip = price * slippage_pct * (1 if is_buy else -1)
         return price + slip
+
+    def close_position(exec_price, date, reason):
+        nonlocal capital, position, entry_price, entry_date
+        proceeds = position * exec_price
+        commission = proceeds * commission_pct
+        net_proceeds = proceeds - commission
+        pnl = (exec_price - entry_price) / entry_price * 100
+        trades.append({
+            "entryDate": entry_date, "exitDate": date,
+            "entryPrice": round(entry_price, 2), "exitPrice": round(exec_price, 2),
+            "pnl": round(pnl, 2), "win": pnl > 0, "closedOpen": reason == "period_end",
+            "exitReason": reason,
+        })
+        capital += net_proceeds
+        position = 0.0
 
     for i in range(len(close)):
         raw_price = float(close.iloc[i])
@@ -153,35 +172,32 @@ def run_backtest(ticker, start, end, strategy="rsi",
             entry_date = date
             capital -= invest
 
-        elif sell_signal.iloc[i] and position > 0:
-            exec_price = fill_price(raw_price, False)
-            proceeds = position * exec_price
-            commission = proceeds * commission_pct
-            net_proceeds = proceeds - commission
-            pnl = (exec_price - entry_price) / entry_price * 100
-            trades.append({
-                "entryDate": entry_date, "exitDate": date,
-                "entryPrice": round(entry_price, 2), "exitPrice": round(exec_price, 2),
-                "pnl": round(pnl, 2), "win": pnl > 0, "closedOpen": False,
-            })
-            capital += net_proceeds
-            position = 0.0
+        elif position > 0:
+            # SL/TP checam ANTES do sinal (baseado no Close diário -- mesma
+            # simplificação do resto do engine, que não usa High/Low
+            # intradiário -- então um SL pode não ser pego se o preço só
+            # tocou o nível intradia e fechou de volta acima dele).
+            stop_hit = stop_loss_pct is not None and raw_price <= entry_price * (1 - stop_loss_pct)
+            target_hit = take_profit_pct is not None and raw_price >= entry_price * (1 + take_profit_pct)
+            if stop_hit:
+                close_position(fill_price(raw_price, False), date, "stop_loss")
+            elif target_hit:
+                close_position(fill_price(raw_price, False), date, "take_profit")
+            elif sell_signal.iloc[i]:
+                close_position(fill_price(raw_price, False), date, "signal")
+
+        equity = capital + position * raw_price
+        equity_curve.append({
+            "date": date,
+            "equity": round(equity, 2),
+            "buyHoldEquity": round(bh_shares * raw_price, 2),
+        })
 
     # Close any open position at period end
     if position > 0:
         last_price = float(close.iloc[-1])
-        exec_price = fill_price(last_price, False)
-        proceeds = position * exec_price
-        commission = proceeds * commission_pct
-        net_proceeds = proceeds - commission
-        pnl = (exec_price - entry_price) / entry_price * 100
-        trades.append({
-            "entryDate": entry_date, "exitDate": str(close.index[-1])[:10],
-            "entryPrice": round(entry_price, 2), "exitPrice": round(exec_price, 2),
-            "pnl": round(pnl, 2), "win": pnl > 0, "closedOpen": True,
-        })
-        capital += net_proceeds
-        position = 0.0
+        close_position(fill_price(last_price, False), str(close.index[-1])[:10], "period_end")
+        equity_curve[-1]["equity"] = round(capital, 2)
 
     final_value = capital
     total_return = (final_value - initial_capital) / initial_capital * 100
@@ -196,15 +212,19 @@ def run_backtest(ticker, start, end, strategy="rsi",
     avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
 
-    daily_ret = close.pct_change().dropna()
+    # Sharpe/drawdown a partir da equity curve DA ESTRATÉGIA (não do
+    # buy&hold do ticker -- as duas coisas coincidiam sempre que a
+    # estratégia ficava 100% do tempo posicionada, mas divergem sempre que
+    # ela fica fora do mercado por um período).
+    equity_series = pd.Series([e["equity"] for e in equity_curve])
+    daily_ret = equity_series.pct_change().dropna()
     sharpe = 0.0
-    if daily_ret.std() > 0:
+    if len(daily_ret) > 0 and daily_ret.std() > 0:
         sharpe = round((daily_ret.mean() / daily_ret.std()) * math.sqrt(252), 2)
 
-    cum = (1 + daily_ret).cumprod()
-    rolling_max = cum.cummax()
-    drawdown = (cum - rolling_max) / rolling_max
-    max_drawdown = round(float(drawdown.min()) * 100, 2)
+    rolling_max = equity_series.cummax()
+    drawdown = (equity_series - rolling_max) / rolling_max
+    max_drawdown = round(float(drawdown.min()) * 100, 2) if len(drawdown) else 0.0
 
     return {
         "ticker": ticker, "strategy": strategy, "start": start, "end": end,
@@ -214,17 +234,21 @@ def run_backtest(ticker, start, end, strategy="rsi",
         "totalTrades": len(trades), "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
         "avgWin": round(avg_win, 2), "avgLoss": round(avg_loss, 2),
         "trades": trades[-30:],
+        "equityCurve": equity_curve,
     }
 
 def run_basket_backtest(tickers, start, end, strategy="confluencia",
-                        position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005):
+                        position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005,
+                        stop_loss_pct=None, take_profit_pct=None,
+                        rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
     """Roda run_backtest pra cada ticker da cesta e agrega. Cada ticker usa seu
     próprio capital inicial de $10k independente (não é uma carteira única
     dividida entre eles) -- o objetivo é comparar a estratégia ticker a
     ticker, não simular alocação de portfólio."""
     results = []
     for t in tickers:
-        r = run_backtest(t, start, end, strategy, position_fraction, commission_pct, slippage_pct)
+        r = run_backtest(t, start, end, strategy, position_fraction, commission_pct, slippage_pct,
+                          stop_loss_pct, take_profit_pct, rsi_oversold, rsi_overbought, score_threshold)
         r["ticker"] = t
         results.append(r)
 
@@ -254,23 +278,25 @@ def run_basket_backtest(tickers, start, end, strategy="confluencia",
         "failed": failed,
     }
 
+def _optional_float(args, key):
+    v = args.get(key)
+    return float(v) if v not in (None, "") else None
+
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     tickers = args.get("tickers")
+    common = dict(
+        position_fraction=float(args.get("positionFraction", 1.0)),
+        commission_pct=float(args.get("commissionPct", 0.001)),
+        slippage_pct=float(args.get("slippagePct", 0.0005)),
+        stop_loss_pct=_optional_float(args, "stopLossPct"),
+        take_profit_pct=_optional_float(args, "takeProfitPct"),
+        rsi_oversold=float(args.get("rsiOversold", 30.0)),
+        rsi_overbought=float(args.get("rsiOverbought", 70.0)),
+        score_threshold=float(args.get("scoreThreshold", 60.0)),
+    )
     if tickers:
-        result = run_basket_backtest(
-            tickers, args["start"], args["end"],
-            args.get("strategy", "confluencia"),
-            float(args.get("positionFraction", 1.0)),
-            float(args.get("commissionPct", 0.001)),
-            float(args.get("slippagePct", 0.0005)),
-        )
+        result = run_basket_backtest(tickers, args["start"], args["end"], args.get("strategy", "confluencia"), **common)
     else:
-        result = run_backtest(
-            args["ticker"], args["start"], args["end"],
-            args.get("strategy", "rsi"),
-            float(args.get("positionFraction", 1.0)),
-            float(args.get("commissionPct", 0.001)),
-            float(args.get("slippagePct", 0.0005)),
-        )
+        result = run_backtest(args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"), **common)
     print(json.dumps(result))

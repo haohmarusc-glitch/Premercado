@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { FlaskConical, Layers } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Badge } from "@/components/ui/badge";
 
 interface Trade {
@@ -11,6 +12,13 @@ interface Trade {
   pnl: number;
   win: boolean;
   closedOpen: boolean;
+  exitReason?: "signal" | "stop_loss" | "take_profit" | "period_end";
+}
+
+interface EquityPoint {
+  date: string;
+  equity: number;
+  buyHoldEquity: number;
 }
 
 interface BacktestResult {
@@ -30,8 +38,16 @@ interface BacktestResult {
   avgWin: number;
   avgLoss: number;
   trades: Trade[];
+  equityCurve: EquityPoint[];
   error?: string;
 }
+
+const EXIT_REASON_LABEL: Record<string, string> = {
+  signal: "sinal",
+  stop_loss: "stop loss",
+  take_profit: "take profit",
+  period_end: "fim período",
+};
 
 interface BasketResult {
   strategy: string;
@@ -64,6 +80,11 @@ export default function BacktestPage() {
   const [positionFraction, setPositionFraction] = useState("1.0");
   const [commissionPct, setCommissionPct] = useState("0.001");
   const [slippagePct, setSlippagePct] = useState("0.0005");
+  const [stopLossPct, setStopLossPct] = useState("");
+  const [takeProfitPct, setTakeProfitPct] = useState("");
+  const [rsiOversold, setRsiOversold] = useState("30");
+  const [rsiOverbought, setRsiOverbought] = useState("70");
+  const [scoreThreshold, setScoreThreshold] = useState("60");
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [basketResult, setBasketResult] = useState<BasketResult | null>(null);
 
@@ -78,18 +99,26 @@ export default function BacktestPage() {
     setStart(oneYearAgo);
   }
 
+  function riskParams() {
+    return {
+      positionFraction: parseFloat(positionFraction),
+      commissionPct: parseFloat(commissionPct),
+      slippagePct: parseFloat(slippagePct),
+      stopLossPct: stopLossPct ? parseFloat(stopLossPct) / 100 : undefined,
+      takeProfitPct: takeProfitPct ? parseFloat(takeProfitPct) / 100 : undefined,
+      rsiOversold: parseFloat(rsiOversold),
+      rsiOverbought: parseFloat(rsiOverbought),
+      scoreThreshold: parseFloat(scoreThreshold),
+    };
+  }
+
   const run = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/backtest", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticker: ticker.toUpperCase(), start, end, strategy,
-          positionFraction: parseFloat(positionFraction),
-          commissionPct: parseFloat(commissionPct),
-          slippagePct: parseFloat(slippagePct),
-        }),
+        body: JSON.stringify({ ticker: ticker.toUpperCase(), start, end, strategy, ...riskParams() }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
@@ -104,12 +133,7 @@ export default function BacktestPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          start, end, strategy,
-          positionFraction: parseFloat(positionFraction),
-          commissionPct: parseFloat(commissionPct),
-          slippagePct: parseFloat(slippagePct),
-        }),
+        body: JSON.stringify({ start, end, strategy, ...riskParams() }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
@@ -198,8 +222,8 @@ export default function BacktestPage() {
         {strategy === "confluencia" && (
           <p className="text-[11px] font-mono text-muted-foreground border border-dashed border-border rounded px-3 py-2">
             Reproduz o score técnico do sinal (SMA20×50, preço×SMA200, estrutura, MACD, RSI) sem a camada de notícias
-            — não dá pra reconstruir com fidelidade o que era manchete em cada dia do passado. Compra/venda só nos
-            thresholds fortes do score (≥60 / ≤-60).
+            — não dá pra reconstruir com fidelidade o que era manchete em cada dia do passado. Compra/venda nos
+            thresholds do score configurados abaixo (padrão ±60).
           </p>
         )}
         <div className="grid grid-cols-3 gap-4">
@@ -217,6 +241,56 @@ export default function BacktestPage() {
               />
             </div>
           ))}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-border/40 pt-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-mono text-muted-foreground uppercase">Stop Loss % (opcional)</label>
+            <input
+              type="number" step="0.5" min="0" placeholder="ex: 8"
+              value={stopLossPct}
+              onChange={(e) => setStopLossPct(e.target.value)}
+              className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-mono text-muted-foreground uppercase">Take Profit % (opcional)</label>
+            <input
+              type="number" step="0.5" min="0" placeholder="ex: 15"
+              value={takeProfitPct}
+              onChange={(e) => setTakeProfitPct(e.target.value)}
+              className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          {strategy === "rsi" && (
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase">RSI Sobrevendido</label>
+                <input
+                  type="number" step="1" min="1" max="49" value={rsiOversold}
+                  onChange={(e) => setRsiOversold(e.target.value)}
+                  className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase">RSI Sobrecomprado</label>
+                <input
+                  type="number" step="1" min="51" max="99" value={rsiOverbought}
+                  onChange={(e) => setRsiOverbought(e.target.value)}
+                  className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </>
+          )}
+          {strategy === "confluencia" && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-mono text-muted-foreground uppercase">Threshold do Score</label>
+              <input
+                type="number" step="5" min="5" max="100" value={scoreThreshold}
+                onChange={(e) => setScoreThreshold(e.target.value)}
+                className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          )}
         </div>
         <button
           onClick={() => mode === "basket" ? runBasket.mutate() : run.mutate()}
@@ -356,6 +430,57 @@ export default function BacktestPage() {
               <span className={`font-bold ${result.finalValue >= 10000 ? "text-green-400" : "text-red-400"}`}>Final: ${result.finalValue.toLocaleString()}</span>
             </div>
 
+            {/* Equity curve: estratégia vs buy & hold */}
+            {result.equityCurve && result.equityCurve.length > 0 && (
+              <div className="border border-border rounded-lg bg-card p-4">
+                <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-3">
+                  Equity Curve — Estratégia vs Buy &amp; Hold
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <AreaChart data={result.equityCurve} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f97316" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+                      tickLine={false}
+                      axisLine={false}
+                      interval="preserveStartEnd"
+                      minTickGap={60}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+                      tickLine={false}
+                      axisLine={false}
+                      width={64}
+                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                        fontFamily: "monospace",
+                        fontSize: "12px",
+                      }}
+                      labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
+                      formatter={(val: number, name: string) => [`$${val.toLocaleString()}`, name === "equity" ? "Estratégia" : "Buy & Hold"]}
+                    />
+                    <Legend
+                      formatter={(value: string) => (value === "equity" ? "Estratégia" : "Buy & Hold")}
+                      wrapperStyle={{ fontFamily: "monospace", fontSize: "11px" }}
+                    />
+                    <Area type="monotone" dataKey="equity" stroke="#f97316" strokeWidth={1.5} fill="url(#equityGradient)" dot={false} />
+                    <Area type="monotone" dataKey="buyHoldEquity" stroke="#6b7280" strokeWidth={1.5} fill="none" dot={false} strokeDasharray="4 3" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
             {/* Trades table */}
             {result.trades.length > 0 && (
               <div className="border border-border rounded-lg overflow-hidden">
@@ -370,6 +495,7 @@ export default function BacktestPage() {
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Preço Entr.</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Preço Saída</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">P&L%</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Saída via</th>
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Resultado</th>
                     </tr>
                   </thead>
@@ -382,6 +508,9 @@ export default function BacktestPage() {
                         <td className="px-4 py-2.5 text-foreground">${trade.exitPrice.toFixed(2)}</td>
                         <td className={`px-4 py-2.5 font-bold ${trade.pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
                           {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}%
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">
+                          {trade.exitReason ? EXIT_REASON_LABEL[trade.exitReason] ?? trade.exitReason : "—"}
                         </td>
                         <td className="px-4 py-2.5 flex items-center gap-1">
                           <Badge variant="outline" className={trade.win ? "text-green-500 border-green-500/30 bg-green-500/10 text-[10px] font-mono" : "text-red-500 border-red-500/30 bg-red-500/10 text-[10px] font-mono"}>
