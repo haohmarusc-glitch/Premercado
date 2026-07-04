@@ -540,8 +540,9 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
     const qty = p.amount / p.purchasePrice!;
     return s + (qty * ((p.salePrice ?? 0) - p.purchasePrice!));
   }, 0);
-  const totalUnrealizedPnl = currentPrice > 0
-    ? purchases.filter(p => !p.saleDate && p.purchasePrice).reduce((s, p) => {
+  const openForPnl = purchases.filter(p => !p.saleDate && p.purchasePrice);
+  const totalUnrealizedPnl = currentPrice > 0 && openForPnl.length > 0
+    ? openForPnl.reduce((s, p) => {
         const qty = p.amount / p.purchasePrice!;
         return s + (qty * (currentPrice - p.purchasePrice!));
       }, 0)
