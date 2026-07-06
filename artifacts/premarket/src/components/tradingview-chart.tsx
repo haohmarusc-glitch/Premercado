@@ -57,5 +57,15 @@ export function TradingViewChart({ symbol, height = 400, interval = "D", hideSid
     };
   }, [symbol, interval, hideSideToolbar]);
 
-  return <div className="tradingview-widget-container" ref={containerRef} style={{ height, width: "100%" }} />;
+  // O script injeta autosize:true, que faz a própria TradingView sobrescrever
+  // a altura do elemento com a classe "tradingview-widget-container" pra
+  // 100% (ela assume que é ela quem controla o próprio container, esperando
+  // que UM PAI tenha a altura fixa). Por isso a altura pedida vai num wrapper
+  // por fora, não no elemento que o script vai mexer -- senão a altura pedida
+  // é sobrescrita e o gráfico colapsa pra um valor mínimo.
+  return (
+    <div style={{ height, width: "100%" }}>
+      <div className="tradingview-widget-container" ref={containerRef} style={{ height: "100%", width: "100%" }} />
+    </div>
+  );
 }
