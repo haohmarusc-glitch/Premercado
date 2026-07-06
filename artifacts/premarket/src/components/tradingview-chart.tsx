@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 // ─── TradingViewChart ────────────────────────────────────────────────────────
 // Embed oficial e gratuito do widget "Advanced Real-Time Chart" da TradingView
@@ -19,8 +20,15 @@ interface TradingViewChartProps {
 
 export function TradingViewChart({ symbol, height = 400, interval = "D", hideSideToolbar = true }: TradingViewChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // O script só dispara onload quando o iframe deles termina de carregar --
+  // não temos como saber quando o candle em si termina de pintar (é um
+  // iframe de outro domínio), então isso cobre o trecho "container vazio"
+  // e deixa o resto do carregamento visível pro spinner interno da própria
+  // TradingView.
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
+    setIsReady(false);
     const container = containerRef.current;
     if (!container) return;
     container.innerHTML = "";
@@ -35,6 +43,7 @@ export function TradingViewChart({ symbol, height = 400, interval = "D", hideSid
     script.type = "text/javascript";
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
     script.async = true;
+    script.onload = () => setIsReady(true);
     // O widget lê essa config do próprio texto da tag <script> (não é eval
     // nosso) -- é assim que o embed oficial da TradingView funciona.
     script.text = JSON.stringify({
@@ -64,8 +73,14 @@ export function TradingViewChart({ symbol, height = 400, interval = "D", hideSid
   // por fora, não no elemento que o script vai mexer -- senão a altura pedida
   // é sobrescrita e o gráfico colapsa pra um valor mínimo.
   return (
-    <div style={{ height, width: "100%" }}>
+    <div style={{ height, width: "100%", position: "relative" }}>
       <div className="tradingview-widget-container" ref={containerRef} style={{ height: "100%", width: "100%" }} />
+      {!isReady && (
+        <div className="absolute inset-0 flex items-center justify-center gap-2 bg-card font-mono text-xs text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Carregando gráfico da TradingView...
+        </div>
+      )}
     </div>
   );
 }
