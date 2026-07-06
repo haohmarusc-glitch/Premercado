@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { cn } from "@/lib/utils";
 import {
@@ -229,7 +229,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {navSection("Dados de Mercado")}
           {navLink("/macro", <Globe className="h-4 w-4" />, "Macro")}
-          {navLink("/grafico", <CandlestickChart className="h-4 w-4" />, "Gráfico")}
           {navLink("/cotacoes", <LineChart className="h-4 w-4" />, "Cotações")}
           {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
           {navLink("/short", <Flame className="h-4 w-4" />, "Short")}

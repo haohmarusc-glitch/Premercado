@@ -13,11 +13,9 @@ import { useEffect, useRef } from "react";
 interface TradingViewChartProps {
   symbol: string;
   height?: number;
-  interval?: string;
-  hideSideToolbar?: boolean;
 }
 
-export function TradingViewChart({ symbol, height = 400, interval = "D", hideSideToolbar = true }: TradingViewChartProps) {
+export function TradingViewChart({ symbol, height = 400 }: TradingViewChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,13 +38,13 @@ export function TradingViewChart({ symbol, height = 400, interval = "D", hideSid
     script.text = JSON.stringify({
       autosize: true,
       symbol,
-      interval,
+      interval: "D",
       timezone: "America/Sao_Paulo",
       theme: "dark",
       style: "1",
       locale: "br",
       allow_symbol_change: false,
-      hide_side_toolbar: hideSideToolbar,
+      hide_side_toolbar: true,
       calendar: false,
       support_host: "https://www.tradingview.com",
     });
@@ -55,7 +53,7 @@ export function TradingViewChart({ symbol, height = 400, interval = "D", hideSid
     return () => {
       container.innerHTML = "";
     };
-  }, [symbol, interval, hideSideToolbar]);
+  }, [symbol]);
 
   return <div className="tradingview-widget-container" ref={containerRef} style={{ height, width: "100%" }} />;
 }
