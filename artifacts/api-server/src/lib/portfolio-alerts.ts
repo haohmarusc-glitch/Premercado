@@ -3,6 +3,11 @@
  * Reads positions and purchases from DB, fetches live prices via yfinance,
  * and fires emails. Fired keys are persisted in portfolio_alert_firings so
  * deduplication survives server restarts.
+ *
+ * NOTE: intencionalmente NÃO escopado por usuário -- roda sobre as posições
+ * de TODOS os usuários e manda pro único notifyEmail compartilhado (settings).
+ * Posições passaram a ter dono (user_id) só pra separar os DADOS entre
+ * contas; esse job de sistema continua rodando sobre a tabela inteira.
  */
 import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";

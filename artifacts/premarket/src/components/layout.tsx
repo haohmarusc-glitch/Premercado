@@ -1,7 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import {
   useGetAgentStatus,
@@ -49,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { viewMode, toggleViewMode } = useViewMode();
   const isMobile = viewMode === "mobile";
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -204,9 +206,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
               >
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
+              <button
+                onClick={() => logout()}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                title="Sair"
+                data-testid="button-logout"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Agent Command Center</p>
+          {user && <p className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{user.email}</p>}
         </div>
         
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">

@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import authRouter from "./auth";
+import { requireAuth } from "../middleware/require-auth";
 import healthRouter from "./health";
 import reportsRouter from "./reports";
 import observationsRouter from "./observations";
@@ -24,6 +26,11 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(internalRouter); // localhost-only agent routes
+router.use(authRouter); // login/signup/logout/me/claim -- abertas, sem exigir sessão
+
+// Tudo abaixo exige sessão de login (cookie) OU bearer OPERATOR_API_KEY
+// (agente Python / carteira.py) -- ver middleware/require-auth.ts.
+router.use(requireAuth);
 
 router.use(reportsRouter);
 router.use(quotesRouter);

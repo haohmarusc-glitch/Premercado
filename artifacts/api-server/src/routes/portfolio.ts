@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { computeOpenLotTotals } from "../lib/portfolio-math";
@@ -95,69 +95,24 @@ async function recomputePosition(positionId: number): Promise<void> {
     .where(eq(portfolioPositionsTable.id, positionId));
 }
 
-// Seed initial portfolio data if table is empty
-const SEED_POSITIONS = [
-  { ticker: "NVDA", quantity: 5.37435,  avgCost: 208.21, investedAmount: 1119.00, firstPurchaseDate: "2026-03-20" },
-  { ticker: "MU",   quantity: 0.46091,  avgCost: 865.65, investedAmount:  398.99, firstPurchaseDate: "2026-05-14" },
-  { ticker: "INTC", quantity: 3.35583,  avgCost: 104.29, investedAmount:  350.00, firstPurchaseDate: "2026-06-02" },
-  { ticker: "ARM",  quantity: 0.87559,  avgCost: 399.73, investedAmount:  350.00, firstPurchaseDate: "2026-06-02" },
-  { ticker: "GOOGL",quantity: 0.81693,  avgCost: 367.22, investedAmount:  300.00, firstPurchaseDate: "2026-06-02" },
-  { ticker: "TSLA", quantity: 0.53411,  avgCost: 374.45, investedAmount:  200.00, firstPurchaseDate: "2026-03-20" },
-  { ticker: "SMCI", quantity: 13.98789, avgCost:  39.31, investedAmount:  550.00, firstPurchaseDate: "2026-05-14" },
-] as const;
-
-const SEED_PURCHASES: Record<string, Array<{ purchaseDate: string; amount: number }>> = {
-  NVDA:  [{ purchaseDate: "2026-03-20", amount: 300.00 }, { purchaseDate: "2026-05-18", amount: 470.00 },
-          { purchaseDate: "2026-05-20", amount: 140.00 }, { purchaseDate: "2026-05-21", amount: 70.00  },
-          { purchaseDate: "2026-05-27", amount: 139.00 }],
-  MU:    [{ purchaseDate: "2026-05-14", amount: 258.99 }, { purchaseDate: "2026-06-02", amount: 140.00 }],
-  INTC:  [{ purchaseDate: "2026-06-02", amount: 350.00 }],
-  ARM:   [{ purchaseDate: "2026-06-02", amount: 350.00 }],
-  GOOGL: [{ purchaseDate: "2026-06-02", amount: 300.00 }],
-  TSLA:  [{ purchaseDate: "2026-03-20", amount: 200.00 }],
-  SMCI:  [{ purchaseDate: "2026-05-14", amount: 250.00 }, { purchaseDate: "2026-06-02", amount: 300.00 }],
-};
-
-export async function seedPortfolioIfEmpty() {
-  try {
-    const existing = await db.select({ id: portfolioPositionsTable.id }).from(portfolioPositionsTable).limit(1);
-    if (existing.length > 0) return;
-
-    for (const pos of SEED_POSITIONS) {
-      const [inserted] = await db.insert(portfolioPositionsTable).values(pos).returning();
-      const purchases = SEED_PURCHASES[pos.ticker] ?? [];
-      if (purchases.length === 0) continue;
-
-      // Os totais da posicao ja vem corretos e fixos em SEED_POSITIONS (nao
-      // dependem de recompute aqui). Mas os lotes individuais nascem sem
-      // purchasePrice -- backfill best-effort pra que qualquer edicao futura
-      // (que dispara recomputePosition) parta de dados completos em vez de
-      // lotes "sem preco" (ver bug corrigido em recomputePosition).
-      let prices: Record<string, number> = {};
-      try {
-        const dates = [...new Set(purchases.map((p) => p.purchaseDate))];
-        prices = await fetchHistoricalPrices(pos.ticker, dates);
-      } catch (err) {
-        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill seed purchase prices");
-      }
-
-      await db.insert(portfolioPurchasesTable).values(
-        purchases.map((p) => ({
-          positionId: inserted.id,
-          ...p,
-          purchasePrice: prices[p.purchaseDate] ?? null,
-        })),
-      );
-    }
-    logger.info("Portfolio seeded with initial positions");
-  } catch (err) {
-    logger.error({ err }, "Failed to seed portfolio");
-  }
+// Verifica que a posição existe E pertence ao usuário logado -- usado antes
+// de qualquer leitura/mutação em portfolio_purchases (que não tem user_id
+// próprio, o dono é sempre checado transitivamente via position_id).
+async function getOwnedPosition(positionId: number, userId: number) {
+  const [pos] = await db
+    .select()
+    .from(portfolioPositionsTable)
+    .where(and(eq(portfolioPositionsTable.id, positionId), eq(portfolioPositionsTable.userId, userId)));
+  return pos ?? null;
 }
 
 // GET /portfolio
-router.get("/portfolio", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
+router.get("/portfolio", async (req, res): Promise<void> => {
+  const rows = await db
+    .select()
+    .from(portfolioPositionsTable)
+    .where(eq(portfolioPositionsTable.userId, req.userId!))
+    .orderBy(asc(portfolioPositionsTable.createdAt));
   // Posicoes totalmente vendidas ficam com quantity = 0 (ver recomputePosition)
   // e nao devem aparecer como holding ativo -- mas a linha continua no banco
   // preservando o historico de compras/vendas.
@@ -169,6 +124,8 @@ router.get("/portfolio", async (_req, res): Promise<void> => {
 router.get("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const p = PortfolioPositionParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
+  const pos = await getOwnedPosition(p.data.id, req.userId!);
+  if (!pos) { res.status(404).json({ error: "Position not found" }); return; }
   const rows = await db
     .select()
     .from(portfolioPurchasesTable)
@@ -183,7 +140,7 @@ router.post("/portfolio", async (req, res): Promise<void> => {
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const [row] = await db
     .insert(portfolioPositionsTable)
-    .values({ ...body.data, ticker: body.data.ticker.toUpperCase() })
+    .values({ ...body.data, ticker: body.data.ticker.toUpperCase(), userId: req.userId! })
     .returning();
   res.status(201).json(PortfolioPositionSchema.parse(serPos(row)));
 });
@@ -198,7 +155,7 @@ router.put("/portfolio/:id", async (req, res): Promise<void> => {
   const [row] = await db
     .update(portfolioPositionsTable)
     .set(update)
-    .where(eq(portfolioPositionsTable.id, params.data.id))
+    .where(and(eq(portfolioPositionsTable.id, params.data.id), eq(portfolioPositionsTable.userId, req.userId!)))
     .returning();
   if (!row) { res.status(404).json({ error: "Position not found" }); return; }
   res.json(PortfolioPositionSchema.parse(serPos(row)));
@@ -208,7 +165,9 @@ router.put("/portfolio/:id", async (req, res): Promise<void> => {
 router.delete("/portfolio/:id", async (req, res): Promise<void> => {
   const p = PortfolioPositionParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(portfolioPositionsTable).where(eq(portfolioPositionsTable.id, p.data.id));
+  await db
+    .delete(portfolioPositionsTable)
+    .where(and(eq(portfolioPositionsTable.id, p.data.id), eq(portfolioPositionsTable.userId, req.userId!)));
   res.status(204).send();
 });
 
@@ -218,6 +177,9 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const body = CreatePortfolioPurchaseBody.safeParse(req.body);
   if (!params.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
 
+  const pos = await getOwnedPosition(params.data.id, req.userId!);
+  if (!pos) { res.status(404).json({ error: "Position not found" }); return; }
+
   // Se o cliente nao mandou preco, tenta buscar o fechamento real da data
   // (yfinance) aqui tambem -- o frontend ja tenta isso antes de chamar essa
   // rota, mas essa e' a defesa de verdade: sem isso o lote fica com
@@ -226,17 +188,11 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   // fica null e o usuario pode rodar backfill-prices depois.
   let purchasePrice = body.data.purchasePrice ?? null;
   if (purchasePrice == null) {
-    const [pos] = await db
-      .select({ ticker: portfolioPositionsTable.ticker })
-      .from(portfolioPositionsTable)
-      .where(eq(portfolioPositionsTable.id, params.data.id));
-    if (pos) {
-      try {
-        const prices = await fetchHistoricalPrices(pos.ticker, [body.data.purchaseDate]);
-        purchasePrice = prices[body.data.purchaseDate] ?? null;
-      } catch (err) {
-        logger.warn({ err, ticker: pos.ticker }, "Failed to backfill purchase price at insert time");
-      }
+    try {
+      const prices = await fetchHistoricalPrices(pos.ticker, [body.data.purchaseDate]);
+      purchasePrice = prices[body.data.purchaseDate] ?? null;
+    } catch (err) {
+      logger.warn({ err, ticker: pos.ticker }, "Failed to backfill purchase price at insert time");
     }
   }
 
@@ -253,12 +209,21 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
   const p = PortfolioPurchaseParams.safeParse(req.params);
   const body = UpdatePortfolioPurchaseBody.safeParse(req.body);
   if (!p.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
+
+  const [existing] = await db
+    .select({ positionId: portfolioPurchasesTable.positionId })
+    .from(portfolioPurchasesTable)
+    .where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
+  if (!existing || !(await getOwnedPosition(existing.positionId, req.userId!))) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
   const [row] = await db
     .update(portfolioPurchasesTable)
     .set({ saleDate: body.data.saleDate ?? null, salePrice: body.data.salePrice ?? null })
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
     .returning();
-  if (!row) { res.status(404).json({ error: "Not found" }); return; }
   await recomputePosition(row.positionId);
   res.json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
@@ -271,12 +236,18 @@ router.delete("/portfolio/purchases/:purchaseId", async (req, res): Promise<void
     .select({ positionId: portfolioPurchasesTable.positionId })
     .from(portfolioPurchasesTable)
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
+  if (!existing || !(await getOwnedPosition(existing.positionId, req.userId!))) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
   await db.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
-  if (existing) { await recomputePosition(existing.positionId); }
+  await recomputePosition(existing.positionId);
   res.status(204).send();
 });
 
 // GET /portfolio/historical-price?ticker=NVDA&date=2026-03-20 — single real close price
+// Utilitário sem estado próprio de usuário (proxy do yfinance) -- não precisa
+// de checagem de dono, só de estar logado (já garantido pelo requireAuth).
 router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
   const ticker = String(req.query.ticker ?? "").toUpperCase();
   const date = String(req.query.date ?? "");
@@ -300,10 +271,7 @@ router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> =>
   if (!params.success) { res.status(400).json({ error: "invalid id" }); return; }
   const force = req.body?.force === true;
 
-  const [pos] = await db
-    .select()
-    .from(portfolioPositionsTable)
-    .where(eq(portfolioPositionsTable.id, params.data.id));
+  const pos = await getOwnedPosition(params.data.id, req.userId!);
   if (!pos) { res.status(404).json({ error: "Position not found" }); return; }
 
   const purchases = await db

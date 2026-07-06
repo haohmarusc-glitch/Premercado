@@ -7,6 +7,8 @@ servers:
   - url: /api
     description: Base API path
 tags:
+  - name: auth
+    description: Email/password authentication
   - name: health
     description: Health operations
   - name: reports
@@ -25,6 +27,91 @@ tags:
     description: Trade journal
 
 paths:
+  /auth/signup:
+    post:
+      operationId: authSignup
+      tags: [auth]
+      summary: Create a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthCredentials"
+      responses:
+        "201":
+          description: Account created and logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "409":
+          description: Email already registered
+
+  /auth/login:
+    post:
+      operationId: authLogin
+      tags: [auth]
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthCredentials"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid email or password
+
+  /auth/logout:
+    post:
+      operationId: authLogout
+      tags: [auth]
+      summary: Log out and clear the session cookie
+      responses:
+        "204":
+          description: Logged out
+
+  /auth/me:
+    get:
+      operationId: getAuthMe
+      tags: [auth]
+      summary: Get the currently logged-in user, if any
+      responses:
+        "200":
+          description: Current session state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMeResponse"
+
+  /auth/claim-seed-account:
+    post:
+      operationId: authClaimSeedAccount
+      tags: [auth]
+      summary: One-time claim of the pre-existing owner account (sets its real password)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimSeedAccountBody"
+      responses:
+        "200":
+          description: Account claimed and logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "403":
+          description: Email does not match the seed account, or it was already claimed
+
   /healthz:
     get:
       operationId: healthCheck
@@ -786,6 +873,46 @@ paths:
 
 components:
   schemas:
+    AuthCredentials:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    AuthUser:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+
+    AuthMeResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/AuthUser"
+            - type: "null"
+
+    ClaimSeedAccountBody:
+      type: object
+      required: [email, newPassword]
+      properties:
+        email:
+          type: string
+          format: email
+        newPassword:
+          type: string
+          minLength: 8
+
     HealthStatus:
       type: object
       required: [status]
