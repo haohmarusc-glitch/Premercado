@@ -39,4 +39,24 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (alerts technical indicator columns)");
   }
+
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id serial PRIMARY KEY,
+        email text NOT NULL UNIQUE,
+        password_hash text NOT NULL,
+        is_claimed boolean NOT NULL DEFAULT true,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_portfolio_positions_user_id ON portfolio_positions(user_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id)`);
+    logger.info("Schema check ok (users table + portfolio/alerts ownership columns)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (users/ownership columns)");
+  }
 }

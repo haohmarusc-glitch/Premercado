@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, sql } from "drizzle-orm";
+import { and, eq, desc, inArray, sql } from "drizzle-orm";
 import { db, alertsTable, alertFiringsTable } from "@workspace/db";
 import {
   ListAlertsResponse,
@@ -24,15 +24,19 @@ function serializeAlert(a: typeof alertsTable.$inferSelect) {
   };
 }
 
-router.get("/alerts/firings/summary", async (_req, res): Promise<void> => {
+router.get("/alerts/firings/summary", async (req, res): Promise<void> => {
   const today = startOfTodayBRT();
 
-  const [allAlerts, todayFirings] = await Promise.all([
-    db.select({ id: alertsTable.id, enabled: alertsTable.enabled }).from(alertsTable),
-    db.select({ id: alertFiringsTable.id })
-      .from(alertFiringsTable)
-      .where(sql`${alertFiringsTable.firedAt} >= ${today}`),
-  ]);
+  const allAlerts = await db
+    .select({ id: alertsTable.id, enabled: alertsTable.enabled })
+    .from(alertsTable)
+    .where(eq(alertsTable.userId, req.userId!));
+
+  const alertIds = allAlerts.map((a) => a.id);
+  const todayFirings = alertIds.length === 0 ? [] : await db
+    .select({ id: alertFiringsTable.id })
+    .from(alertFiringsTable)
+    .where(and(inArray(alertFiringsTable.alertId, alertIds), sql`${alertFiringsTable.firedAt} >= ${today}`));
 
   res.json(GetAlertFiringsSummaryResponse.parse({
     total: allAlerts.length,
@@ -41,8 +45,12 @@ router.get("/alerts/firings/summary", async (_req, res): Promise<void> => {
   }));
 });
 
-router.get("/alerts", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(alertsTable).orderBy(desc(alertsTable.createdAt));
+router.get("/alerts", async (req, res): Promise<void> => {
+  const rows = await db
+    .select()
+    .from(alertsTable)
+    .where(eq(alertsTable.userId, req.userId!))
+    .orderBy(desc(alertsTable.createdAt));
   res.json(ListAlertsResponse.parse(rows.map(serializeAlert)));
 });
 
@@ -76,7 +84,7 @@ router.post("/alerts", async (req, res): Promise<void> => {
   // (macd: histograma bullish/bearish; sma: preco acima/abaixo da media).
 
   const [row] = await db.insert(alertsTable)
-    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue })
+    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue, userId: req.userId! })
     .returning();
   res.status(201).json(ListAlertsResponseItem.parse(serializeAlert(row)));
 });
@@ -85,7 +93,9 @@ router.delete("/alerts/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const deleted = await db.delete(alertsTable).where(eq(alertsTable.id, id)).returning();
+  const deleted = await db.delete(alertsTable)
+    .where(and(eq(alertsTable.id, id), eq(alertsTable.userId, req.userId!)))
+    .returning();
   if (!deleted.length) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).end();
 });
@@ -99,7 +109,7 @@ router.patch("/alerts/:id", async (req, res): Promise<void> => {
 
   const [updated] = await db.update(alertsTable)
     .set({ enabled: parsed.data.enabled })
-    .where(eq(alertsTable.id, id))
+    .where(and(eq(alertsTable.id, id), eq(alertsTable.userId, req.userId!)))
     .returning();
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
   res.json(ToggleAlertResponse.parse(serializeAlert(updated)));
@@ -109,7 +119,9 @@ router.get("/alerts/:id/firings", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const alert = await db.select().from(alertsTable).where(eq(alertsTable.id, id)).limit(1);
+  const alert = await db.select().from(alertsTable)
+    .where(and(eq(alertsTable.id, id), eq(alertsTable.userId, req.userId!)))
+    .limit(1);
   if (!alert.length) { res.status(404).json({ error: "Not found" }); return; }
 
   const rows = await db

@@ -9,6 +9,66 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Create a new account
+ */
+export const authSignupBodyPasswordMin = 8;
+
+
+
+export const AuthSignupBody = zod.object({
+  "email": zod.string().email(),
+  "password": zod.string().min(authSignupBodyPasswordMin)
+})
+
+
+/**
+ * @summary Log in with email and password
+ */
+export const authLoginBodyPasswordMin = 8;
+
+
+
+export const AuthLoginBody = zod.object({
+  "email": zod.string().email(),
+  "password": zod.string().min(authLoginBodyPasswordMin)
+})
+
+export const AuthLoginResponse = zod.object({
+  "id": zod.coerce.number(),
+  "email": zod.string()
+})
+
+
+/**
+ * @summary Get the currently logged-in user, if any
+ */
+export const GetAuthMeResponse = zod.object({
+  "user": zod.union([zod.object({
+  "id": zod.coerce.number(),
+  "email": zod.string()
+}),zod.null()])
+})
+
+
+/**
+ * @summary One-time claim of the pre-existing owner account (sets its real password)
+ */
+export const authClaimSeedAccountBodyNewPasswordMin = 8;
+
+
+
+export const AuthClaimSeedAccountBody = zod.object({
+  "email": zod.string().email(),
+  "newPassword": zod.string().min(authClaimSeedAccountBodyNewPasswordMin)
+})
+
+export const AuthClaimSeedAccountResponse = zod.object({
+  "id": zod.coerce.number(),
+  "email": zod.string()
+})
+
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
