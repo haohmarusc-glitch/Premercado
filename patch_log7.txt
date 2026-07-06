@@ -1,0 +1,18 @@
+   stash: ok (ou nada para guardar)
+>> Passo 2: criando arquivo de patch
+   patch criado: 333 linhas
+>> Passo 3: verificando se o patch aplica (dry-run)
+   dry-run: OK
+>> Passo 4: aplicando o patch de verdade
+   patch aplicado: OK
+>> Passo 5: git add
+   add: ok
+>> Passo 6: git commit
+[main fe84d05] fix(provider): remover Groq da cadeia de fallback
+ 2 files changed, 25 insertions(+), 176 deletions(-)
+   commit: ok
+>> Passo 7: git push
+To https://github.com/haohmarusc-glitch/Premercado.git
+   ec61fad..fe84d05  main -> main
+   push: OK — enviado ao GitHub!
+=== SUCESSO TOTAL: Fri Jun 19 03:37:02 PM UTC 2026 ===
