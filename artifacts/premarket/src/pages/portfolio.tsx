@@ -334,6 +334,8 @@ function PriceChart({ ticker }: { ticker: string }) {
                 return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
               }}
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+              labelStyle={{ color: "#a1a1aa" }}
+              itemStyle={{ color: "#e4e4e7" }}
             />
             <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
             {candleNewsMarkers.map((m) => (
@@ -370,7 +372,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               formatter={(value: number, name: string, item: { payload?: { newsItems?: { title: string }[] } }) => {
                 if (name === "newsY") {
                   const items = item?.payload?.newsItems ?? [];
-                  return [items.map((n) => n.title).join(" · "), "📰 Notícia"];
+                  return [<span style={{ color: "#e4e4e7" }}>{items.map((n) => n.title).join(" · ")}</span>, "📰 Notícia"];
                 }
                 return [`$${value.toFixed(2)}`, ticker];
               }}
@@ -380,6 +382,7 @@ function PriceChart({ ticker }: { ticker: string }) {
                 return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
               }}
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+              labelStyle={{ color: "#a1a1aa" }}
             />
             <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
             <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} />
@@ -413,6 +416,8 @@ function AllocationChart({ data }: { data: AllocEntry[] }) {
               <RechartsTooltip
                 formatter={(value) => [fmt$(value as number), ""]}
                 contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
+                labelStyle={{ color: "#a1a1aa" }}
+                itemStyle={{ color: "#e4e4e7" }}
               />
             </PieChart>
           </ResponsiveContainer>
