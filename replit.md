@@ -12,7 +12,8 @@ alertas de preço e chat conversacional.
 - `pnpm --filter @workspace/api-spec run codegen` — regenerar hooks e schemas do OpenAPI
 - `pnpm --filter @workspace/db run push` — aplicar schema no banco (dev only)
 - `pnpm --filter @workspace/api-server test` — testes do servidor (vitest)
-- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPERATOR_API_KEY`
+- Required env: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPERATOR_API_KEY`, `JWT_SECRET`
+  (segredo do cookie de sessão — o servidor falha no boot se faltar)
 - Opcional (fallback chain): `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`
 - Opcional (dados alternativos "smart money" — sem a chave, a seção correspondente
   some/mostra como ativar em vez de quebrar): `QUIVER_API_KEY` (negociações do
@@ -23,7 +24,8 @@ alertas de preço e chat conversacional.
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5, sem autenticação (acesso aberto — não expor a URL publicamente)
+- API: Express 5, login por email/senha (cookie httpOnly + JWT) atrás de
+  `requireAuth` — ver Architecture decisions
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod, drizzle-zod
 - API codegen: Orval (a partir do OpenAPI spec)
@@ -43,10 +45,17 @@ alertas de preço e chat conversacional.
   - `alerts.ts` — CRUD de alertas de preço + histórico de disparos
   - `portfolio.ts` — posições, compras/vendas, alertas de carteira
   - `chat.ts` — sessões + streaming SSE de chat conversacional
-  - `settings.ts`, `quotes.ts`, `chart.ts`, `auth.ts`, `health.ts`
-  - `index.ts` monta `requireAuth` em todas as rotas operator-only
-    (agent, settings, alerts, runs, chat, portfolio, observations)
-- `artifacts/api-server/src/middleware/auth.ts` — sessão OU bearer `OPERATOR_API_KEY`
+  - `settings.ts`, `quotes.ts`, `chart.ts`, `health.ts`
+  - `auth.ts` (`/auth/signup`, `/auth/login`, `/auth/logout`, `/auth/me`,
+    `/auth/claim-seed-account`) — únicas rotas abertas, sem exigir sessão
+  - `index.ts` monta `requireAuth` centralmente pra tudo que vem depois de
+    `health`/`internal`/`auth` (ver Architecture decisions)
+- `artifacts/api-server/src/middleware/require-auth.ts` — sessão (cookie) OU
+  bearer `OPERATOR_API_KEY`
+- `artifacts/api-server/src/lib/auth.ts` — hash de senha (bcryptjs), JWT
+  (jsonwebtoken), cookie de sessão
+- `artifacts/api-server/src/lib/claim-seed-account.ts` — cria a conta seed
+  (dono original) e faz o backfill de `user_id` nas linhas antigas no boot
 - `artifacts/api-server/src/lib/`:
   - `runner.ts` — spawna o subprocess Python do agente completo
   - `scheduler.ts` — cron diário + scan intradiário de pré-mercado
@@ -92,14 +101,32 @@ alertas de preço e chat conversacional.
 - Cada ferramenta de rede em `tools.py` é cacheada via `cache.py` com TTL
   proporcional à volatilidade do dado (preço: 120s; filing SEC: 24h)
 - Frontend faz polling do status do agente a cada ~3s enquanto `running: true`
-- Todas as rotas operator-only exigem `requireAuth` (sessão de login OU bearer
-  `OPERATOR_API_KEY`) — montado centralmente em `routes/index.ts`, não rota a rota
+- Login por email/senha: `requireAuth` (montado centralmente em
+  `routes/index.ts`, logo após `auth.ts`) aceita cookie de sessão (JWT
+  httpOnly, 30 dias) OU bearer `Authorization: Bearer $OPERATOR_API_KEY` — esse
+  segundo caminho existe pro agente Python (`tools.py`) e o script
+  `carteira.py`, que chamam `/api/alerts` e `/api/portfolio` direto e não têm
+  sessão de usuário própria; nesse caso `req.userId` resolve pra conta "dona"
+  (seed), a mesma que recebeu o backfill dos dados existentes
+- Só `portfolio_positions`/`portfolio_purchases` e `alerts`/`alert_firings`
+  são separados por usuário (`user_id`); todo o resto (relatórios,
+  observações, watchlist, journal, settings, chat, agent_runs) continua um
+  dataset único compartilhado por qualquer conta logada
+- Jobs de background (`alert-checker.ts`, `portfolio-alerts.ts`) continuam
+  rodando sobre TODOS os usuários e mandando e-mail pro único `notifyEmail`
+  global de `settings` — não foram escopados por usuário de propósito
+- Conta seed (dono original, email fixo em `claim-seed-account.ts`) nasce com
+  senha aleatória inutilizável (`isClaimed: false`) e só fica utilizável
+  depois de `POST /auth/claim-seed-account`, que define a senha real
 
 ## Database (tabelas em `lib/db/src/schema/premarket.ts`)
 
-`reports`, `observations`, `agent_runs`, `settings`, `alerts`, `alert_firings`,
-`chat_sessions`, `chat_messages`, `portfolio_positions`, `portfolio_purchases`,
-`portfolio_alert_firings`
+`users`, `reports`, `observations`, `agent_runs`, `settings`, `alerts`,
+`alert_firings`, `chat_sessions`, `chat_messages`, `portfolio_positions`,
+`portfolio_purchases`, `portfolio_alert_firings`
+
+`portfolio_positions.user_id` e `alerts.user_id` (nullable, FK pra `users`)
+são as únicas colunas de dono — ver Architecture decisions.
 
 ## Product
 

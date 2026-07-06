@@ -5,6 +5,27 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+export interface AuthCredentials {
+  email: string;
+  /** @minLength 8 */
+  password: string;
+}
+
+export interface AuthUser {
+  id: number;
+  email: string;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser | null;
+}
+
+export interface ClaimSeedAccountBody {
+  email: string;
+  /** @minLength 8 */
+  newPassword: string;
+}
+
 export interface HealthStatus {
   status: string;
 }

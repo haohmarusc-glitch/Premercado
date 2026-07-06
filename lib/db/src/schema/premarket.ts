@@ -17,6 +17,21 @@ import { z } from "zod/v4";
 // automaticamente em aritméticas, mas .$type<number>() sinaliza isso ao TS.
 const money = (col: string) => numeric(col, { precision: 15, scale: 4 }).$type<number>();
 
+export const usersTable = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  // Conta "seed" criada pelo backfill de migração pra dono do login original --
+  // fica com senha aleatória inutilizável até o dono reivindicar via
+  // /auth/claim-seed-account (ver ensure-schema.ts). Novos cadastros normais
+  // já nascem com isClaimed=true.
+  isClaimed: boolean("is_claimed").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type User = typeof usersTable.$inferSelect;
+
 export const reportsTable = pgTable("reports", {
   id: serial("id").primaryKey(),
   date: text("date").notNull(),
@@ -126,11 +141,16 @@ export const alertsTable = pgTable("alerts", {
   thresholdValue: money("threshold_value"), // generico: nivel de RSI etc.
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
+  // Dono do alerta -- nullable pra permitir o ALTER TABLE em cima de linhas
+  // existentes; o backfill de migração preenche as linhas antigas com o
+  // usuário seed (ver ensure-schema.ts).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_alerts_symbol").on(t.symbol),
   index("idx_alerts_enabled").on(t.enabled),
+  index("idx_alerts_user_id").on(t.userId),
 ]);
 
 export type Alert = typeof alertsTable.$inferSelect;
@@ -192,10 +212,15 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   isSimulated: boolean("is_simulated").notNull().default(false),
   downAlertPcts: integer("down_alert_pcts").array().notNull().default([10, 15, 20, 30]),
   upAlertPcts: integer("up_alert_pcts").array().notNull().default([10, 15, 20, 30, 40, 50]),
+  // Dono da posição -- nullable pra permitir o ALTER TABLE em cima de linhas
+  // existentes; o backfill de migração preenche as linhas antigas com o
+  // usuário seed (ver ensure-schema.ts).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_portfolio_positions_ticker").on(t.ticker),
+  index("idx_portfolio_positions_user_id").on(t.userId),
 ]);
 
 export type PortfolioPosition = typeof portfolioPositionsTable.$inferSelect;
