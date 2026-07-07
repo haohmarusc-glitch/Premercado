@@ -26,7 +26,6 @@ def fear_greed() -> dict:
         data = r.json()
         current = data.get("fear_and_greed", {})
         score = current.get("score")
-        hist = data.get("fear_and_greed_historical", {})
 
         def classify(s):
             if s is None: return "desconhecido"
@@ -36,17 +35,21 @@ def fear_greed() -> dict:
             if s <= 75: return "ganância"
             return "ganância extrema"
 
-        def safe(obj):
-            return round(obj.get("score"), 1) if isinstance(obj, dict) and obj.get("score") is not None else None
+        def safe(v):
+            return round(v, 1) if isinstance(v, (int, float)) else None
 
+        # As comparações históricas vêm como campos soltos no próprio objeto
+        # "fear_and_greed" (previous_close/previous_1_week/...), não dentro de
+        # "fear_and_greed_historical" — esse é o timeseries completo (chave
+        # "data"), formato diferente do que o nome sugere.
         return {
             "score": round(score, 1) if score is not None else None,
             "ratingEn": current.get("rating", ""),
             "ratingPt": classify(score),
-            "prevClose": safe(hist.get("previousClose")),
-            "oneWeekAgo": safe(hist.get("oneWeekAgo")),
-            "oneMonthAgo": safe(hist.get("oneMonthAgo")),
-            "oneYearAgo": safe(hist.get("oneYearAgo")),
+            "prevClose": safe(current.get("previous_close")),
+            "oneWeekAgo": safe(current.get("previous_1_week")),
+            "oneMonthAgo": safe(current.get("previous_1_month")),
+            "oneYearAgo": safe(current.get("previous_1_year")),
         }
     except Exception as e:
         return {"error": str(e)}
