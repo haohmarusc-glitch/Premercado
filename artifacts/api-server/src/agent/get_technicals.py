@@ -2,9 +2,24 @@
 
 Input (stdin JSON):  {"tickers": ["NVDA", "ARM"]}
 Output (stdout JSON): {"items": [ {ticker, price, rsi, rsiSignal, macd..., sma...}, ... ]}
+
+Stdout isolation: during computation fd-1 is redirected to fd-2 (stderr) so
+any library print/warn output never reaches the pipe Node.js is reading.
+The final JSON is written via os.write(real_stdout_fd, ...) — bypasses all
+Python text buffering and guarantees a clean pipe.
 """
-import sys, json, re
+import os, sys, json, re, warnings, logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ── Save the real stdout fd BEFORE any library can pollute it ────────────────
+_real_stdout_fd = os.dup(1)          # save a copy of fd-1
+os.dup2(2, 1)                        # redirect fd-1 → stderr for the entire run
+sys.stdout = open(os.devnull, "w")   # also redirect Python's sys.stdout object
+
+# ── Suppress all warning channels ─────────────────────────────────────────────
+warnings.filterwarnings("ignore")
+logging.disable(logging.CRITICAL)
+
 import yfinance as yf
 import pandas as pd
 
@@ -96,4 +111,7 @@ if __name__ == "__main__":
                 items[i] = future.result()
             except Exception as e:
                 items[i] = {"ticker": tickers[i], "error": f"{type(e).__name__}: {e}"}
-    print(json.dumps({"items": items}))
+    result = json.dumps({"items": items}, ensure_ascii=False) + "\n"
+    # Write directly to the saved real stdout fd — clean, no buffering issues
+    os.write(_real_stdout_fd, result.encode("utf-8"))
+    os.close(_real_stdout_fd)
