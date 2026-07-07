@@ -369,6 +369,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
           fill={`url(#grad-${symbol})`}
           dot={false}
           activeDot={{ r: 3, fill: color }}
+          isAnimationActive={false}
         />
       </AreaChart>
     </ResponsiveContainer>

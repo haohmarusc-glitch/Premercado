@@ -597,8 +597,8 @@ export default function BacktestPage() {
                       formatter={(value: string) => (value === "equity" ? "Estratégia" : "Buy & Hold")}
                       wrapperStyle={{ fontFamily: "monospace", fontSize: "11px" }}
                     />
-                    <Area type="monotone" dataKey="equity" stroke="#f97316" strokeWidth={1.5} fill="url(#equityGradient)" dot={false} />
-                    <Area type="monotone" dataKey="buyHoldEquity" stroke="#6b7280" strokeWidth={1.5} fill="none" dot={false} strokeDasharray="4 3" />
+                    <Area type="monotone" dataKey="equity" stroke="#f97316" strokeWidth={1.5} fill="url(#equityGradient)" dot={false} isAnimationActive={false} />
+                    <Area type="monotone" dataKey="buyHoldEquity" stroke="#6b7280" strokeWidth={1.5} fill="none" dot={false} strokeDasharray="4 3" isAnimationActive={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>

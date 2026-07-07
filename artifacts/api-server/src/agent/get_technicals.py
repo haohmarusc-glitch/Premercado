@@ -4,6 +4,7 @@ Input (stdin JSON):  {"tickers": ["NVDA", "ARM"]}
 Output (stdout JSON): {"items": [ {ticker, price, rsi, rsiSignal, macd..., sma...}, ... ]}
 """
 import sys, json, re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas as pd
 
@@ -82,5 +83,17 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     tickers = args.get("tickers", [])
-    items = [technicals(t) for t in tickers]
+    # Busca em paralelo (I/O-bound) — sequencial para ~25+ tickers arrisca
+    # estourar o timeout do subprocesso no Node quando o yfinance está lento.
+    # `technicals()` já captura suas próprias exceções por ticker; o
+    # try/except aqui é só uma rede de segurança extra por chamada.
+    items = [None] * len(tickers)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(technicals, t): i for i, t in enumerate(tickers)}
+        for future in as_completed(futures):
+            i = futures[future]
+            try:
+                items[i] = future.result()
+            except Exception as e:
+                items[i] = {"ticker": tickers[i], "error": f"{type(e).__name__}: {e}"}
     print(json.dumps({"items": items}))
