@@ -3,7 +3,7 @@ import { Activity, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@workspace/api-client-react";
 
-type Mode = "login" | "signup" | "claim";
+type Mode = "login" | "signup";
 
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -14,7 +14,7 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 export default function LoginPage() {
-  const { login, signup, claimSeedAccount } = useAuth();
+  const { login, signup } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,8 +27,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       if (mode === "login") await login(email, password);
-      else if (mode === "signup") await signup(email, password);
-      else await claimSeedAccount(email, password);
+      else await signup(email, password);
     } catch (err) {
       setError(errorMessage(err, "Algo deu errado. Tente de novo."));
     } finally {
@@ -78,9 +77,7 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="text-[10px] text-muted-foreground uppercase tracking-widest">
-              {mode === "claim" ? "Nova senha" : "Senha"}
-            </label>
+            <label className="text-[10px] text-muted-foreground uppercase tracking-widest">Senha</label>
             <input
               type="password"
               required
@@ -100,19 +97,10 @@ export default function LoginPage() {
             className="w-full mt-2 bg-primary text-primary-foreground rounded py-2 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {mode === "login" ? "Entrar" : mode === "signup" ? "Criar conta" : "Reivindicar conta"}
+            {mode === "login" ? "Entrar" : "Criar conta"}
           </button>
         </form>
 
-        <button
-          type="button"
-          onClick={() => { setMode(mode === "claim" ? "login" : "claim"); setError(null); }}
-          className="mt-4 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
-        >
-          {mode === "claim"
-            ? "Voltar pro login normal"
-            : "É o dono da conta original? Defina sua senha aqui"}
-        </button>
       </div>
     </div>
   );

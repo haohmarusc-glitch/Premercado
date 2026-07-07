@@ -39,9 +39,13 @@ export function signSessionToken(userId: number): string {
 export function verifySessionToken(token: string): { userId: number } | null {
   try {
     const payload = jwt.verify(token, getJwtSecret());
-    if (typeof payload === "object" && payload !== null && typeof payload.sub === "string") {
-      const userId = Number(payload.sub);
-      if (Number.isFinite(userId)) return { userId };
+    if (typeof payload === "object" && payload !== null) {
+      const sub = payload.sub;
+      // sub pode ser string (JWT padrão) ou number (como era salvo antes)
+      if (typeof sub === "string" || typeof sub === "number") {
+        const userId = Number(sub);
+        if (Number.isFinite(userId)) return { userId };
+      }
     }
     return null;
   } catch {

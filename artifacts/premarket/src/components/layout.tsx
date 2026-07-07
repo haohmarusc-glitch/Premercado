@@ -220,136 +220,138 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {user && <p className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{user.email}</p>}
         </div>
         
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
-          {navLink("/screener", <Radar className="h-4 w-4" />, "Screener")}
-          {navLink("/history", <History className="h-4 w-4" />, "History")}
-          {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
-          {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
-          {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
-          {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
+        <div className="flex-1 overflow-y-auto">
+          <nav className="p-4 space-y-1">
+            {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
+            {navLink("/screener", <Radar className="h-4 w-4" />, "Screener")}
+            {navLink("/history", <History className="h-4 w-4" />, "History")}
+            {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
+            {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
+            {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
+            {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
 
-          {navSection("Carteira")}
-          {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
-          {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
-          {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
-          {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
-          {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
-          {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
-          {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
+            {navSection("Carteira")}
+            {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
+            {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
+            {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
+            {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
+            {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
+            {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
+            {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
 
-          {navSection("Dados de Mercado")}
-          {navLink("/macro", <Globe className="h-4 w-4" />, "Macro")}
-          {navLink("/grafico", <CandlestickChart className="h-4 w-4" />, "Gráfico")}
-          {navLink("/cotacoes", <LineChart className="h-4 w-4" />, "Cotações")}
-          {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
-          {navLink("/short", <Flame className="h-4 w-4" />, "Short")}
-          {navLink("/analistas", <Users className="h-4 w-4" />, "Analistas")}
-          {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
-          {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
+            {navSection("Dados de Mercado")}
+            {navLink("/macro", <Globe className="h-4 w-4" />, "Macro")}
+            {navLink("/grafico", <CandlestickChart className="h-4 w-4" />, "Gráfico")}
+            {navLink("/cotacoes", <LineChart className="h-4 w-4" />, "Cotações")}
+            {navLink("/tecnicos", <Activity className="h-4 w-4" />, "Técnicos")}
+            {navLink("/short", <Flame className="h-4 w-4" />, "Short")}
+            {navLink("/analistas", <Users className="h-4 w-4" />, "Analistas")}
+            {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
+            {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
 
-          {navSection("Sistema")}
-          {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
-        </nav>
+            {navSection("Sistema")}
+            {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
+          </nav>
 
-        <div className="p-4 border-t border-border overflow-y-auto">
-          <div className="mb-4">
-            <div className="flex items-center justify-between text-xs font-mono mb-2">
-              <span className="text-muted-foreground">STATUS</span>
-              {isRunning ? (
-                <span className="text-primary flex items-center gap-1.5">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          <div className="p-4 border-t border-border">
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-xs font-mono mb-2">
+                <span className="text-muted-foreground">STATUS</span>
+                {isRunning ? (
+                  <span className="text-primary flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    </span>
+                    RUNNING
                   </span>
-                  RUNNING
-                </span>
-              ) : (
-                <span className="text-muted-foreground">IDLE</span>
+                ) : (
+                  <span className="text-muted-foreground">IDLE</span>
+                )}
+              </div>
+              {isRunning && status?.currentStep && (
+                <div className="text-xs text-foreground font-mono bg-secondary p-2 rounded truncate" title={status.currentStep}>
+                  &gt; {status.currentStep}
+                </div>
+              )}
+              {!isRunning && status?.lastRunAt && (
+                <div className="text-xs text-muted-foreground font-mono">
+                  Last run: {new Date(status.lastRunAt).toLocaleTimeString()}
+                </div>
+              )}
+              {!isRunning && status?.nextRunAt && (
+                <div className="text-xs font-mono mt-1 flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Next:</span>
+                  <span className="text-primary" data-testid="text-next-run">
+                    {new Date(status.nextRunAt).toLocaleString("pt-BR", {
+                      weekday: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      timeZone: "America/Sao_Paulo",
+                    })}
+                  </span>
+                </div>
               )}
             </div>
-            {isRunning && status?.currentStep && (
-              <div className="text-xs text-foreground font-mono bg-secondary p-2 rounded truncate" title={status.currentStep}>
-                &gt; {status.currentStep}
-              </div>
-            )}
-            {!isRunning && status?.lastRunAt && (
-              <div className="text-xs text-muted-foreground font-mono">
-                Last run: {new Date(status.lastRunAt).toLocaleTimeString()}
-              </div>
-            )}
-            {!isRunning && status?.nextRunAt && (
-              <div className="text-xs font-mono mt-1 flex items-center gap-1.5">
-                <span className="text-muted-foreground">Next:</span>
-                <span className="text-primary" data-testid="text-next-run">
-                  {new Date(status.nextRunAt).toLocaleString("pt-BR", {
-                    weekday: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    timeZone: "America/Sao_Paulo",
-                  })}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-2">
-            {[
-              {
-                icon: <Play className="h-4 w-4 shrink-0" />,
-                label: "COMPLETO",
-                desc: "Todos os tickers · notícias · técnicos · short · analistas · alertas",
-                onClick: handleRun,
-                variant: "default" as const,
-              },
-              {
-                icon: <Zap className="h-4 w-4 shrink-0" />,
-                label: "CARTEIRA",
-                desc: "Só seus ativos · técnicos · short · analistas · salva sentimento",
-                onClick: () => runPortfolio.mutate(),
-                variant: "outline" as const,
-              },
-              {
-                icon: <Zap className="h-4 w-4 shrink-0" />,
-                label: "PRÉ-MERCADO",
-                desc: "Flash intradiário · contágio de setor · cotações · opções",
-                onClick: () => runPremarket.mutate(),
-                variant: "outline" as const,
-              },
-              {
-                icon: <Zap className="h-4 w-4 shrink-0" />,
-                label: "CARVÃO",
-                desc: "HCC · AMR · ARCH · CEIX · BTU — análise completa do setor",
-                onClick: () => runCoal.mutate(),
-                variant: "outline" as const,
-              },
-              {
-                icon: <Zap className="h-4 w-4 shrink-0" />,
-                label: "IA",
-                desc: "NVDA · ARM · GOOGL · META · MSFT · AMD · PLTR · SMCI",
-                onClick: () => runAI.mutate(),
-                variant: "outline" as const,
-              },
-            ].map(({ icon, label, desc, onClick, variant }) => (
-              <button
-                key={label}
-                onClick={onClick}
-                disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending || runAI.isPending}
-                className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-                  ${variant === "default"
-                    ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
-                    : "bg-transparent text-foreground border-border hover:bg-secondary"
-                  }`}
-              >
-                <div className="flex items-center gap-2 font-mono font-bold text-xs">
-                  {icon}
-                  {isRunning && label === "COMPLETO" ? "AGENT ACTIVE" : label}
-                </div>
-                <p className={`text-[10px] font-mono mt-1 leading-tight
-                  ${variant === "default" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-                  {desc}
-                </p>
-              </button>
-            ))}
+            <div className="flex flex-col gap-2">
+              {[
+                {
+                  icon: <Play className="h-4 w-4 shrink-0" />,
+                  label: "COMPLETO",
+                  desc: "Todos os tickers · notícias · técnicos · short · analistas · alertas",
+                  onClick: handleRun,
+                  variant: "default" as const,
+                },
+                {
+                  icon: <Zap className="h-4 w-4 shrink-0" />,
+                  label: "CARTEIRA",
+                  desc: "Só seus ativos · técnicos · short · analistas · salva sentimento",
+                  onClick: () => runPortfolio.mutate(),
+                  variant: "outline" as const,
+                },
+                {
+                  icon: <Zap className="h-4 w-4 shrink-0" />,
+                  label: "PRÉ-MERCADO",
+                  desc: "Flash intradiário · contágio de setor · cotações · opções",
+                  onClick: () => runPremarket.mutate(),
+                  variant: "outline" as const,
+                },
+                {
+                  icon: <Zap className="h-4 w-4 shrink-0" />,
+                  label: "CARVÃO",
+                  desc: "HCC · AMR · ARCH · CEIX · BTU — análise completa do setor",
+                  onClick: () => runCoal.mutate(),
+                  variant: "outline" as const,
+                },
+                {
+                  icon: <Zap className="h-4 w-4 shrink-0" />,
+                  label: "IA",
+                  desc: "NVDA · ARM · GOOGL · META · MSFT · AMD · PLTR · SMCI",
+                  onClick: () => runAI.mutate(),
+                  variant: "outline" as const,
+                },
+              ].map(({ icon, label, desc, onClick, variant }) => (
+                <button
+                  key={label}
+                  onClick={onClick}
+                  disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending || runAI.isPending}
+                  className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                    ${variant === "default"
+                      ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
+                      : "bg-transparent text-foreground border-border hover:bg-secondary"
+                    }`}
+                >
+                  <div className="flex items-center gap-2 font-mono font-bold text-xs">
+                    {icon}
+                    {isRunning && label === "COMPLETO" ? "AGENT ACTIVE" : label}
+                  </div>
+                  <p className={`text-[10px] font-mono mt-1 leading-tight
+                    ${variant === "default" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                    {desc}
+                  </p>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </aside>
