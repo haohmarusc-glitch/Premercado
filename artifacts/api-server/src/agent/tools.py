@@ -5,6 +5,7 @@ Ferramentas disponíveis para o agente de pré-mercado.
 import datetime
 import json
 import os
+import re
 
 import requests
 import yfinance as yf
@@ -13,6 +14,24 @@ from . import market_alerts as _ma
 from . import sector_contagion as _sc
 from .cache import cached
 from .security import sanitize_for_llm, sanitize_ticker, sanitize_url
+
+_PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
+
+
+def _history_for_period(t: "yf.Ticker", period: str):
+    """Busca histórico para qualquer período (ex.: '5mo', '4mo', '18mo'),
+    não só o conjunto fixo que o yfinance aceita nativamente (1mo, 3mo, 6mo,
+    1y, 2y, 5y, 10y, ytd, max). Converte 'Nd'/'Nmo'/'Ny' em start/end; valores
+    fora desse formato (ex.: 'ytd', 'max') são passados direto ao yfinance.
+    """
+    m = _PERIOD_RE.match(period or "")
+    if not m:
+        return t.history(period=period)
+    n, unit = int(m.group(1)), m.group(2).lower()
+    days = n if unit == "d" else n * 30 if unit == "mo" else n * 365
+    start = datetime.date.today() - datetime.timedelta(days=days)
+    return t.history(start=start.isoformat())
+
 
 # ── Cotações ──────────────────────────────────────────────────────────────────
 
@@ -413,7 +432,7 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         import pandas as pd
 
         t = yf.Ticker(ticker)
-        hist = t.history(period=period)
+        hist = _history_for_period(t, period)
         if hist.empty or len(hist) < 30:
             return {"ticker": ticker, "error": "Dados insuficientes"}
 
@@ -495,7 +514,7 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
 def detect_candle_patterns(ticker: str, period: str = "1mo", lookback: int = 5) -> dict:
     """
     Detecta padrões clássicos de candlestick nos últimos `lookback` candles
-    diários (dentro da janela `period`, ex.: '1mo', '3mo', '6mo', '1y', '2y'):
+    diários (dentro da janela `period`, ex.: '1mo', '3mo', '5mo', '6mo', '1y', '2y'):
     Doji, Martelo/Enforcado, Estrela Cadente/Martelo Invertido, Engolfo de
     Alta/Baixa e Estrela da Manhã/Noite. Para analisar o período inteiro
     (ex.: o ano todo com period='1y'), passe um `lookback` alto o bastante
@@ -515,7 +534,7 @@ def detect_candle_patterns(ticker: str, period: str = "1mo", lookback: int = 5) 
         return {"ticker": ticker, "error": str(e)}
     try:
         t = yf.Ticker(ticker)
-        hist = t.history(period=period)
+        hist = _history_for_period(t, period)
         if hist.empty or len(hist) < 5:
             return {"ticker": ticker, "error": "Dados insuficientes"}
 
@@ -1178,7 +1197,7 @@ TOOLS = [
                 "ticker": {"type": "string"},
                 "period": {
                     "type": "string",
-                    "description": "Período histórico: '3mo', '6mo', '1y'. Default: '6mo'.",
+                    "description": "Período histórico: qualquer valor 'Nd'/'Nmo'/'Ny' (ex.: '5mo', '18mo', '2y') ou 'ytd'/'max'. Default: '6mo'.",
                 },
             },
             "required": ["ticker"],
@@ -1200,7 +1219,7 @@ TOOLS = [
                 "ticker": {"type": "string"},
                 "period": {
                     "type": "string",
-                    "description": "Período histórico buscado: '1mo', '3mo', '6mo', '1y', '2y'. Default: '1mo'.",
+                    "description": "Período histórico buscado: qualquer valor 'Nd'/'Nmo'/'Ny' (ex.: '5mo', '18mo', '2y') ou 'ytd'/'max'. Default: '1mo'.",
                 },
                 "lookback": {
                     "type": "integer",
