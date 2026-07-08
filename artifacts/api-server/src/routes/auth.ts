@@ -42,7 +42,7 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
   const [user] = await db
     .insert(usersTable)
     .values({ email, passwordHash, isClaimed: true })
-    .returning({ id: usersTable.id, email: usersTable.email });
+    .returning({ id: usersTable.id, email: usersTable.email, isAdmin: usersTable.isAdmin });
 
   setSessionCookie(res, user.id);
   res.status(201).json(AuthUserSchema.parse(user));
@@ -65,7 +65,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   if (!ok) { invalid(); return; }
 
   setSessionCookie(res, user.id);
-  res.json(AuthUserSchema.parse({ id: user.id, email: user.email }));
+  res.json(AuthUserSchema.parse({ id: user.id, email: user.email, isAdmin: user.isAdmin }));
 });
 
 router.post("/auth/logout", (_req, res): void => {
@@ -79,7 +79,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
   if (!payload) { res.json(GetAuthMeResponse.parse({ user: null })); return; }
 
   const [user] = await db
-    .select({ id: usersTable.id, email: usersTable.email })
+    .select({ id: usersTable.id, email: usersTable.email, isAdmin: usersTable.isAdmin })
     .from(usersTable)
     .where(eq(usersTable.id, payload.userId))
     .limit(1);
@@ -108,7 +108,7 @@ router.post("/auth/claim-seed-account", async (req, res): Promise<void> => {
 
   logger.info({ email }, "Seed owner account claimed");
   setSessionCookie(res, user.id);
-  res.json(AuthClaimSeedAccountResponse.parse({ id: user.id, email: user.email }));
+  res.json(AuthClaimSeedAccountResponse.parse({ id: user.id, email: user.email, isAdmin: user.isAdmin }));
 });
 
 export default router;

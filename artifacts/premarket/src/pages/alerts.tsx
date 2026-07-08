@@ -19,6 +19,7 @@ import {
   Clock, ChevronDown, ChevronUp, History,
 } from "lucide-react";
 import { useGetTickerQuotes, getGetTickerQuotesQueryKey } from "@workspace/api-client-react";
+import { useAuth } from "@/lib/auth";
 
 const CONDITIONS = [
   { key: "above", label: "Sobe acima de", icon: TrendingUp, color: "text-green-400" },
@@ -130,6 +131,7 @@ function FiringHistory({ alertId }: { alertId: number }) {
 export default function Alerts() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const { data: alerts, isLoading } = useListAlerts({
     query: { queryKey: getListAlertsQueryKey(), refetchInterval: 30_000 },
@@ -152,6 +154,8 @@ export default function Alerts() {
   const [alertMode, setAlertMode] = useState<"pct" | "price">("price");
   const [indicator, setIndicator] = useState<IndicatorKey>("price");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [notifyEmail, setNotifyEmail] = useState("");
+  const effectiveNotifyEmail = notifyEmail || user?.email || "";
 
   const availableSymbols = quotes?.map((q) => q.symbol) ?? [];
 
@@ -160,7 +164,8 @@ export default function Alerts() {
     if (!symbol) return;
 
     let desc: string;
-    let body: { symbol: string; indicator: IndicatorKey; condition: "above" | "below"; thresholdPct: number | null; thresholdPrice: number | null; thresholdValue: number | null };
+    let body: { symbol: string; indicator: IndicatorKey; condition: "above" | "below"; thresholdPct: number | null; thresholdPrice: number | null; thresholdValue: number | null; notifyEmail?: string };
+    const notifyEmailField = effectiveNotifyEmail.trim() ? { notifyEmail: effectiveNotifyEmail.trim() } : {};
 
     if (indicator === "price") {
       const pct = alertMode === "pct" ? parseFloat(thresholdPct) : undefined;
@@ -170,19 +175,19 @@ export default function Alerts() {
       desc = alertMode === "price"
         ? `${symbol} ${condition === "above" ? "acima de" : "abaixo de"} $${price}`
         : `${symbol} ${condition} ${pct! > 0 ? "+" : ""}${pct}%`;
-      body = { symbol, indicator, condition, thresholdPct: pct ?? null, thresholdPrice: price ?? null, thresholdValue: null };
+      body = { symbol, indicator, condition, thresholdPct: pct ?? null, thresholdPrice: price ?? null, thresholdValue: null, ...notifyEmailField };
     } else if (indicator === "rsi") {
       const val = parseFloat(thresholdValue);
       if (isNaN(val)) return;
       desc = `${symbol} RSI(14) ${condition === "above" ? "acima de" : "abaixo de"} ${val}`;
-      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: val };
+      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: val, ...notifyEmailField };
     } else if (indicator === "macd") {
       desc = `${symbol} MACD virar ${condition === "above" ? "bullish" : "bearish"}`;
-      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: null };
+      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: null, ...notifyEmailField };
     } else {
       const period = indicator === "sma20" ? "SMA20" : "SMA50";
       desc = `${symbol} preço cruzar ${condition === "above" ? "acima" : "abaixo"} da ${period}`;
-      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: null };
+      body = { symbol, indicator, condition, thresholdPct: null, thresholdPrice: null, thresholdValue: null, ...notifyEmailField };
     }
 
     createAlert.mutate(
@@ -316,6 +321,18 @@ export default function Alerts() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">E-mail de notificação</label>
+            <Input
+              value={effectiveNotifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
+              type="email"
+              placeholder={user?.email ?? "seu@email.com"}
+              className="font-mono bg-secondary border-border w-64"
+              data-testid="input-notify-email"
+            />
           </div>
 
           <div className="flex flex-wrap items-end gap-4">

@@ -17,4 +17,6 @@ export interface AlertCreateInput {
   thresholdPrice?: number | null;
   /** @nullable */
   thresholdValue?: number | null;
+  /** Default: e-mail de login do usuario. */
+  notifyEmail?: string;
 }

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, eq, desc, inArray, sql } from "drizzle-orm";
-import { db, alertsTable, alertFiringsTable } from "@workspace/db";
+import { db, alertsTable, alertFiringsTable, usersTable } from "@workspace/db";
 import {
   ListAlertsResponse,
   ListAlertsResponseItem,
@@ -59,6 +59,11 @@ router.post("/alerts", async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
   const { symbol, condition, thresholdPct, thresholdPrice, thresholdValue } = parsed.data;
+  let notifyEmail = parsed.data.notifyEmail?.trim() || null;
+  if (!notifyEmail) {
+    const [me] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+    notifyEmail = me?.email ?? null;
+  }
   const indicator = parsed.data.indicator ?? "price";
   if (!isAlertIndicator(indicator)) {
     res.status(400).json({ error: `indicator must be one of: price, rsi, macd, sma20, sma50` });
@@ -84,7 +89,7 @@ router.post("/alerts", async (req, res): Promise<void> => {
   // (macd: histograma bullish/bearish; sma: preco acima/abaixo da media).
 
   const [row] = await db.insert(alertsTable)
-    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue, userId: req.userId! })
+    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue, notifyEmail, userId: req.userId! })
     .returning();
   res.status(201).json(ListAlertsResponseItem.parse(serializeAlert(row)));
 });

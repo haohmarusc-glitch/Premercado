@@ -14,6 +14,7 @@ export interface AuthCredentials {
 export interface AuthUser {
   id: number;
   email: string;
+  isAdmin: boolean;
 }
 
 export interface AuthMeResponse {
@@ -75,6 +76,8 @@ export interface AgentStatus {
   /** @nullable */
   nextRunAt?: string | null;
   scheduleEnabled?: boolean;
+  /** Segundos desde que o processo do servidor subiu (process.uptime()). */
+  uptimeSeconds?: number;
 }
 
 export interface PriceAlert {
@@ -95,6 +98,11 @@ export interface PriceAlert {
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
+  /**
+     * E-mail que recebe a notificacao deste alerta, definido na criacao.
+     * @nullable
+     */
+  notifyEmail?: string | null;
   createdAt: string;
 }
 
@@ -109,6 +117,8 @@ export interface AlertCreateInput {
   thresholdPrice?: number | null;
   /** @nullable */
   thresholdValue?: number | null;
+  /** Default: e-mail de login do usuario. */
+  notifyEmail?: string;
 }
 
 export interface AlertToggleInput {
@@ -300,6 +310,11 @@ export interface PortfolioPosition {
   notes?: string | null;
   downAlertPcts: number[];
   upAlertPcts: number[];
+  /**
+     * E-mail que recebe os alertas desta posicao, definido na criacao.
+     * @nullable
+     */
+  notifyEmail?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -320,6 +335,8 @@ export interface PortfolioPositionCreate {
   notes?: string;
   downAlertPcts?: number[];
   upAlertPcts?: number[];
+  /** Default: e-mail de login do usuario. */
+  notifyEmail?: string;
 }
 
 export interface PortfolioPositionUpdate {
@@ -339,6 +356,8 @@ export interface PortfolioPositionUpdate {
   notes?: string | null;
   downAlertPcts?: number[];
   upAlertPcts?: number[];
+  /** @nullable */
+  notifyEmail?: string | null;
 }
 
 export interface PortfolioPurchase {

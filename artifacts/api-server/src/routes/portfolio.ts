@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { and, asc, eq } from "drizzle-orm";
-import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
+import { db, portfolioPositionsTable, portfolioPurchasesTable, usersTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { computeOpenLotTotals } from "../lib/portfolio-math";
 import {
@@ -138,9 +138,14 @@ router.get("/portfolio/:id/purchases", async (req, res): Promise<void> => {
 router.post("/portfolio", async (req, res): Promise<void> => {
   const body = CreatePortfolioPositionBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  let notifyEmail = body.data.notifyEmail?.trim() || null;
+  if (!notifyEmail) {
+    const [me] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+    notifyEmail = me?.email ?? null;
+  }
   const [row] = await db
     .insert(portfolioPositionsTable)
-    .values({ ...body.data, ticker: body.data.ticker.toUpperCase(), userId: req.userId! })
+    .values({ ...body.data, notifyEmail, ticker: body.data.ticker.toUpperCase(), userId: req.userId! })
     .returning();
   res.status(201).json(PortfolioPositionSchema.parse(serPos(row)));
 });

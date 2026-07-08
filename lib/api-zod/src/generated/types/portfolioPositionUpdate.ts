@@ -23,4 +23,6 @@ export interface PortfolioPositionUpdate {
   notes?: string | null;
   downAlertPcts?: number[];
   upAlertPcts?: number[];
+  /** @nullable */
+  notifyEmail?: string | null;
 }

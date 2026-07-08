@@ -59,4 +59,13 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (users/ownership columns)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS notify_email text`);
+    await db.execute(sql`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS notify_email text`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin boolean NOT NULL DEFAULT false`);
+    logger.info("Schema check ok (notify_email per-record + users.is_admin)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (notify_email/is_admin columns)");
+  }
 }

@@ -4,10 +4,9 @@
  * 'price') or RSI/MACD/SMA (demais indicadores) and fires an email if the
  * condition is met (with a 4-hour cooldown per alert).
  *
- * NOTE: intencionalmente NÃO escopado por usuário -- checa/notifica os
- * alertas de TODOS os usuários e manda pro único notifyEmail compartilhado
- * (settings). Alertas passaram a ter dono (user_id) só pra separar os DADOS
- * entre contas; esse job de sistema continua rodando sobre a tabela inteira.
+ * NOTE: o job em si roda sobre a tabela inteira (todos os usuários, uma
+ * varredura só) -- mas cada e-mail vai pro notify_email salvo NO PRÓPRIO
+ * alerta (definido na criação), não mais pra um endereço único compartilhado.
  */
 import { spawn } from "child_process";
 import path from "path";
@@ -77,6 +76,7 @@ async function fireAlert(
 ): Promise<void> {
   try {
     await sendAlertEmail({
+      to: alert.notifyEmail,
       symbol: alert.symbol,
       indicator: alert.indicator,
       condition: alert.condition,

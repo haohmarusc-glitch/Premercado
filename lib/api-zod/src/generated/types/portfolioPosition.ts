@@ -17,6 +17,11 @@ export interface PortfolioPosition {
   notes?: string | null;
   downAlertPcts: number[];
   upAlertPcts: number[];
+  /**
+     * E-mail que recebe os alertas desta posicao, definido na criacao.
+     * @nullable
+     */
+  notifyEmail?: string | null;
   createdAt: string;
   updatedAt: string;
 }

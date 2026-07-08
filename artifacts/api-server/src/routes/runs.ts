@@ -2,8 +2,10 @@ import { Router, type IRouter } from "express";
 import { desc } from "drizzle-orm";
 import { db, agentRunsTable } from "@workspace/db";
 import { ListAgentRunsQueryParams, ListAgentRunsResponse } from "@workspace/api-zod";
+import { requireAdmin } from "../middleware/require-auth";
 
 const router: IRouter = Router();
+router.use(requireAdmin);
 
 function serializeRun(r: typeof agentRunsTable.$inferSelect) {
   return {

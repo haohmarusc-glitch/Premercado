@@ -40,6 +40,7 @@ function toNum(v: number | string | null | undefined): number | null {
 }
 
 export async function sendAlertEmail(opts: {
+  to: string | null;
   symbol: string;
   indicator?: string; // 'price' (default) | 'rsi' | 'macd' | 'sma20' | 'sma50'
   condition: string;
@@ -50,8 +51,8 @@ export async function sendAlertEmail(opts: {
   currentChangePct: number | string | null;
   currentPrice: number | string | null;
 }): Promise<void> {
-  const to = await resolveNotifyEmail();
-  if (!to) { logger.warn("No notify email — skipping alert"); return; }
+  const to = opts.to?.trim();
+  if (!to) { logger.warn({ symbol: opts.symbol }, "No notify email on record — skipping alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
   // Todos os campos numeric do drizzle (thresholdPrice/Pct/Value, valueAtFiring,
@@ -136,13 +137,14 @@ export async function sendAlertEmail(opts: {
 }
 
 export async function sendPortfolioHoldingEmail(opts: {
+  to: string | null;
   ticker: string;
   purchaseDate: string;
   milestone: number;
   amount: number | string;
 }): Promise<void> {
-  const to = await resolveNotifyEmail();
-  if (!to) { logger.warn("No notify email — skipping holding alert"); return; }
+  const to = opts.to?.trim();
+  if (!to) { logger.warn({ ticker: opts.ticker }, "No notify email on record — skipping holding alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
   const subject = `📅 ${opts.ticker} — lote de ${opts.milestone} dias (compra ${opts.purchaseDate})`;
@@ -180,14 +182,15 @@ export async function sendPortfolioHoldingEmail(opts: {
 }
 
 export async function sendRecompraEmail(opts: {
+  to: string | null;
   ticker: string;
   salePrice: number | string;
   currentPrice: number | string;
   dropPct: number | string;       // queda % vs. preço de venda (valor positivo)
   thresholdPct: number | string;  // limiar que disparou
 }): Promise<void> {
-  const to = await resolveNotifyEmail();
-  if (!to) { logger.warn("No notify email — skipping recompra alert"); return; }
+  const to = opts.to?.trim();
+  if (!to) { logger.warn({ ticker: opts.ticker }, "No notify email on record — skipping recompra alert"); return; }
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
 
   const salePrice = toNum(opts.salePrice) ?? 0;

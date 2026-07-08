@@ -24,5 +24,10 @@ export interface PriceAlert {
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
+  /**
+     * E-mail que recebe a notificacao deste alerta, definido na criacao.
+     * @nullable
+     */
+  notifyEmail?: string | null;
   createdAt: string;
 }

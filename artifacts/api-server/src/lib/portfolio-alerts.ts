@@ -4,10 +4,9 @@
  * and fires emails. Fired keys are persisted in portfolio_alert_firings so
  * deduplication survives server restarts.
  *
- * NOTE: intencionalmente NÃO escopado por usuário -- roda sobre as posições
- * de TODOS os usuários e manda pro único notifyEmail compartilhado (settings).
- * Posições passaram a ter dono (user_id) só pra separar os DADOS entre
- * contas; esse job de sistema continua rodando sobre a tabela inteira.
+ * NOTE: o job roda sobre as posições de TODOS os usuários numa varredura só,
+ * mas cada e-mail vai pro notify_email salvo NA PRÓPRIA posição (definido na
+ * criação), não mais pra um endereço único compartilhado.
  */
 import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
@@ -91,6 +90,7 @@ async function checkPortfolioAlerts(): Promise<void> {
       if (pct >= thr && !firedKeys.has(key)) {
         try {
           await sendAlertEmail({
+            to: pos.notifyEmail,
             symbol: pos.ticker,
             condition: "above",
             thresholdPct: thr,
@@ -112,6 +112,7 @@ async function checkPortfolioAlerts(): Promise<void> {
       if (pct <= -thr && !firedKeys.has(key)) {
         try {
           await sendAlertEmail({
+            to: pos.notifyEmail,
             symbol: pos.ticker,
             condition: "below",
             thresholdPct: -thr,
@@ -146,6 +147,7 @@ async function checkPortfolioAlerts(): Promise<void> {
         if (!firedKeys.has(key)) {
           try {
             await sendPortfolioHoldingEmail({
+              to: pos.notifyEmail,
               ticker: pos.ticker,
               purchaseDate: purchase.purchaseDate,
               milestone,
@@ -200,7 +202,7 @@ async function checkPortfolioAlerts(): Promise<void> {
     if (firedKeys.has(key)) continue;
 
     try {
-      await sendRecompraEmail({ ticker: pos.ticker, salePrice: avgSalePrice, currentPrice: price, dropPct, thresholdPct: thr });
+      await sendRecompraEmail({ to: pos.notifyEmail, ticker: pos.ticker, salePrice: avgSalePrice, currentPrice: price, dropPct, thresholdPct: thr });
       await persistKey(key);
       firedKeys.add(key);
       logger.info({ ticker: pos.ticker, dropPct: dropPct.toFixed(2), thr }, "Recompra alert fired");
