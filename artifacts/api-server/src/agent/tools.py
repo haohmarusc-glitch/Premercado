@@ -440,12 +440,19 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         volume = hist["Volume"]
         price = float(close.iloc[-1])
 
-        # RSI 14
+        # RSI 14 — quando os 14 dias não têm nenhuma queda, avg_loss = 0 e a
+        # divisão vira NaN; json.dumps serializa isso como o token `NaN`, que
+        # não é JSON válido em quem for reparsear estritamente. RSI=100 é o
+        # valor tecnicamente correto pra essa condição (só alta).
         delta = close.diff()
         avg_gain = delta.clip(lower=0).rolling(14).mean()
         avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = avg_gain / avg_loss.replace(0, float("nan"))
-        rsi = round(float((100 - 100 / (1 + rs)).iloc[-1]), 2)
+        avg_gain_last = float(avg_gain.iloc[-1])
+        avg_loss_last = float(avg_loss.iloc[-1])
+        if avg_loss_last == 0:
+            rsi = 100.0 if avg_gain_last > 0 else 50.0
+        else:
+            rsi = round(100 - 100 / (1 + avg_gain_last / avg_loss_last), 2)
 
         # MACD (12, 26, 9)
         ema12 = close.ewm(span=12).mean()
