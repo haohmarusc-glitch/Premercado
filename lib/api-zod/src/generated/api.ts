@@ -410,6 +410,14 @@ export const UpdateUserPasswordBody = zod.object({
 
 
 /**
+ * @summary Delete a user account and all its data (admin only)
+ */
+export const DeleteAdminUserParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
  * @summary Manchetes recentes por ativo (yfinance, traduzidas para pt-BR)
  */
 export const GetNewsQueryParams = zod.object({

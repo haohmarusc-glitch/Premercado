@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { asc, eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
-import { ListAdminUsersResponse, UpdateUserPasswordParams, UpdateUserPasswordBody } from "@workspace/api-zod";
+import { ListAdminUsersResponse, UpdateUserPasswordParams, UpdateUserPasswordBody, DeleteAdminUserParams } from "@workspace/api-zod";
 import { requireAdmin } from "../middleware/require-auth";
 import { hashPassword } from "../lib/auth";
 
@@ -45,6 +45,24 @@ router.patch("/admin/users/:id/password", requireAdmin, async (req, res): Promis
     .returning({ id: usersTable.id });
 
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
+  res.status(204).send();
+});
+
+router.delete("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
+  const p = DeleteAdminUserParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
+
+  if (p.data.id === req.userId) {
+    res.status(400).json({ error: "Cannot delete your own account" });
+    return;
+  }
+
+  const deleted = await db
+    .delete(usersTable)
+    .where(eq(usersTable.id, p.data.id))
+    .returning({ id: usersTable.id });
+
+  if (!deleted.length) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).send();
 });
 

@@ -3,14 +3,16 @@ import {
   useListAdminUsers,
   getListAdminUsersQueryKey,
   useUpdateUserPassword,
+  useDeleteAdminUser,
 } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ShieldAlert, KeyRound, Clock } from "lucide-react";
+import { ShieldAlert, KeyRound, Clock, Trash2 } from "lucide-react";
 
 function formatLastSeen(iso: string | null): string {
   if (!iso) return "nunca";
@@ -27,6 +29,7 @@ function formatLastSeen(iso: string | null): string {
 export default function AdminUsersPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const qc = useQueryClient();
   const [passwordTarget, setPasswordTarget] = useState<{ id: number; email: string } | null>(null);
   const [newPassword, setNewPassword] = useState("");
 
@@ -35,6 +38,21 @@ export default function AdminUsersPage() {
   });
 
   const updatePassword = useUpdateUserPassword();
+  const deleteUser = useDeleteAdminUser();
+
+  const handleDelete = (id: number, email: string) => {
+    if (!confirm(`Excluir a conta ${email}? Isso remove permanentemente carteira, alertas, watchlist, diário e conversas dessa conta.`)) return;
+    deleteUser.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+          toast({ title: "Usuário excluído", description: `${email} e todos os seus dados foram removidos.` });
+        },
+        onError: () => toast({ variant: "destructive", title: "Erro ao excluir usuário" }),
+      },
+    );
+  };
 
   if (!user?.isAdmin) {
     return (
@@ -129,16 +147,29 @@ export default function AdminUsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs gap-1.5"
-                      onClick={() => setPasswordTarget({ id: u.id, email: u.email })}
-                      data-testid={`button-change-password-${u.id}`}
-                    >
-                      <KeyRound className="h-3 w-3" />
-                      Trocar senha
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs gap-1.5"
+                        onClick={() => setPasswordTarget({ id: u.id, email: u.email })}
+                        data-testid={`button-change-password-${u.id}`}
+                      >
+                        <KeyRound className="h-3 w-3" />
+                        Trocar senha
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(u.id, u.email)}
+                        disabled={u.id === user?.id || deleteUser.isPending}
+                        title={u.id === user?.id ? "Não é possível excluir sua própria conta" : "Excluir usuário"}
+                        data-testid={`button-delete-user-${u.id}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

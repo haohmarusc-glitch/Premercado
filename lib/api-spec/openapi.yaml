@@ -500,6 +500,27 @@ paths:
         "404":
           description: Not found
 
+  /admin/users/{id}:
+    delete:
+      operationId: deleteAdminUser
+      tags: [admin]
+      summary: Delete a user account and all its data (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: User deleted
+        "400":
+          description: Cannot delete your own account
+        "403":
+          description: Admin access required
+        "404":
+          description: Not found
+
   /news:
     get:
       operationId: getNews
