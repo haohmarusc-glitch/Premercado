@@ -886,12 +886,14 @@ components:
 
     AuthUser:
       type: object
-      required: [id, email]
+      required: [id, email, isAdmin]
       properties:
         id:
           type: integer
         email:
           type: string
+        isAdmin:
+          type: boolean
 
     AuthMeResponse:
       type: object
@@ -1000,6 +1002,9 @@ components:
           type: ["string", "null"]
         scheduleEnabled:
           type: boolean
+        uptimeSeconds:
+          type: number
+          description: "Segundos desde que o processo do servidor subiu (process.uptime())."
 
     PriceAlert:
       type: object
@@ -1014,6 +1019,7 @@ components:
         thresholdValue: { type: ["number", "null"], description: "Threshold generico (ex: nivel de RSI). Nao usado por macd/sma20/sma50." }
         enabled: { type: boolean }
         lastTriggeredAt: { type: ["string", "null"] }
+        notifyEmail: { type: ["string", "null"], description: "E-mail que recebe a notificacao deste alerta, definido na criacao." }
         createdAt: { type: string }
 
     AlertCreateInput:
@@ -1026,6 +1032,7 @@ components:
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
         thresholdValue: { type: ["number", "null"] }
+        notifyEmail: { type: string, format: email, description: "Default: e-mail de login do usuario." }
 
     AlertToggleInput:
       type: object
@@ -1317,6 +1324,7 @@ components:
           type: array
           items:
             type: number
+        notifyEmail: { type: ["string", "null"], description: "E-mail que recebe os alertas desta posicao, definido na criacao." }
         createdAt: { type: string }
         updatedAt: { type: string }
 
@@ -1338,6 +1346,7 @@ components:
           type: array
           items:
             type: number
+        notifyEmail: { type: string, format: email, description: "Default: e-mail de login do usuario." }
 
     PortfolioPositionUpdate:
       type: object
@@ -1356,6 +1365,7 @@ components:
           type: array
           items:
             type: number
+        notifyEmail: { type: ["string", "null"] }
 
     PortfolioPurchase:
       type: object

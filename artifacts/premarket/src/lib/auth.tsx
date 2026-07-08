@@ -12,6 +12,7 @@ import {
 interface AuthUser {
   id: number;
   email: string;
+  isAdmin: boolean;
 }
 
 interface AuthContextValue {

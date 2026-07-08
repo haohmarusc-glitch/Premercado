@@ -35,7 +35,8 @@ export const AuthLoginBody = zod.object({
 
 export const AuthLoginResponse = zod.object({
   "id": zod.coerce.number(),
-  "email": zod.string()
+  "email": zod.string(),
+  "isAdmin": zod.boolean()
 })
 
 
@@ -45,7 +46,8 @@ export const AuthLoginResponse = zod.object({
 export const GetAuthMeResponse = zod.object({
   "user": zod.union([zod.object({
   "id": zod.coerce.number(),
-  "email": zod.string()
+  "email": zod.string(),
+  "isAdmin": zod.boolean()
 }),zod.null()])
 })
 
@@ -64,7 +66,8 @@ export const AuthClaimSeedAccountBody = zod.object({
 
 export const AuthClaimSeedAccountResponse = zod.object({
   "id": zod.coerce.number(),
-  "email": zod.string()
+  "email": zod.string(),
+  "isAdmin": zod.boolean()
 })
 
 
@@ -178,6 +181,7 @@ export const ListAlertsResponseItem = zod.object({
   "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
+  "notifyEmail": zod.string().nullish().describe('E-mail que recebe a notificacao deste alerta, definido na criacao.'),
   "createdAt": zod.string()
 })
 export const ListAlertsResponse = zod.array(ListAlertsResponseItem)
@@ -192,7 +196,8 @@ export const CreateAlertBody = zod.object({
   "condition": zod.string(),
   "thresholdPct": zod.number().nullish(),
   "thresholdPrice": zod.number().nullish(),
-  "thresholdValue": zod.number().nullish()
+  "thresholdValue": zod.number().nullish(),
+  "notifyEmail": zod.string().email().optional().describe('Default: e-mail de login do usuario.')
 })
 
 
@@ -225,6 +230,7 @@ export const ToggleAlertResponse = zod.object({
   "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
+  "notifyEmail": zod.string().nullish().describe('E-mail que recebe a notificacao deste alerta, definido na criacao.'),
   "createdAt": zod.string()
 })
 
@@ -327,7 +333,8 @@ export const GetAgentStatusResponse = zod.object({
   "lastRunAt": zod.string().nullable(),
   "currentStep": zod.string().nullish(),
   "nextRunAt": zod.string().nullish(),
-  "scheduleEnabled": zod.boolean().optional()
+  "scheduleEnabled": zod.boolean().optional(),
+  "uptimeSeconds": zod.coerce.number().optional().describe('Segundos desde que o processo do servidor subiu (process.uptime()).')
 })
 
 
@@ -478,6 +485,7 @@ export const ListPortfolioPositionsResponseItem = zod.object({
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.coerce.number()),
   "upAlertPcts": zod.array(zod.coerce.number()),
+  "notifyEmail": zod.string().nullish().describe('E-mail que recebe os alertas desta posicao, definido na criacao.'),
   "createdAt": zod.string(),
   "updatedAt": zod.string()
 })
@@ -505,7 +513,8 @@ export const CreatePortfolioPositionBody = zod.object({
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().optional(),
   "downAlertPcts": zod.array(zod.number()).optional(),
-  "upAlertPcts": zod.array(zod.number()).optional()
+  "upAlertPcts": zod.array(zod.number()).optional(),
+  "notifyEmail": zod.string().email().optional().describe('Default: e-mail de login do usuario.')
 })
 
 
@@ -534,7 +543,8 @@ export const UpdatePortfolioPositionBody = zod.object({
   "firstPurchaseDate": zod.string().optional(),
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.number()).optional(),
-  "upAlertPcts": zod.array(zod.number()).optional()
+  "upAlertPcts": zod.array(zod.number()).optional(),
+  "notifyEmail": zod.string().nullish()
 })
 
 export const UpdatePortfolioPositionResponse = zod.object({
@@ -547,6 +557,7 @@ export const UpdatePortfolioPositionResponse = zod.object({
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.coerce.number()),
   "upAlertPcts": zod.array(zod.coerce.number()),
+  "notifyEmail": zod.string().nullish().describe('E-mail que recebe os alertas desta posicao, definido na criacao.'),
   "createdAt": zod.string(),
   "updatedAt": zod.string()
 })

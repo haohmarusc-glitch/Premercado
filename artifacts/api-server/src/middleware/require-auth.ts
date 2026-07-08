@@ -52,3 +52,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   req.userId = payload.userId;
   next();
 }
+
+// Usado nas rotas que só o administrador pode ver (ex.: histórico de runs do
+// agente). Deve rodar DEPOIS de requireAuth (precisa de req.userId já setado).
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const [user] = await db
+    .select({ isAdmin: usersTable.isAdmin })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.userId!))
+    .limit(1);
+  if (!user?.isAdmin) {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}

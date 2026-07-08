@@ -16,6 +16,7 @@ import {
   listPortfolioPurchases,
 } from "@workspace/api-client-react";
 import type { PortfolioPosition } from "@workspace/api-client-react";
+import { useAuth } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +73,7 @@ interface PosForm {
   notes: string;
   downAlertPcts: string;
   upAlertPcts: string;
+  notifyEmail: string;
 }
 
 const EMPTY_FORM: PosForm = {
@@ -83,6 +85,7 @@ const EMPTY_FORM: PosForm = {
   notes: "",
   downAlertPcts: "10,15,20,30",
   upAlertPcts: "10,15,20,30,40,50",
+  notifyEmail: "",
 };
 
 function posToForm(p: PortfolioPosition): PosForm {
@@ -95,6 +98,7 @@ function posToForm(p: PortfolioPosition): PosForm {
     notes: p.notes ?? "",
     downAlertPcts: p.downAlertPcts.join(","),
     upAlertPcts: p.upAlertPcts.join(","),
+    notifyEmail: p.notifyEmail ?? "",
   };
 }
 
@@ -869,6 +873,7 @@ interface PositionDialogProps {
 
 function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: PositionDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const createPos = useCreatePortfolioPosition();
   const updatePos = useUpdatePortfolioPosition();
   const [form, setForm] = useState<PosForm>(editing ? posToForm(editing) : EMPTY_FORM);
@@ -882,6 +887,8 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const effectiveNotifyEmail = form.notifyEmail || user?.email || "";
+
   const handleSave = () => {
     const payload = {
       ticker: form.ticker.trim().toUpperCase(),
@@ -892,6 +899,7 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
       notes: form.notes || undefined,
       downAlertPcts: parseAlertPcts(form.downAlertPcts),
       upAlertPcts: parseAlertPcts(form.upAlertPcts),
+      ...(effectiveNotifyEmail.trim() ? { notifyEmail: effectiveNotifyEmail.trim() } : {}),
       ...(isSimulated && !editing ? { isSimulated: true } : {}),
     };
 
@@ -995,6 +1003,16 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
                 className="font-mono text-xs h-8"
               />
             </div>
+          </div>
+          <div>
+            <Label className="text-xs font-mono">E-mail de notificação</Label>
+            <Input
+              type="email"
+              value={effectiveNotifyEmail}
+              onChange={upd("notifyEmail")}
+              placeholder={user?.email ?? "seu@email.com"}
+              className="font-mono text-xs h-8"
+            />
           </div>
           <div>
             <Label className="text-xs font-mono">Notas</Label>

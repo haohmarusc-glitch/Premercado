@@ -226,7 +226,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/screener", <Radar className="h-4 w-4" />, "Screener")}
             {navLink("/history", <History className="h-4 w-4" />, "History")}
             {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
-            {navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
+            {user?.isAdmin && navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
             {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
             {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}
 

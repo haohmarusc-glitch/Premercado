@@ -15,4 +15,6 @@ export interface AgentStatus {
   /** @nullable */
   nextRunAt?: string | null;
   scheduleEnabled?: boolean;
+  /** Segundos desde que o processo do servidor subiu (process.uptime()). */
+  uptimeSeconds?: number;
 }

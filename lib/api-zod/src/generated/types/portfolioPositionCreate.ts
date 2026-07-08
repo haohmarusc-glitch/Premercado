@@ -22,4 +22,6 @@ export interface PortfolioPositionCreate {
   notes?: string;
   downAlertPcts?: number[];
   upAlertPcts?: number[];
+  /** Default: e-mail de login do usuario. */
+  notifyEmail?: string;
 }

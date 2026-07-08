@@ -1,5 +1,16 @@
-import { useListAgentRuns, getListAgentRunsQueryKey } from "@workspace/api-client-react";
-import { CheckCircle, XCircle, Clock, Zap, Calendar } from "lucide-react";
+import { useListAgentRuns, getListAgentRunsQueryKey, useGetAgentStatus, getGetAgentStatusQueryKey } from "@workspace/api-client-react";
+import { CheckCircle, XCircle, Clock, Zap, Calendar, ShieldAlert, Power, Timer } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+
+function formatUptime(seconds: number | null | undefined): string {
+  if (seconds == null) return "—";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
 function formatDuration(ms: number | null | undefined): string {
   if (!ms) return "—";
@@ -109,10 +120,23 @@ function ModeBadge({ mode }: { mode?: string }) {
 }
 
 export default function Runs() {
+  const { user } = useAuth();
   const { data: runs, isLoading } = useListAgentRuns(
     {},
-    { query: { queryKey: getListAgentRunsQueryKey({}), refetchInterval: 5000 } },
+    { query: { queryKey: getListAgentRunsQueryKey({}), refetchInterval: 5000, enabled: !!user?.isAdmin } },
   );
+  const { data: status } = useGetAgentStatus({
+    query: { queryKey: getGetAgentStatusQueryKey(), refetchInterval: 30000, enabled: !!user?.isAdmin },
+  });
+
+  if (!user?.isAdmin) {
+    return (
+      <div className="border border-border rounded-lg p-12 text-center">
+        <ShieldAlert className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+        <p className="font-mono text-muted-foreground text-sm">Acesso restrito ao administrador.</p>
+      </div>
+    );
+  }
 
   const successCount = runs?.filter((r) => r.status === "success").length ?? 0;
   const failedCount = runs?.filter((r) => r.status === "failed").length ?? 0;
@@ -135,6 +159,30 @@ export default function Runs() {
         <p className="text-muted-foreground font-mono text-sm mt-2">
           Status de cada rodada do agente — automática e manual
         </p>
+      </div>
+
+      {/* Status do sistema — sempre visível, independe de haver histórico */}
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="border border-border rounded-lg p-4 bg-card">
+          <div className="text-xs font-mono text-muted-foreground uppercase mb-1 flex items-center gap-1.5">
+            <Power className="h-3 w-3" /> Quantidade de Runs
+          </div>
+          <div className="text-2xl font-bold font-mono" data-testid="text-runs-quantity">{runs?.length ?? "—"}</div>
+        </div>
+        <div className={`border rounded-lg p-4 ${status?.scheduleEnabled ? "border-green-900/40 bg-green-950/20" : "border-border bg-card"}`}>
+          <div className="text-xs font-mono text-muted-foreground uppercase mb-1 flex items-center gap-1.5">
+            <Power className="h-3 w-3" /> Agendamento
+          </div>
+          <div className={`text-2xl font-bold font-mono ${status?.scheduleEnabled ? "text-green-400" : "text-muted-foreground"}`} data-testid="text-schedule-status">
+            {status?.scheduleEnabled ? "LIGADO" : "DESLIGADO"}
+          </div>
+        </div>
+        <div className="border border-border rounded-lg p-4 bg-card">
+          <div className="text-xs font-mono text-muted-foreground uppercase mb-1 flex items-center gap-1.5">
+            <Timer className="h-3 w-3" /> Tempo Ligado (app)
+          </div>
+          <div className="text-2xl font-bold font-mono" data-testid="text-uptime">{formatUptime(status?.uptimeSeconds)}</div>
+        </div>
       </div>
 
       {/* Summary stats */}

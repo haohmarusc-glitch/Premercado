@@ -23,7 +23,7 @@ router.post("/agent/run", async (req, res): Promise<void> => {
 });
 
 router.get("/agent/status", (_req, res): void => {
-  res.json(GetAgentStatusResponse.parse(state));
+  res.json(GetAgentStatusResponse.parse({ ...state, uptimeSeconds: process.uptime() }));
 });
 
 export default router;

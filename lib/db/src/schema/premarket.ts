@@ -26,6 +26,10 @@ export const usersTable = pgTable("users", {
   // /auth/claim-seed-account (ver ensure-schema.ts). Novos cadastros normais
   // já nascem com isClaimed=true.
   isClaimed: boolean("is_claimed").notNull().default(true),
+  // Vê o menu Runs (histórico de execuções do agente) e a lista completa de
+  // runs -- gerenciado só via SQL/backfill do dono seed por enquanto, sem
+  // tela de administração pra promover outras contas.
+  isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -145,6 +149,10 @@ export const alertsTable = pgTable("alerts", {
   // existentes; o backfill de migração preenche as linhas antigas com o
   // usuário seed (ver ensure-schema.ts).
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
+  // E-mail que recebe a notificação deste alerta especificamente, definido
+  // no momento da criação (default: e-mail de login do usuário) -- lido
+  // direto daqui no disparo, sem consultar settings/users de novo.
+  notifyEmail: text("notify_email"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
@@ -216,6 +224,9 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   // existentes; o backfill de migração preenche as linhas antigas com o
   // usuário seed (ver ensure-schema.ts).
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
+  // E-mail que recebe os alertas de ganho/perda/holding/recompra desta
+  // posição, definido na criação (default: e-mail de login do usuário).
+  notifyEmail: text("notify_email"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
