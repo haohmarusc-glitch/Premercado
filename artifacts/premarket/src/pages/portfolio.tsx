@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2 } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -192,6 +192,9 @@ type PortfolioChartVisual = "line" | "candle" | "tradingview";
 function PriceChart({ ticker }: { ticker: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1d");
   const [visual, setVisual] = useState<PortfolioChartVisual>("line");
+  // Mesmo tamanho padrao/expandido do grafico do Dashboard (200/420 line-candle,
+  // 480/900 TradingView) -- antes ficava fixo em 220/480, sem opcao de expandir.
+  const [expanded, setExpanded] = useState(false);
   const { data, isLoading } = useGetTickerChart(
     { symbol: ticker, period },
     {
@@ -294,11 +297,20 @@ function PriceChart({ ticker }: { ticker: string }) {
             ))}
           </div>
           )}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="p-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            aria-label={expanded ? "Recolher gráfico" : "Expandir gráfico"}
+            title={expanded ? "Recolher gráfico" : "Expandir gráfico"}
+          >
+            {expanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+          </button>
         </div>
       </div>
 
       {visual === "tradingview" ? (
-        <TradingViewChart symbol={ticker} height={480} />
+        <TradingViewChart symbol={ticker} height={expanded ? 900 : 480} />
       ) : isLoading ? (
         <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
           carregando...
@@ -308,7 +320,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           sem dados
         </div>
       ) : visual === "candle" ? (
-        <ResponsiveContainer width="100%" height={220}>
+        <ResponsiveContainer width="100%" height={expanded ? 420 : 200}>
           <ComposedChart data={candleData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             <XAxis
               dataKey="t"
@@ -354,7 +366,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           </ComposedChart>
         </ResponsiveContainer>
       ) : (
-        <ResponsiveContainer width="100%" height={220}>
+        <ResponsiveContainer width="100%" height={expanded ? 420 : 200}>
           <ComposedChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             <XAxis
               dataKey="t"
