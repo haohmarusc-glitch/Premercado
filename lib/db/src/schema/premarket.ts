@@ -31,6 +31,11 @@ export const usersTable = pgTable("users", {
   // runs -- gerenciado só via SQL/backfill do dono seed por enquanto, sem
   // tela de administração pra promover outras contas.
   isAdmin: boolean("is_admin").notNull().default(false),
+  // Rastreio de atividade pra tela de administração de usuários -- atualizado
+  // a cada heartbeat do frontend (ver routes/activity.ts). lastPath é a rota
+  // do FRONTEND (ex: "/portfolio"), não a rota da API.
+  lastSeenAt: timestamp("last_seen_at"),
+  lastPath: text("last_path"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

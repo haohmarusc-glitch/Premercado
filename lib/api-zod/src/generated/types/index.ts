@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './activityHeartbeatInput';
+export * from './adminUser';
 export * from './agentRun';
 export * from './agentRunResult';
 export * from './agentStatus';
@@ -49,5 +51,6 @@ export * from './settingsUpdate';
 export * from './tickerChart';
 export * from './tickerNews';
 export * from './tickerQuote';
+export * from './userPasswordUpdate';
 export * from './watchlistItem';
 export * from './watchlistItemCreate';
