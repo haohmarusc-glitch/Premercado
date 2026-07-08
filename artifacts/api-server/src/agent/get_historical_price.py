@@ -26,7 +26,7 @@ def run(ticker, dates):
     start = (datetime.strptime(valid[0], "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
     end = (datetime.strptime(valid[-1], "%Y-%m-%d") + timedelta(days=2)).strftime("%Y-%m-%d")
 
-    df = yf.Ticker(ticker).history(start=start, end=end, interval="1d", auto_adjust=True)
+    df = yf.Ticker(ticker).history(start=start, end=end, interval="1d", auto_adjust=False)
     if df.empty:
         return {"prices": {}, "error": "Sem dados para o período"}
     if hasattr(df.columns, "levels"):
