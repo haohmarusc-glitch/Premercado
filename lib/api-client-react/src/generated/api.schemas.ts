@@ -21,6 +21,29 @@ export interface AuthMeResponse {
   user: AuthUser | null;
 }
 
+export interface ActivityHeartbeatInput {
+  /** @maxLength 200 */
+  path: string;
+}
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  isAdmin: boolean;
+  isClaimed: boolean;
+  createdAt: string;
+  /** @nullable */
+  lastSeenAt: string | null;
+  /** @nullable */
+  lastPath: string | null;
+  online: boolean;
+}
+
+export interface UserPasswordUpdate {
+  /** @minLength 8 */
+  newPassword: string;
+}
+
 export interface ClaimSeedAccountBody {
   email: string;
   /** @minLength 8 */

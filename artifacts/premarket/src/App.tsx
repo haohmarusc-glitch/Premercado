@@ -11,6 +11,7 @@ import History from "@/pages/history";
 import Observations from "@/pages/observations";
 import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
+import AdminUsersPage from "@/pages/admin-users";
 import AlertsPage from "@/pages/alerts";
 import ScreenerPage from "@/pages/screener";
 import ChatPage from "@/pages/chat";
@@ -52,6 +53,7 @@ function Router() {
         <Route path="/observations" component={Observations} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/runs" component={RunsPage} />
+        <Route path="/users" component={AdminUsersPage} />
         <Route path="/alerts" component={AlertsPage} />
         <Route path="/screener" component={ScreenerPage} />
         <Route path="/chat" component={ChatPage} />

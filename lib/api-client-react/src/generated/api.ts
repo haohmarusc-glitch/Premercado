@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  ActivityHeartbeatInput,
+  AdminUser,
   AgentRun,
   AgentRunResult,
   AgentStatus,
@@ -59,6 +61,7 @@ import type {
   SettingsUpdate,
   TickerChart,
   TickerQuote,
+  UserPasswordUpdate,
   WatchlistItem,
   WatchlistItemCreate
 } from './api.schemas';
@@ -1816,6 +1819,226 @@ export function useListAgentRuns<TData = Awaited<ReturnType<typeof listAgentRuns
 
 
 
+
+export const getActivityHeartbeatUrl = () => {
+
+
+
+
+  return `/api/activity/heartbeat`
+}
+
+/**
+ * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
+ */
+export const activityHeartbeat = async (activityHeartbeatInput: ActivityHeartbeatInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getActivityHeartbeatUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      activityHeartbeatInput,)
+  }
+);}
+
+
+
+
+export const getActivityHeartbeatMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activityHeartbeat>>, TError,{data: BodyType<ActivityHeartbeatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof activityHeartbeat>>, TError,{data: BodyType<ActivityHeartbeatInput>}, TContext> => {
+
+const mutationKey = ['activityHeartbeat'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof activityHeartbeat>>, {data: BodyType<ActivityHeartbeatInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  activityHeartbeat(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ActivityHeartbeatMutationResult = NonNullable<Awaited<ReturnType<typeof activityHeartbeat>>>
+    export type ActivityHeartbeatMutationBody = BodyType<ActivityHeartbeatInput>
+    export type ActivityHeartbeatMutationError = ErrorType<void>
+
+    /**
+ * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
+ */
+export const useActivityHeartbeat = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activityHeartbeat>>, TError,{data: BodyType<ActivityHeartbeatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof activityHeartbeat>>,
+        TError,
+        {data: BodyType<ActivityHeartbeatInput>},
+        TContext
+      > => {
+      return useMutation(getActivityHeartbeatMutationOptions(options));
+    }
+
+export const getListAdminUsersUrl = () => {
+
+
+
+
+  return `/api/admin/users`
+}
+
+/**
+ * @summary List all users with activity status (admin only)
+ */
+export const listAdminUsers = async ( options?: RequestInit): Promise<AdminUser[]> => {
+
+  return customFetch<AdminUser[]>(getListAdminUsersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminUsersQueryKey = () => {
+    return [
+    `/api/admin/users`
+    ] as const;
+    }
+
+
+export const getListAdminUsersQueryOptions = <TData = Awaited<ReturnType<typeof listAdminUsers>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminUsersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminUsers>>> = ({ signal }) => listAdminUsers({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminUsers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminUsersQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminUsers>>>
+export type ListAdminUsersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List all users with activity status (admin only)
+ */
+
+export function useListAdminUsers<TData = Awaited<ReturnType<typeof listAdminUsers>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminUsersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateUserPasswordUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/users/${id}/password`
+}
+
+/**
+ * @summary Set a new password for a user (admin only)
+ */
+export const updateUserPassword = async (id: number,
+    userPasswordUpdate: UserPasswordUpdate, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getUpdateUserPasswordUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      userPasswordUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateUserPasswordMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserPassword>>, TError,{id: number;data: BodyType<UserPasswordUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateUserPassword>>, TError,{id: number;data: BodyType<UserPasswordUpdate>}, TContext> => {
+
+const mutationKey = ['updateUserPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateUserPassword>>, {id: number;data: BodyType<UserPasswordUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateUserPassword(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateUserPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof updateUserPassword>>>
+    export type UpdateUserPasswordMutationBody = BodyType<UserPasswordUpdate>
+    export type UpdateUserPasswordMutationError = ErrorType<void>
+
+    /**
+ * @summary Set a new password for a user (admin only)
+ */
+export const useUpdateUserPassword = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUserPassword>>, TError,{id: number;data: BodyType<UserPasswordUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateUserPassword>>,
+        TError,
+        {id: number;data: BodyType<UserPasswordUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateUserPasswordMutationOptions(options));
+    }
 
 export const getGetNewsUrl = (params?: GetNewsParams,) => {
   const normalizedParams = new URLSearchParams();

@@ -89,4 +89,12 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (chat/watchlist/journal ownership)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at timestamp`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_path text`);
+    logger.info("Schema check ok (users.last_seen_at/last_path)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (users activity tracking columns)");
+  }
 }

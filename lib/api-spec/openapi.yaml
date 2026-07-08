@@ -439,6 +439,67 @@ paths:
                 items:
                   $ref: "#/components/schemas/AgentRun"
 
+  /activity/heartbeat:
+    post:
+      operationId: activityHeartbeat
+      tags: [activity]
+      summary: Report the current user's active page (heartbeat for online/last-seen tracking)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivityHeartbeatInput"
+      responses:
+        "204":
+          description: Recorded
+        "400":
+          description: Invalid input
+
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [admin]
+      summary: List all users with activity status (admin only)
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUser"
+        "403":
+          description: Admin access required
+
+  /admin/users/{id}/password:
+    patch:
+      operationId: updateUserPassword
+      tags: [admin]
+      summary: Set a new password for a user (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPasswordUpdate"
+      responses:
+        "204":
+          description: Password updated
+        "400":
+          description: Invalid input
+        "403":
+          description: Admin access required
+        "404":
+          description: Not found
+
   /news:
     get:
       operationId: getNews
@@ -903,6 +964,43 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AuthUser"
             - type: "null"
+
+    ActivityHeartbeatInput:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          maxLength: 200
+
+    AdminUser:
+      type: object
+      required: [id, email, isAdmin, isClaimed, createdAt, lastSeenAt, lastPath, online]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        isAdmin:
+          type: boolean
+        isClaimed:
+          type: boolean
+        createdAt:
+          type: string
+        lastSeenAt:
+          type: ["string", "null"]
+        lastPath:
+          type: ["string", "null"]
+        online:
+          type: boolean
+
+    UserPasswordUpdate:
+      type: object
+      required: [newPassword]
+      properties:
+        newPassword:
+          type: string
+          minLength: 8
 
     ClaimSeedAccountBody:
       type: object

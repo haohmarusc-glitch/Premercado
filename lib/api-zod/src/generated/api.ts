@@ -366,6 +366,50 @@ export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
 
 
 /**
+ * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
+ */
+export const activityHeartbeatBodyPathMax = 200;
+
+
+
+export const ActivityHeartbeatBody = zod.object({
+  "path": zod.string().max(activityHeartbeatBodyPathMax)
+})
+
+
+/**
+ * @summary List all users with activity status (admin only)
+ */
+export const ListAdminUsersResponseItem = zod.object({
+  "id": zod.coerce.number(),
+  "email": zod.string(),
+  "isAdmin": zod.boolean(),
+  "isClaimed": zod.boolean(),
+  "createdAt": zod.string(),
+  "lastSeenAt": zod.string().nullable(),
+  "lastPath": zod.string().nullable(),
+  "online": zod.boolean()
+})
+export const ListAdminUsersResponse = zod.array(ListAdminUsersResponseItem)
+
+
+/**
+ * @summary Set a new password for a user (admin only)
+ */
+export const UpdateUserPasswordParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const updateUserPasswordBodyNewPasswordMin = 8;
+
+
+
+export const UpdateUserPasswordBody = zod.object({
+  "newPassword": zod.string().min(updateUserPasswordBodyNewPasswordMin)
+})
+
+
+/**
  * @summary Manchetes recentes por ativo (yfinance, traduzidas para pt-BR)
  */
 export const GetNewsQueryParams = zod.object({

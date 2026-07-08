@@ -21,6 +21,8 @@ import riskRouter from "./risk";
 import technicalsRouter from "./technicals";
 import analysisRouter from "./analysis";
 import internalRouter from "./internal";
+import activityRouter from "./activity";
+import adminUsersRouter from "./admin-users";
 
 const router: IRouter = Router();
 
@@ -50,5 +52,7 @@ router.use(backtestRouter);
 router.use(riskRouter);
 router.use(technicalsRouter);
 router.use(analysisRouter);
+router.use(activityRouter);
+router.use(adminUsersRouter);
 
 export default router;
