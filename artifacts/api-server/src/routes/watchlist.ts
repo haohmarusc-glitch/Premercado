@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db, watchlistTable } from "@workspace/db";
 import {
   ListWatchlistResponse,
@@ -15,8 +15,12 @@ function ser(r: typeof watchlistTable.$inferSelect) {
 }
 
 // GET /watchlist
-router.get("/watchlist", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(watchlistTable).orderBy(asc(watchlistTable.addedAt));
+router.get("/watchlist", async (req, res): Promise<void> => {
+  const rows = await db
+    .select()
+    .from(watchlistTable)
+    .where(eq(watchlistTable.userId, req.userId!))
+    .orderBy(asc(watchlistTable.addedAt));
   res.json(ListWatchlistResponse.parse(rows.map(ser)));
 });
 
@@ -26,7 +30,7 @@ router.post("/watchlist", async (req, res): Promise<void> => {
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const [row] = await db
     .insert(watchlistTable)
-    .values({ ticker: body.data.ticker.toUpperCase(), notes: body.data.notes ?? null })
+    .values({ ticker: body.data.ticker.toUpperCase(), notes: body.data.notes ?? null, userId: req.userId! })
     .returning();
   res.status(201).json(WatchlistItemSchema.parse(ser(row)));
 });
@@ -35,7 +39,11 @@ router.post("/watchlist", async (req, res): Promise<void> => {
 router.delete("/watchlist/:id", async (req, res): Promise<void> => {
   const p = WatchlistItemParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(watchlistTable).where(eq(watchlistTable.id, p.data.id));
+  const deleted = await db
+    .delete(watchlistTable)
+    .where(and(eq(watchlistTable.id, p.data.id), eq(watchlistTable.userId, req.userId!)))
+    .returning({ id: watchlistTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).send();
 });
 

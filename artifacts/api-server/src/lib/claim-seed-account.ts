@@ -1,5 +1,5 @@
 import { eq, isNull, sql } from "drizzle-orm";
-import { db, usersTable, portfolioPositionsTable, alertsTable } from "@workspace/db";
+import { db, usersTable, portfolioPositionsTable, alertsTable, chatSessionsTable, watchlistTable, tradeJournalTable } from "@workspace/db";
 import { generateUnusablePassword, hashPassword } from "./auth";
 import { logger } from "./logger";
 
@@ -52,6 +52,33 @@ export async function claimSeedAccountBootstrap(): Promise<void> {
       logger.info(
         { positions: positionsBackfilled.length, alerts: alertsBackfilled.length },
         "Backfilled ownerless portfolio/alerts rows to seed owner account",
+      );
+    }
+
+    // chat_sessions/watchlist/trade_journal eram globais antes deste recurso
+    // -- mesmo backfill de dono das linhas antigas (ver comentario no topo).
+    const chatBackfilled = await db
+      .update(chatSessionsTable)
+      .set({ userId: seedUser.id })
+      .where(isNull(chatSessionsTable.userId))
+      .returning({ id: chatSessionsTable.id });
+
+    const watchlistBackfilled = await db
+      .update(watchlistTable)
+      .set({ userId: seedUser.id })
+      .where(isNull(watchlistTable.userId))
+      .returning({ id: watchlistTable.id });
+
+    const journalBackfilled = await db
+      .update(tradeJournalTable)
+      .set({ userId: seedUser.id })
+      .where(isNull(tradeJournalTable.userId))
+      .returning({ id: tradeJournalTable.id });
+
+    if (chatBackfilled.length > 0 || watchlistBackfilled.length > 0 || journalBackfilled.length > 0) {
+      logger.info(
+        { chatSessions: chatBackfilled.length, watchlist: watchlistBackfilled.length, journal: journalBackfilled.length },
+        "Backfilled ownerless chat/watchlist/journal rows to seed owner account",
       );
     }
 
