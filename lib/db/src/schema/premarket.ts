@@ -7,6 +7,7 @@ import {
   boolean,
   integer,
   index,
+  unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -189,9 +190,15 @@ export type AlertFiring = typeof alertFiringsTable.$inferSelect;
 export const chatSessionsTable = pgTable("chat_sessions", {
   id: serial("id").primaryKey(),
   title: text("title").notNull().default("Nova conversa"),
+  // Dono da conversa -- nullable pra permitir o ALTER TABLE em cima de linhas
+  // existentes; o backfill de migração preenche as linhas antigas com o
+  // usuário seed (ver ensure-schema.ts).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_chat_sessions_user_id").on(t.userId),
+]);
 
 export type ChatSession = typeof chatSessionsTable.$inferSelect;
 
@@ -265,10 +272,19 @@ export type PortfolioAlertFiring = typeof portfolioAlertFiringsTable.$inferSelec
 
 export const watchlistTable = pgTable("watchlist", {
   id: serial("id").primaryKey(),
-  ticker: text("ticker").notNull().unique(),
+  ticker: text("ticker").notNull(),
   notes: text("notes"),
+  // Dono do item -- nullable pra permitir o ALTER TABLE em cima de linhas
+  // existentes; o backfill de migração preenche as linhas antigas com o
+  // usuário seed (ver ensure-schema.ts).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   addedAt: timestamp("added_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_watchlist_user_id").on(t.userId),
+  // Antes era unique(ticker) sozinho -- agora cada usuário pode ter o mesmo
+  // ticker na própria watchlist, só não duplicado para ELE.
+  unique("uq_watchlist_user_ticker").on(t.userId, t.ticker),
+]);
 export type WatchlistItem = typeof watchlistTable.$inferSelect;
 
 export const tradeJournalTable = pgTable("trade_journal", {
@@ -284,7 +300,13 @@ export const tradeJournalTable = pgTable("trade_journal", {
   exitPrice: money("exit_price"),
   result: text("result"),
   notes: text("notes"),
+  // Dono da anotação -- nullable pra permitir o ALTER TABLE em cima de linhas
+  // existentes; o backfill de migração preenche as linhas antigas com o
+  // usuário seed (ver ensure-schema.ts).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("idx_trade_journal_user_id").on(t.userId),
+]);
 export type TradeJournalEntry = typeof tradeJournalTable.$inferSelect;

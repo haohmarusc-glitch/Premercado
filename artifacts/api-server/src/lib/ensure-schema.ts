@@ -68,4 +68,25 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (notify_email/is_admin columns)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE trade_journal ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_watchlist_user_id ON watchlist(user_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_trade_journal_user_id ON trade_journal(user_id)`);
+    await db.execute(sql`ALTER TABLE watchlist DROP CONSTRAINT IF EXISTS watchlist_ticker_key`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_watchlist_user_ticker') THEN
+          ALTER TABLE watchlist ADD CONSTRAINT uq_watchlist_user_ticker UNIQUE (user_id, ticker);
+        END IF;
+      END $$;
+    `);
+    logger.info("Schema check ok (chat_sessions/watchlist/trade_journal ownership)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (chat/watchlist/journal ownership)");
+  }
 }

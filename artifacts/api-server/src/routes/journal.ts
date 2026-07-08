@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, tradeJournalTable } from "@workspace/db";
 import {
   ListJournalResponse,
@@ -28,8 +28,12 @@ function ser(r: typeof tradeJournalTable.$inferSelect) {
 }
 
 // GET /journal
-router.get("/journal", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(tradeJournalTable).orderBy(desc(tradeJournalTable.createdAt));
+router.get("/journal", async (req, res): Promise<void> => {
+  const rows = await db
+    .select()
+    .from(tradeJournalTable)
+    .where(eq(tradeJournalTable.userId, req.userId!))
+    .orderBy(desc(tradeJournalTable.createdAt));
   res.json(ListJournalResponse.parse(rows.map(ser)));
 });
 
@@ -37,7 +41,10 @@ router.get("/journal", async (_req, res): Promise<void> => {
 router.post("/journal", async (req, res): Promise<void> => {
   const body = CreateJournalEntryBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
-  const [row] = await db.insert(tradeJournalTable).values({ ...body.data, ticker: body.data.ticker.toUpperCase() }).returning();
+  const [row] = await db
+    .insert(tradeJournalTable)
+    .values({ ...body.data, ticker: body.data.ticker.toUpperCase(), userId: req.userId! })
+    .returning();
   res.status(201).json(TradeJournalEntrySchema.parse(ser(row)));
 });
 
@@ -49,7 +56,7 @@ router.put("/journal/:id", async (req, res): Promise<void> => {
   const [row] = await db
     .update(tradeJournalTable)
     .set({ ...body.data, updatedAt: new Date() })
-    .where(eq(tradeJournalTable.id, p.data.id))
+    .where(and(eq(tradeJournalTable.id, p.data.id), eq(tradeJournalTable.userId, req.userId!)))
     .returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(TradeJournalEntrySchema.parse(ser(row)));
@@ -59,7 +66,11 @@ router.put("/journal/:id", async (req, res): Promise<void> => {
 router.delete("/journal/:id", async (req, res): Promise<void> => {
   const p = JournalEntryParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(tradeJournalTable).where(eq(tradeJournalTable.id, p.data.id));
+  const deleted = await db
+    .delete(tradeJournalTable)
+    .where(and(eq(tradeJournalTable.id, p.data.id), eq(tradeJournalTable.userId, req.userId!)))
+    .returning({ id: tradeJournalTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).send();
 });
 

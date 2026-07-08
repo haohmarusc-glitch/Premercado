@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db, chatSessionsTable, chatMessagesTable } from "@workspace/db";
 import {
   ListChatSessionsResponse,
@@ -13,8 +13,16 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+async function ownsSession(sessionId: number, userId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ id: chatSessionsTable.id })
+    .from(chatSessionsTable)
+    .where(and(eq(chatSessionsTable.id, sessionId), eq(chatSessionsTable.userId, userId)));
+  return !!row;
+}
+
 // GET /chat/sessions
-router.get("/chat/sessions", async (_req, res): Promise<void> => {
+router.get("/chat/sessions", async (req, res): Promise<void> => {
   const rows = await db
     .select({
       id: chatSessionsTable.id,
@@ -25,6 +33,7 @@ router.get("/chat/sessions", async (_req, res): Promise<void> => {
     })
     .from(chatSessionsTable)
     .leftJoin(chatMessagesTable, eq(chatMessagesTable.sessionId, chatSessionsTable.id))
+    .where(eq(chatSessionsTable.userId, req.userId!))
     .groupBy(chatSessionsTable.id)
     .orderBy(desc(chatSessionsTable.updatedAt));
 
@@ -43,6 +52,7 @@ router.get("/chat/sessions", async (_req, res): Promise<void> => {
 router.get("/chat/sessions/:id/messages", async (req, res): Promise<void> => {
   const parsed = GetChatSessionParams.safeParse(req.params);
   if (!parsed.success) { res.status(400).json({ error: "invalid id" }); return; }
+  if (!(await ownsSession(parsed.data.id, req.userId!))) { res.status(404).json({ error: "Not found" }); return; }
 
   const messages = await db
     .select()
@@ -61,7 +71,11 @@ router.get("/chat/sessions/:id/messages", async (req, res): Promise<void> => {
 router.delete("/chat/sessions/:id", async (req, res): Promise<void> => {
   const parsed = DeleteChatSessionParams.safeParse(req.params);
   if (!parsed.success) { res.status(400).json({ error: "invalid id" }); return; }
-  await db.delete(chatSessionsTable).where(eq(chatSessionsTable.id, parsed.data.id));
+  const deleted = await db
+    .delete(chatSessionsTable)
+    .where(and(eq(chatSessionsTable.id, parsed.data.id), eq(chatSessionsTable.userId, req.userId!)))
+    .returning({ id: chatSessionsTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "Not found" }); return; }
   res.status(204).send();
 });
 
@@ -82,6 +96,10 @@ router.post("/chat/message", async (req, res): Promise<void> => {
   let currentSessionId: number;
   try {
     if (sessionId) {
+      if (!(await ownsSession(sessionId, req.userId!))) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
       currentSessionId = sessionId;
       await db
         .update(chatSessionsTable)
@@ -90,7 +108,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     } else {
       const [session] = await db
         .insert(chatSessionsTable)
-        .values({ title: message.trim().slice(0, 80) })
+        .values({ title: message.trim().slice(0, 80), userId: req.userId! })
         .returning();
       currentSessionId = session.id;
     }
