@@ -1422,6 +1422,7 @@ components:
           avgCost,
           investedAmount,
           dividends,
+          isEtf,
           firstPurchaseDate,
           downAlertPcts,
           upAlertPcts,
@@ -1435,6 +1436,7 @@ components:
         avgCost: { type: number }
         investedAmount: { type: number }
         dividends: { type: number }
+        isEtf: { type: boolean }
         firstPurchaseDate: { type: string }
         notes: { type: ["string", "null"] }
         downAlertPcts:
@@ -1458,6 +1460,7 @@ components:
         avgCost: { type: number, exclusiveMinimum: 0 }
         investedAmount: { type: number, exclusiveMinimum: 0 }
         dividends: { type: number, minimum: 0 }
+        isEtf: { type: boolean }
         firstPurchaseDate: { type: string }
         notes: { type: string }
         downAlertPcts:
@@ -1478,6 +1481,7 @@ components:
         avgCost: { type: number, exclusiveMinimum: 0 }
         investedAmount: { type: number, exclusiveMinimum: 0 }
         dividends: { type: number, minimum: 0 }
+        isEtf: { type: boolean }
         firstPurchaseDate: { type: string }
         notes: { type: ["string", "null"] }
         downAlertPcts:

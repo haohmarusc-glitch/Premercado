@@ -20,6 +20,7 @@ export interface PortfolioPositionCreate {
   investedAmount: number;
   /** @minimum 0 */
   dividends?: number;
+  isEtf?: boolean;
   firstPurchaseDate: string;
   notes?: string;
   downAlertPcts?: number[];
