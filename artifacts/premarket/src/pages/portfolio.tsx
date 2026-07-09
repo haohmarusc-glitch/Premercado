@@ -1131,8 +1131,28 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
     }
 
     if (editing) {
+      // Envia SOMENTE os campos que o usuário alterou em relação ao estado
+      // com que o formulário abriu. Mandar o payload inteiro fazia um form
+      // semeado com dados velhos (ex.: cache) sobrescrever campos que o
+      // usuário nem tocou — ETF/dividendos "sumindo" ao salvar outra coisa.
+      const orig = posToForm(editing);
+      const diff: Record<string, unknown> = {};
+      if (form.ticker.trim().toUpperCase() !== orig.ticker.trim().toUpperCase()) diff.ticker = payload.ticker;
+      if (form.quantity !== orig.quantity) diff.quantity = payload.quantity;
+      if (form.avgCost !== orig.avgCost) diff.avgCost = payload.avgCost;
+      if (form.investedAmount !== orig.investedAmount) diff.investedAmount = payload.investedAmount;
+      if (form.dividends !== orig.dividends) diff.dividends = payload.dividends;
+      if (form.isEtf !== orig.isEtf) diff.isEtf = payload.isEtf;
+      if (form.firstPurchaseDate !== orig.firstPurchaseDate) diff.firstPurchaseDate = payload.firstPurchaseDate;
+      if (form.notes !== orig.notes) diff.notes = form.notes || undefined;
+      if (form.downAlertPcts !== orig.downAlertPcts) diff.downAlertPcts = payload.downAlertPcts;
+      if (form.upAlertPcts !== orig.upAlertPcts) diff.upAlertPcts = payload.upAlertPcts;
+      if (form.notifyEmail !== orig.notifyEmail && effectiveNotifyEmail.trim()) diff.notifyEmail = effectiveNotifyEmail.trim();
+
+      if (Object.keys(diff).length === 0) { onClose(); return; }
+
       updatePos.mutate(
-        { id: editing.id, data: payload },
+        { id: editing.id, data: diff },
         { onSuccess: () => { onSaved(); onClose(); }, onError: () => toast({ variant: "destructive", title: "Erro ao atualizar posição" }) },
       );
     } else {

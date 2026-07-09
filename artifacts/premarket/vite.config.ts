@@ -77,14 +77,13 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
+          // NUNCA cachear /api: dados financeiros mutáveis. O NetworkFirst
+          // antigo servia respostas velhas durante o cold start pós-deploy,
+          // semeando os formulários com dados antigos — que, ao salvar,
+          // sobrescreviam edições recentes (ETF/dividendos "sumindo").
           {
             urlPattern: /\/api\/.*/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-cache",
-              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 5 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
+            handler: "NetworkOnly",
           },
         ],
       },
