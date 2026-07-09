@@ -209,7 +209,7 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
-// PATCH /portfolio/purchases/:purchaseId — registrar venda
+// PATCH /portfolio/purchases/:purchaseId — corrigir valor/preco de compra ou registrar venda
 router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void> => {
   const p = PortfolioPurchaseParams.safeParse(req.params);
   const body = UpdatePortfolioPurchaseBody.safeParse(req.body);
@@ -224,9 +224,23 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
     return;
   }
 
+  // So mexe em cada campo se ele veio explicitamente no corpo da requisicao --
+  // do contrario, editar so o preco/valor de uma compra ja vendida apagaria
+  // a venda registrada (saleDate/salePrice), ja que ambos sao nullish no schema.
+  const update: Record<string, unknown> = {};
+  if ("saleDate" in req.body) update.saleDate = body.data.saleDate ?? null;
+  if ("salePrice" in req.body) update.salePrice = body.data.salePrice ?? null;
+  if (body.data.amount !== undefined) update.amount = body.data.amount;
+  if (body.data.purchasePrice !== undefined) update.purchasePrice = body.data.purchasePrice;
+
+  if (Object.keys(update).length === 0) {
+    res.status(400).json({ error: "no fields to update" });
+    return;
+  }
+
   const [row] = await db
     .update(portfolioPurchasesTable)
-    .set({ saleDate: body.data.saleDate ?? null, salePrice: body.data.salePrice ?? null })
+    .set(update)
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
     .returning();
   await recomputePosition(row.positionId);

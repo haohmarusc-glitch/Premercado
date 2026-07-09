@@ -3014,7 +3014,7 @@ export const getUpdatePortfolioPurchaseUrl = (purchaseId: number,) => {
 }
 
 /**
- * @summary Update a purchase (sale fields)
+ * @summary Update a purchase (amount, purchase price, sale fields)
  */
 export const updatePortfolioPurchase = async (purchaseId: number,
     portfolioPurchaseUpdate: PortfolioPurchaseUpdate, options?: RequestInit): Promise<PortfolioPurchase> => {
@@ -3064,7 +3064,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdatePortfolioPurchaseMutationError = ErrorType<void>
 
     /**
- * @summary Update a purchase (sale fields)
+ * @summary Update a purchase (amount, purchase price, sale fields)
  */
 export const useUpdatePortfolioPurchase = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePortfolioPurchase>>, TError,{purchaseId: number;data: BodyType<PortfolioPurchaseUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}

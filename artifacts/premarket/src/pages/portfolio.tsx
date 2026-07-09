@@ -475,6 +475,12 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
   const [saleDate, setSaleDate] = useState("");
   const [salePrice, setSalePrice] = useState("");
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editPurchaseId, setEditPurchaseId] = useState<number | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
   const invalidate = () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) });
 
   const handleDelete = (purchaseId: number) => {
@@ -527,6 +533,37 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       toast({ variant: "destructive", title: "Erro ao corrigir preços", description: String(e) });
     } finally {
       setBackfilling(false);
+    }
+  };
+
+  const handleEditOpen = (purchase: { id: number; amount: number; purchasePrice?: number | null }) => {
+    setEditPurchaseId(purchase.id);
+    setEditAmount(String(purchase.amount));
+    setEditPrice(purchase.purchasePrice != null ? String(purchase.purchasePrice) : "");
+    setEditOpen(true);
+  };
+
+  const handleEditSave = async () => {
+    if (!editPurchaseId || !editAmount) return;
+    setEditSaving(true);
+    try {
+      const r = await fetch(`/api/portfolio/purchases/${editPurchaseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: parseFloat(editAmount),
+          purchasePrice: editPrice ? parseFloat(editPrice) : null,
+        }),
+        credentials: "include",
+      });
+      if (!r.ok) throw new Error("Falhou");
+      invalidate();
+      setEditOpen(false);
+      toast({ title: "Compra atualizada" });
+    } catch {
+      toast({ variant: "destructive", title: "Erro ao atualizar compra" });
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -707,6 +744,13 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                               </Button>
                             )}
                             <Button size="sm" variant="ghost"
+                              className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => handleEditOpen(p)}
+                              title="Editar valor/preço de compra"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost"
                               className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
                               onClick={() => handleDelete(p.id)}
                               disabled={deletePurchase.isPending}
@@ -865,6 +909,42 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
             <Button variant="outline" size="sm" onClick={() => setSaleOpen(false)} className="font-mono text-xs">Cancelar</Button>
             <Button size="sm" onClick={handleSaleSave} disabled={!saleDate || !salePrice} className="font-mono text-xs">
               Confirmar venda
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog — Editar valor/preço de compra */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">Editar compra — {ticker}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs font-mono">Valor investido ($)</Label>
+              <Input type="number" placeholder="0.00" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="font-mono text-xs h-8" />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Preço de compra real ($)</Label>
+              <Input type="number" placeholder="0.00" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} className="font-mono text-xs h-8" />
+            </div>
+            {(() => {
+              const amt = parseFloat(editAmount);
+              const price = parseFloat(editPrice);
+              const qty = amt > 0 && price > 0 ? amt / price : null;
+              return qty != null ? (
+                <div className="rounded border border-border bg-muted/20 px-3 py-2 flex justify-between font-mono text-xs">
+                  <span className="text-muted-foreground">Qtde resultante</span>
+                  <span className="font-semibold">{qty.toFixed(5)}</span>
+                </div>
+              ) : null;
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(false)} className="font-mono text-xs">Cancelar</Button>
+            <Button size="sm" onClick={handleEditSave} disabled={!editAmount || editSaving} className="font-mono text-xs">
+              Salvar
             </Button>
           </DialogFooter>
         </DialogContent>
