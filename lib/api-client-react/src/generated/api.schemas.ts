@@ -410,6 +410,10 @@ export interface PortfolioPurchaseCreate {
 }
 
 export interface PortfolioPurchaseUpdate {
+  /** @exclusiveMinimum 0 */
+  amount?: number;
+  /** @nullable */
+  purchasePrice?: number | null;
   /** @nullable */
   saleDate?: string | null;
   /** @nullable */

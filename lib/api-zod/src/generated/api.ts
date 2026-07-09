@@ -664,13 +664,19 @@ export const CreatePortfolioPurchaseBody = zod.object({
 
 
 /**
- * @summary Update a purchase (sale fields)
+ * @summary Update a purchase (amount, purchase price, sale fields)
  */
 export const UpdatePortfolioPurchaseParams = zod.object({
   "purchaseId": zod.coerce.number()
 })
 
+export const updatePortfolioPurchaseBodyAmountExclusiveMin = 0;
+
+
+
 export const UpdatePortfolioPurchaseBody = zod.object({
+  "amount": zod.number().gt(updatePortfolioPurchaseBodyAmountExclusiveMin).optional(),
+  "purchasePrice": zod.number().nullish(),
   "saleDate": zod.string().nullish(),
   "salePrice": zod.number().nullish()
 })

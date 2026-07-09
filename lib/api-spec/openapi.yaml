@@ -756,7 +756,7 @@ paths:
     patch:
       operationId: updatePortfolioPurchase
       tags: [portfolio]
-      summary: Update a purchase (sale fields)
+      summary: Update a purchase (amount, purchase price, sale fields)
       parameters:
         - name: purchaseId
           in: path
@@ -1512,6 +1512,8 @@ components:
     PortfolioPurchaseUpdate:
       type: object
       properties:
+        amount: { type: number, exclusiveMinimum: 0 }
+        purchasePrice: { type: ["number", "null"] }
         saleDate: { type: ["string", "null"] }
         salePrice: { type: ["number", "null"] }
 
