@@ -55,26 +55,38 @@ interface NewsMarkerShapeProps {
   y?: number;
   width?: number;
   payload?: { newsItems?: NewsItem[] };
+  onSelect?: (items: NewsItem[]) => void;
+}
+
+// Marcador visível (raio) e área de toque invisível (bem maior, pra facilitar
+// o clique no celular sem cobrir o gráfico). O <title> mantém o tooltip nativo
+// no desktop; o onClick abre a caixa de notícias persistente no mobile.
+const DOT_RADIUS = 6;
+const HIT_RADIUS = 18;
+
+function markerTitle(items: NewsItem[]): string {
+  return items
+    .slice(0, 3)
+    .map((n) => n.title + (n.summary ? ` — ${n.summary}` : ""))
+    .join("\n\n");
 }
 
 // Bar shape que só desenha algo quando o candle tem notícia associada — as
 // demais posições ficam com um <g/> vazio (o Bar de marcadores usa o MESMO
 // dataKey/array de dados do gráfico principal, então a posição X já vem
 // perfeitamente alinhada com o candle correspondente).
-export function NewsMarkerShape({ x, y, width, payload }: NewsMarkerShapeProps) {
+export function NewsMarkerShape({ x, y, width, payload, onSelect }: NewsMarkerShapeProps) {
   const items = payload?.newsItems;
   if (x == null || y == null || width == null || !items || !items.length) return <g />;
 
   const cx = x + width / 2;
-  const title = items
-    .slice(0, 3)
-    .map((n) => n.title + (n.summary ? ` — ${n.summary}` : ""))
-    .join("\n\n");
 
   return (
-    <g>
-      <circle cx={cx} cy={y} r={4} fill="#facc15" stroke="#78350f" strokeWidth={1} />
-      <title>{title}</title>
+    <g style={{ cursor: "pointer" }} onClick={() => onSelect?.(items)}>
+      {/* área de toque ampliada (transparente, mas recebe o clique) */}
+      <circle cx={cx} cy={y} r={HIT_RADIUS} fill="transparent" />
+      <circle cx={cx} cy={y} r={DOT_RADIUS} fill="#facc15" stroke="#78350f" strokeWidth={1.5} />
+      <title>{markerTitle(items)}</title>
     </g>
   );
 }
@@ -85,17 +97,14 @@ export function NewsMarkerShape({ x, y, width, payload }: NewsMarkerShapeProps) 
 // do eixo Y do recharts (visto em produção: eixo colapsou para 0–200 em vez
 // de ~192–200). ReferenceDot é uma anotação independente de série — não
 // participa desse cálculo, então não tem esse efeito colateral.
-export function newsDotShape(items: NewsItem[]) {
+export function newsDotShape(items: NewsItem[], onSelect?: () => void) {
   return function NewsDot({ cx, cy }: { cx?: number; cy?: number }) {
     if (cx == null || cy == null) return <g />;
-    const title = items
-      .slice(0, 3)
-      .map((n) => n.title + (n.summary ? ` — ${n.summary}` : ""))
-      .join("\n\n");
     return (
-      <g>
-        <circle cx={cx} cy={cy} r={4} fill="#facc15" stroke="#78350f" strokeWidth={1} />
-        <title>{title}</title>
+      <g style={{ cursor: "pointer" }} onClick={() => onSelect?.()}>
+        <circle cx={cx} cy={cy} r={HIT_RADIUS} fill="transparent" />
+        <circle cx={cx} cy={cy} r={DOT_RADIUS} fill="#facc15" stroke="#78350f" strokeWidth={1.5} />
+        <title>{markerTitle(items)}</title>
       </g>
     );
   };
