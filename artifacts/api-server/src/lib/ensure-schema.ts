@@ -111,4 +111,12 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (dividends column)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS cash_real numeric(15,4) NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS cash_simulated numeric(15,4) NOT NULL DEFAULT 0`);
+    logger.info("Schema check ok (users.cash_real/cash_simulated)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (user cash columns)");
+  }
 }

@@ -120,6 +120,34 @@ router.get("/portfolio", async (req, res): Promise<void> => {
   res.json(ListPortfolioPositionsResponse.parse(active.map(serPos)));
 });
 
+// GET /portfolio/cash — caixa disponível (por modo) do usuário logado.
+// Declarada antes das rotas /portfolio/:id pra "cash" não cair no param :id.
+router.get("/portfolio/cash", async (req, res): Promise<void> => {
+  const [u] = await db
+    .select({ real: usersTable.cashReal, simulated: usersTable.cashSimulated })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.userId!));
+  res.json({ real: Number(u?.real ?? 0), simulated: Number(u?.simulated ?? 0) });
+});
+
+// PATCH /portfolio/cash — atualiza o caixa de um modo (real|simulated).
+router.patch("/portfolio/cash", async (req, res): Promise<void> => {
+  const mode = req.body?.mode;
+  const amount = Number(req.body?.amount);
+  if ((mode !== "real" && mode !== "simulated") || !Number.isFinite(amount) || amount < 0) {
+    res.status(400).json({ error: "invalid input" });
+    return;
+  }
+  const patch = mode === "real" ? { cashReal: amount } : { cashSimulated: amount };
+  const [u] = await db
+    .update(usersTable)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(usersTable.id, req.userId!))
+    .returning({ real: usersTable.cashReal, simulated: usersTable.cashSimulated });
+  if (!u) { res.status(404).json({ error: "user not found" }); return; }
+  res.json({ real: Number(u.real), simulated: Number(u.simulated) });
+});
+
 // GET /portfolio/:id/purchases
 router.get("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const p = PortfolioPositionParams.safeParse(req.params);
