@@ -36,6 +36,11 @@ export const usersTable = pgTable("users", {
   // do FRONTEND (ex: "/portfolio"), não a rota da API.
   lastSeenAt: timestamp("last_seen_at"),
   lastPath: text("last_path"),
+  // Caixa disponível (USD não investido) por modo de carteira, por usuário —
+  // "Disponível para investir" da corretora. Entra no Patrimônio total, não no
+  // investido. Fica no usuário (não no settings global) pra não vazar entre contas.
+  cashReal: money("cash_real").notNull().default(0),
+  cashSimulated: money("cash_simulated").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
