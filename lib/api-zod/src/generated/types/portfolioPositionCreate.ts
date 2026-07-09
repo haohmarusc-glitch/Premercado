@@ -18,6 +18,8 @@ export interface PortfolioPositionCreate {
   avgCost: number;
   /** @exclusiveMinimum 0 */
   investedAmount: number;
+  /** @minimum 0 */
+  dividends?: number;
   firstPurchaseDate: string;
   notes?: string;
   downAlertPcts?: number[];

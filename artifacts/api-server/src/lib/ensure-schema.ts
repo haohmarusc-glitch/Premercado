@@ -104,4 +104,11 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (price_manually_edited column)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS dividends numeric(15,4) NOT NULL DEFAULT 0`);
+    logger.info("Schema check ok (portfolio_positions.dividends)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (dividends column)");
+  }
 }

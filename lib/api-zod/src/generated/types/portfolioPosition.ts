@@ -12,6 +12,7 @@ export interface PortfolioPosition {
   quantity: number;
   avgCost: number;
   investedAmount: number;
+  dividends: number;
   firstPurchaseDate: string;
   /** @nullable */
   notes?: string | null;

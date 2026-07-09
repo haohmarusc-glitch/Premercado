@@ -1421,6 +1421,7 @@ components:
           quantity,
           avgCost,
           investedAmount,
+          dividends,
           firstPurchaseDate,
           downAlertPcts,
           upAlertPcts,
@@ -1433,6 +1434,7 @@ components:
         quantity: { type: number }
         avgCost: { type: number }
         investedAmount: { type: number }
+        dividends: { type: number }
         firstPurchaseDate: { type: string }
         notes: { type: ["string", "null"] }
         downAlertPcts:
@@ -1455,6 +1457,7 @@ components:
         quantity: { type: number, exclusiveMinimum: 0 }
         avgCost: { type: number, exclusiveMinimum: 0 }
         investedAmount: { type: number, exclusiveMinimum: 0 }
+        dividends: { type: number, minimum: 0 }
         firstPurchaseDate: { type: string }
         notes: { type: string }
         downAlertPcts:
@@ -1474,6 +1477,7 @@ components:
         quantity: { type: number, exclusiveMinimum: 0 }
         avgCost: { type: number, exclusiveMinimum: 0 }
         investedAmount: { type: number, exclusiveMinimum: 0 }
+        dividends: { type: number, minimum: 0 }
         firstPurchaseDate: { type: string }
         notes: { type: ["string", "null"] }
         downAlertPcts:
