@@ -329,6 +329,7 @@ export interface PortfolioPosition {
   avgCost: number;
   investedAmount: number;
   dividends: number;
+  isEtf: boolean;
   firstPurchaseDate: string;
   /** @nullable */
   notes?: string | null;
@@ -357,6 +358,7 @@ export interface PortfolioPositionCreate {
   investedAmount: number;
   /** @minimum 0 */
   dividends?: number;
+  isEtf?: boolean;
   firstPurchaseDate: string;
   notes?: string;
   downAlertPcts?: number[];
@@ -379,6 +381,7 @@ export interface PortfolioPositionUpdate {
   investedAmount?: number;
   /** @minimum 0 */
   dividends?: number;
+  isEtf?: boolean;
   firstPurchaseDate?: string;
   /** @nullable */
   notes?: string | null;

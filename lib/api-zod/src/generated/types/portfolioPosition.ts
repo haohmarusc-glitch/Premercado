@@ -13,6 +13,7 @@ export interface PortfolioPosition {
   avgCost: number;
   investedAmount: number;
   dividends: number;
+  isEtf: boolean;
   firstPurchaseDate: string;
   /** @nullable */
   notes?: string | null;
