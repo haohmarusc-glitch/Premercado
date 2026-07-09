@@ -15,7 +15,7 @@ import {
   getGetTickerQuotesQueryKey,
   listPortfolioPurchases,
 } from "@workspace/api-client-react";
-import type { PortfolioPosition } from "@workspace/api-client-react";
+import type { PortfolioPosition, NewsItem } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQue
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
-import { attachNewsMarkers, NewsMarkerShape, newsDotShape } from "@/components/news-markers";
+import { attachNewsMarkers, NewsMarkerShape, newsDotShape, parseNewsPublished } from "@/components/news-markers";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
 
@@ -192,9 +192,19 @@ function formatXTick(ts: number, period: ChartPeriod): string {
 
 type PortfolioChartVisual = "line" | "candle" | "tradingview";
 
+function fmtNewsDate(v: string | number | null | undefined): string {
+  const ts = parseNewsPublished(v);
+  if (ts == null) return "";
+  return new Date(ts).toLocaleString("pt-BR", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
 function PriceChart({ ticker }: { ticker: string }) {
   const [period, setPeriod] = useState<ChartPeriod>("1d");
   const [visual, setVisual] = useState<PortfolioChartVisual>("line");
+  // Notícias abertas na caixa (modal) ao tocar num marcador amarelo do gráfico.
+  const [activeNews, setActiveNews] = useState<NewsItem[] | null>(null);
   // Mesmo tamanho padrao/expandido do grafico do Dashboard (200/420 line-candle,
   // 480/900 TradingView) -- antes ficava fixo em 220/480, sem opcao de expandir.
   const [expanded, setExpanded] = useState(false);
@@ -363,7 +373,7 @@ function PriceChart({ ticker }: { ticker: string }) {
                 x={m.t}
                 y={candleDomainRange[1]}
                 ifOverflow="visible"
-                shape={newsDotShape(m.newsItems)}
+                shape={newsDotShape(m.newsItems, () => setActiveNews(m.newsItems))}
               />
             ))}
           </ComposedChart>
@@ -404,10 +414,35 @@ function PriceChart({ ticker }: { ticker: string }) {
               labelStyle={{ color: "#a1a1aa" }}
             />
             <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
-            <Bar dataKey="newsY" shape={NewsMarkerShape} isAnimationActive={false} />
+            <Bar dataKey="newsY" shape={(p: React.ComponentProps<typeof NewsMarkerShape>) => <NewsMarkerShape {...p} onSelect={setActiveNews} />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       )}
+
+      {/* Caixa de notícias — abre ao tocar no marcador amarelo. Fica aberta até
+          fechar (ao contrário do tooltip de hover, que some no celular). */}
+      <Dialog open={activeNews != null} onOpenChange={(o) => { if (!o) setActiveNews(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">📰 Notícias — {ticker}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+            {(activeNews ?? []).map((n, i) => (
+              <div key={i} className="border-b border-border/40 pb-2 last:border-0 last:pb-0">
+                <p className="text-xs font-semibold text-foreground leading-snug">{n.title}</p>
+                {(n.source || fmtNewsDate(n.published)) && (
+                  <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                    {[n.source, fmtNewsDate(n.published)].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                {n.summary && (
+                  <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{n.summary}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
