@@ -235,6 +235,9 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   // Dividendos recebidos acumulados nesta posição, informados manualmente.
   // Entram no patrimônio total e no P&L total como retorno realizado.
   dividends: money("dividends").notNull().default(0),
+  // Marca a posição como ETF/fundo (vs ação). Usado só pra separar os valores
+  // de "ações" e "ETFs" no Patrimônio total. Informado manualmente.
+  isEtf: boolean("is_etf").notNull().default(false),
   firstPurchaseDate: text("first_purchase_date").notNull(),
   notes: text("notes"),
   isSimulated: boolean("is_simulated").notNull().default(false),

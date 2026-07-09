@@ -119,4 +119,11 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (user cash columns)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS is_etf boolean NOT NULL DEFAULT false`);
+    logger.info("Schema check ok (portfolio_positions.is_etf)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (is_etf column)");
+  }
 }

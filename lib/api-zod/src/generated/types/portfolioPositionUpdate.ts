@@ -20,6 +20,7 @@ export interface PortfolioPositionUpdate {
   investedAmount?: number;
   /** @minimum 0 */
   dividends?: number;
+  isEtf?: boolean;
   firstPurchaseDate?: string;
   /** @nullable */
   notes?: string | null;

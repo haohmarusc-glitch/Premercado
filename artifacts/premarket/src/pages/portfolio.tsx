@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
@@ -70,6 +71,7 @@ interface PosForm {
   avgCost: string;
   investedAmount: string;
   dividends: string;
+  isEtf: boolean;
   firstPurchaseDate: string;
   notes: string;
   downAlertPcts: string;
@@ -83,6 +85,7 @@ const EMPTY_FORM: PosForm = {
   avgCost: "",
   investedAmount: "",
   dividends: "",
+  isEtf: false,
   firstPurchaseDate: "",
   notes: "",
   downAlertPcts: "10,15,20,30",
@@ -97,6 +100,7 @@ function posToForm(p: PortfolioPosition): PosForm {
     avgCost: String(p.avgCost),
     investedAmount: String(p.investedAmount),
     dividends: p.dividends ? String(p.dividends) : "",
+    isEtf: p.isEtf ?? false,
     firstPurchaseDate: p.firstPurchaseDate,
     notes: p.notes ?? "",
     downAlertPcts: p.downAlertPcts.join(","),
@@ -1110,6 +1114,7 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
       avgCost: parseFloat(form.avgCost),
       investedAmount: parseFloat(form.investedAmount),
       dividends: form.dividends ? parseFloat(form.dividends) : 0,
+      isEtf: form.isEtf,
       firstPurchaseDate: form.firstPurchaseDate,
       notes: form.notes || undefined,
       downAlertPcts: parseAlertPcts(form.downAlertPcts),
@@ -1211,6 +1216,13 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
               />
             </div>
           </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <Checkbox
+              checked={form.isEtf}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, isEtf: v === true }))}
+            />
+            <span className="text-xs font-mono">É ETF / fundo (separa de "ações" no Patrimônio)</span>
+          </label>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs font-mono">Alertas baixa (%)</Label>
@@ -1410,12 +1422,15 @@ export default function PortfolioPage() {
   const totals = useMemo(() => {
     const invested = rows.reduce((s, r) => s + r.investedUsd, 0);
     const current = rows.reduce((s, r) => s + r.currentValueUsd, 0);
+    // Valor atual separado por tipo (ETF/fundo vs ação) pro Patrimônio total.
+    const etfsCurrent = rows.reduce((s, r) => s + (r.pos.isEtf ? r.currentValueUsd : 0), 0);
+    const stocksCurrent = current - etfsCurrent;
     const pnl = current - invested;
     const pnlPct = invested > 0 && current > 0 ? (pnl / invested) * 100 : 0;
     const dailyChange = rows.some((r) => r.dailyChangeUsd != null)
       ? rows.reduce((s, r) => s + (r.dailyChangeUsd ?? 0), 0)
       : null;
-    return { invested, current, pnl, pnlPct, dailyChange };
+    return { invested, current, stocksCurrent, etfsCurrent, pnl, pnlPct, dailyChange };
   }, [rows]);
 
   // Lucro realizado das ações vendidas (proceeds já estão refletidos no caixa).
@@ -1588,7 +1603,15 @@ export default function PortfolioPage() {
               {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash + totalDividends)}
             </div>
             <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
-              ações {hasPrices ? fmt$(totals.current) : "—"} + caixa {fmt$(cash)}
+              {hasPrices ? (
+                <>
+                  ações {fmt$(totals.stocksCurrent)}
+                  {totals.etfsCurrent > 0 ? ` + ETFs ${fmt$(totals.etfsCurrent)}` : ""}
+                  {" + caixa "}{fmt$(cash)}
+                </>
+              ) : (
+                <>caixa {fmt$(cash)}</>
+              )}
               {totalDividends > 0 ? ` + dividendos ${fmt$(totalDividends)}` : ""}
             </div>
             {hasBrl && (
