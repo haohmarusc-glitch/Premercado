@@ -97,4 +97,11 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (users activity tracking columns)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE portfolio_purchases ADD COLUMN IF NOT EXISTS price_manually_edited boolean NOT NULL DEFAULT false`);
+    logger.info("Schema check ok (portfolio_purchases.price_manually_edited)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (price_manually_edited column)");
+  }
 }
