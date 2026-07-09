@@ -18,6 +18,8 @@ export interface PortfolioPositionUpdate {
   avgCost?: number;
   /** @exclusiveMinimum 0 */
   investedAmount?: number;
+  /** @minimum 0 */
+  dividends?: number;
   firstPurchaseDate?: string;
   /** @nullable */
   notes?: string | null;

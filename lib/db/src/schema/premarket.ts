@@ -227,6 +227,9 @@ export const portfolioPositionsTable = pgTable("portfolio_positions", {
   quantity: money("quantity").notNull(),
   avgCost: money("avg_cost").notNull(),
   investedAmount: money("invested_amount").notNull(),
+  // Dividendos recebidos acumulados nesta posição, informados manualmente.
+  // Entram no patrimônio total e no P&L total como retorno realizado.
+  dividends: money("dividends").notNull().default(0),
   firstPurchaseDate: text("first_purchase_date").notNull(),
   notes: text("notes"),
   isSimulated: boolean("is_simulated").notNull().default(false),

@@ -69,6 +69,7 @@ interface PosForm {
   quantity: string;
   avgCost: string;
   investedAmount: string;
+  dividends: string;
   firstPurchaseDate: string;
   notes: string;
   downAlertPcts: string;
@@ -81,6 +82,7 @@ const EMPTY_FORM: PosForm = {
   quantity: "",
   avgCost: "",
   investedAmount: "",
+  dividends: "",
   firstPurchaseDate: "",
   notes: "",
   downAlertPcts: "10,15,20,30",
@@ -94,6 +96,7 @@ function posToForm(p: PortfolioPosition): PosForm {
     quantity: String(p.quantity),
     avgCost: String(p.avgCost),
     investedAmount: String(p.investedAmount),
+    dividends: p.dividends ? String(p.dividends) : "",
     firstPurchaseDate: p.firstPurchaseDate,
     notes: p.notes ?? "",
     downAlertPcts: p.downAlertPcts.join(","),
@@ -1071,6 +1074,7 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
       quantity: parseFloat(form.quantity),
       avgCost: parseFloat(form.avgCost),
       investedAmount: parseFloat(form.investedAmount),
+      dividends: form.dividends ? parseFloat(form.dividends) : 0,
       firstPurchaseDate: form.firstPurchaseDate,
       notes: form.notes || undefined,
       downAlertPcts: parseAlertPcts(form.downAlertPcts),
@@ -1151,14 +1155,26 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
               />
             </div>
           </div>
-          <div>
-            <Label className="text-xs font-mono">Primeira compra *</Label>
-            <Input
-              type="date"
-              value={form.firstPurchaseDate}
-              onChange={upd("firstPurchaseDate")}
-              className="font-mono text-xs h-8"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-mono">Primeira compra *</Label>
+              <Input
+                type="date"
+                value={form.firstPurchaseDate}
+                onChange={upd("firstPurchaseDate")}
+                className="font-mono text-xs h-8"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">Dividendos recebidos ($)</Label>
+              <Input
+                type="number"
+                value={form.dividends}
+                onChange={upd("dividends")}
+                placeholder="0.00"
+                className="font-mono text-xs h-8"
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1388,11 +1404,20 @@ export default function PortfolioPage() {
     return { proceeds, pnl, invested };
   }, [positions, purchasesMap, fxRate]);
 
-  // Patrimônio total = posições abertas (valor atual) + caixa disponível.
-  // Espelha o "Patrimônio total" da corretora (Ações + Disponível p/ investir).
-  const netWorth = totals.current + cash;
-  // P&L combinado = não realizado (posições abertas) + realizado (vendas).
-  const combinedPnl = totals.pnl + realized.pnl;
+  // Dividendos recebidos (informados manualmente por posição), somados em USD.
+  const totalDividends = useMemo(() => {
+    return positions.reduce((s, p) => {
+      const brl = isB3(p.ticker);
+      const conv = (v: number) => (brl && fxRate ? v / fxRate : v);
+      return s + conv(p.dividends ?? 0);
+    }, 0);
+  }, [positions, fxRate]);
+
+  // Patrimônio total = posições abertas (valor atual) + caixa + dividendos.
+  // Espelha o "Patrimônio total" da corretora somado aos proventos recebidos.
+  const netWorth = totals.current + cash + totalDividends;
+  // P&L combinado = não realizado (abertas) + realizado (vendas) + dividendos.
+  const combinedPnl = totals.pnl + realized.pnl + totalDividends;
   const combinedInvested = totals.invested + realized.invested;
   const combinedPnlPct = combinedInvested > 0 ? (combinedPnl / combinedInvested) * 100 : 0;
 
@@ -1525,10 +1550,11 @@ export default function PortfolioPage() {
               <Wallet className="h-4 w-4 text-primary" />
             </div>
             <div className="text-xl font-bold font-mono tabular-nums text-primary">
-              {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash)}
+              {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash + totalDividends)}
             </div>
             <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
               ações {hasPrices ? fmt$(totals.current) : "—"} + caixa {fmt$(cash)}
+              {totalDividends > 0 ? ` + dividendos ${fmt$(totalDividends)}` : ""}
             </div>
             {hasBrl && (
               <div className={cn("text-[10px] font-mono mt-0.5", fxRate ? "text-muted-foreground" : "text-yellow-400")}>
@@ -1577,7 +1603,23 @@ export default function PortfolioPage() {
             </div>
           </CardContent>
         </Card>
-        {/* P&L total = aberto + realizado */}
+        {/* Dividendos recebidos (informados manualmente por posição) */}
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="mb-1">
+              <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">Dividendos ($)</span>
+            </div>
+            <div className={cn("text-xl font-bold font-mono tabular-nums",
+              totalDividends > 0 ? "text-green-400" : ""
+            )}>
+              {totalDividends > 0 ? `+${fmt$(totalDividends)}` : "—"}
+            </div>
+            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+              soma no patrimônio e P&amp;L total
+            </div>
+          </CardContent>
+        </Card>
+        {/* P&L total = aberto + realizado + dividendos */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <div className="mb-1">

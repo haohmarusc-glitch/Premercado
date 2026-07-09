@@ -533,6 +533,7 @@ export const ListPortfolioPositionsResponseItem = zod.object({
   "quantity": zod.coerce.number(),
   "avgCost": zod.coerce.number(),
   "investedAmount": zod.coerce.number(),
+  "dividends": zod.coerce.number(),
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.coerce.number()),
@@ -555,6 +556,8 @@ export const createPortfolioPositionBodyAvgCostExclusiveMin = 0;
 
 export const createPortfolioPositionBodyInvestedAmountExclusiveMin = 0;
 
+export const createPortfolioPositionBodyDividendsMin = 0;
+
 
 
 export const CreatePortfolioPositionBody = zod.object({
@@ -562,6 +565,7 @@ export const CreatePortfolioPositionBody = zod.object({
   "quantity": zod.number().gt(createPortfolioPositionBodyQuantityExclusiveMin),
   "avgCost": zod.number().gt(createPortfolioPositionBodyAvgCostExclusiveMin),
   "investedAmount": zod.number().gt(createPortfolioPositionBodyInvestedAmountExclusiveMin),
+  "dividends": zod.number().min(createPortfolioPositionBodyDividendsMin).optional(),
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().optional(),
   "downAlertPcts": zod.array(zod.number()).optional(),
@@ -585,6 +589,8 @@ export const updatePortfolioPositionBodyAvgCostExclusiveMin = 0;
 
 export const updatePortfolioPositionBodyInvestedAmountExclusiveMin = 0;
 
+export const updatePortfolioPositionBodyDividendsMin = 0;
+
 
 
 export const UpdatePortfolioPositionBody = zod.object({
@@ -592,6 +598,7 @@ export const UpdatePortfolioPositionBody = zod.object({
   "quantity": zod.number().gt(updatePortfolioPositionBodyQuantityExclusiveMin).optional(),
   "avgCost": zod.number().gt(updatePortfolioPositionBodyAvgCostExclusiveMin).optional(),
   "investedAmount": zod.number().gt(updatePortfolioPositionBodyInvestedAmountExclusiveMin).optional(),
+  "dividends": zod.number().min(updatePortfolioPositionBodyDividendsMin).optional(),
   "firstPurchaseDate": zod.string().optional(),
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.number()).optional(),
@@ -605,6 +612,7 @@ export const UpdatePortfolioPositionResponse = zod.object({
   "quantity": zod.coerce.number(),
   "avgCost": zod.coerce.number(),
   "investedAmount": zod.coerce.number(),
+  "dividends": zod.coerce.number(),
   "firstPurchaseDate": zod.string(),
   "notes": zod.string().nullish(),
   "downAlertPcts": zod.array(zod.coerce.number()),

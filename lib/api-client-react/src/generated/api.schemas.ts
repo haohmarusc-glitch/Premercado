@@ -328,6 +328,7 @@ export interface PortfolioPosition {
   quantity: number;
   avgCost: number;
   investedAmount: number;
+  dividends: number;
   firstPurchaseDate: string;
   /** @nullable */
   notes?: string | null;
@@ -354,6 +355,8 @@ export interface PortfolioPositionCreate {
   avgCost: number;
   /** @exclusiveMinimum 0 */
   investedAmount: number;
+  /** @minimum 0 */
+  dividends?: number;
   firstPurchaseDate: string;
   notes?: string;
   downAlertPcts?: number[];
@@ -374,6 +377,8 @@ export interface PortfolioPositionUpdate {
   avgCost?: number;
   /** @exclusiveMinimum 0 */
   investedAmount?: number;
+  /** @minimum 0 */
+  dividends?: number;
   firstPurchaseDate?: string;
   /** @nullable */
   notes?: string | null;
