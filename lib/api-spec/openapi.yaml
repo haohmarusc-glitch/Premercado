@@ -1488,13 +1488,14 @@ components:
 
     PortfolioPurchase:
       type: object
-      required: [id, positionId, purchaseDate, amount, createdAt]
+      required: [id, positionId, purchaseDate, amount, createdAt, priceManuallyEdited]
       properties:
         id: { type: integer }
         positionId: { type: integer }
         purchaseDate: { type: string }
         amount: { type: number }
         purchasePrice: { type: ["number", "null"] }
+        priceManuallyEdited: { type: boolean }
         saleDate: { type: ["string", "null"] }
         salePrice: { type: ["number", "null"] }
         createdAt: { type: string }

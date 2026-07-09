@@ -636,6 +636,7 @@ export const ListPortfolioPurchasesResponseItem = zod.object({
   "purchaseDate": zod.string(),
   "amount": zod.coerce.number(),
   "purchasePrice": zod.coerce.number().nullish(),
+  "priceManuallyEdited": zod.boolean(),
   "saleDate": zod.string().nullish(),
   "salePrice": zod.coerce.number().nullish(),
   "createdAt": zod.string()
@@ -687,6 +688,7 @@ export const UpdatePortfolioPurchaseResponse = zod.object({
   "purchaseDate": zod.string(),
   "amount": zod.coerce.number(),
   "purchasePrice": zod.coerce.number().nullish(),
+  "priceManuallyEdited": zod.boolean(),
   "saleDate": zod.string().nullish(),
   "salePrice": zod.coerce.number().nullish(),
   "createdAt": zod.string()

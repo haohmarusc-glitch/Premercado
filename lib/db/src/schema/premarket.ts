@@ -256,6 +256,7 @@ export const portfolioPurchasesTable = pgTable("portfolio_purchases", {
   purchaseDate: text("purchase_date").notNull(),
   amount: money("amount").notNull(),
   purchasePrice: money("purchase_price"),
+  priceManuallyEdited: boolean("price_manually_edited").notNull().default(false),
   saleDate: text("sale_date"),
   salePrice: money("sale_price"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

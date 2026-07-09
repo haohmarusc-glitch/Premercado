@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -523,11 +523,14 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Falhou");
       invalidate();
+      const skippedNote = data.skippedManual > 0
+        ? ` ${data.skippedManual} mantida(s) por já ter preço editado manualmente.`
+        : "";
       toast({
         title: data.updated > 0 ? "✅ Preços corrigidos" : "Nada a corrigir",
-        description: data.updated > 0
+        description: (data.updated > 0
           ? `${data.updated} compra(s) atualizada(s) com o preço real do dia.`
-          : "Nenhuma compra precisou de ajuste.",
+          : "Nenhuma compra precisou de ajuste.") + skippedNote,
       });
     } catch (e) {
       toast({ variant: "destructive", title: "Erro ao corrigir preços", description: String(e) });
@@ -663,7 +666,16 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                       <tr key={p.id} className="border-t border-border/20 hover:bg-muted/10">
                         <td className="px-3 py-2 font-semibold">{p.purchaseDate}</td>
                         <td className="px-3 py-2 text-right tabular-nums">
-                          {p.purchasePrice ? `$${p.purchasePrice.toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                          {p.purchasePrice ? (
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              {p.priceManuallyEdited && (
+                                <span title="Preço confirmado manualmente — não é sobrescrito por 'Corrigir preços reais'">
+                                  <Lock className="h-2.5 w-2.5 text-muted-foreground" />
+                                </span>
+                              )}
+                              {`$${p.purchasePrice.toFixed(2)}`}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">
                           {currentPrice > 0
