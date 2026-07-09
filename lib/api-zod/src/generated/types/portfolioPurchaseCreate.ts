@@ -12,6 +12,7 @@ export interface PortfolioPurchaseCreate {
   amount: number;
   /** @nullable */
   purchasePrice?: number | null;
+  priceManuallyEdited?: boolean;
   /** @nullable */
   saleDate?: string | null;
   /** @nullable */

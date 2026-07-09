@@ -201,9 +201,16 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
     }
   }
 
+  // priceManuallyEdited so' e' true quando o cliente sinaliza explicitamente
+  // que o preco (ou a quantidade) foi informado a mao a partir da confirmacao
+  // real da corretora. O preco que o frontend busca por estimativa (yfinance)
+  // ao adicionar sem preco NAO conta -- senao "Corrigir precos reais" ficaria
+  // permanentemente bloqueado num valor apenas aproximado.
+  const priceManuallyEdited = body.data.priceManuallyEdited === true;
+
   const [row] = await db
     .insert(portfolioPurchasesTable)
-    .values({ positionId: params.data.id, ...body.data, purchasePrice })
+    .values({ positionId: params.data.id, ...body.data, purchasePrice, priceManuallyEdited })
     .returning();
   await recomputePosition(params.data.id);
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
@@ -231,7 +238,12 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
   if ("saleDate" in req.body) update.saleDate = body.data.saleDate ?? null;
   if ("salePrice" in req.body) update.salePrice = body.data.salePrice ?? null;
   if (body.data.amount !== undefined) update.amount = body.data.amount;
-  if (body.data.purchasePrice !== undefined) update.purchasePrice = body.data.purchasePrice;
+  if (body.data.purchasePrice !== undefined) {
+    update.purchasePrice = body.data.purchasePrice;
+    // Preco corrigido a mao (ex.: confirmacao real da corretora) -- nunca mais
+    // deixa o backfill (mesmo forcado) sobrescrever com estimativa historica.
+    update.priceManuallyEdited = body.data.purchasePrice != null;
+  }
 
   if (Object.keys(update).length === 0) {
     res.status(400).json({ error: "no fields to update" });
@@ -284,7 +296,10 @@ router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
 
 // POST /portfolio/:id/backfill-prices — corrige purchasePrice de cada compra
 // usando o fechamento real da data (yfinance). Por padrão só preenche compras
-// sem preço; passe { force: true } para sobrescrever todas.
+// sem preço; passe { force: true } para sobrescrever as demais também.
+// Nunca mexe em compras marcadas como priceManuallyEdited (preço já corrigido
+// à mão com o valor real de execução da corretora é sempre mais confiável do
+// que a estimativa por fechamento do dia).
 router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> => {
   const params = PortfolioPositionParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: "invalid id" }); return; }
@@ -298,9 +313,11 @@ router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> =>
     .from(portfolioPurchasesTable)
     .where(eq(portfolioPurchasesTable.positionId, params.data.id));
 
-  const targets = force ? purchases : purchases.filter((p) => p.purchasePrice == null);
+  const editable = purchases.filter((p) => !p.priceManuallyEdited);
+  const targets = force ? editable : editable.filter((p) => p.purchasePrice == null);
+  const skippedManual = purchases.length - editable.length;
   if (targets.length === 0) {
-    res.json({ updated: 0, message: "Nenhuma compra para atualizar" });
+    res.json({ updated: 0, skippedManual, message: "Nenhuma compra para atualizar" });
     return;
   }
 
@@ -318,7 +335,7 @@ router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> =>
         .where(eq(portfolioPurchasesTable.id, p.id));
       updated++;
     }
-    res.json({ updated, total: targets.length, prices });
+    res.json({ updated, total: targets.length, skippedManual, prices });
   } catch (e: unknown) {
     res.status(500).json({ error: String(e) });
   }
