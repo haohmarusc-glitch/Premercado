@@ -201,10 +201,12 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
     }
   }
 
-  // Se o preco veio explicito do cliente (nao foi buscado por estimativa
-  // aqui em cima), e' um preco real de execucao -- marca como editado
-  // manualmente pra "Corrigir precos reais" nunca sobrescrever com estimativa.
-  const priceManuallyEdited = body.data.purchasePrice != null;
+  // priceManuallyEdited so' e' true quando o cliente sinaliza explicitamente
+  // que o preco (ou a quantidade) foi informado a mao a partir da confirmacao
+  // real da corretora. O preco que o frontend busca por estimativa (yfinance)
+  // ao adicionar sem preco NAO conta -- senao "Corrigir precos reais" ficaria
+  // permanentemente bloqueado num valor apenas aproximado.
+  const priceManuallyEdited = body.data.priceManuallyEdited === true;
 
   const [row] = await db
     .insert(portfolioPurchasesTable)
