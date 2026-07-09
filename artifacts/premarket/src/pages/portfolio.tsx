@@ -1599,20 +1599,29 @@ export default function PortfolioPage() {
               <span className="text-xs font-mono text-primary uppercase tracking-wide">Patrimônio total</span>
               <Wallet className="h-4 w-4 text-primary" />
             </div>
-            <div className="text-xl font-bold font-mono tabular-nums text-primary">
-              {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash + totalDividends)}
-            </div>
-            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
-              {hasPrices ? (
-                <>
-                  ações {fmt$(totals.stocksCurrent)}
-                  {totals.etfsCurrent > 0 ? ` + ETFs ${fmt$(totals.etfsCurrent)}` : ""}
-                  {" + caixa "}{fmt$(cash)}
-                </>
-              ) : (
-                <>caixa {fmt$(cash)}</>
-              )}
-              {totalDividends > 0 ? ` + dividendos ${fmt$(totalDividends)}` : ""}
+            <div className="font-mono tabular-nums space-y-0.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Ações</span>
+                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.stocksCurrent) : "—"}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">ETFs</span>
+                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.etfsCurrent) : "—"}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Dividendos</span>
+                <span className="text-xl font-bold">{fmt$(totalDividends)}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Caixa</span>
+                <span className="text-xl font-bold">{fmt$(cash)}</span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2 border-t border-primary/30 pt-1 mt-1">
+                <span className="text-[10px] text-primary uppercase tracking-wide">Total</span>
+                <span className="text-xl font-bold text-primary">
+                  {hasPrices && totals.current > 0 ? fmt$(netWorth) : fmt$(cash + totalDividends)}
+                </span>
+              </div>
             </div>
             {hasBrl && (
               <div className={cn("text-[10px] font-mono mt-0.5", fxRate ? "text-muted-foreground" : "text-yellow-400")}>
