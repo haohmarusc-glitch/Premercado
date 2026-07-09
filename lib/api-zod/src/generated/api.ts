@@ -659,6 +659,7 @@ export const CreatePortfolioPurchaseBody = zod.object({
   "purchaseDate": zod.string(),
   "amount": zod.number().gt(createPortfolioPurchaseBodyAmountExclusiveMin),
   "purchasePrice": zod.number().nullish(),
+  "priceManuallyEdited": zod.boolean().optional(),
   "saleDate": zod.string().nullish(),
   "salePrice": zod.number().nullish()
 })

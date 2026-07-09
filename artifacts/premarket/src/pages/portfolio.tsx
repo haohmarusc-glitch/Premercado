@@ -468,7 +468,11 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
   const [addOpen, setAddOpen] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState("");
   const [purchasePrice, setPurchasePrice] = useState("");
+  const [purchaseQty, setPurchaseQty] = useState("");
   const [amount, setAmount] = useState("");
+  // Qual campo o usuario preencheu por ultimo (preco x quantidade) -- decide
+  // qual e' a fonte de verdade ao salvar. null = nenhum (usa estimativa).
+  const [addLastField, setAddLastField] = useState<"price" | "qty" | null>(null);
 
   const [saleOpen, setSaleOpen] = useState(false);
   const [salePurchaseId, setSalePurchaseId] = useState<number | null>(null);
@@ -479,6 +483,8 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
   const [editPurchaseId, setEditPurchaseId] = useState<number | null>(null);
   const [editAmount, setEditAmount] = useState("");
   const [editPrice, setEditPrice] = useState("");
+  const [editQty, setEditQty] = useState("");
+  const [editLastField, setEditLastField] = useState<"price" | "qty">("price");
   const [editSaving, setEditSaving] = useState(false);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(positionId) });
@@ -492,8 +498,22 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
 
   const handleAdd = async () => {
     if (!purchaseDate || !amount) return;
-    // Se o preço não foi informado, busca o fechamento real da data (yfinance)
-    let price = purchasePrice ? parseFloat(purchasePrice) : null;
+    const amt = parseFloat(amount);
+    // Fonte de verdade: se o usuário informou a quantidade da corretora, o
+    // preço exato é amount/quantidade; se informou o preço, usa direto. Em
+    // ambos os casos é um dado real, então marca priceManuallyEdited para
+    // "Corrigir preços reais" não sobrescrever depois.
+    let price: number | null = null;
+    let manual = false;
+    if (addLastField === "qty" && purchaseQty) {
+      const q = parseFloat(purchaseQty);
+      if (q > 0) { price = amt / q; manual = true; }
+    } else if (purchasePrice) {
+      price = parseFloat(purchasePrice);
+      manual = true;
+    }
+    // Sem preço nem quantidade informados: busca o fechamento estimado da data
+    // (yfinance). Fica corrigível pelo backfill -- não é dado real da corretora.
     if (price == null) {
       try {
         const r = await fetch(`/api/portfolio/historical-price?ticker=${encodeURIComponent(ticker)}&date=${purchaseDate}`, { credentials: "include" });
@@ -502,9 +522,9 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       } catch { /* segue sem preço */ }
     }
     createPurchase.mutate(
-      { id: positionId, data: { purchaseDate, amount: parseFloat(amount), purchasePrice: price } },
+      { id: positionId, data: { purchaseDate, amount: amt, purchasePrice: price, priceManuallyEdited: manual } },
       {
-        onSuccess: () => { invalidate(); setAddOpen(false); setPurchaseDate(""); setPurchasePrice(""); setAmount(""); },
+        onSuccess: () => { invalidate(); setAddOpen(false); setPurchaseDate(""); setPurchasePrice(""); setPurchaseQty(""); setAmount(""); setAddLastField(null); },
         onError: () => toast({ variant: "destructive", title: "Erro ao adicionar compra" }),
       },
     );
@@ -543,19 +563,31 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
     setEditPurchaseId(purchase.id);
     setEditAmount(String(purchase.amount));
     setEditPrice(purchase.purchasePrice != null ? String(purchase.purchasePrice) : "");
+    setEditQty(purchase.purchasePrice && purchase.amount ? String(purchase.amount / purchase.purchasePrice) : "");
+    setEditLastField("price");
     setEditOpen(true);
   };
 
   const handleEditSave = async () => {
     if (!editPurchaseId || !editAmount) return;
+    // Se o usuário digitou a quantidade da corretora, o preço exato é
+    // amount/quantidade; senão usa o preço digitado.
+    const amt = parseFloat(editAmount);
+    let price: number | null = null;
+    if (editLastField === "qty" && editQty) {
+      const q = parseFloat(editQty);
+      price = q > 0 ? amt / q : null;
+    } else {
+      price = editPrice ? parseFloat(editPrice) : null;
+    }
     setEditSaving(true);
     try {
       const r = await fetch(`/api/portfolio/purchases/${editPurchaseId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: parseFloat(editAmount),
-          purchasePrice: editPrice ? parseFloat(editPrice) : null,
+          amount: amt,
+          purchasePrice: price,
         }),
         credentials: "include",
       });
@@ -855,13 +887,39 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
               <Input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="font-mono text-xs h-8" />
             </div>
             <div>
-              <Label className="text-xs font-mono">Preço no dia da compra ($)</Label>
-              <Input type="number" placeholder="865.00" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} className="font-mono text-xs h-8" />
-            </div>
-            <div>
               <Label className="text-xs font-mono">Total investido ($)</Label>
               <Input type="number" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="font-mono text-xs h-8" />
             </div>
+            <div>
+              <Label className="text-xs font-mono">Quantidade (corretora)</Label>
+              <Input type="number" placeholder="0.00000" value={purchaseQty} onChange={(e) => { setPurchaseQty(e.target.value); setAddLastField("qty"); }} className="font-mono text-xs h-8" />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">ou Preço no dia da compra ($)</Label>
+              <Input type="number" placeholder="865.00" value={purchasePrice} onChange={(e) => { setPurchasePrice(e.target.value); setAddLastField("price"); }} className="font-mono text-xs h-8" />
+            </div>
+            {(() => {
+              const amt = parseFloat(amount);
+              let price: number | null = null;
+              let qty: number | null = null;
+              if (addLastField === "qty" && parseFloat(purchaseQty) > 0) {
+                qty = parseFloat(purchaseQty);
+                price = amt > 0 ? amt / qty : null;
+              } else if (parseFloat(purchasePrice) > 0) {
+                price = parseFloat(purchasePrice);
+                qty = amt > 0 ? amt / price : null;
+              }
+              return price != null && qty != null ? (
+                <div className="rounded border border-border bg-muted/20 px-3 py-2 space-y-1 font-mono text-xs">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Preço</span><span className="font-semibold">${price.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Qtde</span><span className="font-semibold">{qty.toFixed(5)}</span></div>
+                </div>
+              ) : (
+                <p className="text-[10px] text-muted-foreground font-mono leading-tight">
+                  Informe a quantidade da corretora (recomendado) ou o preço. Deixe ambos em branco para estimar pelo fechamento do dia.
+                </p>
+              );
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} className="font-mono text-xs">Cancelar</Button>
@@ -938,20 +996,34 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
               <Input type="number" placeholder="0.00" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} className="font-mono text-xs h-8" />
             </div>
             <div>
-              <Label className="text-xs font-mono">Preço de compra real ($)</Label>
-              <Input type="number" placeholder="0.00" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} className="font-mono text-xs h-8" />
+              <Label className="text-xs font-mono">Quantidade (corretora)</Label>
+              <Input type="number" placeholder="0.00000" value={editQty} onChange={(e) => { setEditQty(e.target.value); setEditLastField("qty"); }} className="font-mono text-xs h-8" />
+            </div>
+            <div>
+              <Label className="text-xs font-mono">ou Preço de compra real ($)</Label>
+              <Input type="number" placeholder="0.00" value={editPrice} onChange={(e) => { setEditPrice(e.target.value); setEditLastField("price"); }} className="font-mono text-xs h-8" />
             </div>
             {(() => {
               const amt = parseFloat(editAmount);
-              const price = parseFloat(editPrice);
-              const qty = amt > 0 && price > 0 ? amt / price : null;
-              return qty != null ? (
-                <div className="rounded border border-border bg-muted/20 px-3 py-2 flex justify-between font-mono text-xs">
-                  <span className="text-muted-foreground">Qtde resultante</span>
-                  <span className="font-semibold">{qty.toFixed(5)}</span>
+              let price: number | null = null;
+              let qty: number | null = null;
+              if (editLastField === "qty" && parseFloat(editQty) > 0) {
+                qty = parseFloat(editQty);
+                price = amt > 0 ? amt / qty : null;
+              } else if (parseFloat(editPrice) > 0) {
+                price = parseFloat(editPrice);
+                qty = amt > 0 ? amt / price : null;
+              }
+              return price != null && qty != null ? (
+                <div className="rounded border border-border bg-muted/20 px-3 py-2 space-y-1 font-mono text-xs">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Preço</span><span className="font-semibold">${price.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Qtde</span><span className="font-semibold">{qty.toFixed(5)}</span></div>
                 </div>
               ) : null;
             })()}
+            <p className="text-[10px] text-muted-foreground font-mono leading-tight">
+              Dica: digite a <span className="text-foreground">Quantidade</span> exatamente como aparece na corretora — o preço exato é calculado a partir do valor investido.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setEditOpen(false)} className="font-mono text-xs">Cancelar</Button>

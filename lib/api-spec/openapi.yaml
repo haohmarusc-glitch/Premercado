@@ -1507,6 +1507,7 @@ components:
         purchaseDate: { type: string }
         amount: { type: number, exclusiveMinimum: 0 }
         purchasePrice: { type: ["number", "null"] }
+        priceManuallyEdited: { type: boolean }
         saleDate: { type: ["string", "null"] }
         salePrice: { type: ["number", "null"] }
 
