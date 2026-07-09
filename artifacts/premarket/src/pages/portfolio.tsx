@@ -143,14 +143,16 @@ function parseAlertPcts(s: string): number[] {
 // não conta como investido.
 type CashByMode = { real: number; simulated: number };
 
-async function fetchCash(): Promise<CashByMode> {
+// Retorna null em caso de falha -- NUNCA um zero substituto, pra não arriscar
+// sobrescrever visualmente um saldo real por uma falha transitória de rede.
+async function fetchCash(): Promise<CashByMode | null> {
   try {
     const r = await fetch("/api/portfolio/cash", { credentials: "include" });
-    if (!r.ok) return { real: 0, simulated: 0 };
+    if (!r.ok) return null;
     const d = await r.json();
     return { real: Number(d.real ?? 0), simulated: Number(d.simulated ?? 0) };
   } catch {
-    return { real: 0, simulated: 0 };
+    return null;
   }
 }
 
@@ -1299,16 +1301,29 @@ export default function PortfolioPage() {
 
   // Caixa disponível (USD não investido) — persistido no banco por modo
   const [cashByMode, setCashByMode] = useState<CashByMode>({ real: 0, simulated: 0 });
+  const [cashLoadFailed, setCashLoadFailed] = useState(false);
   const [editingCash, setEditingCash] = useState(false);
   const [cashDraft, setCashDraft] = useState("");
-  useEffect(() => { fetchCash().then(setCashByMode); }, []);
+  useEffect(() => {
+    fetchCash().then((c) => {
+      if (c) setCashByMode(c);
+      else setCashLoadFailed(true);
+    });
+  }, []);
   const [fxRate, setFxRate] = useState<number | null>(null);
   useEffect(() => { fetchFxRate().then(setFxRate); }, []);
   useEffect(() => { setEditingCash(false); }, [mode]);
   const cash = mode === "real" ? cashByMode.real : cashByMode.simulated;
   const commitCash = async () => {
+    // Campo vazio/inválido: cancela sem salvar, em vez de zerar o saldo real
+    // por engano (ex.: campo limpo sem querer antes de confirmar).
+    if (cashDraft.trim() === "") { setEditingCash(false); return; }
     const n = parseFloat(cashDraft);
-    const val = isNaN(n) || n < 0 ? 0 : n;
+    if (isNaN(n) || n < 0) {
+      toast({ variant: "destructive", title: "Valor de caixa inválido", description: "Nada foi salvo." });
+      return;
+    }
+    const val = n;
     setCashByMode((prev) => ({ ...prev, [mode]: val }));
     setEditingCash(false);
     try {
@@ -1319,7 +1334,7 @@ export default function PortfolioPage() {
         title: "Erro ao salvar caixa",
         description: e instanceof Error ? e.message : undefined,
       });
-      fetchCash().then(setCashByMode);
+      fetchCash().then((c) => { if (c) setCashByMode(c); });
     }
   };
 
@@ -1590,6 +1605,11 @@ export default function PortfolioPage() {
             ) : (
               <div className="text-xl font-bold font-mono tabular-nums">{fmt$(cash)}</div>
             )}
+            {cashLoadFailed && !editingCash && (
+              <div className="text-[10px] font-mono text-yellow-400 mt-0.5">
+                Falha ao carregar o caixa salvo — recarregue a página antes de editar.
+              </div>
+            )}
           </CardContent>
         </Card>
         {/* Patrimônio total = valor atual + caixa */}
@@ -1835,6 +1855,12 @@ export default function PortfolioPage() {
                             {hasPrice ? fmtPct(pnlPct) : "—"}
                           </div>
                         </div>
+                        {pos.dividends > 0 && (
+                          <div>
+                            <div className="text-muted-foreground text-[10px] uppercase">Dividendos</div>
+                            <div className="font-semibold text-green-400 tabular-nums">+{fmtMoney(pos.dividends, isBrl)}</div>
+                          </div>
+                        )}
                       </div>
 
                       {(downAlert != null || upAlert != null || weight > 0) && (
@@ -1874,6 +1900,7 @@ export default function PortfolioPage() {
                 <th className="text-right pr-3">P&amp;L $</th>
                 <th className="text-right pr-3">P&amp;L %</th>
                 <th className="text-right pr-3">Peso</th>
+                <th className="text-right pr-3">Dividendos</th>
                 <th className="text-right pr-3">Alertas</th>
                 <th className="text-right pr-3" />
               </tr>
@@ -1881,14 +1908,14 @@ export default function PortfolioPage() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={15} className="py-10 text-center text-muted-foreground">
+                  <td colSpan={16} className="py-10 text-center text-muted-foreground">
                     Carregando...
                   </td>
                 </tr>
               )}
               {!isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="py-10 text-center text-muted-foreground">
+                  <td colSpan={14} className="py-10 text-center text-muted-foreground">
                     Nenhuma posição cadastrada.
                   </td>
                 </tr>
@@ -1977,6 +2004,9 @@ export default function PortfolioPage() {
                     </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">
                       {weight.toFixed(1)}%
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-green-400">
+                      {pos.dividends > 0 ? `+${fmtMoney(pos.dividends, isBrl)}` : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="py-2.5 pr-3 text-right">
                       <div className="flex items-center justify-end gap-1">
