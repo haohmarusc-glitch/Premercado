@@ -188,7 +188,7 @@ export function CandleChart({ candles, height = 200, labelFor, markers }: Candle
       {/* Headline do marcador tocado */}
       {openMarker != null && markerDots[openMarker] && (
         <div
-          className="absolute bottom-7 left-1 right-1 z-20 rounded-md border px-3 py-2 font-mono text-[11px] leading-4"
+          className="absolute bottom-7 left-1 right-1 z-20 rounded-md border px-3 py-2.5 font-mono text-sm leading-snug"
           style={{ background: "hsl(var(--card))", borderColor: "hsl(var(--border))" }}
           onClick={() => setOpenMarker(null)}
         >
