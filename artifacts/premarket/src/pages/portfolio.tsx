@@ -428,21 +428,21 @@ function PriceChart({ ticker }: { ticker: string }) {
       {/* Caixa de notícias — abre ao tocar no marcador amarelo. Fica aberta até
           fechar (ao contrário do tooltip de hover, que some no celular). */}
       <Dialog open={activeNews != null} onOpenChange={(o) => { if (!o) setActiveNews(null); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-mono text-sm">📰 Notícias — {ticker}</DialogTitle>
+            <DialogTitle className="font-mono text-base">📰 Notícias — {ticker}</DialogTitle>
           </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+          <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
             {(activeNews ?? []).map((n, i) => (
-              <div key={i} className="border-b border-border/40 pb-2 last:border-0 last:pb-0">
-                <p className="text-xs font-semibold text-foreground leading-snug">{n.title}</p>
+              <div key={i} className="border-b border-border/40 pb-3 last:border-0 last:pb-0">
+                <p className="text-sm font-semibold text-foreground leading-snug">{n.title}</p>
                 {(n.source || fmtNewsDate(n.published)) && (
-                  <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                  <p className="text-xs text-muted-foreground font-mono mt-1">
                     {[n.source, fmtNewsDate(n.published)].filter(Boolean).join(" · ")}
                   </p>
                 )}
                 {n.summary && (
-                  <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{n.summary}</p>
+                  <p className="text-sm text-muted-foreground mt-1.5 leading-snug">{n.summary}</p>
                 )}
               </div>
             ))}
