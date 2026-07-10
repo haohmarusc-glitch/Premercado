@@ -1642,11 +1642,11 @@ export default function PortfolioPage() {
             <div className="font-mono tabular-nums space-y-0.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Ações</span>
-                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.stocksCurrent) : "—"}</span>
+                <span className="text-xl font-bold">{hasPrices && totals.current > 0 ? fmt$(totals.stocksCurrent) : "—"}</span>
               </div>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">ETFs</span>
-                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.etfsCurrent) : "—"}</span>
+                <span className="text-xl font-bold">{hasPrices && totals.current > 0 ? fmt$(totals.etfsCurrent) : "—"}</span>
               </div>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Dividendos</span>
@@ -1733,18 +1733,18 @@ export default function PortfolioPage() {
               <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L total ($)</span>
             </div>
             <div className={cn("text-xl font-bold font-mono tabular-nums",
-              hasPrices
+              hasPrices && totals.current > 0
                 ? combinedPnl >= 0 ? "text-green-400" : "text-red-400"
                 : ""
             )}>
-              {hasPrices
+              {hasPrices && totals.current > 0
                 ? `${combinedPnl >= 0 ? "+" : "-"}${fmt$(combinedPnl)}`
                 : "—"}
             </div>
             <div className={cn("text-[10px] font-mono mt-0.5",
-              hasPrices ? (combinedPnlPct >= 0 ? "text-green-400" : "text-red-400") : "text-muted-foreground"
+              hasPrices && totals.current > 0 ? (combinedPnlPct >= 0 ? "text-green-400" : "text-red-400") : "text-muted-foreground"
             )}>
-              {hasPrices ? fmtPct(combinedPnlPct) : ""}
+              {hasPrices && totals.current > 0 ? fmtPct(combinedPnlPct) : ""}
             </div>
           </CardContent>
         </Card>
