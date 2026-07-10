@@ -1131,8 +1131,28 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
     }
 
     if (editing) {
+      // Envia SOMENTE os campos que o usuário alterou em relação ao estado
+      // com que o formulário abriu. Mandar o payload inteiro fazia um form
+      // semeado com dados velhos (ex.: cache) sobrescrever campos que o
+      // usuário nem tocou — ETF/dividendos "sumindo" ao salvar outra coisa.
+      const orig = posToForm(editing);
+      const diff: Record<string, unknown> = {};
+      if (form.ticker.trim().toUpperCase() !== orig.ticker.trim().toUpperCase()) diff.ticker = payload.ticker;
+      if (form.quantity !== orig.quantity) diff.quantity = payload.quantity;
+      if (form.avgCost !== orig.avgCost) diff.avgCost = payload.avgCost;
+      if (form.investedAmount !== orig.investedAmount) diff.investedAmount = payload.investedAmount;
+      if (form.dividends !== orig.dividends) diff.dividends = payload.dividends;
+      if (form.isEtf !== orig.isEtf) diff.isEtf = payload.isEtf;
+      if (form.firstPurchaseDate !== orig.firstPurchaseDate) diff.firstPurchaseDate = payload.firstPurchaseDate;
+      if (form.notes !== orig.notes) diff.notes = form.notes || undefined;
+      if (form.downAlertPcts !== orig.downAlertPcts) diff.downAlertPcts = payload.downAlertPcts;
+      if (form.upAlertPcts !== orig.upAlertPcts) diff.upAlertPcts = payload.upAlertPcts;
+      if (form.notifyEmail !== orig.notifyEmail && effectiveNotifyEmail.trim()) diff.notifyEmail = effectiveNotifyEmail.trim();
+
+      if (Object.keys(diff).length === 0) { onClose(); return; }
+
       updatePos.mutate(
-        { id: editing.id, data: payload },
+        { id: editing.id, data: diff },
         { onSuccess: () => { onSaved(); onClose(); }, onError: () => toast({ variant: "destructive", title: "Erro ao atualizar posição" }) },
       );
     } else {
@@ -1622,11 +1642,11 @@ export default function PortfolioPage() {
             <div className="font-mono tabular-nums space-y-0.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Ações</span>
-                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.stocksCurrent) : "—"}</span>
+                <span className="text-xl font-bold">{hasPrices && totals.current > 0 ? fmt$(totals.stocksCurrent) : "—"}</span>
               </div>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">ETFs</span>
-                <span className="text-xl font-bold">{hasPrices ? fmt$(totals.etfsCurrent) : "—"}</span>
+                <span className="text-xl font-bold">{hasPrices && totals.current > 0 ? fmt$(totals.etfsCurrent) : "—"}</span>
               </div>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Dividendos</span>
@@ -1713,18 +1733,18 @@ export default function PortfolioPage() {
               <span className="text-xs font-mono text-muted-foreground uppercase tracking-wide">P&amp;L total ($)</span>
             </div>
             <div className={cn("text-xl font-bold font-mono tabular-nums",
-              hasPrices
+              hasPrices && totals.current > 0
                 ? combinedPnl >= 0 ? "text-green-400" : "text-red-400"
                 : ""
             )}>
-              {hasPrices
+              {hasPrices && totals.current > 0
                 ? `${combinedPnl >= 0 ? "+" : "-"}${fmt$(combinedPnl)}`
                 : "—"}
             </div>
             <div className={cn("text-[10px] font-mono mt-0.5",
-              hasPrices ? (combinedPnlPct >= 0 ? "text-green-400" : "text-red-400") : "text-muted-foreground"
+              hasPrices && totals.current > 0 ? (combinedPnlPct >= 0 ? "text-green-400" : "text-red-400") : "text-muted-foreground"
             )}>
-              {hasPrices ? fmtPct(combinedPnlPct) : ""}
+              {hasPrices && totals.current > 0 ? fmtPct(combinedPnlPct) : ""}
             </div>
           </CardContent>
         </Card>
