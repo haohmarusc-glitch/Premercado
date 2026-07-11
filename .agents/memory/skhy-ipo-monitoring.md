@@ -30,3 +30,15 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 ## Cuidado se adicionar SKHY a settings.tickers
 
 SKHY é "foreign private issuer" — pode arquivar 20-F em vez de 10-K na SEC EDGAR. Antes de adicionar SKHY a `settings.tickers`, confirmar se `get_fundamentals.py` / `TICKER_TO_CIK` (`artifacts/api-server/src/agent/tools.py`) reconhece o CIK e o tipo de filing certo; caso contrário a busca de fundamentos falha silenciosamente ou retorna dados de outro emissor. Ver também `ticker-source-of-truth.md`.
+
+## Plano de swing trade discutido (referência US$1.000, janela 2-4 semanas)
+
+Este plano assume entrada logo na 2ª sessão (segunda-feira, 13/jul), o que **contraria** a recomendação da Fase 1 acima (esperar 5-8 pregões). É uma escolha consciente de tese — documentar aqui para não confundir com a tese de "só observar", que continua sendo a mais conservadora.
+
+- **Gatilho de entrada**: defesa da VWAP intradiária ou rompimento da máxima da 1ª hora, após os primeiros 60-90 min de negociação. `ALERT_INDICATORS` (`artifacts/api-server/src/lib/alert-indicators.ts`) só suporta `price`, `rsi`, `macd`, `sma20`, `sma50` — **VWAP não é automatizável pela tela de Alerts**; esse gatilho exige checagem manual.
+- **Regra de invalidação**: se nenhum gatilho válido se formar até o fechamento de segunda, não forçar entrada — reavaliar terça.
+- **Stop**: usar ATR curto (3-5 candles, proxy provisório) × 1,5-2, não percentual fixo arbitrário — o range do dia 1 ($149-$177) já sugere volatilidade real acima de 8%.
+- **R:R travado antes de entrar**: fixar os dois números (ex.: stop -7% / alvo parcial +14% = 2:1), não faixas soltas.
+- **Position sizing escalonado**: não alocar os US$1.000 inteiros no gatilho de segunda; entrar com ~50% e reservar o resto para confirmação num pullback/rompimento subsequente.
+- **Confirmação setorial**: além de NVDA/SMCI (lado da demanda), incluir MU (Micron) como referência — par mais direto do lado da oferta (mesma tese de memória/HBM) e com histórico completo.
+- **Gate obrigatório de calendário**: reduzir ou zerar a posição remanescente até o fechamento de 28/jul/2026, véspera dos resultados do Q2 + listagem KOSPI simultânea (29/jul) — gap risk duplo que o trailing stop por mínima de 2 pregões não cobre (gap ocorre fora do pregão).
