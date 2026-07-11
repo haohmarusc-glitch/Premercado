@@ -27,9 +27,26 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 - dez/2026: possível inclusão no Nasdaq 100 (rebalanceamento, fluxo passivo)
 - set/2027: elegibilidade para o índice SOX (exige 3 meses listado)
 
-## Cuidado se adicionar SKHY a settings.tickers
+## Adicionar SKHY a settings.tickers
 
-SKHY é "foreign private issuer" — pode arquivar 20-F em vez de 10-K na SEC EDGAR. Antes de adicionar SKHY a `settings.tickers`, confirmar se `get_fundamentals.py` / `TICKER_TO_CIK` (`artifacts/api-server/src/agent/tools.py`) reconhece o CIK e o tipo de filing certo; caso contrário a busca de fundamentos falha silenciosamente ou retorna dados de outro emissor. Ver também `ticker-source-of-truth.md`.
+SKHY é "foreign private issuer" — arquiva 20-F/F-6 em vez de 10-K na SEC EDGAR. CIK confirmado e já adicionado a `TICKER_TO_CIK` (`artifacts/api-server/src/agent/tools.py`): `"SKHY": "0002120882"` (fonte: F-6 da SK hynix Inc. em sec.gov/Archives/edgar/data/2120882/...). Com isso, `search_edgar_filings` já resolve o CIK certo — o único filing esperado por enquanto é o F-6 de registro do ADR, não um 20-F anual ainda. `get_fundamentals.py` (short interest/analyst ratings via yfinance) não depende de CIK, então já funcionava independente disso.
+
+Para adicionar de fato o ticker: `settings.tickers` **não é uma tabela** — é uma coluna array de texto na linha única de `settingsTable` (`lib/db/src/schema/premarket.ts`). Não crie uma tabela `tickers`; edite via `PATCH /settings` (tela de Settings) ou a query `UPDATE settings SET tickers = array_append(tickers, 'SKHY')`.
+
+## Alertas de preço sugeridos (via tela de Alerts / POST /alerts)
+
+`alertsTable` só tem `symbol`, `indicator` (`price`/`rsi`/`macd`/`sma20`/`sma50`, minúsculo), `condition` (`above`/`below`, minúsculo), `thresholdPct`/`thresholdPrice`/`thresholdValue` e `notifyEmail` — **não existe campo de label/descrição livre**; o disparo aparece só como símbolo+condição+valor. Os 4 alertas de referência do plano de swing trade (ver seção acima), traduzidos pro schema real:
+
+| symbol | indicator | condition | thresholdPrice | significado (não fica salvo, só pra referência) |
+|---|---|---|---|---|
+| SKHY | price | below | 149.00 | invalidação de tese — perda do preço de oferta |
+| SKHY | price | above | 177.00 | rompimento da máxima do dia 1 |
+| SKHY | price | below | 163.00 | zona de entrada primária (pullback) — confirmar volume manualmente |
+| SKHY | price | above | 185.00 | alvo parcial — cenário bull |
+
+Criar direto na tela de Alerts (ou `POST /alerts` com esse payload) é mais simples e seguro do que um script de seed: evita duplicar a lógica de resolução de `notifyEmail`/`userId` que a API já faz, e não depende de acesso direto ao Postgres de produção (que este ambiente de código não tem — só o Replit do usuário tem `DATABASE_URL`).
+
+**Não existe tabela `tickerEvents`** no schema — o marcador de conversão SKHYV→SKHY em 13/jul/2026 fica só documentado aqui mesmo (seção "Contexto" acima); criar uma tabela nova só para esse marcador único seria escopo desnecessário.
 
 ## Plano de swing trade discutido (referência US$1.000, janela 2-4 semanas)
 

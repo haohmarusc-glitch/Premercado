@@ -151,6 +151,8 @@ TICKER_TO_CIK = {
     "ABBV": "0001551152",
     "MRK": "0000310158",
     "PFE": "0000078003",
+    # IPO 10/jul/2026 na Nasdaq (ADR); foreign private issuer, arquiva 20-F/F-6
+    "SKHY": "0002120882",
 }
 
 
