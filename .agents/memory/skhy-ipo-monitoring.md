@@ -24,8 +24,21 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 ## Catalisadores no calendário
 
 - 29/jul/2026: resultados Q2 2026 (receita esperada ~82,46 tri won vs 52,58 tri no Q1) + listagem das ordinárias na KOSPI no mesmo dia
+- **~4/ago/2026 (estimado): fim do quiet period** (~25 dias corridos após a precificação de 10/jul). Historicamente 76-87% das coberturas de analistas iniciadas nessa janela são "compra"/"compra forte" e podem mover o papel +5% a +10% — mas é viés estrutural conhecido (os próprios bancos coordenadores do IPO iniciam cobertura otimista), não confirmação técnica real. Ver seção de pesquisa abaixo.
+- **Expiração do lock-up — data exata não confirmada, checar prospecto F-1/424B4**: padrão de mercado é 90 ou 180 dias após o IPO, ou seja, entre **~out/2026 e ~jan/2027**. É quando Baillie Gifford, Coatue, Situational Awareness Partners e demais cornerstone investors ficam livres para vender — tende a criar pressão de venda antes/durante e, historicamente, um ponto de entrada melhor 4-7 meses após o IPO (depois que essa pressão já ocorreu).
 - dez/2026: possível inclusão no Nasdaq 100 (rebalanceamento, fluxo passivo)
 - set/2027: elegibilidade para o índice SOX (exige 3 meses listado)
+
+## O que a pesquisa acadêmica diz sobre estratégia de IPO (aplicado à SKHY)
+
+Pesquisa de mercado (Renaissance Capital, Ritter/Bradley, Michaely & Womack) reforça a tese conservadora já documentada acima, com dados concretos:
+
+- **Comprar no pop de abertura tem histórico ruim**: o pop do dia 1 (SKHY: +13%, ~+18,8% é a média histórica de IPOs) beneficia quase só quem recebeu ações no preço de oferta (cornerstone investors), não quem compra no mercado aberto. Ritter (1.526 IPOs, 1975-1984) mediu underperformance de ~27% em 3 anos vs. empresas comparáveis do mesmo setor/tamanho — ou seja, o retail que compra no pop historicamente compra no pior ponto relativo.
+- **O rali do fim do quiet period é enviesado, não é sinal técnico**: 87% das primeiras recomendações de analistas no fim do quiet period são "compra"/"compra forte" (Michaely & Womack, 1999) — parcialmente porque os bancos que fizeram o underwriting do IPO iniciam cobertura via seus próprios analistas. Um rali nessa janela não deve ser tratado como confirmação de tese, só como ruído de fluxo esperado.
+- **A melhor janela de entrada, segundo esses dados, é pós-lock-up (4-7 meses após o IPO)**, não a primeira semana — reforça a Fase 1 (observação) e sugere que, mesmo depois da Fase 2, vale reavaliar a tese com mais rigor perto da expiração do lock-up em vez de assumir que "mais dados técnicos" = "mais seguro".
+- Recomendação recorrente da pesquisa, independente do ativo: **posição pequena, entender a mecânica de quiet period/lock-up, e dizer não com mais frequência do que sim** — já alinhado com o position sizing escalonado e os gates de calendário documentados no plano de swing trade abaixo.
+
+Fontes: [Renaissance Capital — IPO Timing](https://ipopro.renaissancecapital.com/IPO-University/IPO-Timing), [LongYield — Should You Buy a Stock on IPO Day?](https://longyield.substack.com/p/should-you-buy-a-stock-on-ipo-day), [The IPO Quiet Period Revisited (Bradley)](https://site.warrington.ufl.edu/ritter/files/2016/01/The-IPO-Quiet-Period-Revisited-2004-02.pdf), [NBER — A Review of IPO Activity, Pricing, and Allocations](https://www.nber.org/system/files/working_papers/w8805/w8805.pdf)
 
 ## Adicionar SKHY a settings.tickers
 
