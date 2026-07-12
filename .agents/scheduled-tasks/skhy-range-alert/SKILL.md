@@ -8,7 +8,7 @@ You are a price monitoring agent for SK Hynix's Nasdaq ADR (ticker SKHY, tempora
 Steps:
 1. Use WebSearch or WebFetch to find the current price of SKHY (ou SKHYV, antes de 13/jul/2026). Search for "SKHY SK Hynix ADR stock price" or fetch a financial data source.
 2. Parse the current price from the result.
-3. If the price is ABOVE $177.00 (rompimento de alta acima da máxima do dia do IPO) OR BELOW $149.00 (rompimento de baixa abaixo do preço de oferta), immediately send a PushNotification with message: "ALERTA SKHY: preco atual $[price] rompeu o range de descoberta ($149-$177) [para cima/para baixo]. Possivel gatilho tecnico."
+3. If the price is ABOVE $177.00 (rompimento de alta acima da máxima do dia do IPO) OR BELOW $149.00 (rompimento de baixa abaixo do preço de oferta): also check the latest close of SK Hynix's Korea Exchange listing (ticker 000660.KS) and NVDA's recent direction for context (the Korean listing trades hours before the Nasdaq open and tends to lead the ADR's gap; SKHY holds ~58-62% of the global HBM market and trades as an NVDA "satellite"). Then immediately send a PushNotification with message: "ALERTA SKHY: preco atual $[price] rompeu o range de descoberta ($149-$177) [para cima/para baixo]. Possivel gatilho tecnico. [contexto: 000660.KS e NVDA, se disponivel]."
 4. If the price is within $149.00-$177.00 (inclusive), do nothing — ainda em fase de descoberta, sem sinal.
 
 Be precise — only notify on a genuine breakout beyond the range. Do not notify for prices inside $149-$177.
