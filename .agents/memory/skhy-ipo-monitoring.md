@@ -8,9 +8,11 @@ description: SK Hynix (SKHY) estreou em 10/jul/2026 sem histórico de preços; S
 ## Contexto
 
 - IPO/estreia: 10/jul/2026, ticker temporário SKHYV até 13/jul/2026 (regular trading passa a ser sob SKHY)
-- Preço de oferta do ADR: $149; fechou o 1º dia em $168,01 (+13%), máxima intraday ~$177
+- Preço de oferta do ADR: $149; abriu a $170, fechou o 1º dia em $168,01 (+13%). Range intraday real do dia 1: **mínima $166,19 / máxima $177,00** — nunca testou o preço de oferta ($149) intraday.
 - Liquidação do ADR: 14/jul/2026. Listagem das ações ordinárias na KOSPI: 29/jul/2026 (mesmo dia dos resultados do Q2 2026)
-- Cada ADR representa fração da ação coreana (~1:10)
+- Cada ADR representa fração da ação coreana (~1:10). HSBC espera um prêmio permanente do ADR de **~20% sobre a ação doméstica coreana** (000660.KS) — útil pra calibrar se o preço "faz sentido" vs. o ativo original.
+- Market share de HBM confirmado no filing da SEC: **56,4%** (não os 58-62% estimados antes — esse número é mais preciso, direto do documento oficial)
+- Opções sobre SKHY começam a negociar **terça 14/jul/2026** (2 dias úteis após o debut de sexta 10/jul) — nenhuma opção disponível no dia 1 nem no dia 2 (13/jul)
 
 ## Por que os indicadores técnicos ficam null
 
@@ -32,9 +34,37 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 ## Sinais de pré-mercado: KRX (000660.KS) e correlação com NVDA
 
 - **A ação original negocia na Korea Exchange sob o ticker `000660.KS`** (fetchável via yfinance, mesma lib já usada no projeto — `yf.Ticker("000660.KS")`). O pregão coreano funciona enquanto os EUA dormem, então o movimento overnight de `000660.KS` tende a antecipar o gap de abertura do ADR na Nasdaq — vale checar o fechamento coreano mais recente antes de decidir sobre o gatilho de entrada do dia.
-- **Correlação com NVDA**: SK Hynix detém ~58-62% do mercado global de HBM (memória usada nos aceleradores de IA da Nvidia) — a companhia tende a negociar como "satélite" da NVDA. Reforça o que já está na seção de confirmação setorial abaixo: usar NVDA (além de MU/SMCI) como confirmação de fluxo antes de entrar, não só o gráfico isolado da SKHY.
+- **Correlação com NVDA**: SK Hynix detém 56,4% do mercado global de HBM (filing da SEC) (memória usada nos aceleradores de IA da Nvidia) — a companhia tende a negociar como "satélite" da NVDA. Reforça o que já está na seção de confirmação setorial abaixo: usar NVDA (além de MU/SMCI) como confirmação de fluxo antes de entrar, não só o gráfico isolado da SKHY.
 - **Risco de "sell the news"**: a ação subiu fortemente na Coreia antes da listagem (dado de mercado: ~640% em 12 meses até o pico de 25/jun/2026, ~₩2.987.000; fechou em ~₩2.180.000 em 10/jul/2026 — já em correção desde o pico, consistente com a queda de 18% nas duas semanas pré-IPO já documentada no Contexto). A listagem nos EUA traz liquidez extra que pode ser justamente a janela que fundos asiáticos usam para realizar lucro, não necessariamente sinal de confiança no ADR.
 - **Refinamento da regra de horário**: além de aguardar os 60-90 min iniciais (já documentado no plano de swing trade), **evitar especificamente ordens a mercado nos primeiros 15 minutos do pregão** — é quando a volatilidade de saída de posições (se houver realização de lucro dos fundos asiáticos) é mais agressiva. Usar ordem limitada mesmo depois da janela de observação.
+
+## ETFs alavancados sobre SKHY — pelo menos 6 produtos, 3 emissoras, na 1ª semana
+
+Pelo menos 6 ETFs alavancados/inversos sobre a ADR da SKHY estão sendo lançados por 3 emissoras diferentes na primeira semana pós-IPO — um volume de lançamentos incomum pra uma ação com 2-3 dias de histórico:
+
+- **SKUU (2x long) / SKDD (-2x short)** — GraniteShares, estreiam **segunda 13/jul/2026**
+- **SKHX (2x long) / SKHZ (1x short)** — Leverage Shares, estreiam **terça 14/jul/2026**
+- Produtos adicionais de ProShares/Rex Shares na mesma semana (tickers ainda não confirmados)
+
+**Por que isso importa pro day trade**: um estudo (ETF Stream) mediu que o rebalanceamento diário desses ETFs alavancados de ação única contribui com **14,0 pontos percentuais de volatilidade pra SK Hynix**, contra 7,9 pontos pra Samsung — a diferença é liquidez mais rasa da SK Hynix. Esse rebalanceamento se concentra tipicamente nos **últimos 15-40 minutos do pregão** (padrão conhecido de produtos como TQQQ/SQQQ, TSLL/TSLQ). Com 4-6 produtos desses estreando na mesma semana que a própria ação ainda está no dia 2-3 de negociação, é fluxo mecânico extra empilhado em cima de um book já raso e sem profundidade histórica.
+
+**Regra prática**: zerar qualquer posição de day trade até **15h30-15h45 ET**, antes da janela de rebalanceamento — não segurar posição até o fechamento nos primeiros dias enquanto esses ETFs ainda não têm padrão conhecido de comportamento na SKHY especificamente. Também vale desconfiar de sinais de volume nos primeiros dias desses ETFs: parte do volume vem de criação/resgate de cotas e hedge inicial dos market makers, não de convicção direcional.
+
+Fontes: [TradingKey — SK Hynix US Listing Sparks Leveraged ETF Boom](https://www.tradingkey.com/analysis/stocks/us-stocks/262022210-skhynix-samsung-mu-sdnk-tradingkey), [GraniteShares — SK Hynix Leveraged ETFs](https://graniteshares.com/sk-hynix-leveraged-etfs/), [ETF Stream — Leveraged single stock chipmaker ETFs create volatility feedback loop](https://www.etfstream.com/articles/leveraged-single-stock-chipmaker-etfs-mechanically-create-market-volatility)
+
+## Risco de desvio de capital: MU → SKHY
+
+Parte do capital institucional alocado no setor de memória pode migrar de MU pra SKHY agora que ela lista direto nos EUA (fluxo antes represado por acesso só via ADR de balcão ou ação coreana). Isso pode **enfraquecer ou até inverter** a correlação MU-SKHY que o plano de swing trade usa como confirmação setorial — vale checar se MU passa a andar *contra* SKHY em vez de junto, especialmente nas primeiras semanas, antes de confiar cegamente em MU como sinal de confirmação.
+
+## Day trade — padrões históricos de IPO aplicados à SKHY
+
+Pesquisa sobre os primeiros dias de negociação de IPOs em geral:
+
+- **Preço de abertura costuma ser mais forte nos dias 1 e 2**, com declínio consistente só a partir do dia 3 — o breakeven médio contra o preço de oferta leva ~11 dias. Ou seja, o dia 2 (13/jul) ainda está, estatisticamente, dentro da janela "forte" do IPO, não da fase de enfraquecimento típica.
+- **Flippers (quem vendeu no 1º dia) respondem por só ~15% do volume** — menos do que o senso comum sugere; a maior parte do volume vem de reposicionamento normal de mercado.
+- Estrutura recomendada pra day trade num ativo assim (metodologia ORB — Opening Range Breakout, padrão de mercado, não específico da SKHY): definir o range dos primeiros 15-30 min do pregão, não operar dentro dessa janela, entrar só no rompimento do range com volume ≥1,5x a média do próprio range e alinhado com o VWAP intradiário, stop no lado oposto do range.
+
+Fontes: [Who trades IPOs? A close look at the first days of trading](https://www.sciencedirect.com/science/article/abs/pii/S0304405X05001200), [Post-IPO Flipping and Turnover](https://uweb.engr.arizona.edu/~boulat/pdf/IPOs.pdf), [Warrior Trading — Opening Range Breakout](https://www.warriortrading.com/opening-range-breakout/)
 
 ## O que a pesquisa acadêmica diz sobre estratégia de IPO (aplicado à SKHY)
 
