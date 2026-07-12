@@ -29,6 +29,13 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 - dez/2026: possível inclusão no Nasdaq 100 (rebalanceamento, fluxo passivo)
 - set/2027: elegibilidade para o índice SOX (exige 3 meses listado)
 
+## Sinais de pré-mercado: KRX (000660.KS) e correlação com NVDA
+
+- **A ação original negocia na Korea Exchange sob o ticker `000660.KS`** (fetchável via yfinance, mesma lib já usada no projeto — `yf.Ticker("000660.KS")`). O pregão coreano funciona enquanto os EUA dormem, então o movimento overnight de `000660.KS` tende a antecipar o gap de abertura do ADR na Nasdaq — vale checar o fechamento coreano mais recente antes de decidir sobre o gatilho de entrada do dia.
+- **Correlação com NVDA**: SK Hynix detém ~58-62% do mercado global de HBM (memória usada nos aceleradores de IA da Nvidia) — a companhia tende a negociar como "satélite" da NVDA. Reforça o que já está na seção de confirmação setorial abaixo: usar NVDA (além de MU/SMCI) como confirmação de fluxo antes de entrar, não só o gráfico isolado da SKHY.
+- **Risco de "sell the news"**: a ação subiu fortemente na Coreia antes da listagem (dado de mercado: ~640% em 12 meses até o pico de 25/jun/2026, ~₩2.987.000; fechou em ~₩2.180.000 em 10/jul/2026 — já em correção desde o pico, consistente com a queda de 18% nas duas semanas pré-IPO já documentada no Contexto). A listagem nos EUA traz liquidez extra que pode ser justamente a janela que fundos asiáticos usam para realizar lucro, não necessariamente sinal de confiança no ADR.
+- **Refinamento da regra de horário**: além de aguardar os 60-90 min iniciais (já documentado no plano de swing trade), **evitar especificamente ordens a mercado nos primeiros 15 minutos do pregão** — é quando a volatilidade de saída de posições (se houver realização de lucro dos fundos asiáticos) é mais agressiva. Usar ordem limitada mesmo depois da janela de observação.
+
 ## O que a pesquisa acadêmica diz sobre estratégia de IPO (aplicado à SKHY)
 
 Pesquisa de mercado (Renaissance Capital, Ritter/Bradley, Michaely & Womack) reforça a tese conservadora já documentada acima, com dados concretos:
@@ -65,10 +72,11 @@ Criar direto na tela de Alerts (ou `POST /alerts` com esse payload) é mais simp
 
 Este plano assume entrada logo na 2ª sessão (segunda-feira, 13/jul), o que **contraria** a recomendação da Fase 1 acima (esperar 5-8 pregões). É uma escolha consciente de tese — documentar aqui para não confundir com a tese de "só observar", que continua sendo a mais conservadora.
 
-- **Gatilho de entrada**: defesa da VWAP intradiária ou rompimento da máxima da 1ª hora, após os primeiros 60-90 min de negociação. `ALERT_INDICATORS` (`artifacts/api-server/src/lib/alert-indicators.ts`) só suporta `price`, `rsi`, `macd`, `sma20`, `sma50` — **VWAP não é automatizável pela tela de Alerts**; esse gatilho exige checagem manual.
+- **Checagem pré-abertura**: antes do gatilho, checar o fechamento mais recente de `000660.KS` (SK Hynix na Korea Exchange, ver seção acima) — o overnight coreano tende a antecipar o gap de abertura do ADR.
+- **Gatilho de entrada**: defesa da VWAP intradiária ou rompimento da máxima da 1ª hora, após os primeiros 60-90 min de negociação, **usando ordem limitada** — evitar especificamente ordens a mercado nos primeiros 15 minutos do pregão (risco de volatilidade de saída de posições/realização de lucro dos fundos asiáticos, ver seção acima). `ALERT_INDICATORS` (`artifacts/api-server/src/lib/alert-indicators.ts`) só suporta `price`, `rsi`, `macd`, `sma20`, `sma50` — **VWAP não é automatizável pela tela de Alerts**; esse gatilho exige checagem manual.
 - **Regra de invalidação**: se nenhum gatilho válido se formar até o fechamento de segunda, não forçar entrada — reavaliar terça.
 - **Stop**: usar ATR curto (3-5 candles, proxy provisório) × 1,5-2, não percentual fixo arbitrário — o range do dia 1 ($149-$177) já sugere volatilidade real acima de 8%.
 - **R:R travado antes de entrar**: fixar os dois números (ex.: stop -7% / alvo parcial +14% = 2:1), não faixas soltas.
 - **Position sizing escalonado**: não alocar os US$1.000 inteiros no gatilho de segunda; entrar com ~50% e reservar o resto para confirmação num pullback/rompimento subsequente.
-- **Confirmação setorial**: além de NVDA/SMCI (lado da demanda), incluir MU (Micron) como referência — par mais direto do lado da oferta (mesma tese de memória/HBM) e com histórico completo.
+- **Confirmação setorial**: NVDA como referência principal (SK Hynix ~58-62% do mercado de HBM, negocia como satélite da NVDA), além de SMCI (lado da demanda) e MU/Micron (par mais direto do lado da oferta, mesma tese de memória/HBM, com histórico completo).
 - **Gate obrigatório de calendário**: reduzir ou zerar a posição remanescente até o fechamento de 28/jul/2026, véspera dos resultados do Q2 + listagem KOSPI simultânea (29/jul) — gap risk duplo que o trailing stop por mínima de 2 pregões não cobre (gap ocorre fora do pregão).
