@@ -75,6 +75,30 @@ router.get("/risk/portfolio-exposure", async (req, res): Promise<void> => {
 // GET /risk/portfolio-correlation — correlação de Pearson entre os retornos
 // diários das posições atuais (peso em dólar não conta como diversificação
 // se os ativos se movem juntos).
+// POST /risk/intraday-beta — beta deslizante (rolling) de hedgeTicker em
+// relação a baseTicker (ex.: SKHY vs NVDA) e alocação sugerida em
+// hedgeTicker pra igualar a exposição de volatilidade de targetCapital
+// investido em baseTicker. Pensado pra pares recém-listados sem histórico
+// diário suficiente ainda (ver .agents/memory/skhy-ipo-monitoring.md).
+router.post("/risk/intraday-beta", async (req, res): Promise<void> => {
+  const { baseTicker, hedgeTicker, targetCapital, interval, window, period, winsorizeStd } = req.body;
+  if (!baseTicker || !hedgeTicker || !targetCapital) {
+    res.status(400).json({ error: "baseTicker, hedgeTicker, targetCapital required" }); return;
+  }
+  try {
+    res.json(await runPython({
+      action: "intraday_beta",
+      baseTicker, hedgeTicker, targetCapital,
+      interval: interval ?? "5m",
+      window: window ?? 24,
+      period: period ?? "1d",
+      winsorizeStd: winsorizeStd ?? 3.0,
+    }));
+  } catch (e: unknown) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 router.get("/risk/portfolio-correlation", async (req, res): Promise<void> => {
   try {
     const positions = await db.select({ ticker: portfolioPositionsTable.ticker }).from(portfolioPositionsTable);
