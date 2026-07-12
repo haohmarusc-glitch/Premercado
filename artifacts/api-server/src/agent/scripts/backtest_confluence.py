@@ -7,8 +7,17 @@ arquivos em agent/). Rode direto:
 
 Ou de qualquer diretório (o sys.path.insert abaixo resolve o import).
 
+Roda a mesma bateria de testes em DOIS REGIMES de mercado (ver REGIMES
+abaixo): o período recente de rali forte (2y, supercycle de HBM/IA) e um
+período histórico de correção/lateralização (memory chip downcycle de
+2022-2023, queda ampla de tech por alta de juros) -- uma estratégia de
+confluência devia teoricamente se sair melhor evitando falsos sinais num
+mercado sem direção clara, não necessariamente capturando uma tendência
+forte e sustentada (onde qualquer filtro que espera confirmação tende a
+entrar tarde/sair cedo).
+
 Pra cada ticker do universo (MU, AVGO, MRVL), usando os outros dois como
-sector_returns:
+sector_returns, em CADA regime:
 1. Grid search de min_votes (4, 5, 6) COM sector_returns.
 2. O mesmo grid search SEM sector_returns (ablação -- isola se a
    confirmação setorial está ajudando ou só reduzindo trades à toa).
@@ -18,7 +27,8 @@ sector_returns:
 4. Recalibra kelly_position_size com win_rate/avg_win/avg_loss REAIS do
    melhor min_votes (versão com setor) e roda de novo.
 
-Salva um relatório markdown comparativo único, com uma seção por ticker.
+Salva um relatório markdown comparativo único, com uma seção por regime x
+ticker.
 """
 import os
 import sys
@@ -30,9 +40,17 @@ import pandas as pd
 from confluence_engine import ConfluenceEngine, run_backtest, _fetch_ohlcv  # noqa: E402
 
 TICKERS = ["MU", "AVGO", "MRVL"]
-PERIOD = "2y"
 MIN_VOTES_GRID = (4, 5, 6)
 RESULTS_MD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "confluence_grid_search_results.md")
+
+# Cada regime é um dict de kwargs pra _fetch_ohlcv (period OU start/end).
+# "correcao_2022_2023": memory chip downcycle + selloff amplo de tech por
+# alta de juros -- período genuinamente lateral/de queda pra MU/AVGO/MRVL,
+# em contraste com o supercycle de alta sustentada de "recente_2y".
+REGIMES = {
+    "recente_2y (supercycle HBM/IA)": {"period": "2y"},
+    "correcao_2022_2023 (memory downcycle + selloff de juros)": {"start": "2022-01-01", "end": "2023-06-30"},
+}
 
 
 def _equity_metrics(equity: pd.Series) -> dict:
@@ -60,10 +78,10 @@ def _buy_and_hold(df: pd.DataFrame, initial_capital: float = 10_000.0) -> dict:
     return _equity_metrics(equity)
 
 
-def _fetch_all(tickers: list, period: str) -> dict:
+def _fetch_all(tickers: list, fetch_kwargs: dict) -> dict:
     dfs = {}
     for t in tickers:
-        df, error = _fetch_ohlcv(t, period)
+        df, error = _fetch_ohlcv(t, **fetch_kwargs)
         if error:
             print(f"AVISO: não consegui buscar {t}: {error}", file=sys.stderr)
             continue
@@ -123,12 +141,12 @@ def _best_viable(rows: list, min_trades: int = 3):
     return max(viable, key=lambda r: r["sharpe"]) if viable else None
 
 
-def _run_for_ticker(ticker: str, dfs: dict) -> str:
+def _run_for_ticker(ticker: str, dfs: dict, regime_label: str) -> str:
     df = dfs[ticker]
     sector_returns = _sector_returns_excluding(dfs, ticker)
     other_tickers = [t for t in dfs if t != ticker]
 
-    print(f"\n{'='*78}\n{ticker}  (setor de comparação: {', '.join(other_tickers) or 'nenhum'})\n{'='*78}")
+    print(f"\n{'='*78}\n[{regime_label}] {ticker}  (setor de comparação: {', '.join(other_tickers) or 'nenhum'})\n{'='*78}")
 
     print(f"\n-- Grid search COM sector_returns ({', '.join(other_tickers)}) --")
     rows_with = _grid_search(df, sector_returns)
@@ -139,24 +157,25 @@ def _run_for_ticker(ticker: str, dfs: dict) -> str:
     _print_table(rows_without)
 
     bh = _buy_and_hold(df)
-    print(f"\n-- Buy & hold {ticker} (mesmo período, {PERIOD}) --")
+    print(f"\n-- Buy & hold {ticker} ({df.index[0].date()} a {df.index[-1].date()}) --")
     print(f"total_return_pct={bh['total_return_pct']:.2f}  cagr={bh['cagr']*100:.2f}%  "
           f"sharpe={bh['sharpe']:.3f}  max_drawdown={bh['max_drawdown_pct']:.2f}%")
 
     md_sections = [
-        f"## {ticker}\n",
+        f"## [{regime_label}] {ticker}\n",
+        f"Período: {df.index[0].date()} a {df.index[-1].date()}\n",
         f"### Com sector_returns ({', '.join(other_tickers)})\n",
         _md_table(rows_with),
         f"\n### Sem sector_returns (ablação)\n",
         _md_table(rows_without),
-        f"\n### Buy & hold {ticker} ({PERIOD})\n",
+        f"\n### Buy & hold {ticker}\n",
         f"total_return_pct={bh['total_return_pct']:.2f}%, cagr={bh['cagr']*100:.2f}%, "
         f"sharpe={bh['sharpe']:.3f}, max_drawdown={bh['max_drawdown_pct']:.2f}%\n",
     ]
 
     best = _best_viable(rows_with)
     if best is None:
-        print("\nNenhum min_votes (com setor) gerou pelo menos 3 trades -- sem recalibração de Kelly pra esse ticker.")
+        print("\nNenhum min_votes (com setor) gerou pelo menos 3 trades -- sem recalibração de Kelly pra esse ticker/regime.")
         md_sections.append("\nNenhum min_votes (com setor) gerou pelo menos 3 trades -- sem recalibração de Kelly.\n")
         return "\n".join(md_sections)
 
@@ -184,16 +203,23 @@ def _run_for_ticker(ticker: str, dfs: dict) -> str:
 
 
 def main() -> None:
-    dfs = _fetch_all(TICKERS, PERIOD)
-    if not dfs:
-        print("ERRO: não consegui buscar nenhum ticker do universo", file=sys.stderr)
+    all_sections = []
+    for regime_label, fetch_kwargs in REGIMES.items():
+        print(f"\n\n{'#'*78}\nREGIME: {regime_label}  ({fetch_kwargs})\n{'#'*78}")
+        dfs = _fetch_all(TICKERS, fetch_kwargs)
+        if not dfs:
+            print(f"ERRO: não consegui buscar nenhum ticker do universo pro regime '{regime_label}'", file=sys.stderr)
+            continue
+        for t in dfs:
+            all_sections.append(_run_for_ticker(t, dfs, regime_label))
+
+    if not all_sections:
+        print("ERRO: nenhum regime produziu resultado", file=sys.stderr)
         sys.exit(1)
 
-    sections = [_run_for_ticker(t, dfs) for t in dfs]
-
     with open(RESULTS_MD_PATH, "w") as f:
-        f.write(f"# Grid search — ConfluenceEngine em {', '.join(dfs.keys())} (universo: {', '.join(TICKERS)})\n\n")
-        f.write("\n\n".join(sections) + "\n")
+        f.write(f"# Grid search — ConfluenceEngine em {', '.join(TICKERS)}, múltiplos regimes\n\n")
+        f.write("\n\n".join(all_sections) + "\n")
     print(f"\nRelatório completo salvo em {RESULTS_MD_PATH}")
 
 

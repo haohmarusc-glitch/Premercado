@@ -311,9 +311,20 @@ def run_backtest(
     }
 
 
-def _fetch_ohlcv(ticker: str, period: str = "18mo") -> tuple[Optional[pd.DataFrame], Optional[str]]:
+def _fetch_ohlcv(
+    ticker: str,
+    period: str = "18mo",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> tuple[Optional[pd.DataFrame], Optional[str]]:
+    """start/end (formato "YYYY-MM-DD") têm prioridade sobre period quando
+    informados -- útil pra testar um regime histórico específico (ex.:
+    correção/lateralização) em vez de só uma janela relativa a hoje."""
     import yfinance as yf
-    df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+    if start or end:
+        df = yf.Ticker(ticker).history(start=start, end=end, interval="1d", auto_adjust=True)
+    else:
+        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
     if df.empty:
         return None, "Sem dados para o período"
     if hasattr(df.columns, "levels"):
