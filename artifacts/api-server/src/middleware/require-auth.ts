@@ -33,8 +33,26 @@ async function resolveOwnerUserId(): Promise<number | null> {
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   const operatorKey = process.env.OPERATOR_API_KEY;
+
+  // DIAGNÓSTICO TEMPORÁRIO -- investigando 401 persistente em produção no
+  // caminho Bearer OPERATOR_API_KEY (ver .agents/memory -- issue de 12-13/jul).
+  // Só loga booleanos/tamanhos, nunca o valor da chave/header. Remover depois
+  // de identificar a causa raiz.
+  if (authHeader?.startsWith("Bearer ")) {
+    logger.info({
+      hasOperatorKeyEnv: !!operatorKey,
+      operatorKeyLength: operatorKey?.length ?? 0,
+      authHeaderLength: authHeader.length,
+      keysMatch: !!operatorKey && authHeader === `Bearer ${operatorKey}`,
+      path: req.path,
+    }, "DIAGNOSTICO requireAuth: tentativa de Bearer auth");
+  }
+
   if (operatorKey && authHeader === `Bearer ${operatorKey}`) {
     const ownerUserId = await resolveOwnerUserId();
+    if (authHeader?.startsWith("Bearer ")) {
+      logger.info({ ownerUserId }, "DIAGNOSTICO requireAuth: resolveOwnerUserId apos match de chave");
+    }
     if (ownerUserId != null) {
       req.userId = ownerUserId;
       next();
