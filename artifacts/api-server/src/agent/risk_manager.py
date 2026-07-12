@@ -154,6 +154,89 @@ def correlation(tickers: list, period: str = "6mo") -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+def intraday_beta(
+    base_ticker: str,
+    hedge_ticker: str,
+    target_capital: float,
+    interval: str = "5m",
+    window: int = 24,
+    period: str = "1d",
+    winsorize_std: float = 3.0,
+) -> dict:
+    """Beta intraday deslizante (rolling) de hedge_ticker em relação a
+    base_ticker, e alocação sugerida em hedge_ticker pra igualar a exposição
+    de volatilidade de target_capital investido em base_ticker.
+
+    window=24 (padrão) em candles de 5min = ~2h de histórico -- testado com
+    dados sintéticos: janela de 12 (1h, valor do protótipo original) tem
+    desvio-padrão do beta estimado ~3-4x maior que janela de 24-36 (muito
+    ruidoso pra calibrar financeiro de posição real). Ver PR pra números.
+
+    winsorize_std: retornos de candle além de N desvios-padrão do próprio dia
+    são "achatados" pro limite antes de calcular covariância/variância --
+    um único candle de desequilíbrio de ordem (comum nos primeiros dias de
+    um IPO) senão contamina as próximas `window` janelas deslizantes.
+    """
+    try:
+        base_ticker = sanitize_ticker(base_ticker)
+        hedge_ticker = sanitize_ticker(hedge_ticker)
+        if target_capital <= 0:
+            return {"error": "targetCapital deve ser positivo"}
+
+        data = yf.download([base_ticker, hedge_ticker], period=period, interval=interval,
+                            auto_adjust=True, progress=False)
+        closes = data["Close"] if "Close" in data else data
+        if not hasattr(closes, "columns") or base_ticker not in closes.columns or hedge_ticker not in closes.columns:
+            return {"error": "Dados insuficientes ou ticker(s) sem candles no período/intervalo pedido"}
+
+        returns = closes[[base_ticker, hedge_ticker]].pct_change().dropna(how="any")
+        if len(returns) < window:
+            return {
+                "error": f"Dados insuficientes: {len(returns)} candles disponíveis, "
+                         f"janela pede {window} (comum antes da abertura ou nos primeiros candles do pregão)"
+            }
+
+        # Winsorize por ticker usando o desvio-padrão DO PRÓPRIO DIA (não
+        # rolling) -- simples e suficiente pra achatar 1-2 outliers isolados
+        # sem exigir uma segunda janela deslizante só pra isso.
+        clipped = returns.copy()
+        for col in (base_ticker, hedge_ticker):
+            std = clipped[col].std()
+            mean = clipped[col].mean()
+            if std > 0:
+                clipped[col] = clipped[col].clip(mean - winsorize_std * std, mean + winsorize_std * std)
+
+        rolling_cov = clipped[hedge_ticker].rolling(window=window).cov(clipped[base_ticker])
+        rolling_var = clipped[base_ticker].rolling(window=window).var()
+        rolling_beta = (rolling_cov / rolling_var).dropna()
+
+        if rolling_beta.empty:
+            return {"error": "Não foi possível calcular beta (variância zero ou dados insuficientes)"}
+
+        beta = float(rolling_beta.iloc[-1])
+        warning = None
+        if len(returns) < window * 2:
+            warning = (f"Só {len(returns)} candles disponíveis (menos que 2x a janela) -- "
+                       f"beta ainda pouco estável, tratar como indicativo, não confiável pra hedge real")
+        if beta == 0:
+            return {"error": "Beta calculado é zero -- não dá pra sugerir alocação (divisão por zero)"}
+
+        suggested_hedge_capital = target_capital / beta
+        return {
+            "baseTicker": base_ticker,
+            "hedgeTicker": hedge_ticker,
+            "beta": round(beta, 4),
+            "windowUsed": window,
+            "barsAvailable": len(returns),
+            "targetCapital": target_capital,
+            "suggestedHedgeCapital": round(suggested_hedge_capital, 2),
+            "asOf": str(returns.index[-1]),
+            "warning": warning,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     action = args.get("action")
@@ -174,6 +257,12 @@ if __name__ == "__main__":
         result = portfolio_exposure(args.get("positions", []))
     elif action == "correlation":
         result = correlation(args.get("tickers", []), args.get("period", "6mo"))
+    elif action == "intraday_beta":
+        result = intraday_beta(
+            args["baseTicker"], args["hedgeTicker"], float(args["targetCapital"]),
+            args.get("interval", "5m"), int(args.get("window", 24)),
+            args.get("period", "1d"), float(args.get("winsorizeStd", 3.0)),
+        )
     else:
         result = {"error": f"Unknown action: {action}"}
     print(json.dumps(result))
