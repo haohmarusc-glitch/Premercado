@@ -79,6 +79,9 @@ Seu fluxo completo:
 {_sector_groups_text()}
    Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
    Para captura intradiária: period='1d', interval='5m'.
+6. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
+   overlap e futuros de índice. É só contexto informativo — não é um sinal de
+   compra/venda; não ajuste thresholds com base nele sem validação histórica prévia.
 
 **FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
 
