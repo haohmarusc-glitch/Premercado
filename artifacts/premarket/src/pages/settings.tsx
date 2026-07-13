@@ -1,4 +1,4 @@
-import { useGetSettings, useUpdateSettings, getGetSettingsQueryKey } from "@workspace/api-client-react";
+import { useGetSettings, useUpdateSettings, getGetSettingsQueryKey, useGetAgentSpend, getGetAgentSpendQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,7 +10,28 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Save, Mail, Clock, Tag, Plus, X, Zap } from "lucide-react";
+import { Save, Mail, Clock, Tag, Plus, X, Zap, DollarSign } from "lucide-react";
+
+const PROVIDER_OPTIONS: { value: string; label: string }[] = [
+  { value: "anthropic", label: "Anthropic (Claude)" },
+  { value: "gemini", label: "Gemini" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "openai", label: "OpenAI" },
+  { value: "kimi", label: "Kimi" },
+];
+
+function providerLabel(key: string): string {
+  return PROVIDER_OPTIONS.find((p) => p.value === key)?.label ?? key;
+}
+
+function formatProviderGroup(raw: string): string {
+  return raw.split(",").filter(Boolean).map(providerLabel).join(" → ") || raw;
+}
+
+function formatUsd(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  return `US$ ${v.toFixed(v < 1 ? 4 : 2)}`;
+}
 
 const POPULAR_TICKERS: { symbol: string; name: string }[] = [
   { symbol: "AAPL", name: "Apple" },
@@ -66,6 +87,9 @@ const schema = z.object({
   premarketIntervalMin: z.coerce.number().int().min(5).max(60),
   premarketWindowStartHour: z.coerce.number().int().min(0).max(23),
   premarketWindowEndHour: z.coerce.number().int().min(0).max(23),
+  agentProvider: z.string().nullable(),
+  dailyBudgetUsd: z.coerce.number().min(0).nullable(),
+  cheapProvider: z.string().min(1),
 }).refine(
   (d) => !d.premarketEnabled || d.premarketWindowStartHour < d.premarketWindowEndHour,
   { message: "Horário de início deve ser antes do horário de fim", path: ["premarketWindowEndHour"] },
@@ -236,6 +260,7 @@ export default function Settings() {
   const { toast } = useToast();
   const { data: settings, isLoading } = useGetSettings({ query: { queryKey: getGetSettingsQueryKey() } });
   const updateSettings = useUpdateSettings();
+  const { data: spend } = useGetAgentSpend({ query: { queryKey: getGetAgentSpendQueryKey(), refetchInterval: 30_000 } });
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -249,6 +274,9 @@ export default function Settings() {
       premarketIntervalMin: 30,
       premarketWindowStartHour: 6,
       premarketWindowEndHour: 9,
+      agentProvider: null,
+      dailyBudgetUsd: null,
+      cheapProvider: "gemini",
     },
   });
 
@@ -265,6 +293,9 @@ export default function Settings() {
         premarketIntervalMin: settings.premarketIntervalMin,
         premarketWindowStartHour: settings.premarketWindowStartHour,
         premarketWindowEndHour: settings.premarketWindowEndHour,
+        agentProvider: settings.agentProvider ?? null,
+        dailyBudgetUsd: settings.dailyBudgetUsd ?? null,
+        cheapProvider: settings.cheapProvider ?? "gemini",
       });
     }
   }, [settings, form]);
@@ -298,6 +329,68 @@ export default function Settings() {
         <h1 className="text-3xl font-bold font-mono tracking-tight" data-testid="text-settings-title">CONFIGURAÇÕES</h1>
         <p className="text-muted-foreground font-mono text-sm mt-2">Notificações, agendamento e ativos monitorados</p>
       </div>
+
+      {/* Gasto do agente em tempo real */}
+      {spend && (
+        <div className="border border-border rounded-lg p-6 space-y-4 max-w-xl mb-6" data-testid="panel-agent-spend">
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-widest">
+            <DollarSign className="h-3.5 w-3.5" />
+            Gasto do agente — hoje ({spend.date} BRT)
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm font-mono">
+              <thead>
+                <tr className="text-xs text-muted-foreground uppercase border-b border-border">
+                  <th className="text-left py-1.5 pr-2">Provedor</th>
+                  <th className="text-right py-1.5 px-2">Custo</th>
+                  <th className="text-right py-1.5 px-2">Runs</th>
+                  <th className="text-right py-1.5 pl-2">Chamadas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {spend.byProvider.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-2 text-muted-foreground text-xs">Nenhuma execução hoje ainda.</td>
+                  </tr>
+                )}
+                {spend.byProvider.map((p) => (
+                  <tr key={p.provider} className="border-b border-border/40 last:border-0">
+                    <td className="py-1.5 pr-2">{formatProviderGroup(p.provider)}</td>
+                    <td className="py-1.5 px-2 text-right">{formatUsd(p.costUsd)}</td>
+                    <td className="py-1.5 px-2 text-right">{p.runs}</td>
+                    <td className="py-1.5 pl-2 text-right">{p.calls}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-border font-bold">
+                  <td className="py-1.5 pr-2">Total</td>
+                  <td className="py-1.5 px-2 text-right">{formatUsd(spend.totalCostUsd)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {spend.dailyBudgetUsd !== null && (
+            <div
+              className={`rounded-md border p-3 text-xs font-mono ${
+                spend.budgetExceeded
+                  ? "bg-destructive/10 border-destructive/40 text-destructive"
+                  : "bg-primary/5 border-primary/20 text-muted-foreground"
+              }`}
+              data-testid="text-budget-status"
+            >
+              Teto diário de <strong>{providerLabel(spend.primaryProvider)}</strong>: {formatUsd(spend.dailyBudgetUsd)}
+              {" · "}
+              {spend.budgetExceeded
+                ? "teto atingido — agente rodando no provedor barato pelo resto do dia."
+                : `restante: ${formatUsd(spend.budgetRemainingUsd)}`}
+            </div>
+          )}
+        </div>
+      )}
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 max-w-xl">
@@ -539,6 +632,87 @@ export default function Settings() {
                 })()}
               </div>
             )}
+          </div>
+
+          {/* Provedor de LLM & controle de custo */}
+          <div className="border border-border rounded-lg p-6 space-y-4">
+            <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-widest mb-4">
+              <DollarSign className="h-3.5 w-3.5" />
+              Provedor de LLM & controle de custo
+            </div>
+
+            <FormField
+              control={form.control}
+              name="agentProvider"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-mono text-xs uppercase text-muted-foreground">Provedor primário</FormLabel>
+                  <Select
+                    value={field.value ?? "auto"}
+                    onValueChange={(v) => field.onChange(v === "auto" ? null : v)}
+                  >
+                    <SelectTrigger className="font-mono bg-secondary border-border" data-testid="select-agent-provider">
+                      <span>{field.value ? providerLabel(field.value) : "Automático (padrão — Anthropic primeiro)"}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto" className="font-mono">Automático (padrão — Anthropic primeiro)</SelectItem>
+                      {PROVIDER_OPTIONS.map((p) => (
+                        <SelectItem key={p.value} value={p.value} className="font-mono">{p.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription className="text-xs text-muted-foreground">
+                    Provedor usado normalmente, antes de qualquer fallback por erro ou teto de gasto.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="dailyBudgetUsd"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-mono text-xs uppercase text-muted-foreground">Teto diário (USD)</FormLabel>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={field.value ?? ""}
+                    onChange={(e) => field.onChange(e.target.value === "" ? null : Number(e.target.value))}
+                    placeholder="Sem teto"
+                    className="font-mono bg-secondary border-border"
+                    data-testid="input-daily-budget"
+                  />
+                  <FormDescription className="text-xs text-muted-foreground">
+                    Ao atingir esse valor no provedor primário (horário de Brasília), o agente passa a usar o provedor barato pelo resto do dia. Deixe vazio para não ter teto.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="cheapProvider"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-mono text-xs uppercase text-muted-foreground">Provedor barato (fallback por teto)</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger className="font-mono bg-secondary border-border" data-testid="select-cheap-provider">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROVIDER_OPTIONS.map((p) => (
+                        <SelectItem key={p.value} value={p.value} className="font-mono">{p.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
 
           {/* Tickers */}

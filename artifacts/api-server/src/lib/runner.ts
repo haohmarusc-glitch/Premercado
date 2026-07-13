@@ -5,11 +5,11 @@
 import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, gte } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
-import { todayBRTDateString } from "./timezone";
+import { startOfTodayBRT, todayBRTDateString } from "./timezone";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -28,6 +28,39 @@ async function getMonitoredTickers(): Promise<string[]> {
     logger.error({ err }, "Failed to read tickers from settings; using defaults");
   }
   return DEFAULT_TICKERS;
+}
+
+// Provedor manual configurado pelo usuário (ou undefined = ordem padrão do
+// provider.py, anthropic primeiro), rebaixado para o provedor barato quando o
+// gasto de hoje (horário de Brasília) no provedor primário atinge o teto diário.
+async function getEffectiveAgentProvider(): Promise<string | undefined> {
+  try {
+    const [settings] = await db.select().from(settingsTable).limit(1);
+    if (!settings || settings.dailyBudgetUsd == null) return settings?.agentProvider ?? undefined;
+
+    const primary = settings.agentProvider || "anthropic";
+    const runs = await db
+      .select({ costUsd: agentRunsTable.costUsd, llmProvider: agentRunsTable.llmProvider })
+      .from(agentRunsTable)
+      .where(gte(agentRunsTable.startedAt, startOfTodayBRT()));
+    // O driver pg devolve `numeric` como string — converter antes de somar.
+    const spentToday = runs
+      .filter((r) => (r.llmProvider ?? "").split(",").includes(primary))
+      .reduce((sum, r) => sum + (r.costUsd === null ? 0 : Number(r.costUsd)), 0);
+    const dailyBudgetUsd = Number(settings.dailyBudgetUsd);
+
+    if (spentToday >= dailyBudgetUsd) {
+      logger.warn(
+        { primary, spentToday, dailyBudgetUsd, cheapProvider: settings.cheapProvider },
+        "Daily budget exceeded for primary provider — switching to cheap provider for the rest of the day",
+      );
+      return settings.cheapProvider;
+    }
+    return settings.agentProvider ?? undefined;
+  } catch (err) {
+    logger.error({ err }, "Failed to compute effective agent provider; using default order");
+    return undefined;
+  }
 }
 
 async function getPortfolioTickers(): Promise<string[]> {
@@ -114,6 +147,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   }
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
+  const effectiveProvider = await getEffectiveAgentProvider();
 
   const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
     cwd: agentDir,
@@ -125,6 +159,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
       AGENT_MODE: mode,
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
+      ...(effectiveProvider ? { AGENT_PROVIDER: effectiveProvider } : {}),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });

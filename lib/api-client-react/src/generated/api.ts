@@ -24,6 +24,7 @@ import type {
   AdminUser,
   AgentRun,
   AgentRunResult,
+  AgentSpend,
   AgentStatus,
   AlertCreateInput,
   AlertFiring,
@@ -1808,6 +1809,83 @@ export function useListAgentRuns<TData = Awaited<ReturnType<typeof listAgentRuns
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListAgentRunsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetAgentSpendUrl = () => {
+
+
+
+
+  return `/api/agent/spend`
+}
+
+/**
+ * @summary Get today's LLM spend broken down by provider, plus daily budget status
+ */
+export const getAgentSpend = async ( options?: RequestInit): Promise<AgentSpend> => {
+
+  return customFetch<AgentSpend>(getGetAgentSpendUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentSpendQueryKey = () => {
+    return [
+    `/api/agent/spend`
+    ] as const;
+    }
+
+
+export const getGetAgentSpendQueryOptions = <TData = Awaited<ReturnType<typeof getAgentSpend>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentSpend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentSpendQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentSpend>>> = ({ signal }) => getAgentSpend({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentSpend>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentSpendQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentSpend>>>
+export type GetAgentSpendQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get today's LLM spend broken down by provider, plus daily budget status
+ */
+
+export function useGetAgentSpend<TData = Awaited<ReturnType<typeof getAgentSpend>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentSpend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentSpendQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

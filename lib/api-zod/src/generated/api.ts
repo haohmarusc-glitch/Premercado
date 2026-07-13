@@ -366,6 +366,25 @@ export const ListAgentRunsResponse = zod.array(ListAgentRunsResponseItem)
 
 
 /**
+ * @summary Get today's LLM spend broken down by provider, plus daily budget status
+ */
+export const GetAgentSpendResponse = zod.object({
+  "date": zod.string(),
+  "byProvider": zod.array(zod.object({
+  "provider": zod.string(),
+  "costUsd": zod.coerce.number().nullable(),
+  "runs": zod.coerce.number(),
+  "calls": zod.coerce.number()
+})),
+  "totalCostUsd": zod.coerce.number().nullable(),
+  "primaryProvider": zod.string(),
+  "dailyBudgetUsd": zod.coerce.number().nullable(),
+  "budgetRemainingUsd": zod.coerce.number().nullable(),
+  "budgetExceeded": zod.boolean()
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;
@@ -452,6 +471,9 @@ export const GetSettingsResponse = zod.object({
   "premarketIntervalMin": zod.coerce.number(),
   "premarketWindowStartHour": zod.coerce.number(),
   "premarketWindowEndHour": zod.coerce.number(),
+  "agentProvider": zod.string().nullish().describe('Provedor de LLM manualmente escolhido (anthropic, gemini, openrouter, openai, kimi). Vazio\/null = ordem padrão (anthropic primeiro).'),
+  "dailyBudgetUsd": zod.coerce.number().nullish().describe('Teto diário (USD) de gasto no provedor primário. Null = sem teto.'),
+  "cheapProvider": zod.string().optional().describe('Provedor a usar quando o teto diário do provedor primário for atingido.'),
   "updatedAt": zod.string()
 })
 
@@ -468,7 +490,10 @@ export const UpdateSettingsBody = zod.object({
   "premarketEnabled": zod.boolean().optional(),
   "premarketIntervalMin": zod.number().optional(),
   "premarketWindowStartHour": zod.number().optional(),
-  "premarketWindowEndHour": zod.number().optional()
+  "premarketWindowEndHour": zod.number().optional(),
+  "agentProvider": zod.string().nullish(),
+  "dailyBudgetUsd": zod.number().nullish(),
+  "cheapProvider": zod.string().optional()
 })
 
 export const UpdateSettingsResponse = zod.object({
@@ -482,6 +507,9 @@ export const UpdateSettingsResponse = zod.object({
   "premarketIntervalMin": zod.coerce.number(),
   "premarketWindowStartHour": zod.coerce.number(),
   "premarketWindowEndHour": zod.coerce.number(),
+  "agentProvider": zod.string().nullish().describe('Provedor de LLM manualmente escolhido (anthropic, gemini, openrouter, openai, kimi). Vazio\/null = ordem padrão (anthropic primeiro).'),
+  "dailyBudgetUsd": zod.coerce.number().nullish().describe('Teto diário (USD) de gasto no provedor primário. Null = sem teto.'),
+  "cheapProvider": zod.string().optional().describe('Provedor a usar quando o teto diário do provedor primário for atingido.'),
   "updatedAt": zod.string()
 })
 
