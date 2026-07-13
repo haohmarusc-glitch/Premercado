@@ -26,7 +26,7 @@ function runBacktestScript(payload: object, timeoutMs: number): Promise<unknown>
   });
 }
 
-router.post("/backtest", async (req, res): Promise<void> => {
+router.post("/backtest", async (req, res, next): Promise<void> => {
   const { ticker, start, end, strategy } = req.body;
   if (!ticker || !start || !end) {
     res.status(400).json({ error: "ticker, start, end are required" });
@@ -51,11 +51,11 @@ router.post("/backtest", async (req, res): Promise<void> => {
     }, 90_000);
     res.json(data);
   } catch (e: unknown) {
-    res.status(500).json({ error: String((e as Error)?.message ?? e) });
+    next(e);
   }
 });
 
-router.post("/backtest/sensitivity", async (req, res): Promise<void> => {
+router.post("/backtest/sensitivity", async (req, res, next): Promise<void> => {
   const { ticker, start, end, strategy } = req.body;
   if (!ticker || !start || !end) {
     res.status(400).json({ error: "ticker, start, end are required" });
@@ -84,7 +84,7 @@ router.post("/backtest/sensitivity", async (req, res): Promise<void> => {
     }, 120_000);
     res.json(data);
   } catch (e: unknown) {
-    res.status(500).json({ error: String((e as Error)?.message ?? e) });
+    next(e);
   }
 });
 
@@ -92,7 +92,7 @@ router.post("/backtest/sensitivity", async (req, res): Promise<void> => {
 // (default: tickers configurados em Settings), pensado pra estratégia
 // "confluencia" (o sinal técnico do Screener/TrendCard sem a camada de
 // notícias, que não dá pra reconstruir com fidelidade histórica).
-router.post("/backtest/basket", async (req, res): Promise<void> => {
+router.post("/backtest/basket", async (req, res, next): Promise<void> => {
   const { start, end, strategy } = req.body;
   if (!start || !end) {
     res.status(400).json({ error: "start, end are required" });
@@ -131,7 +131,7 @@ router.post("/backtest/basket", async (req, res): Promise<void> => {
     }, 20_000 * Math.max(1, tickers.length));
     res.json(data);
   } catch (e: unknown) {
-    res.status(500).json({ error: String((e as Error)?.message ?? e) });
+    next(e);
   }
 });
 

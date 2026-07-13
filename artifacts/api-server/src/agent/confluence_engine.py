@@ -15,7 +15,7 @@ já usados no projeto.
 Input (stdin JSON, modo endpoint): {"symbol": "MU", "period": "18mo"}
 Output (stdout JSON): {symbol, asOf, action, confidence, votes, catalystVeto}
 """
-import os, sys, json, re, warnings, logging
+import os, sys, json, warnings, logging
 
 # ── Redireciona fd-1 -> fd-2 ANTES de importar yfinance/pandas, senão um
 # print/warning de dentro dessas libs pode vazar pro pipe que o Node lê como
@@ -34,13 +34,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
-
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 
 # ---------------------------------------------------------------------------
