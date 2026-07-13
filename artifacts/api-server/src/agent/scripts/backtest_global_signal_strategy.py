@@ -29,6 +29,13 @@ Compara contra buy & hold do próprio índice (fechamento -> fechamento,
 período inteiro), nos mesmos dois regimes do ConfluenceEngine e do estudo
 de correlação anterior -- mesma régua de sempre: Sharpe/retorno positivos
 não significam nada se a estratégia fica de fora da maior parte de um rali.
+
+Custo de transação: modelado com os MESMOS defaults de backtest.py
+(commission_pct=0.001, slippage_pct=0.0005), cobrado por PERNA a cada
+troca de posição -- essa estratégia rebalanceia quase todo dia, então
+custo por operação pesa muito mais aqui do que numa estratégia que só
+entra em confluências raras (tipo ConfluenceEngine). Reporta retorno/
+Sharpe BRUTO (sem custo) e LÍQUIDO (com custo) lado a lado.
 """
 import os
 import sys
@@ -57,6 +64,13 @@ REGIMES: dict[str, dict] = {
 }
 
 INITIAL_CAPITAL = 10_000.0
+
+# Mesmos defaults de backtest.py -- custo por PERNA de trade (compra OU
+# venda), não por round-trip. commission_pct incide sobre o notional
+# negociado; slippage_pct piora o preço de execução (mesma convenção do
+# fill_price() de backtest.py: pior pra quem compra E pior pra quem vende).
+COMMISSION_PCT = 0.001
+SLIPPAGE_PCT = 0.0005
 
 
 def _fetch_history(ticker: str, period: str | None = None, start: str | None = None,
@@ -125,19 +139,33 @@ def _group_signal(tickers: dict, fetch_kwargs: dict, target_index: pd.DatetimeIn
     return pd.concat(series_list, axis=1).mean(axis=1)
 
 
-def _simulate(signal: pd.Series, intraday_return: pd.Series, mode: str) -> dict:
-    """mode='long_flat' -> posição 0/1; mode='long_short' -> posição -1/0/1."""
+def _simulate(signal: pd.Series, intraday_return: pd.Series, mode: str,
+              commission_pct: float = 0.0, slippage_pct: float = 0.0) -> dict:
+    """mode='long_flat' -> posição 0/1; mode='long_short' -> posição -1/0/1.
+
+    commission_pct/slippage_pct: custo por PERNA (compra OU venda) sobre o
+    notional virado nesse dia -- cobrado toda vez que a posição MUDA (troca
+    de sinal, entrada, saída ou inversão), não só na entrada. Com
+    commission_pct=slippage_pct=0 reproduz o resultado bruto (sem custo)."""
     joined = pd.concat([signal, intraday_return], axis=1).dropna()
     joined.columns = ["signal", "ret"]
     if len(joined) < 5:
         return {"error": "dados insuficientes", "num_trades": 0}
 
     if mode == "long_flat":
-        position = np.where(joined["signal"] > 0, 1.0, 0.0)
+        position = pd.Series(np.where(joined["signal"] > 0, 1.0, 0.0), index=joined.index)
     else:
-        position = np.sign(joined["signal"])
+        position = pd.Series(np.sign(joined["signal"]), index=joined.index)
 
-    strat_returns = position * joined["ret"]
+    # Turnover do dia = |mudança de posição| (ex.: 0->1 vira 1x capital;
+    # 1->-1 vira 2x capital, já que fecha o long e abre o short). Custo por
+    # unidade de turnover = commission_pct + slippage_pct (mesma taxa por
+    # perna que fill_price()/commission de backtest.py usam).
+    position_prev = position.shift(1).fillna(0.0)
+    turnover = (position - position_prev).abs()
+    cost_drag = turnover * (commission_pct + slippage_pct)
+
+    strat_returns = position * joined["ret"] - cost_drag
     equity = INITIAL_CAPITAL * (1 + strat_returns).cumprod()
     metrics = _equity_metrics(equity)
 
@@ -190,8 +218,11 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
         f"Período: {target_df.index[0].date()} a {target_df.index[-1].date()}.\n",
         f"Buy & hold: retorno={bh['total_return_pct']:.2f}%, cagr={bh['cagr']*100:.2f}%, "
         f"sharpe={bh['sharpe']:.3f}, max_dd={bh['max_drawdown_pct']:.2f}%\n",
-        "| Sinal | Posição | Retorno | CAGR | Sharpe | Max DD | Trades | Win rate |",
-        "|---|---|---|---|---|---|---|---|",
+        f"Custo modelado (igual backtest.py): commission_pct={COMMISSION_PCT}, "
+        f"slippage_pct={SLIPPAGE_PCT} por perna, cobrado a cada troca de posição.\n",
+        "| Sinal | Posição | Retorno (bruto) | Retorno (líquido) | Sharpe (bruto) | "
+        "Sharpe (líquido) | Max DD (líquido) | Trades | Win rate (líquido) |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
 
     for signal_label, signal in signals.items():
@@ -199,15 +230,19 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
             print(f"\nAVISO: sinal '{signal_label}' indisponível neste regime")
             continue
         for mode, mode_label in (("long_flat", "long/flat"), ("long_short", "long/short")):
-            m = _simulate(signal, intraday_return, mode)
-            print(f"\n[{signal_label} | {mode_label}] {_fmt(m)}")
-            if "error" in m:
-                md.append(f"| {signal_label} | {mode_label} | {m['error']} | | | | | |")
+            gross = _simulate(signal, intraday_return, mode)
+            net = _simulate(signal, intraday_return, mode,
+                             commission_pct=COMMISSION_PCT, slippage_pct=SLIPPAGE_PCT)
+            print(f"\n[{signal_label} | {mode_label}]")
+            print(f"  bruto (sem custo):    {_fmt(gross)}")
+            print(f"  líquido (com custo):  {_fmt(net)}")
+            if "error" in gross or "error" in net:
+                md.append(f"| {signal_label} | {mode_label} | erro | erro | | | | | |")
             else:
                 md.append(
-                    f"| {signal_label} | {mode_label} | {m['total_return_pct']:.2f}% | "
-                    f"{m['cagr']*100:.2f}% | {m['sharpe']:.3f} | {m['max_drawdown_pct']:.2f}% | "
-                    f"{m['num_trades']} | {m['win_rate']*100:.1f}% |"
+                    f"| {signal_label} | {mode_label} | {gross['total_return_pct']:.2f}% | "
+                    f"{net['total_return_pct']:.2f}% | {gross['sharpe']:.3f} | {net['sharpe']:.3f} | "
+                    f"{net['max_drawdown_pct']:.2f}% | {net['num_trades']} | {net['win_rate']*100:.1f}% |"
                 )
 
     return "\n".join(md) + "\n"
@@ -231,7 +266,9 @@ def main() -> None:
             "simulado é abertura -> fechamento da Nasdaq no mesmo dia (o que dava pra "
             "capturar agindo no sinal antes/na abertura), não fechamento -> fechamento "
             "(que já estaria contaminado pelo próprio gap testado). Compara com buy & hold "
-            "do índice inteiro no mesmo período.\n\n"
+            "do índice inteiro no mesmo período. Reporta retorno/Sharpe BRUTO (sem custo) e "
+            "LÍQUIDO (com commission_pct/slippage_pct iguais aos defaults de backtest.py, "
+            "cobrados por perna a cada troca de posição) lado a lado.\n\n"
         )
         f.write("\n\n".join(sections))
     print(f"\nRelatório completo salvo em {RESULTS_MD_PATH}")
