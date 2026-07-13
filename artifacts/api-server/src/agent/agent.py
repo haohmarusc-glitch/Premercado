@@ -82,6 +82,11 @@ Seu fluxo completo:
 6. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
    overlap e futuros de índice. É só contexto informativo — não é um sinal de
    compra/venda; não ajuste thresholds com base nele sem validação histórica prévia.
+7. Chame get_europe_regime_signal — sinal de regime validado por backtest real
+   (não é contexto genérico como o passo 6: só existe recomendação quando a
+   Nasdaq está fora de tendência de alta, e mesmo assim é um sinal SOMENTE
+   sobre o índice ^IXIC, nunca aplique como sinal de entrada/saída de um
+   ativo individual da cesta sem dizer explicitamente essa limitação no relatório.
 
 **FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
 
