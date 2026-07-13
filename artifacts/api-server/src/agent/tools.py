@@ -994,6 +994,23 @@ def get_global_market_snapshot() -> dict:
         return {"error": str(e), "items": []}
 
 
+def get_europe_regime_signal() -> dict:
+    """
+    Sinal de regime validado por backtest real (PRs #54-#61): fora de
+    tendência de alta clara na Nasdaq (^IXIC abaixo da própria SMA200), a
+    média de variação diária de DAX+CAC+FTSE tem edge real, líquido de
+    custo de transação, sobre o retorno abertura→fechamento da Nasdaq. Em
+    tendência de alta, a estratégia perde do buy&hold puro — nesse caso o
+    sinal fica "sem sinal ativo". Validado SOMENTE contra ^IXIC como alvo;
+    NÃO usar como sinal de entrada/saída pra um ticker individual (MU,
+    NVDA, SKHY etc.) sem validar isso separadamente.
+    """
+    try:
+        return _ma.get_europe_regime_signal()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def check_market_alerts(
     tickers: list[str] | None = None,
     headlines_by_ticker: dict[str, list] | None = None,
@@ -1361,6 +1378,25 @@ TOOLS = [
         },
     },
     {
+        "name": "get_europe_regime_signal",
+        "description": (
+            "Retorna um sinal de regime validado por backtest real (PRs #54-#61 -- ver memory "
+            "doc skhy-ipo-monitoring.md): se a Nasdaq (^IXIC) está abaixo da própria SMA200 "
+            "('correcao_lateral'), calcula a média de variação diária de DAX+CAC+FTSE e devolve "
+            "um viés direcional (long/short) pro Nasdaq -- esse sinal só bate o buy&hold líquido "
+            "de custo real nesse regime. Se a Nasdaq está acima da SMA200 ('alta'), devolve "
+            "'sem sinal ativo', porque nesse regime a estratégia perde do buy&hold puro. "
+            "Validado SOMENTE contra ^IXIC como alvo, em dois regimes históricos -- NÃO use como "
+            "sinal de entrada/saída pra um ticker individual (MU, NVDA, SKHY etc.) sem validar "
+            "isso separadamente antes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "detect_sector_contagion",
         "description": (
             "Detecta contágio setorial entre os grupos da cadeia de IA. "
@@ -1483,4 +1519,5 @@ DISPATCH = {
     "get_analyst_ratings": get_analyst_ratings,
     "detect_sector_contagion": detect_sector_contagion,
     "get_global_market_snapshot": get_global_market_snapshot,
+    "get_europe_regime_signal": get_europe_regime_signal,
 }

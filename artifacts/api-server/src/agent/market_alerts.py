@@ -459,6 +459,81 @@ def get_global_market_snapshot() -> dict:
     return {"items": items}
 
 
+# Validado por backtest real (PRs #54-#61, ver memory doc skhy-ipo-monitoring.md):
+# a media DAX+CAC+FTSE (Europa) so bate o buy&hold da Nasdaq liquido de custo
+# quando o mercado NAO esta em tendencia de alta clara. O filtro de regime
+# (Close vs. propria SMA200) domina SMA100 nos dois regimes testados. Ásia e
+# EUR/USD foram testados e descartados (sem sinal, ou pior que ruido).
+REGIME_TARGET_TICKER = "^IXIC"
+REGIME_SMA_WINDOW = 200
+EUROPE_SIGNAL_TICKERS: dict[str, str] = {"^GDAXI": "DAX", "^FCHI": "CAC 40", "^FTSE": "FTSE 100"}
+
+
+def get_europe_regime_signal() -> dict:
+    """
+    Sinal validado por backtest real: fora de tendencia de alta (Nasdaq
+    abaixo da propria SMA200), a media de variacao diaria de DAX+CAC+FTSE
+    tem edge real (liquido de custo de transacao) sobre o retorno
+    abertura->fechamento da Nasdaq. Em tendencia de alta, a estrategia perde
+    do buy&hold puro -- entao aqui ela fica desligada e a recomendacao vira
+    "sem sinal ativo".
+
+    Validado SOMENTE contra ^IXIC (Nasdaq Composite) como alvo, em dois
+    regimes historicos (rali 2024-2026 e correcao 2022-2023). NAO foi
+    testado em tickers individuais (MU, NVDA, SKHY etc.) -- nao usar como
+    sinal de entrada/saida pra uma posicao especifica sem validar antes.
+    """
+    try:
+        df = _history(REGIME_TARGET_TICKER, period="2y")
+        if df is None or len(df) < REGIME_SMA_WINDOW + 5:
+            return {"error": f"historico insuficiente pra SMA{REGIME_SMA_WINDOW}"}
+
+        sma = df["Close"].rolling(REGIME_SMA_WINDOW).mean()
+        last_close = float(df["Close"].iloc[-1])
+        last_sma = float(sma.iloc[-1])
+        if pd.isna(last_sma):
+            return {"error": f"SMA{REGIME_SMA_WINDOW} ainda nao disponivel"}
+
+        in_uptrend = last_close > last_sma
+        result: dict = {
+            "target": REGIME_TARGET_TICKER,
+            "lastClose": round(last_close, 2),
+            f"sma{REGIME_SMA_WINDOW}": round(last_sma, 2),
+            "regime": "alta" if in_uptrend else "correcao_lateral",
+        }
+
+        if in_uptrend:
+            result["europeSignal"] = None
+            result["recommendation"] = (
+                "sem sinal ativo -- mercado em tendencia de alta; buy&hold simples "
+                "ja bate essa estrategia nesse regime (ver memory doc)"
+            )
+            return result
+
+        details = {}
+        changes = []
+        for ticker, label in EUROPE_SIGNAL_TICKERS.items():
+            chg = _day_change_pct(ticker)
+            if chg is not None:
+                details[label] = chg
+                changes.append(chg)
+        if not changes:
+            result["error"] = "nao consegui buscar nenhum ticker europeu"
+            return result
+
+        europe_signal = sum(changes) / len(changes)
+        result["europeSignal"] = round(europe_signal, 3)
+        result["europeDetails"] = details
+        result["recommendation"] = (
+            "vies comprado (long) no Nasdaq" if europe_signal > 0
+            else "vies vendido (short) no Nasdaq" if europe_signal < 0
+            else "sinal neutro -- sem vies"
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # =============================================================================
 # CHECKS
 # =============================================================================
