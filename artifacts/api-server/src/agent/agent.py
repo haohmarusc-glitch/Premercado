@@ -361,11 +361,20 @@ def _agent_loop(
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
-        for block in resp.content:
-            if isinstance(block, TextBlock):
-                final_text = block.text
-
         if resp.stop_reason != "tool_use":
+            # Só aceita o texto do turno como candidato a relatório final
+            # quando o modelo sinaliza que terminou (sem mais tool_use).
+            # Texto de um turno que TAMBÉM chama ferramenta é narração/
+            # raciocínio intermediário ("Estou na FASE 2.5... vou chamar
+            # check_market_alerts"), não o relatório -- se o loop acabar
+            # batendo em max_turns enquanto o modelo ainda está nesse tipo
+            # de narração, essa fala intermediária não deve virar o
+            # relatório exibido pro usuário (bug visto em produção: a
+            # narração de FASE 2.5 apareceu como se fosse o relatório final,
+            # com as manchetes em inglês cru do get_news no meio).
+            for block in resp.content:
+                if isinstance(block, TextBlock):
+                    final_text = block.text
             # Modelos mais fracos (visto em produção com gemini-2.5-flash-lite)
             # encerram no meio do fluxo sem registrar observações — a run sai
             # "success" mas a memória do agente não avança. Cobra a conclusão
