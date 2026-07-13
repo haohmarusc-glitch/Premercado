@@ -1,3 +1,4 @@
 - [Drizzle Date → Zod](drizzle-zod-dates.md) — convert timestamp columns with .toISOString() before *Response.parse() in Express routes, else HTTP 500
 - [Tickers source of truth](ticker-source-of-truth.md) — settings.tickers (DB) é a fonte; runner passa via env AGENT_TICKERS p/ Python; EDGAR exige CIK oficial em TICKER_TO_CIK
 - [SKHY IPO monitoring](skhy-ipo-monitoring.md) — SK Hynix estreou 10/jul/2026 sem histórico de candles; SMA/RSI/MACD retornam null até ~22/jul; usar range $149-$177 como gatilho até lá; cuidado com EDGAR (foreign private issuer) se adicionar a settings.tickers
+- [OPERATOR_API_KEY — Secrets de Deployment vs. Shell](operator-api-key-deployment.md) — 401 persistente no Bearer auth apesar da secret "configurada": checar Deployment secrets vs. workspace secrets, republicar após editar, e nunca comparar segredos visualmente (Shell cacheia env var no início da sessão) — usar `echo -n "$VAR" | wc -c`
