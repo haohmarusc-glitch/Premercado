@@ -153,3 +153,14 @@ Ver PRs #52-#53 pro histórico completo (tool, script de correlação, números 
 - **Conclusão prática — mesmo padrão do ConfluenceEngine, confirmado com um sinal independente**: essa estratégia (Europa isolada, sem Ásia) só sobrevive ao custo real como **filtro/gerador de alfa em mercado de correção/lateral**, não em rali forte — exatamente a mesma conclusão qualitativa da seção do ConfluenceEngine acima, agora replicada com um sinal completamente diferente (mercado europeu, não indicador técnico) e já líquido de custo. Não é coincidência de um teste isolado; reforça que "funciona só em correção" pode ser um padrão real do próprio ativo/mercado, não um artefato de uma estratégia específica.
 
 Ver PR #54 pro histórico completo (código, teste de vazamento de look-ahead com dados sintéticos em múltiplas seeds, números reais rodados no Replit).
+
+**Atualização (PR #57) — filtro de regime automático (SMA100) pra ligar/desligar a estratégia:**
+
+`scripts/backtest_regime_switch_strategy.py` testou se dá pra detectar o regime automaticamente (Close do Nasdaq vs. SMA100 própria) em vez de rotular "rali" vs "correção" na mão, e usar isso pra alternar entre buy&hold passivo (em alta) e o sinal europeu (fora de alta). Números reais (Replit):
+
+- **O filtro discrimina os regimes de verdade**: 78,4% dos dias classificados "alta" no regime de rali, contra só 36,9% no de correção — diferença grande o suficiente pra mostrar que a SMA100 capta algo real, não é ruído.
+- **Na correção, o híbrido preserva quase todo o edge**: long/flat líquido 35,60% (vs. 35,15% do sinal sempre ligado); long/short líquido 69,22% (vs. 69,75% sempre ligado) — praticamente empatado, mesmo com mais trades por causa das trocas de regime.
+- **No rali, o híbrido melhora mas NÃO resolve o problema**: long/flat líquido vai de -14,13% (sempre ligado) pra -8,01% (híbrido) — menos ruim, mas ainda muito longe dos +42,27% do buy&hold puro. Dois motivos: (1) os ~22% de dias "fora de alta" DENTRO do próprio rali ainda ativam o sinal europeu, que perde dinheiro nesse regime; (2) a própria troca de regime é uma operação com custo — o híbrido fez 447 trades contra 269 do sempre-ligado, então parte do que se ganharia ficando parado se perde na troca em si.
+- **Conclusão prática**: a SMA100 é rápida/ruidosa demais — fica alternando "alta"/"correção" dentro do próprio rali, e cada troca custa dinheiro. Hipótese não testada ainda: um filtro mais "pegajoso" (SMA200, exigir vários dias seguidos abaixo da média, ou um gatilho de drawdown mínimo desde a máxima) provavelmente reduziria esses falsos positivos de "correção" durante um rali genuíno.
+
+Ver PR #57 pro histórico completo (código, números reais rodados no Replit).
