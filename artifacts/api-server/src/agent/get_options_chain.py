@@ -3,14 +3,9 @@
 Input (stdin JSON):  {"tickers": ["NVDA", "ARM"]}
 Output (stdout JSON): {"items": [ {ticker, putCallRatio, atmIvPct, ...}, ... ]}
 """
-import sys, json, re
+import sys, json
 import yfinance as yf
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 def for_ticker(ticker: str) -> dict:
     try:

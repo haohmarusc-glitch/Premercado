@@ -19,14 +19,9 @@ Output (stdout JSON): {
   "darkPool": {"configured": bool, "trades": [...], "error"?: str}
 }
 """
-import sys, json, os, re
+import sys, json, os
 import requests
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 def congress_trades(tickers: set[str]) -> dict:
     api_key = os.environ.get("QUIVER_API_KEY", "").strip()

@@ -10,12 +10,7 @@ import sys, json, re
 from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 def run(ticker, dates):
     ticker = sanitize_ticker(ticker)

@@ -11,10 +11,11 @@ Filosofia: calculadora, não decisor — expõe os componentes, não dá ordem d
 Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
-import sys, json, re, os, time
+import sys, json, os, time
 import requests
 import yfinance as yf
 import pandas as pd
+from security import sanitize_ticker
 
 # ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
 #    então não pode importar agent/cache.py que usa import relativo).
@@ -38,12 +39,6 @@ def _cache_save(cache: dict) -> None:
             json.dump(cache, f, ensure_ascii=False)
     except Exception:
         pass  # disco cheio/sem permissão: segue sem cache
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
 
 # ── Sentimento por palavras-chave (headlines vêm em inglês do yfinance) ──────
 POSITIVE = [
