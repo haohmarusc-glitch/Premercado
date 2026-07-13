@@ -164,3 +164,14 @@ Ver PR #54 pro histórico completo (código, teste de vazamento de look-ahead co
 - **Conclusão prática**: a SMA100 é rápida/ruidosa demais — fica alternando "alta"/"correção" dentro do próprio rali, e cada troca custa dinheiro. Hipótese não testada ainda: um filtro mais "pegajoso" (SMA200, exigir vários dias seguidos abaixo da média, ou um gatilho de drawdown mínimo desde a máxima) provavelmente reduziria esses falsos positivos de "correção" durante um rali genuíno.
 
 Ver PR #57 pro histórico completo (código, números reais rodados no Replit).
+
+**Atualização (PR #60) — SMA200 testada lado a lado com SMA100: confirma a hipótese, e vem com bônus:**
+
+`scripts/backtest_regime_switch_strategy.py` foi estendido pra testar SMA100 e SMA200 no mesmo run, testando a hipótese levantada acima (SMA mais lenta = menos trocas falsas de regime dentro do rali). Números reais (Replit):
+
+- **No rali, SMA200 reduz o dano, confirmando a hipótese**: híbrido long/flat líquido melhora de -8,01% (SMA100) para **-5,00%** (SMA200), Sharpe de -0,224 para -0,095. Long/short: -24,44% → -19,01%. Ainda muito longe dos +42,27% do buy&hold, mas é uma melhora real e consistente.
+- **Bônus não esperado — na correção, SMA200 supera tanto a SMA100 quanto o sinal sempre ligado**: híbrido long/flat líquido 41,94%/Sharpe 1,414 (vs. 35,60%/1,217 da SMA100 e 35,15%/1,276 do sinal sempre ligado); long/short 85,07%/Sharpe 1,889 — o melhor número registrado até agora nessa linha de teste, batendo os 69,75%/1,648 do sinal sempre ligado. Motivo: a SMA200 classificou só 29,4% dos dias como "alta" na correção (contra 36,9% da SMA100), mantendo o sinal europeu ligado por mais tempo justamente no regime em que ele funciona.
+- **SMA200 domina SMA100 nos dois regimes e nos dois modos de posição** — não é uma troca de um lado pelo outro, é estritamente melhor em todas as 8 combinações testadas (2 regimes x 2 janelas x 2 modos).
+- **Conclusão prática final desta linha de investigação**: mesmo com o melhor filtro testado até agora, a estratégia (Europa + regime) não resolve o rali — buy&hold puro continua ganhando disparado em tendência forte e sustentada. O pragmatismo real: usar buy&hold como default, e ligar o sinal europeu com filtro SMA200 só como camada adicional quando houver confirmação de regime de correção/lateralização — não como substituto do buy&hold em todos os cenários.
+
+Ver PR #60 pro histórico completo (código, números reais rodados no Replit).
