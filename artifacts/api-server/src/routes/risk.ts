@@ -25,7 +25,7 @@ function runPython(payload: object): Promise<object> {
   });
 }
 
-router.post("/risk/position-size", async (req, res): Promise<void> => {
+router.post("/risk/position-size", async (req, res, next): Promise<void> => {
   const { accountSize, riskPct, entry, stop } = req.body;
   if (!accountSize || !riskPct || !entry || !stop) {
     res.status(400).json({ error: "accountSize, riskPct, entry, stop required" }); return;
@@ -33,11 +33,11 @@ router.post("/risk/position-size", async (req, res): Promise<void> => {
   try {
     res.json(await runPython({ action: "position_size", accountSize, riskPct, entry, stop }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
-router.post("/risk/risk-reward", async (req, res): Promise<void> => {
+router.post("/risk/risk-reward", async (req, res, next): Promise<void> => {
   const { entry, stop, target } = req.body;
   if (!entry || !stop || !target) {
     res.status(400).json({ error: "entry, stop, target required" }); return;
@@ -45,21 +45,21 @@ router.post("/risk/risk-reward", async (req, res): Promise<void> => {
   try {
     res.json(await runPython({ action: "risk_reward", entry, stop, target }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
-router.post("/risk/stop-distance", async (req, res): Promise<void> => {
+router.post("/risk/stop-distance", async (req, res, next): Promise<void> => {
   const { ticker, period, atrMultiplier } = req.body;
   if (!ticker) { res.status(400).json({ error: "ticker required" }); return; }
   try {
     res.json(await runPython({ action: "stop_distance", ticker, period: period ?? "3mo", atrMultiplier: atrMultiplier ?? 2.0 }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
-router.get("/risk/portfolio-exposure", async (req, res): Promise<void> => {
+router.get("/risk/portfolio-exposure", async (req, res, next): Promise<void> => {
   try {
     const positions = await db.select().from(portfolioPositionsTable);
     const payload = positions.map((p) => ({
@@ -68,7 +68,7 @@ router.get("/risk/portfolio-exposure", async (req, res): Promise<void> => {
     }));
     res.json(await runPython({ action: "portfolio_exposure", positions: payload }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
@@ -80,7 +80,7 @@ router.get("/risk/portfolio-exposure", async (req, res): Promise<void> => {
 // hedgeTicker pra igualar a exposição de volatilidade de targetCapital
 // investido em baseTicker. Pensado pra pares recém-listados sem histórico
 // diário suficiente ainda (ver .agents/memory/skhy-ipo-monitoring.md).
-router.post("/risk/intraday-beta", async (req, res): Promise<void> => {
+router.post("/risk/intraday-beta", async (req, res, next): Promise<void> => {
   const { baseTicker, hedgeTicker, targetCapital, interval, window, period, winsorizeStd } = req.body;
   if (!baseTicker || !hedgeTicker || !targetCapital) {
     res.status(400).json({ error: "baseTicker, hedgeTicker, targetCapital required" }); return;
@@ -95,11 +95,11 @@ router.post("/risk/intraday-beta", async (req, res): Promise<void> => {
       winsorizeStd: winsorizeStd ?? 3.0,
     }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
-router.get("/risk/portfolio-correlation", async (req, res): Promise<void> => {
+router.get("/risk/portfolio-correlation", async (req, res, next): Promise<void> => {
   try {
     const positions = await db.select({ ticker: portfolioPositionsTable.ticker }).from(portfolioPositionsTable);
     const tickers = [...new Set(positions.map((p) => p.ticker))];
@@ -110,7 +110,7 @@ router.get("/risk/portfolio-correlation", async (req, res): Promise<void> => {
     const period = typeof req.query.period === "string" ? req.query.period : "6mo";
     res.json(await runPython({ action: "correlation", tickers, period }));
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 

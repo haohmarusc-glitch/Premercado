@@ -28,7 +28,7 @@ function runConfluence(payload: object): Promise<unknown> {
 // volume/sector, mais o veto de calendário) para o símbolo pedido, buscando
 // OHLCV direto via yfinance dentro do subprocesso Python (não há tabela de
 // OHLCV no Postgres -- mesmo padrão de /backtest, /risk/* e /technicals).
-router.post("/confluence", async (req, res): Promise<void> => {
+router.post("/confluence", async (req, res, next): Promise<void> => {
   const { symbol, period, minVotes, kellyFraction } = req.body;
   if (!symbol) { res.status(400).json({ error: "symbol is required" }); return; }
 
@@ -41,7 +41,7 @@ router.post("/confluence", async (req, res): Promise<void> => {
     });
     res.json(data);
   } catch (e: unknown) {
-    res.status(500).json({ error: String((e as Error)?.message ?? e) });
+    next(e);
   }
 });
 

@@ -237,6 +237,13 @@ def run_tool(name: str, args: dict) -> str:
         result = fn(**args)
         return _json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
+        # Loga o traceback real no stderr -- runner.ts/chat.ts ja capturam
+        # stderr do subprocesso via logger.warn (ver "Agent stderr"), entao
+        # isso aparece nos logs do servidor sem precisar de plumbing nova.
+        # Sem isso, a falha so' existia como uma string curta devolvida pro
+        # LLM, invisivel a quem monitora o servidor.
+        import traceback
+        print(f"ERRO_TOOL {name}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr, flush=True)
         return f"[erro ao executar {name}: {type(e).__name__}: {e}]"
 
 

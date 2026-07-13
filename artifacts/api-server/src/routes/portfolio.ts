@@ -21,6 +21,10 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+// Aceita tanto `db` quanto o `tx` recebido dentro de db.transaction(...) --
+// deixa recomputePosition reutilizavel nos dois contextos.
+type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 // Fetch real historical close prices for a ticker on a set of dates (via yfinance)
 function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<string, number>> {
   return new Promise((resolve, reject) => {
@@ -63,8 +67,13 @@ function serPur(r: typeof portfolioPurchasesTable.$inferSelect) {
 // a tabela de posicoes nunca ficar "congelada" desatualizada em relacao as
 // compras reais. Se nao sobrar nenhum lote em aberto, a posicao e removida
 // (fica so o historico em portfolio_purchases, incluindo os lotes vendidos).
-async function recomputePosition(positionId: number): Promise<void> {
-  const purchases = await db
+//
+// Recebe o executor (db ou uma tx) explicitamente -- os chamadores sempre
+// rodam isso dentro de db.transaction() junto com a escrita em
+// portfolio_purchases, senao um crash entre as duas escritas deixa
+// portfolio_positions dessincronizada silenciosamente.
+async function recomputePosition(executor: DbOrTx, positionId: number): Promise<void> {
+  const purchases = await executor
     .select()
     .from(portfolioPurchasesTable)
     .where(eq(portfolioPurchasesTable.positionId, positionId));
@@ -78,7 +87,7 @@ async function recomputePosition(positionId: number): Promise<void> {
     // junto). Em vez disso zeramos os campos: a posicao some da view de
     // "ativas" (ver filtro em GET /portfolio) mas a linha e o historico
     // continuam intactos no banco.
-    await db
+    await executor
       .update(portfolioPositionsTable)
       .set({ quantity: 0, avgCost: 0, investedAmount: 0, updatedAt: new Date() })
       .where(eq(portfolioPositionsTable.id, positionId));
@@ -89,7 +98,7 @@ async function recomputePosition(positionId: number): Promise<void> {
     open.map((p) => ({ amount: Number(p.amount), purchasePrice: p.purchasePrice != null ? Number(p.purchasePrice) : null })),
   );
 
-  await db
+  await executor
     .update(portfolioPositionsTable)
     .set({ ...totals, updatedAt: new Date() })
     .where(eq(portfolioPositionsTable.id, positionId));
@@ -236,11 +245,14 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   // permanentemente bloqueado num valor apenas aproximado.
   const priceManuallyEdited = body.data.priceManuallyEdited === true;
 
-  const [row] = await db
-    .insert(portfolioPurchasesTable)
-    .values({ positionId: params.data.id, ...body.data, purchasePrice, priceManuallyEdited })
-    .returning();
-  await recomputePosition(params.data.id);
+  const row = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(portfolioPurchasesTable)
+      .values({ positionId: params.data.id, ...body.data, purchasePrice, priceManuallyEdited })
+      .returning();
+    await recomputePosition(tx, params.data.id);
+    return inserted;
+  });
   res.status(201).json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -278,12 +290,15 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
     return;
   }
 
-  const [row] = await db
-    .update(portfolioPurchasesTable)
-    .set(update)
-    .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
-    .returning();
-  await recomputePosition(row.positionId);
+  const row = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(portfolioPurchasesTable)
+      .set(update)
+      .where(eq(portfolioPurchasesTable.id, p.data.purchaseId))
+      .returning();
+    await recomputePosition(tx, updated.positionId);
+    return updated;
+  });
   res.json(PortfolioPurchaseSchema.parse(serPur(row)));
 });
 
@@ -299,15 +314,17 @@ router.delete("/portfolio/purchases/:purchaseId", async (req, res): Promise<void
     res.status(404).json({ error: "Not found" });
     return;
   }
-  await db.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
-  await recomputePosition(existing.positionId);
+  await db.transaction(async (tx) => {
+    await tx.delete(portfolioPurchasesTable).where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
+    await recomputePosition(tx, existing.positionId);
+  });
   res.status(204).send();
 });
 
 // GET /portfolio/historical-price?ticker=NVDA&date=2026-03-20 — single real close price
 // Utilitário sem estado próprio de usuário (proxy do yfinance) -- não precisa
 // de checagem de dono, só de estar logado (já garantido pelo requireAuth).
-router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
+router.get("/portfolio/historical-price", async (req, res, next): Promise<void> => {
   const ticker = String(req.query.ticker ?? "").toUpperCase();
   const date = String(req.query.date ?? "");
   if (!ticker || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -318,7 +335,7 @@ router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
     const prices = await fetchHistoricalPrices(ticker, [date]);
     res.json({ ticker, date, price: prices[date] ?? null });
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
@@ -328,7 +345,7 @@ router.get("/portfolio/historical-price", async (req, res): Promise<void> => {
 // Nunca mexe em compras marcadas como priceManuallyEdited (preço já corrigido
 // à mão com o valor real de execução da corretora é sempre mais confiável do
 // que a estimativa por fechamento do dia).
-router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> => {
+router.post("/portfolio/:id/backfill-prices", async (req, res, next): Promise<void> => {
   const params = PortfolioPositionParams.safeParse(req.params);
   if (!params.success) { res.status(400).json({ error: "invalid id" }); return; }
   const force = req.body?.force === true;
@@ -365,7 +382,7 @@ router.post("/portfolio/:id/backfill-prices", async (req, res): Promise<void> =>
     }
     res.json({ updated, total: targets.length, skippedManual, prices });
   } catch (e: unknown) {
-    res.status(500).json({ error: String(e) });
+    next(e);
   }
 });
 
