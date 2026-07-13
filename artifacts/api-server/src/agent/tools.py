@@ -981,6 +981,19 @@ def detect_sector_contagion(
 # ── Análise de mercado (market_alerts) ───────────────────────────────────────
 
 
+def get_global_market_snapshot() -> dict:
+    """
+    Variação % do último pregão disponível para os mercados que operam antes ou
+    durante o pré-mercado da Nasdaq: Ásia overnight (Nikkei, KOSPI, Hang Seng),
+    Europa em overlap direto (DAX, FTSE, CAC), EUR/USD e futuros de índice dos
+    EUA (NQ, ES). Dado bruto de contexto — sem pontuação/composite embutido.
+    """
+    try:
+        return _ma.get_global_market_snapshot()
+    except Exception as e:
+        return {"error": str(e), "items": []}
+
+
 def check_market_alerts(
     tickers: list[str] | None = None,
     headlines_by_ticker: dict[str, list] | None = None,
@@ -1332,6 +1345,22 @@ TOOLS = [
         },
     },
     {
+        "name": "get_global_market_snapshot",
+        "description": (
+            "Retorna a variação % do último pregão disponível para mercados que operam antes ou "
+            "durante o pré-mercado da Nasdaq: Nikkei 225 e KOSPI (Ásia overnight), Hang Seng "
+            "(Hong Kong), DAX/FTSE 100/CAC 40 (Europa, overlap direto com o pré-mercado dos EUA), "
+            "EUR/USD e futuros de índice (Nasdaq 100 e S&P 500). "
+            "É dado bruto de contexto, sem pontuação/composite embutido — não ajuste thresholds "
+            "de compra/venda com base nisso sem validar via backtest primeiro."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "detect_sector_contagion",
         "description": (
             "Detecta contágio setorial entre os grupos da cadeia de IA. "
@@ -1453,4 +1482,5 @@ DISPATCH = {
     "get_fear_greed_index": get_fear_greed_index,
     "get_analyst_ratings": get_analyst_ratings,
     "detect_sector_contagion": detect_sector_contagion,
+    "get_global_market_snapshot": get_global_market_snapshot,
 }
