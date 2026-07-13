@@ -329,6 +329,21 @@ Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análi
 
 # ── Agent loop (shared by all run modes) ──────────────────────────────────────
 
+# Relatório de mercado real cobre vários ativos em Markdown -- escala com
+# min_observations (proxy de quantos ativos o relatório precisa cobrir) pra
+# não gerar falso positivo numa carteira bem pequena (1-2 ativos), mas ainda
+# assim pegar os ~140-160 caracteres típicos de um reconhecimento de
+# continuação ("Entendido, vou fazer X..."), que não é o relatório de
+# verdade. Só é checado quando require_observations=True (fluxos de
+# relatório real); chat/premarket-flash não usam essa checagem.
+MIN_REPORT_CHARS_PER_TICKER = 40
+MIN_REPORT_CHARS_FLOOR = 150
+
+
+def _min_report_chars(min_observations: int) -> int:
+    return max(MIN_REPORT_CHARS_FLOOR, MIN_REPORT_CHARS_PER_TICKER * min_observations)
+
+
 def _agent_loop(
     client,
     model: str,
@@ -395,6 +410,32 @@ def _agent_loop(
                     "(resumo curto + sentimento) e só então escreva o relatório final."
                 )})
                 continue
+
+            # As observações podem já estar OK (missing <= 0) e ainda assim o
+            # texto final ser só um reconhecimento curto de continuação
+            # ("Entendido, peço desculpas pela interrupção, vou registrar as
+            # observações restantes..."), não o relatório de mercado de
+            # verdade -- bug visto em produção: esse texto passava sem
+            # nenhum aviso porque a checagem de observações sozinha não
+            # detecta um relatório vazio/curto demais. Um relatório real
+            # cobre vários ativos em Markdown e nunca é tão curto quanto
+            # isso, então usamos o tamanho como sinal.
+            looks_like_report = (
+                require_observations is False
+                or len(final_text.strip()) >= _min_report_chars(min_observations)
+            )
+            if require_observations and not looks_like_report and nudges_left > 0:
+                nudges_left -= 1
+                if progress_callback:
+                    progress_callback(f"{step_prefix}Cobrando o relatório final por completo...")
+                messages.append({"role": "user", "content": (
+                    "Sua última resposta foi curta demais para ser o relatório de "
+                    "mercado completo — parece só um reconhecimento de continuação, "
+                    "não a análise final. Escreva AGORA o relatório completo em "
+                    "Markdown, com uma seção por ativo, conforme o fluxo pedido."
+                )})
+                continue
+
             if require_observations and missing > 0:
                 # Cobranças esgotadas e o modelo ainda assim respondeu só com
                 # texto, sem chamar save_observation -- esse texto é quase
@@ -407,6 +448,15 @@ def _agent_loop(
                     "Análise incompleta nesta execução: o modelo não conseguiu "
                     "registrar as observações pendentes mesmo após ser cobrado, "
                     "e não produziu um relatório final confiável."
+                )
+            elif require_observations and not looks_like_report:
+                # Cobranças esgotadas e o texto final continua curto demais
+                # pra ser um relatório de verdade -- mesma lógica do bloco
+                # acima, mas pro caso em que as observações já estavam OK.
+                final_text = (
+                    "Análise incompleta nesta execução: o modelo encerrou com uma "
+                    "resposta curta demais para ser um relatório de mercado real, "
+                    "mesmo após ser cobrado para completar."
                 )
             break
 
