@@ -120,3 +120,16 @@ Este plano assume entrada logo na 2ª sessão (segunda-feira, 13/jul), o que **c
 - **Conclusão prática**: essa estratégia de confluência se comporta como um **filtro defensivo de redução de exposição em mercado sem direção clara**, não como gerador de alfa em tendência forte. Quando a SKHY tiver histórico suficiente pra habilitar o ConfluenceEngine, não esperar que ele "capture" um rali sustentado (ex.: um upgrade estrutural de tese por causa do HBM) — o valor real dela é evitar ficar exposto durante quedas/correções sem direção, e mesmo assim precisa ser validada regime a regime e ticker a ticker, não assumida como universal.
 
 Ver PRs #41-#45 no repositório pro histórico completo dessa validação (código, testes com dados sintéticos, e os números reais rodados no Replit).
+
+## Correlação mercados globais x gap de abertura da Nasdaq — resultados reais (PRs #52-#53)
+
+`get_global_market_snapshot()` (`market_alerts.py`, tool do agente) busca a variação do último pregão de Nikkei 225, KOSPI, Hang Seng, DAX, FTSE 100, CAC 40, EUR/USD e futuros Nasdaq/S&P — dado bruto, sem pontuação/composite embutido. Antes de conectar isso a qualquer sinal, rodamos um estudo de correlação (`scripts/backtest_global_market_pulse.py`) contra o gap de abertura da Nasdaq (^IXIC), nos mesmos dois regimes do ConfluenceEngine (rali 2024-2026 vs. correção 2022-2023). Números reais (Replit):
+
+- **Validação do método**: `NQ=F` (futuros Nasdaq) teve corr_day de 0,97/0,99 com ^IXIC — confirma que o alinhamento de datas entre mercados está correto; é um sanity check, não um achado novo.
+- **Europa é o sinal mais forte**: DAX (corr_gap 0,48/0,60, hit-rate 66%/73%) e CAC 40 (0,48/0,57, hit-rate 67%/72%) lideram — mas é mais "leitura simultânea da manhã" que previsão overnight, já que a Europa está operando durante o próprio pré-mercado da Nasdaq.
+- **Ásia tem sinal real, mais fraco**: Nikkei (corr_gap 0,42/0,15, hit-rate 62%/55%), KOSPI (0,32/0,20, hit-rate 61%/60%), Hang Seng (0,27/0,25, hit-rate 59%/60%) — mais fraco que a Europa, mas consistente nos dois regimes e sempre acima de 50%.
+- **EUR/USD não tem sinal nenhum**: corr_gap -0,09/-0,04, hit-rate 49%/49% nos dois regimes (pior que cara-ou-coroa) — descartar essa variável de qualquer sinal futuro.
+- **Ressalva antes de combinar**: DAX/FTSE/CAC provavelmente têm forte correlação entre si (mesmo "humor europeu"), então um composite com pesos fixos nas três infla o mesmo sinal em vez de agregar informação independente — checar multicolinearidade antes de somar.
+- **Isso ainda é só correlação, não uma estratégia testada** — o próximo passo é testar uma regra de entrada/saída de verdade (usando o sinal europeu e/ou asiático) contra buy&hold, do mesmo jeito que foi feito com o ConfluenceEngine, antes de conectar isso a qualquer decisão de compra/venda real.
+
+Ver PRs #52-#53 pro histórico completo (tool, script de correlação, números reais rodados no Replit).
