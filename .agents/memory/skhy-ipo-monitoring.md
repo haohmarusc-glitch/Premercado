@@ -133,3 +133,15 @@ Ver PRs #41-#45 no repositório pro histórico completo dessa validação (códi
 - **Isso ainda é só correlação, não uma estratégia testada** — o próximo passo é testar uma regra de entrada/saída de verdade (usando o sinal europeu e/ou asiático) contra buy&hold, do mesmo jeito que foi feito com o ConfluenceEngine, antes de conectar isso a qualquer decisão de compra/venda real.
 
 Ver PRs #52-#53 pro histórico completo (tool, script de correlação, números reais rodados no Replit).
+
+## Backtest da regra de sinal global (Europa/Ásia) vs. buy&hold — resultados reais (PR #54)
+
+`scripts/backtest_global_signal_strategy.py` converteu a correlação acima numa regra de verdade: posição long/flat ou long/short na Nasdaq (^IXIC) baseada no sinal do dia (Europa = média DAX+CAC+FTSE, Ásia = média Nikkei+KOSPI+HSI), com retorno medido abertura→fechamento do mesmo dia (não fechamento→fechamento, pra não reusar o próprio gap já testado na correlação). Números reais (Replit), nos mesmos dois regimes do ConfluenceEngine:
+
+- **Europa é o achado real e consistente**: bate o Sharpe do buy&hold nos dois regimes, com drawdown bem menor (rali: -11,69% vs -24,32% do buy&hold; correção: -12,40% vs -35,49%). Na correção o resultado é dramático — long/flat +81,46% contra -14,16% do buy&hold; long/short chega a +199,70% (Sharpe 3,306). Win-rate ficou em 54-62,5% nos dois regimes, batendo com o hit-rate de 59-73% já visto no estudo de correlação — a correlação virou retorno de verdade.
+- **Ásia NÃO se sustenta como retorno**, mesmo tendo tido correlação positiva com o gap: no rali, long/flat perde -9,01% (Sharpe -0,356) e long/short perde -26,64% (Sharpe -0,755); só ficou positiva (modesta) na correção. Interpretação provável: a Ásia acerta a direção do gap, mas o resto do pregão frequentemente reverte esse movimento — o sinal se esgota na abertura.
+- **Combinar Europa+Ásia piora o resultado da Europa isolada** nos dois regimes (rali: -0,21%/-11,80% contra os 25-37% da Europa sozinha) — confirma a ressalva de multicolinearidade acima: **Ásia deveria sair de qualquer composite**, não é só redundante, é contraprodutiva no rali.
+- **Long/short vs. long/flat depende do regime**: dispara na correção (mercado bidirecional, lucra nos dias de queda também), mas piora o drawdown no rali (-25,60% vs -11,69% do long/flat) sem ganho de Sharpe — brigar contra a tendência custa caro.
+- **Ressalva crítica — nenhum custo de transação foi modelado** (comissão/slippage/spread). A estratégia opera quase todo dia (190-500 trades no período testado), exatamente onde custo por operação mais corrói o resultado. Antes de considerar isso validado pra uso real, precisa rodar de novo com custo realista aplicado a cada troca de posição (o `backtest.py` já tem `commissionPct`/`slippagePct` prontos pra isso).
+
+Ver PR #54 pro histórico completo (código, teste de vazamento de look-ahead com dados sintéticos em múltiplas seeds, números reais rodados no Replit).
