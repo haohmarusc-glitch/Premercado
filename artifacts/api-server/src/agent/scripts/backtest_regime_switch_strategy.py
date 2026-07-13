@@ -21,24 +21,36 @@ automaticamente, sem rotular nada, e comparar:
       passivo (igual ao buy&hold); fora de alta, liga o sinal europeu
       (long/flat ou long/short).
 
-Filtro de regime: SMA100 do próprio alvo (Nasdaq, ^IXIC). Close > SMA100 ->
-"alta" (desliga o sinal, buy&hold passivo); Close <= SMA100 -> "correção/
+Filtro de regime: SMA de janela configurável (SMA_WINDOWS abaixo, por
+padrão 100 E 200 lado a lado) do próprio alvo (Nasdaq, ^IXIC). Close > SMA
+-> "alta" (desliga o sinal, buy&hold passivo); Close <= SMA -> "correção/
 lateral" (liga o sinal europeu). Simples de propósito -- é o filtro de
 tendência mais padrão que existe; não é o objetivo aqui inventar um
 classificador de regime sofisticado antes de saber se a ideia básica já
 ajuda.
 
-Busca com warmup extra (SMA100 precisa de ~100 pregões de histórico ANTES
-do início do período de teste pra já estar válida no primeiro dia) e
-recorta pro período de teste depois -- mesmo padrão de _trim_to_window em
-backtest.py. Custo de transação: mesmos defaults de backtest.py, cobrado
-por perna a cada troca de posição (incluindo a troca causada pelo próprio
-filtro de regime, que também é uma operação real).
+Motivo de testar os dois: o resultado real da SMA100 (PR #57/#58) mostrou
+que ela discrimina os regimes de verdade (78,4% "alta" no rali vs. 36,9%
+na correção), mas é rápida/ruidosa demais -- fica alternando "alta"/
+"correção" DENTRO do próprio rali, e cada troca de regime é uma operação
+com custo. Uma SMA mais lenta (200) deve ser mais "pegajosa" (menos trocas
+falsas dentro de uma tendência sustentada), o que devia reduzir esse custo
+extra especificamente no regime de rali -- é essa hipótese que este script
+testa, comparando SMA100 e SMA200 lado a lado no mesmo run.
 
-Reporta, pra cada regime testado: % de dias classificados como "alta" pelo
-filtro (valida se o filtro faz sentido -- espera-se maioria "alta" no
-regime de rali e maioria "correção" no regime de correção), e as métricas
-líquidas de custo do hibrido vs. buy&hold vs. sinal sempre ligado.
+Busca com warmup extra (a maior SMA testada precisa do próprio tanto de
+pregões de histórico ANTES do início do período de teste pra já estar
+válida no primeiro dia) e recorta pro período de teste depois -- mesmo
+padrão de _trim_to_window em backtest.py. Custo de transação: mesmos
+defaults de backtest.py, cobrado por perna a cada troca de posição
+(incluindo a troca causada pelo próprio filtro de regime, que também é
+uma operação real).
+
+Reporta, pra cada regime x janela de SMA testada: % de dias classificados
+como "alta" pelo filtro (valida se o filtro faz sentido -- espera-se
+maioria "alta" no regime de rali e maioria "correção" no regime de
+correção), e as métricas líquidas de custo do híbrido vs. buy&hold vs.
+sinal sempre ligado.
 """
 import os
 import sys
@@ -55,8 +67,8 @@ TARGET_LABEL = "Nasdaq Composite"
 # Único sinal que sobreviveu ao custo real (PR #56) -- Ásia fica de fora.
 EUROPE_TICKERS = {"^GDAXI": "DAX", "^FCHI": "CAC 40", "^FTSE": "FTSE 100"}
 
-SMA_WINDOW = 100
-WARMUP_CALENDAR_DAYS = int(SMA_WINDOW * 1.6)  # folga pra feriados/fins de semana
+SMA_WINDOWS = [100, 200]
+WARMUP_CALENDAR_DAYS = int(max(SMA_WINDOWS) * 1.6)  # folga pra feriados/fins de semana
 
 RESULTS_MD_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "regime_switch_strategy_results.md"
@@ -169,8 +181,9 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
         print(msg, file=sys.stderr)
         return f"## {regime_label}\n\n{msg}\n"
 
-    sma = target_full["Close"].rolling(SMA_WINDOW).mean()
-    uptrend_full = target_full["Close"] > sma
+    uptrend_full_by_window = {
+        w: target_full["Close"] > target_full["Close"].rolling(w).mean() for w in SMA_WINDOWS
+    }
 
     europe_series = []
     for ticker in EUROPE_TICKERS:
@@ -185,17 +198,18 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
         return f"## {regime_label}\n\n{msg}\n"
     europe_signal_full = pd.concat(europe_series, axis=1).mean(axis=1)
 
-    # Recorta pro período de teste pedido -- a SMA100/sinal já usaram o
+    # Recorta pro período de teste pedido -- as SMAs/sinal já usaram o
     # warmup, o teste olha só [req_start, fim].
     mask = target_full.index >= req_start
     target_df = target_full.loc[mask]
-    uptrend = uptrend_full.loc[mask]
+    uptrend_by_window = {w: s.loc[mask] for w, s in uptrend_full_by_window.items()}
     europe_signal = europe_signal_full.loc[mask]
     intraday_return = _intraday_return_series(target_df)
 
-    pct_uptrend = float(uptrend.mean() * 100)
-    print(f"\nFiltro de regime (Close > SMA{SMA_WINDOW}): {pct_uptrend:.1f}% dos dias classificados 'alta' "
-          f"({len(uptrend)} dias no período de teste, {target_df.index[0].date()} a {target_df.index[-1].date()}).")
+    for w, uptrend in uptrend_by_window.items():
+        pct_uptrend = float(uptrend.mean() * 100)
+        print(f"\nFiltro de regime (Close > SMA{w}): {pct_uptrend:.1f}% dos dias classificados 'alta' "
+              f"({len(uptrend)} dias no período de teste, {target_df.index[0].date()} a {target_df.index[-1].date()}).")
 
     bh_equity = INITIAL_CAPITAL * (target_df["Close"] / target_df["Close"].iloc[0])
     bh = _equity_metrics(bh_equity)
@@ -205,7 +219,11 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
         f"## {regime_label}\n",
         f"Alvo: {TARGET_LABEL} ({TARGET_TICKER}). Período de teste: "
         f"{target_df.index[0].date()} a {target_df.index[-1].date()}.\n",
-        f"Filtro de regime (Close > SMA{SMA_WINDOW}): **{pct_uptrend:.1f}% dos dias classificados 'alta'**.\n",
+    ]
+    for w, uptrend in uptrend_by_window.items():
+        pct_uptrend = float(uptrend.mean() * 100)
+        md.append(f"Filtro de regime (Close > SMA{w}): **{pct_uptrend:.1f}% dos dias classificados 'alta'**.\n")
+    md += [
         f"Buy & hold: retorno={bh['total_return_pct']:.2f}%, cagr={bh['cagr']*100:.2f}%, "
         f"sharpe={bh['sharpe']:.3f}, max_dd={bh['max_drawdown_pct']:.2f}%\n",
         "| Estratégia | Retorno (bruto) | Retorno (líquido) | Sharpe (bruto) | Sharpe (líquido) | "
@@ -220,23 +238,25 @@ def _run_regime(regime_label: str, fetch_kwargs: dict) -> str:
             europe_position = pd.Series(np.sign(europe_signal), index=europe_signal.index)
 
         # Sinal europeu sempre ligado (baseline já visto em backtest_global_signal_strategy.py,
-        # recalculado aqui pra comparar lado a lado com o híbrido no mesmo run).
+        # recalculado aqui pra comparar lado a lado com o híbrido no mesmo run). Independe da
+        # janela de SMA, só precisa ser reportado uma vez por modo.
         gross_always = _simulate_position(europe_position, intraday_return)
         net_always = _simulate_position(europe_position, intraday_return, COMMISSION_PCT, SLIPPAGE_PCT)
 
-        # Híbrido: em alta (uptrend=True) fica 100% comprado passivo; fora
-        # de alta, usa a posição do sinal europeu.
-        hybrid_position = pd.Series(
-            np.where(uptrend.reindex(europe_position.index).fillna(False), 1.0, europe_position),
-            index=europe_position.index,
-        )
-        gross_hybrid = _simulate_position(hybrid_position, intraday_return)
-        net_hybrid = _simulate_position(hybrid_position, intraday_return, COMMISSION_PCT, SLIPPAGE_PCT)
+        rows = [(f"sinal europeu sempre ligado ({mode_label})", gross_always, net_always)]
 
-        for label, gross, net in (
-            (f"sinal europeu sempre ligado ({mode_label})", gross_always, net_always),
-            (f"híbrido: SMA{SMA_WINDOW} liga/desliga ({mode_label})", gross_hybrid, net_hybrid),
-        ):
+        for w, uptrend in uptrend_by_window.items():
+            # Híbrido: em alta (uptrend=True) fica 100% comprado passivo;
+            # fora de alta, usa a posição do sinal europeu.
+            hybrid_position = pd.Series(
+                np.where(uptrend.reindex(europe_position.index).fillna(False), 1.0, europe_position),
+                index=europe_position.index,
+            )
+            gross_hybrid = _simulate_position(hybrid_position, intraday_return)
+            net_hybrid = _simulate_position(hybrid_position, intraday_return, COMMISSION_PCT, SLIPPAGE_PCT)
+            rows.append((f"híbrido: SMA{w} liga/desliga ({mode_label})", gross_hybrid, net_hybrid))
+
+        for label, gross, net in rows:
             print(f"\n[{label}]")
             print(f"  bruto:    {_fmt(gross)}")
             print(f"  líquido:  {_fmt(net)}")
@@ -262,15 +282,18 @@ def main() -> None:
         sys.exit(1)
 
     with open(RESULTS_MD_PATH, "w") as f:
-        f.write("# Backtest: filtro de regime (SMA100) liga/desliga a estratégia de sinal europeu\n\n")
+        windows_str = " e ".join(f"SMA{w}" for w in SMA_WINDOWS)
+        f.write(f"# Backtest: filtro de regime ({windows_str}) liga/desliga a estratégia de sinal europeu\n\n")
         f.write(
             f"Testa se um filtro de tendência simples (Close do Nasdaq vs. sua própria "
-            f"SMA{SMA_WINDOW}) detecta automaticamente o mesmo regime que rotulamos na mão em "
+            f"{windows_str}) detecta automaticamente o mesmo regime que rotulamos na mão em "
             "backtest_global_signal_strategy.py -- e se o híbrido resultante (buy&hold passivo "
             "em alta, sinal europeu fora de alta) preserva o edge da correção sem perder tanto "
-            "no rali. Retorno/Sharpe reportados BRUTO (sem custo) e LÍQUIDO (custo igual a "
-            "backtest.py, cobrado a cada troca de posição, inclusive a troca causada pelo "
-            "próprio filtro de regime).\n\n"
+            "no rali. Compara SMA100 (já testada em PR #57, rápida/ruidosa) com SMA200 (mais "
+            "lenta/pegajosa) lado a lado, pra ver se a janela mais lenta reduz as trocas falsas "
+            "de regime dentro de um rali sustentado. Retorno/Sharpe reportados BRUTO (sem custo) "
+            "e LÍQUIDO (custo igual a backtest.py, cobrado a cada troca de posição, inclusive a "
+            "troca causada pelo próprio filtro de regime).\n\n"
         )
         f.write("\n\n".join(sections))
     print(f"\nRelatório completo salvo em {RESULTS_MD_PATH}")
