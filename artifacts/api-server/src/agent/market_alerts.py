@@ -31,6 +31,21 @@ BELLWETHERS = ["AVGO", "NVDA", "TSM", "SOXX", "SMH", "^IXIC"]
 INTL_MEMORY_PEERS = ["000660.KS", "005930.KS"]
 YIELD_TICKER = "^TNX"
 
+# Mercados que operam antes ou durante o pre-mercado da Nasdaq: Asia overnight,
+# Europa em overlap direto, e futuros de indice dos EUA. So contexto -- ver
+# get_global_market_snapshot() abaixo, que devolve dado bruto sem pontuacao.
+GLOBAL_MARKETS: dict[str, str] = {
+    "^N225":    "Nikkei 225 (Japao)",
+    "^KS11":    "KOSPI Composite (Coreia)",
+    "^HSI":     "Hang Seng (Hong Kong)",
+    "^GDAXI":   "DAX (Alemanha)",
+    "^FTSE":    "FTSE 100 (Reino Unido)",
+    "^FCHI":    "CAC 40 (Franca)",
+    "EURUSD=X": "EUR/USD",
+    "NQ=F":     "Nasdaq 100 futuros",
+    "ES=F":     "S&P 500 futuros",
+}
+
 # Calendario macro 2026. FOMC = datas OFICIAIS (dia da decisao, 2o dia da reuniao).
 MACRO_EVENTS: dict[str, list[str]] = {
     "FOMC": [
@@ -423,6 +438,25 @@ def _parse_form4(url: str, user_agent: str = SEC_USER_AGENT) -> Optional[dict]:
             res["sell_shares"] += (shares or 0)
             res["sell_value"]  += val
     return res
+
+
+# =============================================================================
+# CONTEXTO GLOBAL (dado bruto -- sem pontuacao/composite)
+# =============================================================================
+
+def get_global_market_snapshot() -> dict:
+    """
+    Variacao % do ultimo pregao disponivel pros mercados listados em
+    GLOBAL_MARKETS. Retorna so os numeros -- nao ha pontuacao/composite nem
+    classificacao de "risk-on/off" aqui; a leitura de contexto fica a cargo
+    de quem consome o retorno. Nao ajuste thresholds de sinal com base nisso
+    sem validar via backtest primeiro (mesma licao do ConfluenceEngine).
+    """
+    items = [
+        {"ticker": ticker, "label": label, "changePct": _day_change_pct(ticker)}
+        for ticker, label in GLOBAL_MARKETS.items()
+    ]
+    return {"items": items}
 
 
 # =============================================================================
