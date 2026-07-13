@@ -8,7 +8,7 @@ any library print/warn output never reaches the pipe Node.js is reading.
 The final JSON is written via os.write(real_stdout_fd, ...) — bypasses all
 Python text buffering and guarantees a clean pipe.
 """
-import os, sys, json, re, warnings, logging
+import os, sys, json, warnings, logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Save the real stdout fd BEFORE any library can pollute it ────────────────
@@ -22,12 +22,7 @@ logging.disable(logging.CRITICAL)
 
 import yfinance as yf
 import pandas as pd
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 def technicals(ticker: str, period: str = "6mo") -> dict:
     try:

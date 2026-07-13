@@ -1,13 +1,8 @@
-"""Risk management calculator — standalone subprocess (no project imports)."""
-import sys, json, re
+"""Risk management calculator — standalone subprocess (imports only sibling security.py)."""
+import sys, json
 import yfinance as yf
 import pandas as pd
-
-def sanitize_ticker(t: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", str(t)).upper()
-    if len(clean) < 1 or len(clean) > 10:
-        raise ValueError(f"Invalid ticker: {t!r}")
-    return clean
+from security import sanitize_ticker
 
 def position_size(account_size: float, risk_pct: float, entry: float, stop: float) -> dict:
     if entry <= 0 or stop <= 0 or entry == stop:
