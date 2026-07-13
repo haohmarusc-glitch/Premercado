@@ -10,6 +10,8 @@ export * from './activityHeartbeatInput';
 export * from './adminUser';
 export * from './agentRun';
 export * from './agentRunResult';
+export * from './agentSpend';
+export * from './agentSpendProvider';
 export * from './agentStatus';
 export * from './alertCreateInput';
 export * from './alertFiring';

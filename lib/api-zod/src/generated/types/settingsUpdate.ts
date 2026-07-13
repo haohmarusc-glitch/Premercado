@@ -16,4 +16,9 @@ export interface SettingsUpdate {
   premarketIntervalMin?: number;
   premarketWindowStartHour?: number;
   premarketWindowEndHour?: number;
+  /** @nullable */
+  agentProvider?: string | null;
+  /** @nullable */
+  dailyBudgetUsd?: number | null;
+  cheapProvider?: string;
 }

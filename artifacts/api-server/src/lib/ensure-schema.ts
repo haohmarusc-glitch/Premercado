@@ -126,4 +126,13 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (is_etf column)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_provider text`);
+    await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS daily_budget_usd numeric(10,2)`);
+    await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cheap_provider text NOT NULL DEFAULT 'gemini'`);
+    logger.info("Schema check ok (settings.agent_provider/daily_budget_usd/cheap_provider)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (agent provider/budget columns)");
+  }
 }

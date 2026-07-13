@@ -260,6 +260,27 @@ export interface AgentRun {
   llmModel?: string | null;
 }
 
+export interface AgentSpendProvider {
+  provider: string;
+  /** @nullable */
+  costUsd: number | null;
+  runs: number;
+  calls: number;
+}
+
+export interface AgentSpend {
+  date: string;
+  byProvider: AgentSpendProvider[];
+  /** @nullable */
+  totalCostUsd: number | null;
+  primaryProvider: string;
+  /** @nullable */
+  dailyBudgetUsd: number | null;
+  /** @nullable */
+  budgetRemainingUsd: number | null;
+  budgetExceeded: boolean;
+}
+
 export interface NewsItem {
   title: string;
   published?: string | number;
@@ -291,6 +312,18 @@ export interface Settings {
   premarketIntervalMin: number;
   premarketWindowStartHour: number;
   premarketWindowEndHour: number;
+  /**
+     * Provedor de LLM manualmente escolhido (anthropic, gemini, openrouter, openai, kimi). Vazio/null = ordem padrão (anthropic primeiro).
+     * @nullable
+     */
+  agentProvider?: string | null;
+  /**
+     * Teto diário (USD) de gasto no provedor primário. Null = sem teto.
+     * @nullable
+     */
+  dailyBudgetUsd?: number | null;
+  /** Provedor a usar quando o teto diário do provedor primário for atingido. */
+  cheapProvider?: string;
   updatedAt: string;
 }
 
@@ -304,6 +337,11 @@ export interface SettingsUpdate {
   premarketIntervalMin?: number;
   premarketWindowStartHour?: number;
   premarketWindowEndHour?: number;
+  /** @nullable */
+  agentProvider?: string | null;
+  /** @nullable */
+  dailyBudgetUsd?: number | null;
+  cheapProvider?: string;
 }
 
 export interface ChatSession {
