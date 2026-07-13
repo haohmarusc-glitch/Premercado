@@ -386,6 +386,19 @@ def _agent_loop(
                     "(resumo curto + sentimento) e só então escreva o relatório final."
                 )})
                 continue
+            if require_observations and missing > 0:
+                # Cobranças esgotadas e o modelo ainda assim respondeu só com
+                # texto, sem chamar save_observation -- esse texto é quase
+                # sempre um reconhecimento vazio da cobrança ("Compreendi,
+                # vou reenviar as observações..."), não um relatório de
+                # verdade. Bug visto em produção: esse texto estava sendo
+                # salvo/exibido como se fosse o relatório final. Descarta e
+                # substitui por uma mensagem de diagnóstico clara.
+                final_text = (
+                    "Análise incompleta nesta execução: o modelo não conseguiu "
+                    "registrar as observações pendentes mesmo após ser cobrado, "
+                    "e não produziu um relatório final confiável."
+                )
             break
 
         tool_results = []
