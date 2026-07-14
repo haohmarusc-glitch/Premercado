@@ -35,6 +35,21 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# ETFs/fundos e índices nunca têm data de resultados/fundamentos no Yahoo Finance
+# — consultar isso pra eles sempre falha (404 "No fundamentals data found") depois
+# de um round-trip de rede completo. Pular isso de cara evita gastar o tempo de
+# rede (às vezes 10s+ por chamada) numa consulta que nunca vai ter resposta.
+NO_EARNINGS_TICKERS = frozenset({
+    "SGOV", "BIL", "SHV", "SHY", "SPY", "QQQ", "VOO", "IVV", "VTI", "DIA",
+    "AGG", "BND", "TLT", "IEF", "GOVT", "MUB", "XLK", "XLF", "XLE", "XLV",
+    "SMH", "SOXX", "ARKK", "VXX", "UVXY",
+})
+
+
+def has_no_earnings_data(ticker: str) -> bool:
+    t = (ticker or "").strip().upper()
+    return t.startswith("^") or t in NO_EARNINGS_TICKERS
+
 def validate_anthropic_key():
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     return validate_api_key(key, expected_prefix="sk-ant-")

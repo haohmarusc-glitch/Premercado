@@ -267,6 +267,9 @@ def _next_earnings_date_iso(ticker: str) -> Optional[str]:
     — ver cache.py). None é cacheado normalmente e cobre tanto "sem data futura
     conhecida" quanto tickers sem dados (delistados etc.), evitando repetir as
     chamadas lentas ao yfinance a cada turno/execucao para o mesmo ticker."""
+    from . import config
+    if config.has_no_earnings_data(ticker):
+        return None
     tk = yf.Ticker(ticker)
     try:
         ed = tk.get_earnings_dates(limit=12)
