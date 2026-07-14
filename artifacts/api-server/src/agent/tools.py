@@ -762,6 +762,9 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
     symbols = tickers or config.TICKERS
     results = []
     for sym in symbols:
+        if config.has_no_earnings_data(sym):
+            results.append({"ticker": sym, "next_earnings_date": None})
+            continue
         try:
             t = yf.Ticker(sym)
             cal = t.calendar

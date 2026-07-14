@@ -1,9 +1,28 @@
 import sys, json
 import yfinance as yf
 
+# ETFs/fundos e índices nunca têm data de resultados no Yahoo Finance — pular
+# de cara evita um round-trip de rede que sempre falha (404). Mantido em sync
+# manualmente com config.NO_EARNINGS_TICKERS: este script roda como arquivo
+# solto (não como `-m agent.get_earnings`), então não pode importar o pacote.
+_NO_EARNINGS_TICKERS = frozenset({
+    "SGOV", "BIL", "SHV", "SHY", "SPY", "QQQ", "VOO", "IVV", "VTI", "DIA",
+    "AGG", "BND", "TLT", "IEF", "GOVT", "MUB", "XLK", "XLF", "XLE", "XLV",
+    "SMH", "SOXX", "ARKK", "VXX", "UVXY",
+})
+
+
+def _has_no_earnings_data(ticker):
+    t = (ticker or "").strip().upper()
+    return t.startswith("^") or t in _NO_EARNINGS_TICKERS
+
+
 def get_earnings(tickers):
     result = []
     for t in tickers:
+        if _has_no_earnings_data(t):
+            result.append({"ticker": t, "name": t, "earningsDate": None, "epsEstimate": None})
+            continue
         try:
             tk = yf.Ticker(t)
             info = tk.info or {}
