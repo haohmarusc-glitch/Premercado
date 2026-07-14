@@ -22,6 +22,8 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
+from .cache import cached
+
 
 # =============================================================================
 # CONFIGURACAO
@@ -259,7 +261,12 @@ def _volume_spike(ticker: str) -> Optional[float]:
     return round(today_vol / avg_vol, 2)
 
 
-def _next_earnings_date(ticker: str) -> Optional[dt.date]:
+@cached("next_earnings:{0}", ttl=21600)
+def _next_earnings_date_iso(ticker: str) -> Optional[str]:
+    """Retorna string ISO (cache em disco via JSON não preserva objetos date/datetime
+    — ver cache.py). None é cacheado normalmente e cobre tanto "sem data futura
+    conhecida" quanto tickers sem dados (delistados etc.), evitando repetir as
+    chamadas lentas ao yfinance a cada turno/execucao para o mesmo ticker."""
     tk = yf.Ticker(ticker)
     try:
         ed = tk.get_earnings_dates(limit=12)
@@ -267,7 +274,7 @@ def _next_earnings_date(ticker: str) -> Optional[dt.date]:
             today  = pd.Timestamp.now(tz=ed.index.tz)
             future = ed.index[ed.index >= today]
             if len(future) > 0:
-                return future.min().date()
+                return future.min().date().isoformat()
     except Exception:
         pass
     try:
@@ -277,12 +284,17 @@ def _next_earnings_date(ticker: str) -> Optional[dt.date]:
             if val:
                 d = val[0] if isinstance(val, (list, tuple)) else val
                 if isinstance(d, dt.datetime):
-                    return d.date()
+                    return d.date().isoformat()
                 if isinstance(d, dt.date):
-                    return d
+                    return d.isoformat()
     except Exception:
         pass
     return None
+
+
+def _next_earnings_date(ticker: str) -> Optional[dt.date]:
+    iso = _next_earnings_date_iso(ticker)
+    return dt.date.fromisoformat(iso) if iso else None
 
 
 def _normalize_headlines(headlines) -> list[str]:
