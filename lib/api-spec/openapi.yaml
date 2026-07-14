@@ -439,6 +439,19 @@ paths:
                 items:
                   $ref: "#/components/schemas/AgentRun"
 
+  /agent/spend:
+    get:
+      operationId: getAgentSpend
+      tags: [agent]
+      summary: Get today's LLM spend broken down by provider, plus daily budget status
+      responses:
+        "200":
+          description: Spend summary for today (Brasília time)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSpend"
+
   /activity/heartbeat:
     post:
       operationId: activityHeartbeat
@@ -1289,6 +1302,49 @@ components:
         llmModel:
           type: ["string", "null"]
 
+    AgentSpendProvider:
+      type: object
+      required: [provider, costUsd, runs, calls]
+      properties:
+        provider:
+          type: string
+        costUsd:
+          type: ["number", "null"]
+        runs:
+          type: integer
+        calls:
+          type: integer
+
+    AgentSpend:
+      type: object
+      required:
+        [
+          date,
+          byProvider,
+          totalCostUsd,
+          primaryProvider,
+          dailyBudgetUsd,
+          budgetRemainingUsd,
+          budgetExceeded,
+        ]
+      properties:
+        date:
+          type: string
+        byProvider:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentSpendProvider"
+        totalCostUsd:
+          type: ["number", "null"]
+        primaryProvider:
+          type: string
+        dailyBudgetUsd:
+          type: ["number", "null"]
+        budgetRemainingUsd:
+          type: ["number", "null"]
+        budgetExceeded:
+          type: boolean
+
     NewsItem:
       type: object
       required: [title]
@@ -1365,6 +1421,15 @@ components:
           type: integer
         premarketWindowEndHour:
           type: integer
+        agentProvider:
+          type: ["string", "null"]
+          description: Provedor de LLM manualmente escolhido (anthropic, gemini, openrouter, openai, kimi). Vazio/null = ordem padrão (anthropic primeiro).
+        dailyBudgetUsd:
+          type: ["number", "null"]
+          description: Teto diário (USD) de gasto no provedor primário. Null = sem teto.
+        cheapProvider:
+          type: string
+          description: Provedor a usar quando o teto diário do provedor primário for atingido.
         updatedAt:
           type: string
 
@@ -1391,6 +1456,12 @@ components:
           type: integer
         premarketWindowEndHour:
           type: integer
+        agentProvider:
+          type: ["string", "null"]
+        dailyBudgetUsd:
+          type: ["number", "null"]
+        cheapProvider:
+          type: string
 
     ChatSession:
       type: object

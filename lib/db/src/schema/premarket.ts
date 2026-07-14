@@ -136,6 +136,12 @@ export const settingsTable = pgTable("settings", {
   // para investir" da corretora. Entra no Patrimônio total, não no investido.
   cashReal: money("cash_real").notNull().default(0),
   cashSimulated: money("cash_simulated").notNull().default(0),
+  // Controle de custo do agente LLM: provedor manual (null = ordem padrão,
+  // anthropic primeiro), teto diário (USD, horário de Brasília) do provedor
+  // primário e provedor barato usado depois que o teto é atingido.
+  agentProvider: text("agent_provider"),
+  dailyBudgetUsd: numeric("daily_budget_usd", { precision: 10, scale: 2 }).$type<number>(),
+  cheapProvider: text("cheap_provider").notNull().default("gemini"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
