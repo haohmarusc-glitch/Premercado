@@ -164,9 +164,13 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     },
   });
 
-  const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+  // Default 10 min historicamente já foi suficiente, mas o yfinance às vezes
+  // fica lento (chamadas de ~10s viram 30-40s) e o run é morto no meio antes
+  // de terminar de coletar dados — nunca chega a escrever o relatório.
+  // Configurável via env var para dar folga sem precisar de outro deploy.
+  const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) > 0 ? Number(process.env.AGENT_TIMEOUT_MS) : 18 * 60 * 1000;
   const killTimer = setTimeout(() => {
-    logger.warn("Agent timeout (10 min) — killing process");
+    logger.warn(`Agent timeout (${Math.round(TIMEOUT_MS / 60000)} min) — killing process`);
     py.kill("SIGTERM");
     state.currentStep = "Tempo limite atingido — encerrando...";
   }, TIMEOUT_MS);
