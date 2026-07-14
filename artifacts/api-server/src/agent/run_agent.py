@@ -9,6 +9,7 @@ AGENT_MODE env var controls the run type:
 
 import json
 import os
+import signal
 import sys
 
 from . import agent as a
@@ -30,6 +31,19 @@ def emit_usage() -> None:
             print("USAGE:" + json.dumps(usage, ensure_ascii=False), flush=True)
     except Exception:
         pass
+
+
+def _handle_sigterm(signum, frame) -> None:
+    """runner.ts mata o processo com SIGTERM ao estourar o timeout de 10 min.
+    Sem este handler, o except mais abaixo nunca roda e o custo já gasto nas
+    chamadas parciais (o run pode ter feito 20+ turnos antes de travar) some
+    silenciosamente — a run fica registrada como falha sem custo nenhum."""
+    emit_usage()
+    print("ERROR: agent killed (timeout)", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 if __name__ == "__main__":
