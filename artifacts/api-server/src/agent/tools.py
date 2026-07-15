@@ -426,7 +426,7 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
 @cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
-    """Calcula RSI-14, MACD, Bollinger Bands, médias móveis e ATR-14 para o ticker.
+    """Calcula RSI-14, MACD, Bollinger Bands, EMA 8/21, SMA 50/200 e ATR-14.
 
     atr_14/atr_pct = volatilidade real do ativo (Average True Range, em $ e
     % do preço). Use isso para calibrar o threshold_pct de create_alert em
@@ -435,6 +435,14 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     significância estatística muito diferente. Regra prática: threshold_pct
     ≈ atr_pct * 1.5 (alerta só dispara em movimento acima do "ruído" normal
     do ativo, não em qualquer variação do dia a dia).
+
+    rsi_signal já vem calibrado pelas bandas de rsi_oversold_threshold/
+    rsi_overbought_threshold (20/80 em ativos de ATR alto, 25/75 nos demais)
+    — não aplique 30/70 fixo por cima disso.
+
+    ema8/ema21/ema_trend = leitura de curtíssimo prazo (timing de entrada,
+    swing/day trade). sma50/sma200/macro_trend_filter servem só de filtro de
+    tendência maior (ex.: só considerar long se macro_trend_filter="alta").
     """
     try:
         ticker = sanitize_ticker(ticker)
@@ -465,6 +473,18 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         atr_14 = round(float(atr14), 2) if not pd.isna(atr14) else None
         atr_pct = round(float(atr14) / price * 100, 2) if not pd.isna(atr14) and price else None
 
+        # Bandas de RSI calibradas pela volatilidade real do ativo (ATR%) em
+        # vez do 30/70 padrão pra todo mundo: NVDA/SMCI/ARM (ATR% alto) ficam
+        # "esticados" por muito mais tempo que big techs estáveis (GOOGL/MSFT)
+        # antes de reverter de verdade — 30/70 fixo gera sinal de reversão
+        # prematuro nos ativos voláteis.
+        if atr_pct is None:
+            rsi_oversold, rsi_overbought = 30.0, 70.0
+        elif atr_pct >= 6.0:
+            rsi_oversold, rsi_overbought = 20.0, 80.0
+        else:
+            rsi_oversold, rsi_overbought = 25.0, 75.0
+
         # RSI 14 — quando os 14 dias não têm nenhuma queda, avg_loss = 0 e a
         # divisão vira NaN; json.dumps serializa isso como o token `NaN`, que
         # não é JSON válido em quem for reparsear estritamente. RSI=100 é o
@@ -485,6 +505,11 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         macd_line = ema12 - ema26
         signal_line = macd_line.ewm(span=9).mean()
         histogram = macd_line - signal_line
+
+        # EMA 8/21 — leitura de curtíssimo prazo (timing de entrada/swing).
+        # SMA 50/200 abaixo seguem servindo só de filtro de tendência maior.
+        ema8 = float(close.ewm(span=8).mean().iloc[-1])
+        ema21 = float(close.ewm(span=21).mean().iloc[-1])
 
         # Bollinger Bands (20, 2)
         sma20 = close.rolling(20).mean()
@@ -517,10 +542,12 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             "price": round(price, 2),
             "rsi_14": rsi,
             "rsi_signal": "sobrecomprado"
-            if rsi > 70
+            if rsi > rsi_overbought
             else "sobrevendido"
-            if rsi < 30
+            if rsi < rsi_oversold
             else "neutro",
+            "rsi_oversold_threshold": rsi_oversold,
+            "rsi_overbought_threshold": rsi_overbought,
             "macd": {
                 "macd_line": round(float(macd_line.iloc[-1]), 4),
                 "signal_line": round(float(signal_line.iloc[-1]), 4),
@@ -533,10 +560,16 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                 "lower": round(bb_lower, 2),
                 "pct_b": pct_b,
             },
+            "ema8": round(ema8, 2),
+            "ema21": round(ema21, 2),
+            "ema_trend": "bullish" if ema8 > ema21 else "bearish",
             "sma50": sma50,
             "sma200": sma200,
             "pct_above_sma50": _pct_diff(price, sma50),
             "pct_above_sma200": _pct_diff(price, sma200),
+            "macro_trend_filter": (
+                ("alta" if price > sma200 else "baixa") if sma200 else None
+            ),
             "volume_ratio_5d_vs_20d": vol_ratio,
             "atr_14": atr_14,
             "atr_pct": atr_pct,
@@ -1261,8 +1294,14 @@ TOOLS = [
         "name": "get_technical_indicators",
         "description": (
             "Calcula indicadores técnicos para o ticker: RSI-14, MACD (12/26/9), "
-            "Bollinger Bands (20/2), SMA 50 e SMA 200, e ratio de volume (5d vs 20d). "
-            "Use para avaliar condição técnica antes de criar alertas de preço."
+            "Bollinger Bands (20/2), EMA 8/21, SMA 50/200, ATR-14 e ratio de "
+            "volume (5d vs 20d). Use para avaliar condição técnica antes de "
+            "criar alertas de preço. rsi_signal já vem calibrado pela "
+            "volatilidade do ativo (bandas mais largas em ativos de ATR alto "
+            "como ARM/SMCI, mais estreitas em big techs estáveis) — não "
+            "reaplique 30/70 fixo por cima. ema8/ema21 são para timing de "
+            "curto prazo; sma50/sma200/macro_trend_filter servem só de "
+            "filtro de tendência maior."
         ),
         "input_schema": {
             "type": "object",

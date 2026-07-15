@@ -248,6 +248,18 @@ def _atr_pct(ticker: str, period: int = 14) -> Optional[float]:
     return round(float(atr) / float(last_price) * 100, 2)
 
 
+def _rsi_overbought_threshold(ticker: str) -> float:
+    """Banda de sobrecompra calibrada por volatilidade (ATR%) — mesma regra
+    de tools.get_technical_indicators: ativos de ATR alto (NVDA/SMCI/ARM)
+    ficam esticados por muito mais tempo que big techs estáveis antes de
+    reverter de verdade, então usar RSI_OVERBOUGHT fixo (75) sinaliza
+    reversão prematura demais nesses ativos."""
+    atr_pct = _atr_pct(ticker)
+    if atr_pct is None:
+        return RSI_OVERBOUGHT
+    return 80.0 if atr_pct >= 6.0 else 75.0
+
+
 def _dist_from_200dma_pct(ticker: str) -> Optional[float]:
     df = _history(ticker, period="1y")
     if df is None or len(df) < 200:
@@ -710,11 +722,12 @@ def check_overbought(ticker: str) -> list[Alert]:
     alerts: list[Alert] = []
 
     rsi = _rsi(ticker)
-    if rsi is not None and rsi >= RSI_OVERBOUGHT:
+    rsi_threshold = _rsi_overbought_threshold(ticker)
+    if rsi is not None and rsi >= rsi_threshold:
         alerts.append(Alert(
             ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
             title="Sobrecomprado (RSI)",
-            detail=f"RSI(14) = {rsi}. Esticado; risco de realizacao de lucro.",
+            detail=f"RSI(14) = {rsi} (limiar {rsi_threshold:.0f}). Esticado; risco de realizacao de lucro.",
             value=rsi,
         ))
 
