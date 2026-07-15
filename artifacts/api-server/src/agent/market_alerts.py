@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -306,7 +307,7 @@ def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
         _HIST_CACHE[key] = df
         return df
     except Exception as e:
-        print(f"[market_alerts] erro ao baixar {ticker}: {e}")
+        print(f"[market_alerts] erro ao baixar {ticker}: {e}", file=sys.stderr)
         return None
 
 
@@ -655,7 +656,7 @@ def _ticker_to_cik(ticker: str, user_agent: str = SEC_USER_AGENT) -> Optional[st
             for row in data.values():
                 _CIK_CACHE[row["ticker"].upper()] = str(row["cik_str"]).zfill(10)
         except Exception as e:
-            print(f"[market_alerts][edgar] erro ao baixar mapa CIK: {e}")
+            print(f"[market_alerts][edgar] erro ao baixar mapa CIK: {e}", file=sys.stderr)
             return None
     return _CIK_CACHE.get(ticker.upper())
 
@@ -670,7 +671,7 @@ def _fetch_edgar_recent(ticker: str, user_agent: str = SEC_USER_AGENT) -> list[d
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        print(f"[market_alerts][edgar] erro ao buscar filings de {ticker}: {e}")
+        print(f"[market_alerts][edgar] erro ao buscar filings de {ticker}: {e}", file=sys.stderr)
         return []
 
     recent = data.get("filings", {}).get("recent", {})
@@ -738,7 +739,7 @@ def _parse_form4(url: str, user_agent: str = SEC_USER_AGENT) -> Optional[dict]:
             raw = resp.read()
         root = ET.fromstring(raw)
     except Exception as e:
-        print(f"[market_alerts][form4] erro ao parsear {url}: {e}")
+        print(f"[market_alerts][form4] erro ao parsear {url}: {e}", file=sys.stderr)
         return None
 
     res = {"buy_shares": 0.0, "buy_value": 0.0,
@@ -1301,7 +1302,7 @@ def check_trading_halt(ticker: str, include_market: bool = True) -> list[Alert]:
                            "pode estar pausada (LULD). Nao tratar o ultimo preco como real.",
                 ))
     except Exception as e:
-        print(f"[market_alerts] intraday {ticker} indisponivel: {e}")
+        print(f"[market_alerts] intraday {ticker} indisponivel: {e}", file=sys.stderr)
 
     return alerts
 
