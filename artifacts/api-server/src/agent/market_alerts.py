@@ -113,6 +113,11 @@ DOWNGRADE_KW = [
     "downgrade", "cuts price target", "lowers price target", "lowered to",
     "underperform", "sell rating", "initiates sell", "rebaixa", "corta preco-alvo",
 ]
+UPGRADE_KW = [
+    "upgrade", "raises price target", "raised price target", "raised to",
+    "outperform", "buy rating", "initiates buy", "initiates outperform",
+    "eleva recomendacao", "eleva preco-alvo",
+]
 POSITIVE_KW = [
     "approval", "qualified", "supplier", "wins", "deal", "contract", "record",
     "beats", "raises guidance", "raised guidance", "upgrade", "qualificada",
@@ -291,6 +296,122 @@ def _volume_spike(ticker: str) -> Optional[float]:
     if avg_vol == 0:
         return None
     return round(today_vol / avg_vol, 2)
+
+
+def detect_candle_patterns_in_hist(hist: pd.DataFrame, lookback: int = 5) -> list[dict]:
+    """Nucleo de deteccao de padroes de candlestick (Doji, Martelo/Enforcado,
+    Estrela Cadente/Invertido, Engolfo, Estrela da Manha/Noite), separado de
+    tools.detect_candle_patterns para poder ser reaproveitado por
+    check_candle_patterns() sobre um historico ja baixado (sem round-trip de
+    rede extra). Unica fonte de verdade das regras -- tools.py delega pra cá."""
+    o, h, l, c = hist["Open"], hist["High"], hist["Low"], hist["Close"]
+    n = len(hist)
+    start = max(3, n - lookback)
+
+    def body(i: int) -> float:
+        return abs(c.iloc[i] - o.iloc[i])
+
+    def rng(i: int) -> float:
+        r = h.iloc[i] - l.iloc[i]
+        return r if r > 0 else 1e-9
+
+    def upper_wick(i: int) -> float:
+        return h.iloc[i] - max(o.iloc[i], c.iloc[i])
+
+    def lower_wick(i: int) -> float:
+        return min(o.iloc[i], c.iloc[i]) - l.iloc[i]
+
+    def is_bullish(i: int) -> bool:
+        return c.iloc[i] > o.iloc[i]
+
+    def is_bearish(i: int) -> bool:
+        return c.iloc[i] < o.iloc[i]
+
+    def trend_before(i: int) -> str:
+        ref = max(0, i - 4)
+        return "down" if c.iloc[i - 1] < c.iloc[ref] else "up"
+
+    found: list[dict] = []
+    for i in range(start, n):
+        date = hist.index[i].strftime("%Y-%m-%d")
+        b, r = body(i), rng(i)
+        body_pct = b / r
+
+        if body_pct < 0.1:
+            found.append({
+                "date": date, "pattern": "Doji", "direction": "neutral",
+                "note": "Indecisão — corpo minúsculo, pode antecipar reversão.",
+            })
+        elif lower_wick(i) >= 2 * b and upper_wick(i) <= b * 0.5 and body_pct < 0.4:
+            if trend_before(i) == "down":
+                found.append({
+                    "date": date, "pattern": "Martelo", "direction": "bullish",
+                    "note": "Pavio inferior longo após queda — possível reversão para alta.",
+                })
+            else:
+                found.append({
+                    "date": date, "pattern": "Enforcado", "direction": "bearish",
+                    "note": "Mesma forma do martelo, mas após alta — possível reversão para baixa; confirmar no próximo candle.",
+                })
+        elif upper_wick(i) >= 2 * b and lower_wick(i) <= b * 0.5 and body_pct < 0.4:
+            if trend_before(i) == "up":
+                found.append({
+                    "date": date, "pattern": "Estrela Cadente", "direction": "bearish",
+                    "note": "Pavio superior longo após alta — possível reversão para baixa.",
+                })
+            else:
+                found.append({
+                    "date": date, "pattern": "Martelo Invertido", "direction": "bullish",
+                    "note": "Mesma forma da estrela cadente, mas após queda — possível reversão para alta; confirmar no próximo candle.",
+                })
+
+        if i >= 1:
+            if is_bearish(i - 1) and is_bullish(i) and o.iloc[i] <= c.iloc[i - 1] and c.iloc[i] >= o.iloc[i - 1]:
+                found.append({
+                    "date": date, "pattern": "Engolfo de Alta", "direction": "bullish",
+                    "note": "Corpo de alta engole o corpo de baixa do candle anterior — reversão forte.",
+                })
+            elif is_bullish(i - 1) and is_bearish(i) and o.iloc[i] >= c.iloc[i - 1] and c.iloc[i] <= o.iloc[i - 1]:
+                found.append({
+                    "date": date, "pattern": "Engolfo de Baixa", "direction": "bearish",
+                    "note": "Corpo de baixa engole o corpo de alta do candle anterior — reversão forte.",
+                })
+
+        if i >= 2:
+            long0 = body(i - 2) / rng(i - 2) > 0.5
+            small1 = body(i - 1) / rng(i - 1) < 0.35
+            mid0 = (o.iloc[i - 2] + c.iloc[i - 2]) / 2
+            if long0 and is_bearish(i - 2) and small1 and is_bullish(i) and c.iloc[i] > mid0:
+                found.append({
+                    "date": date, "pattern": "Estrela da Manhã", "direction": "bullish",
+                    "note": "3 candles: queda forte, indecisão, retomada de alta — reversão clássica de fundo.",
+                })
+            elif long0 and is_bullish(i - 2) and small1 and is_bearish(i) and c.iloc[i] < mid0:
+                found.append({
+                    "date": date, "pattern": "Estrela da Noite", "direction": "bearish",
+                    "note": "3 candles: alta forte, indecisão, queda — reversão clássica de topo.",
+                })
+
+    return found
+
+
+def check_candle_patterns(ticker: str, lookback: int = 3) -> list[Alert]:
+    """Padroes de candlestick nos ultimos `lookback` candles, reaproveitando o
+    historico de 6mo que check_overbought/_atr_pct ja deixam no _HIST_CACHE
+    (zero chamadas de rede extras)."""
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < 10:
+        return []
+    found = detect_candle_patterns_in_hist(df, lookback=lookback)
+    alerts: list[Alert] = []
+    for p in found:
+        sev = Severity.ATENCAO if p["direction"] in ("bullish", "bearish") else Severity.INFO
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=sev,
+            title=f"Padrao de candle: {p['pattern']}",
+            detail=f"{p['date']}: {p['note']}",
+        ))
+    return alerts
 
 
 @cached("next_earnings:{0}", ttl=21600)
@@ -812,6 +933,12 @@ def check_analyst_changes(ticker: str, headlines) -> list[Alert]:
                 title="Mudanca de rating (negativa)",
                 detail=f'Manchete: "{h.strip()[:120]}"',
             ))
+        elif any(kw in low for kw in UPGRADE_KW):
+            alerts.append(Alert(
+                ticker=ticker, category=Category.NOTICIA, severity=Severity.INFO,
+                title="Mudanca de rating (positiva)",
+                detail=f'Manchete: "{h.strip()[:120]}"',
+            ))
     return alerts
 
 
@@ -1042,6 +1169,7 @@ def run_all_alerts(tickers: list[str],
         heads = headlines_by_ticker.get(t, [])
         alerts += check_overbought(t)
         alerts += check_volume_gap(t)
+        alerts += check_candle_patterns(t)
         alerts += check_earnings_proximity(t, today)
         if t == "HCC":
             alerts += check_hcc_setup(t)
