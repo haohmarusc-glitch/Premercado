@@ -95,12 +95,33 @@ GEO_KEYWORDS: dict[str, list[str]] = {
         "pla exercises near taiwan", "china military drill taiwan",
         "taiwan independence crisis",
     ],
+    # Ira/Estreito de Ormuz -- distinto de "conflito armado" generico porque
+    # e' o gatilho geopolitico mais direto pra CHOQUE DE PETROLEO que existe:
+    # Ira e' produtor OPEP e controla o Estreito de Ormuz, por onde passa
+    # ~20% do petroleo mundial. Qualquer escalada Ira-Israel/EUA e' o padrao
+    # classico de choque de oferta -> inflacao -> juros -> pressao em
+    # growth/tech (ver check_macro_regime_risk). Inclui os Houthis do Iemen
+    # (apoiados pelo Ira) porque os ataques deles a navios no Mar Vermelho
+    # desde 2023-2024 tem o MESMO efeito de risco de rota/seguro maritimo de
+    # petroleo, mesmo sem envolver o Estreito de Ormuz diretamente.
+    # "ira" sozinho NAO entra aqui de proposito -- ambiguo com "IRA" (conta
+    # de aposentadoria americana) e "Irish Republican Army" em manchetes em
+    # ingles. "iran" (sem til) e' seguro e especifico o suficiente sozinho.
+    "ira/estreito de ormuz": [
+        "iran", "strait of hormuz", "estreito de ormuz", "israel iran",
+        "irgc", "houthi", "houthis", "red sea shipping attack",
+        "ataque ao ira", "ataque ira", "guerra ira", "irã",
+    ],
 }
 
-# Categorias de GEO_KEYWORDS com severidade acima do padrao (ATENCAO) -- o
-# estreito de Taiwan e' risco existencial de cadeia de suprimento pra boa
-# parte da cesta (hardware/semicondutores), nao so sentimento de mercado.
-GEO_CRITICAL_CATEGORIES = {"estreito de taiwan/cadeia de semicondutores"}
+# Categorias de GEO_KEYWORDS com severidade acima do padrao (ATENCAO) -- sao
+# riscos de cadeia de suprimento/oferta DIRETOS pra esta cesta (Taiwan =
+# semicondutores, Ira/Ormuz = petroleo -> juros), nao so sentimento de
+# mercado generico.
+GEO_CRITICAL_CATEGORIES = {
+    "estreito de taiwan/cadeia de semicondutores",
+    "ira/estreito de ormuz",
+}
 
 # Circuit breakers (S&P 500)
 CB_TICKER    = "^GSPC"
@@ -968,7 +989,10 @@ def check_macro_regime_risk(headlines_by_ticker: Optional[dict[str, list]] = Non
     if oil_chg is not None and oil_chg >= OIL_SHOCK_PCT:
         sinais.append(f"WTI +{oil_chg:.1f}% em {OIL_SHOCK_LOOKBACK_DAYS} pregoes")
 
-    geo_categorias_relevantes = {"conflito armado/guerra", "estreito de taiwan/cadeia de semicondutores"}
+    # Guerra generica + as categorias criticas (Taiwan, Ira/Ormuz) -- usa
+    # GEO_CRITICAL_CATEGORIES em vez de listar de novo pra nao desalinhar
+    # quando uma categoria critica nova for adicionada no futuro.
+    geo_categorias_relevantes = GEO_CRITICAL_CATEGORIES | {"conflito armado/guerra"}
     geo_hit: Optional[str] = None
     for heads in headlines_by_ticker.values():
         for h in _normalize_headlines(heads):
