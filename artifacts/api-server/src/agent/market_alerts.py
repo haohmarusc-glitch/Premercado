@@ -61,10 +61,16 @@ MACRO_EVENTS: dict[str, list[str]] = {
 
 # Palavras-chave geopoliticas / regulatorias
 GEO_KEYWORDS: dict[str, list[str]] = {
+    # Inclui terras raras/minerais criticos -- mesmo ator (China) e mesma
+    # ferramenta (controle de exportacao), so muda o material. Relevante em
+    # especial pra TSLA (imas de motor/baterias) alem de hardware em geral.
     "controle de exportacao/China": [
         "export control", "export controls", "bis ", "commerce department",
         "h20", "h200", "blackwell", "china ban", "chip ban", "license required",
         "entity list", "smuggling", "controle de exportacao", "restricao",
+        "rare earth export", "rare earth ban", "china rare earth",
+        "critical minerals export", "cobalt export", "lithium export ban",
+        "terras raras", "minerais criticos",
     ],
     "antitruste/regulatorio": [
         "antitrust", "monopoly", "doj ", "ftc", "lawsuit", "probe", "investigation",
@@ -112,15 +118,58 @@ GEO_KEYWORDS: dict[str, list[str]] = {
         "irgc", "houthi", "houthis", "red sea shipping attack",
         "ataque ao ira", "ataque ira", "guerra ira", "irã",
     ],
+    # Coreia do Norte/peninsula coreana -- risco de cadeia de suprimento
+    # DIRETO pra memoria: Samsung + SK Hynix (peers coreanos ja rastreados em
+    # INTL_MEMORY_PEERS) sao ~70% do DRAM/NAND global. Uma escalada real na
+    # peninsula ameaca essa producao de forma parecida ao risco de Taiwan
+    # pra logica/GPU -- afeta MU/SNDK/WDC (concorrentes/expostos ao mesmo
+    # mercado) mesmo sem exposicao direta a fab coreana.
+    "coreia do norte/peninsula coreana": [
+        "north korea", "dprk", "kim jong", "korean peninsula", "dmz",
+        "38th parallel", "pyongyang", "north korean missile", "seoul strikes",
+        "coreia do norte", "peninsula coreana", "missil norte-coreano",
+    ],
+    # Independencia do Fed/interferencia politica na politica monetaria --
+    # distinto do calendario normal de FOMC/CPI (ja coberto em
+    # check_macro_triggers): risco de juros IMPREVISIVEL, fora do processo
+    # normal -- mesmo canal (juros) ja identificado como o de maior peso
+    # pra growth/tech, mas gatilho que nenhum calendario capta.
+    "independencia do fed/politica monetaria": [
+        "fed independence", "fires fed chair", "fed chair fired",
+        "remove the fed chair", "replace fed chair", "powell fired",
+        "political pressure on the fed", "fed chair removal",
+        "independencia do fed", "demite presidente do fed",
+        "pressao politica sobre o fed",
+    ],
+    # Rating soberano dos EUA/teto da divida -- outro gatilho pro canal de
+    # juros, mecanismo diferente do Fed: downgrade de credito (S&P 2011,
+    # Fitch 2023) ou crise de teto da divida geram venda ampla de treasuries,
+    # sobe yield, mesma pressao em growth/tech de multiplo alto.
+    # Frases sempre qualificadas com "us"/"united states"/"eua" de proposito
+    # -- "credit rating downgrade" ou "fitch downgrades" sozinhos bateriam em
+    # rebaixamento de rating de QUALQUER empresa, nao so soberano dos EUA.
+    "rating soberano eua/teto da divida": [
+        "downgrades us credit", "downgrades united states credit",
+        "debt ceiling crisis", "us default risk", "sovereign downgrade",
+        "fitch downgrades united states", "fitch downgrades the us",
+        "moody's downgrades united states", "moody's downgrades us",
+        "s&p downgrades united states", "crise do teto da divida",
+        "teto da divida americana", "rebaixamento do rating dos eua",
+        "rebaixa rating dos estados unidos",
+    ],
 }
 
 # Categorias de GEO_KEYWORDS com severidade acima do padrao (ATENCAO) -- sao
-# riscos de cadeia de suprimento/oferta DIRETOS pra esta cesta (Taiwan =
-# semicondutores, Ira/Ormuz = petroleo -> juros), nao so sentimento de
+# riscos de cadeia de suprimento/oferta ou de juros DIRETOS pra esta cesta
+# (Taiwan = semicondutores, Ira/Ormuz = petroleo, Coreia = memoria, Fed e
+# rating soberano = juros fora do calendario normal), nao so sentimento de
 # mercado generico.
 GEO_CRITICAL_CATEGORIES = {
     "estreito de taiwan/cadeia de semicondutores",
     "ira/estreito de ormuz",
+    "coreia do norte/peninsula coreana",
+    "independencia do fed/politica monetaria",
+    "rating soberano eua/teto da divida",
 }
 
 # Circuit breakers (S&P 500)
