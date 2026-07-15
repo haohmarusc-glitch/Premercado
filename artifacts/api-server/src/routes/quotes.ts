@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
+import { gt } from "drizzle-orm";
+import { db, portfolioPositionsTable } from "@workspace/db";
 import { agentDir, getPythonBin } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { GetTickerQuotesResponse, GetFxUsdBrlResponse } from "@workspace/api-zod";
@@ -84,7 +86,15 @@ router.get("/tickers/quotes", async (req, res): Promise<void> => {
 
   try {
     const settings = await getOrCreateSettings();
-    const tickers = settings.tickers;
+    // Uniao com os tickers de posicoes ABERTAS da carteira -- sem isso, um
+    // ativo que o usuario so tem na carteira (ex.: um ETF como SGOV, fora
+    // da watchlist monitorada em Settings) nunca recebe cotacao aqui, e a
+    // tela de Portfolio fica com preco/valor atual em branco pra ele.
+    const openPositions = await db
+      .select({ ticker: portfolioPositionsTable.ticker })
+      .from(portfolioPositionsTable)
+      .where(gt(portfolioPositionsTable.quantity, 0));
+    const tickers = [...new Set([...settings.tickers, ...openPositions.map((p) => p.ticker)])];
 
     if (!tickers.length) {
       res.json([]);
