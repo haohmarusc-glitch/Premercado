@@ -734,6 +734,32 @@ def check_intl_peers() -> list[Alert]:
     return alerts
 
 
+def check_krx_lead_signal(ticker: str = "SKHY", krx_ticker: str = "000660.KS") -> list[Alert]:
+    """SK Hynix negocia na Korea Exchange sob 000660.KS -- a acao original por
+    tras do ADR (SKHY). O pregao coreano roda enquanto os EUA dormem, entao o
+    movimento overnight dela tende a antecipar o gap de abertura da SKHY na
+    Nasdaq (ver .agents/memory/skhy-ipo-monitoring.md). Diferente do
+    check_intl_peers (so' baixa, sinal generico de "pressao asiatica" sem
+    ligar ao ADR) e do indice amplo KOSPI (get_global_market_snapshot), aqui
+    o alerta e' bidirecional e nomeado explicitamente pra SKHY. Chamado so'
+    quando o ticker monitorado for SKHY (ver run_all_alerts); reaproveita o
+    _day_change_pct(krx_ticker) que check_intl_peers ja deixou no
+    _HIST_CACHE, zero chamada de rede extra."""
+    chg = _day_change_pct(krx_ticker)
+    if chg is None or abs(chg) < abs(INTL_DROP_PCT):
+        return []
+    direcao = "alta" if chg > 0 else "queda"
+    return [Alert(
+        ticker=ticker, category=Category.SETOR, severity=Severity.ATENCAO,
+        title=f"SK Hynix Korea (KRX) em {direcao} forte",
+        detail=f"{krx_ticker} variou {chg:+.2f}% no ultimo pregao coreano. Por ser "
+               f"a acao original por tras do ADR, esse movimento historicamente "
+               f"antecipa o gap de abertura da SKHY na Nasdaq -- nao e' garantia, "
+               f"mas e' sinal mais direto que indices amplos (KOSPI).",
+        value=chg,
+    )]
+
+
 def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
     today = today or dt.date.today()
     alerts: list[Alert] = []
@@ -1173,6 +1199,8 @@ def run_all_alerts(tickers: list[str],
         alerts += check_earnings_proximity(t, today)
         if t == "HCC":
             alerts += check_hcc_setup(t)
+        if t == "SKHY":
+            alerts += check_krx_lead_signal(t)
         alerts += check_analyst_changes(t, heads)
         alerts += check_sell_the_news(t, heads)
         alerts += check_geopolitical_news(t, heads)
