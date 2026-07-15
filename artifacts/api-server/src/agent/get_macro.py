@@ -6,6 +6,7 @@ Output (stdout JSON): {"fearGreed": {...}, "sectors": [{name, ticker, changePct}
 import sys, json
 import requests
 import yfinance as yf
+from security import friendly_error
 
 SECTOR_ETFS = [
     ("Tecnologia", "XLK"), ("Energia", "XLE"), ("Financeiro", "XLF"),
@@ -52,7 +53,8 @@ def fear_greed() -> dict:
             "oneYearAgo": safe(current.get("previous_1_year")),
         }
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[get_macro] fear_greed: {e}", file=sys.stderr)
+        return {"error": friendly_error(e)}
 
 def sectors() -> list:
     out = []

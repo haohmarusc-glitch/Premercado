@@ -22,7 +22,7 @@ logging.disable(logging.CRITICAL)
 
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 def technicals(ticker: str, period: str = "6mo") -> dict:
     try:
@@ -95,7 +95,8 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             "volumeRatio": vol_ratio,
         }
     except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
+        print(f"[get_technicals] {ticker}: {e}", file=sys.stderr)
+        return {"ticker": ticker, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
@@ -112,7 +113,8 @@ if __name__ == "__main__":
             try:
                 items[i] = future.result()
             except Exception as e:
-                items[i] = {"ticker": tickers[i], "error": f"{type(e).__name__}: {e}"}
+                print(f"[get_technicals] {tickers[i]}: {e}", file=sys.stderr)
+                items[i] = {"ticker": tickers[i], "error": friendly_error(e)}
     result = json.dumps({"items": items}, ensure_ascii=False) + "\n"
     # Write directly to the saved real stdout fd — clean, no buffering issues
     os.write(_real_stdout_fd, result.encode("utf-8"))

@@ -15,7 +15,7 @@ import sys, json, os, time
 import requests
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 # ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
 #    então não pode importar agent/cache.py que usa import relativo).
@@ -269,7 +269,8 @@ def for_ticker(ticker: str) -> dict:
             "sinalMotivo": sinal_motivo,
         }
     except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
+        print(f"[get_trend] {ticker}: {e}", file=sys.stderr)
+        return {"ticker": ticker, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())

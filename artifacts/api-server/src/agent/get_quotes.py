@@ -12,6 +12,7 @@ nulos e o restante continua funcionando (fail-open).
 import sys
 import json
 import yfinance as yf
+from agent.security import friendly_error
 
 
 def _round(v, d=4):
@@ -77,6 +78,7 @@ def fetch_quote(symbol: str) -> dict:
             "error": None,
         }
     except Exception as ex:
+        print(f"[get_quotes] {symbol}: {ex}", file=sys.stderr)
         return {
             "symbol": symbol,
             "currency": None,
@@ -94,7 +96,7 @@ def fetch_quote(symbol: str) -> dict:
             "preMarketChangePct": None,
             "postMarketPrice": None,
             "postMarketChangePct": None,
-            "error": str(ex),
+            "error": friendly_error(ex),
         }
 
 

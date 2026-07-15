@@ -5,7 +5,7 @@ Output (stdout JSON): {"items": [ {ticker, short:{...}, analyst:{...}}, ... ]}
 """
 import sys, json
 import yfinance as yf
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 REC_LABELS = {
     "strongBuy": "compra forte", "buy": "compra", "hold": "manter",
@@ -62,7 +62,8 @@ def for_ticker(ticker: str) -> dict:
             },
         }
     except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
+        print(f"[get_fundamentals] {ticker}: {e}", file=sys.stderr)
+        return {"ticker": ticker, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
