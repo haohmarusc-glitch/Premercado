@@ -795,20 +795,34 @@ def check_krx_lead_signal(ticker: str = "SKHY", krx_ticker: str = "000660.KS") -
     check_intl_peers (so' baixa, sinal generico de "pressao asiatica" sem
     ligar ao ADR) e do indice amplo KOSPI (get_global_market_snapshot), aqui
     o alerta e' bidirecional e nomeado explicitamente pra SKHY. Chamado so'
-    quando o ticker monitorado for SKHY (ver run_all_alerts); reaproveita o
-    _day_change_pct(krx_ticker) que check_intl_peers ja deixou no
-    _HIST_CACHE, zero chamada de rede extra."""
+    quando o ticker monitorado for SKHY (ver run_all_alerts).
+
+    Limiar calibrado pelo ATR% do proprio 000660.KS (mesma logica de
+    GAP_ATR_MULT em check_volume_gap) em vez de um % fixo emprestado de
+    INTL_DROP_PCT -- a SK Hynix Korea historicamente tem volatilidade bem
+    acima da media (ver memory doc: ~640% em 12 meses ate o pico pre-IPO),
+    entao um limiar fixo de 4% tanto sobre-dispara em dias normais quanto
+    sub-reage num ativo que rotineiramente se move mais que isso. _atr_pct
+    exige _history(krx_ticker, period="6mo"), uma chamada de rede a mais
+    (nao coberta pelo cache de 5d que check_intl_peers ja deixa pronto) --
+    mas e' uma unica chamada extra por run, so' quando SKHY esta na lista
+    monitorada, entao o custo e' pequeno e limitado."""
     chg = _day_change_pct(krx_ticker)
-    if chg is None or abs(chg) < abs(INTL_DROP_PCT):
+    if chg is None:
+        return []
+    atr_pct = _atr_pct(krx_ticker)
+    threshold = atr_pct * GAP_ATR_MULT if atr_pct is not None else abs(INTL_DROP_PCT)
+    if abs(chg) < threshold:
         return []
     direcao = "alta" if chg > 0 else "queda"
     return [Alert(
         ticker=ticker, category=Category.SETOR, severity=Severity.ATENCAO,
         title=f"SK Hynix Korea (KRX) em {direcao} forte",
-        detail=f"{krx_ticker} variou {chg:+.2f}% no ultimo pregao coreano. Por ser "
-               f"a acao original por tras do ADR, esse movimento historicamente "
-               f"antecipa o gap de abertura da SKHY na Nasdaq -- nao e' garantia, "
-               f"mas e' sinal mais direto que indices amplos (KOSPI).",
+        detail=f"{krx_ticker} variou {chg:+.2f}% no ultimo pregao coreano "
+               f"(limiar {threshold:.1f}%). Por ser a acao original por tras do ADR, "
+               f"esse movimento historicamente antecipa o gap de abertura da SKHY "
+               f"na Nasdaq -- nao e' garantia, mas e' sinal mais direto que indices "
+               f"amplos (KOSPI).",
         value=chg,
     )]
 
