@@ -23,6 +23,20 @@ sma20/sma50/rsi/macd exigem 14-20 períodos mínimos de histórico. Sem candles 
 1. **Fase 1 — range de descoberta (10/jul a ~22/jul/2026, ~5-8 pregões)**: sem indicadores confiáveis. Monitorar só por rompimento do range absoluto $149 (piso, preço de oferta) – $177 (teto, máxima do dia 1). Não abrir posição nova nesta fase; tratar como observação, não entrada.
 2. **Fase 2 — pós ~22/jul/2026**: SMA20/RSI/MACD começam a ter base mínima de dados para gatilhos técnicos normais. Mesmo assim, evitar abrir posição nova em 28-29/jul/2026 (véspera/dia dos resultados do Q2 + listagem KOSPI simultânea) por risco de gap duplo.
 
+## Entradas reais feitas ainda na Fase 1 (desvio do plano conservador)
+
+Apesar da recomendação acima (não abrir posição nova na Fase 1), duas ordens a mercado foram executadas em 15/jul/2026 (4º pregão desde a estreia), dentro da janela 10-22/jul:
+
+| Data/hora | Valor | Cotas | Preço implícito por ação |
+|---|---|---|---|
+| 15/07/2026 10:37 | US$ 100,00 | 0,56141927 | US$ 178,12 |
+| 15/07/2026 10:43 | US$ 100,00 | 0,54671696 | US$ 182,91 |
+
+- A segunda ordem já rompeu o teto do range de descoberta ($177,00, máxima do dia 1) — exatamente o rompimento que a Fase 1 dizia pra só observar, não operar.
+- Custo médio das duas entradas: US$ 200,00 / 1,10813623 cotas ≈ **US$ 180,49/ação**.
+- Sem indicadores técnicos confiáveis ainda (SMA/RSI/MACD só ganham base ~22/jul) — essas entradas não têm confirmação técnica por trás, só o preço em si.
+- Próximos gates de calendário que afetam essa posição: fim do quiet period (~4/ago/2026, viés de alta estrutural das primeiras coberturas de analistas, não confirmação técnica real) e vencimento do lock-up (~8/out/2026, pressão de venda esperada dos cornerstone investors).
+
 ## Catalisadores no calendário
 
 - 29/jul/2026: resultados Q2 2026 (receita esperada ~82,46 tri won vs 52,58 tri no Q1) + listagem das ordinárias na KOSPI no mesmo dia
