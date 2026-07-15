@@ -75,7 +75,32 @@ GEO_KEYWORDS: dict[str, list[str]] = {
         "tariff", "tariffs", "section 232", "trade war", "import duty",
         "sanction", "tarifa", "tarifas", "sancao",
     ],
+    # Conflito armado/guerra genérico -- risk-off de curto prazo em toda a
+    # cesta, historicamente pouco persistente por si só (ver categoria
+    # abaixo pro caso especifico que MAIS importa pra esta cesta).
+    "conflito armado/guerra": [
+        "war", "invasion", "invades", "airstrike", "air strike", "missile strike",
+        "military conflict", "military strike", "attack on", "blockade",
+        "declares war", "troops", "guerra", "invasao", "ataque militar",
+        "conflito armado", "bloqueio naval", "tropas",
+    ],
+    # Estreito de Taiwan -- distinto de "conflito armado" generico porque e'
+    # risco de cadeia de suprimento DIRETO (nao so risk-off de sentimento)
+    # pra qualquer ticker que dependa de fabs da TSMC: NVDA, AVGO, AMD, QCOM,
+    # AAPL, ARM, ALAB, CRDO. Ver HARDWARE_EXPOSED_TICKERS em
+    # confluence_engine.py pra a mesma lista aplicada ao motor de sinal.
+    "estreito de taiwan/cadeia de semicondutores": [
+        "taiwan strait", "estreito de taiwan", "invasion of taiwan",
+        "invasao de taiwan", "taiwan blockade", "bloqueio de taiwan",
+        "pla exercises near taiwan", "china military drill taiwan",
+        "taiwan independence crisis",
+    ],
 }
+
+# Categorias de GEO_KEYWORDS com severidade acima do padrao (ATENCAO) -- o
+# estreito de Taiwan e' risco existencial de cadeia de suprimento pra boa
+# parte da cesta (hardware/semicondutores), nao so sentimento de mercado.
+GEO_CRITICAL_CATEGORIES = {"estreito de taiwan/cadeia de semicondutores"}
 
 # Circuit breakers (S&P 500)
 CB_TICKER    = "^GSPC"
@@ -100,6 +125,14 @@ EDGAR_FORMS = {
 PEER_DROP_PCT       = -4.0
 INTL_DROP_PCT       = -4.0
 YIELD_LEVEL         = 4.5
+# Petroleo (WTI) -- nao rastreamos NIVEL de preco (correlacao fraca/instavel
+# com Nasdaq), so CHOQUE DE ALTA rapido, que e' a assinatura de um choque de
+# oferta (guerra, corte da OPEP) -- o canal real pra growth/tech e' indireto:
+# choque de oferta -> pressao de inflacao -> Fed sobe juros -> comprime
+# multiplo. Ver check_macro_regime_risk() pra a combinacao com o yield.
+OIL_TICKER              = "CL=F"  # WTI futures -- mais liquido/confiavel no yfinance
+OIL_SHOCK_LOOKBACK_DAYS = 10
+OIL_SHOCK_PCT           = 15.0
 RSI_OVERBOUGHT      = 75.0
 ABOVE_200DMA_PCT    = 25.0
 NEAR_52W_HIGH_PCT   = 3.0
@@ -213,6 +246,19 @@ def _day_change_pct(ticker: str) -> Optional[float]:
         return None
     prev, last = df["Close"].iloc[-2], df["Close"].iloc[-1]
     return round((last / prev - 1) * 100, 2)
+
+
+def _pct_change_over(ticker: str, lookback_days: int) -> Optional[float]:
+    """Variacao % entre o close de hoje e o close de `lookback_days` pregoes
+    atras -- usado pro choque de petroleo (janela curta detecta choque de
+    oferta rapido, diferente de _day_change_pct que so olha o ultimo pregao)."""
+    df = _history(ticker, period="1mo")
+    if df is None or len(df) < lookback_days + 1:
+        return None
+    then, now = df["Close"].iloc[-1 - lookback_days], df["Close"].iloc[-1]
+    if then == 0:
+        return None
+    return round((now / then - 1) * 100, 2)
 
 
 def _gap_pct(ticker: str) -> Optional[float]:
@@ -883,7 +929,71 @@ def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
                        f"acoes de crescimento/multiplo alto.",
                 value=round(y, 2),
             ))
+
+    oil_chg = _pct_change_over(OIL_TICKER, OIL_SHOCK_LOOKBACK_DAYS)
+    if oil_chg is not None and oil_chg >= OIL_SHOCK_PCT:
+        alerts.append(Alert(
+            ticker=OIL_TICKER, category=Category.MACRO, severity=Severity.ATENCAO,
+            title="Choque de alta no petroleo (WTI)",
+            detail=f"WTI +{oil_chg:.1f}% em {OIL_SHOCK_LOOKBACK_DAYS} pregoes "
+                   f"(limiar {OIL_SHOCK_PCT}%) -- assinatura tipica de choque de oferta "
+                   f"(guerra, corte da OPEP). Canal indireto pra growth/tech: pressiona "
+                   f"inflacao -> Fed reage com juros -> comprime multiplo.",
+            value=oil_chg,
+        ))
     return alerts
+
+
+def check_macro_regime_risk(headlines_by_ticker: Optional[dict[str, list]] = None) -> list[Alert]:
+    """Sinal COMBINADO: juro de 10y elevado + choque no petroleo + manchete de
+    conflito armado/geopolitica. Isolado, cada sinal e' ruido comum (o app ja
+    alerta cada um separado em check_macro_triggers/check_geopolitical_news) --
+    mas a CONVERGENCIA de 2 ou mais ao mesmo tempo e' o padrao que
+    historicamente precede correcoes fortes em growth/tech de multiplo alto
+    (ex.: 2022, juros subindo + choque de commodities pos-invasao da
+    Ucrania). Nao e' recomendacao de posicao, so contexto de regime pro
+    agente ponderar."""
+    headlines_by_ticker = headlines_by_ticker or {}
+    sinais: list[str] = []
+
+    df_y = _history(YIELD_TICKER, period="5d")
+    if df_y is not None and not df_y.empty:
+        y = float(df_y["Close"].iloc[-1])
+        if y > 20:
+            y = y / 10
+        if y >= YIELD_LEVEL:
+            sinais.append(f"juro de 10y em ~{y:.2f}% (limiar {YIELD_LEVEL}%)")
+
+    oil_chg = _pct_change_over(OIL_TICKER, OIL_SHOCK_LOOKBACK_DAYS)
+    if oil_chg is not None and oil_chg >= OIL_SHOCK_PCT:
+        sinais.append(f"WTI +{oil_chg:.1f}% em {OIL_SHOCK_LOOKBACK_DAYS} pregoes")
+
+    geo_categorias_relevantes = {"conflito armado/guerra", "estreito de taiwan/cadeia de semicondutores"}
+    geo_hit: Optional[str] = None
+    for heads in headlines_by_ticker.values():
+        for h in _normalize_headlines(heads):
+            low = h.lower()
+            for categoria in geo_categorias_relevantes:
+                if any(kw in low for kw in GEO_KEYWORDS[categoria]):
+                    geo_hit = f'{categoria} -- "{h.strip()[:90]}"'
+                    break
+            if geo_hit:
+                break
+        if geo_hit:
+            break
+    if geo_hit:
+        sinais.append(geo_hit)
+
+    if len(sinais) >= 2:
+        return [Alert(
+            ticker="MACRO", category=Category.MACRO, severity=Severity.CRITICO,
+            title="Regime de risco macro elevado (juros + petroleo + geopolitica)",
+            detail="Sinais simultaneos: " + "; ".join(sinais) + ". Combinacao "
+                   "historicamente associada a pressao sobre acoes de crescimento/"
+                   "multiplo alto -- nao e' recomendacao de posicao, so contexto "
+                   "de regime pra ponderar junto com o resto da analise.",
+        )]
+    return []
 
 
 def check_hcc_setup(ticker: str = "HCC") -> list[Alert]:
@@ -1056,14 +1166,17 @@ def check_sell_the_news(ticker: str, headlines,
 
 
 def check_geopolitical_news(ticker: str, headlines) -> list[Alert]:
-    """Controle de exportacao/China, antitruste/regulatorio, tarifas."""
+    """Controle de exportacao/China, antitruste/regulatorio, tarifas, conflito
+    armado/guerra e estreito de Taiwan (esta ultima com severidade CRITICO --
+    ver GEO_CRITICAL_CATEGORIES)."""
     alerts: list[Alert] = []
     for h in _normalize_headlines(headlines):
         low = h.lower()
         for categoria, kws in GEO_KEYWORDS.items():
             if any(kw in low for kw in kws):
+                sev = Severity.CRITICO if categoria in GEO_CRITICAL_CATEGORIES else Severity.ATENCAO
                 alerts.append(Alert(
-                    ticker=ticker, category=Category.NOTICIA, severity=Severity.ATENCAO,
+                    ticker=ticker, category=Category.NOTICIA, severity=sev,
                     title=f"Risco geopolitico/regulatorio ({categoria})",
                     detail=f'Manchete: "{h.strip()[:120]}"',
                 ))
@@ -1257,6 +1370,7 @@ def run_all_alerts(tickers: list[str],
     alerts += check_peer_contagion()
     alerts += check_intl_peers()
     alerts += check_macro_triggers(today)
+    alerts += check_macro_regime_risk(headlines_by_ticker)
 
     for i, t in enumerate(tickers):
         heads = headlines_by_ticker.get(t, [])

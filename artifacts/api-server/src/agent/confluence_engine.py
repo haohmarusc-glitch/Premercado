@@ -13,7 +13,8 @@ backtest.py. Fórmula e caso especial (avg_loss==0 -> RSI=100) idênticos aos
 já usados no projeto.
 
 Input (stdin JSON, modo endpoint): {"symbol": "MU", "period": "18mo"}
-Output (stdout JSON): {symbol, asOf, action, confidence, votes, catalystVeto}
+Output (stdout JSON): {symbol, asOf, action, confidence, votes, catalystVeto,
+                       macroRiskVeto, macroRiskSignals}
 """
 import os, sys, json, warnings, logging
 
@@ -332,6 +333,62 @@ def _fetch_ohlcv(
     return df, None
 
 
+# ---------------------------------------------------------------------------
+# Veto de risco macro (juros + petróleo) — só no modo endpoint (__main__)
+# abaixo, NUNCA em evaluate_dataframe/run_backtest: aplicar o preço de
+# petróleo/juros de HOJE a uma linha histórica de anos atrás seria
+# metodologicamente errado (look-ahead bias). Limiares espelham
+# YIELD_LEVEL/OIL_SHOCK_* de market_alerts.py — duplicados aqui de
+# propósito, mesmo motivo do RSI de Wilder reimplementado acima (script
+# standalone, sem contexto de pacote pra import relativo funcionar).
+# ---------------------------------------------------------------------------
+
+YIELD_TICKER            = "^TNX"
+YIELD_LEVEL              = 4.5
+OIL_TICKER               = "CL=F"
+OIL_SHOCK_LOOKBACK_DAYS  = 10
+OIL_SHOCK_PCT            = 15.0
+
+# Tickers com exposição DIRETA de cadeia de suprimento a fabs da TSMC/
+# estreito de Taiwan — só nesse subconjunto o veto de risco macro se aplica.
+# Memória/storage (MU, SNDK, WDC) e infra (ANET, VRT, SMCI) ficam de fora por
+# serem menos dependentes de uma fab específica de Taiwan.
+HARDWARE_EXPOSED_TICKERS = {"NVDA", "AVGO", "AMD", "QCOM", "TSM", "AAPL", "ARM", "ALAB", "CRDO"}
+
+
+def macro_risk_signals() -> dict:
+    """Juro de 10y elevado + choque de alta no petróleo (mesmos limiares de
+    market_alerts.py). NÃO inclui o componente geopolítico de manchetes —
+    este script não recebe headlines como input (ver check_macro_regime_risk
+    em market_alerts.py pro sinal completo de 3 componentes usado pelo loop
+    do agente). Fail-open: qualquer falha de rede conta como sinal inativo,
+    nunca derruba a avaliação principal do símbolo."""
+    import yfinance as yf
+    active: list[str] = []
+    try:
+        df_y = yf.Ticker(YIELD_TICKER).history(period="5d")
+        if df_y is not None and not df_y.empty:
+            y = float(df_y["Close"].iloc[-1])
+            if y > 20:
+                y = y / 10
+            if y >= YIELD_LEVEL:
+                active.append(f"yield 10y ~{y:.2f}%")
+    except Exception:
+        pass
+    try:
+        df_o = yf.Ticker(OIL_TICKER).history(period="1mo")
+        if df_o is not None and len(df_o) >= OIL_SHOCK_LOOKBACK_DAYS + 1:
+            then = float(df_o["Close"].iloc[-1 - OIL_SHOCK_LOOKBACK_DAYS])
+            now = float(df_o["Close"].iloc[-1])
+            if then > 0:
+                chg = (now / then - 1) * 100
+                if chg >= OIL_SHOCK_PCT:
+                    active.append(f"WTI +{chg:.1f}% em {OIL_SHOCK_LOOKBACK_DAYS}p")
+    except Exception:
+        pass
+    return {"activeSignals": active, "count": len(active)}
+
+
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     try:
@@ -347,13 +404,31 @@ if __name__ == "__main__":
             )
             signals = engine.evaluate_dataframe(df)
             last = signals.iloc[-1]
+            action = last["action"]
+            confidence = float(last["confidence"])
+
+            # Veto de risco macro: só avalia (custa 2 chamadas extras de rede)
+            # quando pode de fato mudar o resultado -- ação já seria "buy" E o
+            # símbolo tem exposição direta a Taiwan/TSMC.
+            macro_veto = False
+            macro_signals: list[str] = []
+            if action == "buy" and symbol in HARDWARE_EXPOSED_TICKERS:
+                risk = macro_risk_signals()
+                if risk["count"] >= 2:
+                    action = "flat"
+                    confidence = 0.0
+                    macro_veto = True
+                    macro_signals = risk["activeSignals"]
+
             result = {
                 "symbol": symbol,
                 "asOf": str(df.index[-1])[:10],
-                "action": last["action"],
-                "confidence": float(last["confidence"]),
+                "action": action,
+                "confidence": confidence,
                 "votes": {k: int(last[k]) for k in SIGNAL_NAMES},
                 "catalystVeto": bool(last["catalystVeto"]),
+                "macroRiskVeto": macro_veto,
+                "macroRiskSignals": macro_signals,
             }
     except Exception as e:
         result = {"error": f"{type(e).__name__}: {e}"}

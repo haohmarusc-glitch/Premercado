@@ -995,10 +995,16 @@ def check_market_alerts(
     """
     Roda todos os checks do módulo market_alerts e retorna um relatório
     estruturado com alertas de setor, macro, técnicos, earnings, geopolítico,
-    insider trading (Form 4) e circuit breakers.
+    insider trading (Form 4) e circuit breakers. Inclui choque de alta no
+    petróleo (WTI) e um alerta CRÍTICO de "regime de risco macro elevado"
+    quando 2+ de {juro de 10y alto, choque de petróleo, manchete de conflito
+    armado/estreito de Taiwan} estão ativos ao mesmo tempo -- combinação
+    historicamente associada a pressão sobre growth/tech de múltiplo alto.
 
     tickers: lista de símbolos (default: MU, SMCI)
-    headlines_by_ticker: manchetes coletadas por ticker (do get_news)
+    headlines_by_ticker: manchetes coletadas por ticker (do get_news) -- usado
+        também pro sinal combinado de regime macro acima, então vale passar
+        manchetes de TODOS os tickers analisados, não só um
     filings_by_ticker: filings coletados por ticker (do search_edgar_filings);
         se omitido e check_edgar=True, busca direto na API da SEC
     check_edgar: habilita check de 8-K + Form 4 (padrão True)
