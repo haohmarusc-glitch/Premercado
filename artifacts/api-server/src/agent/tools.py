@@ -310,7 +310,8 @@ def create_alert(
     """
     Cria um novo alerta de preço.
     condition: 'above' ou 'below'
-    threshold_pct: variação percentual relativa ao fechamento anterior (ex: -8.0 para queda de 8%)
+    threshold_pct: variação percentual relativa ao fechamento anterior (ex: -8.0 para queda de 8%).
+        Calibre pelo atr_pct do ativo (get_technical_indicators), não um valor fixo igual pra todos.
     reason: motivo técnico/fundamentalista que justifica o alerta
     """
     try:
@@ -425,7 +426,16 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
 @cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
-    """Calcula RSI-14, MACD, Bollinger Bands e médias móveis para o ticker."""
+    """Calcula RSI-14, MACD, Bollinger Bands, médias móveis e ATR-14 para o ticker.
+
+    atr_14/atr_pct = volatilidade real do ativo (Average True Range, em $ e
+    % do preço). Use isso para calibrar o threshold_pct de create_alert em
+    vez de um percentual fixo: ativos como ARM/SMCI têm atr_pct bem mais alto
+    que GOOGL/big techs estáveis, então o mesmo movimento de preço tem
+    significância estatística muito diferente. Regra prática: threshold_pct
+    ≈ atr_pct * 1.5 (alerta só dispara em movimento acima do "ruído" normal
+    do ativo, não em qualquer variação do dia a dia).
+    """
     try:
         ticker = sanitize_ticker(ticker)
     except ValueError as e:
@@ -439,8 +449,21 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             return {"ticker": ticker, "error": "Dados insuficientes"}
 
         close = hist["Close"]
+        high = hist["High"]
+        low = hist["Low"]
         volume = hist["Volume"]
         price = float(close.iloc[-1])
+
+        # ATR 14 (Average True Range) — volatilidade real em $ e % do ativo,
+        # pra calibrar limiares de alerta por ticker em vez de usar o mesmo
+        # % fixo pra todo mundo (5% é ruído pra ARM e evento raro pra GOOGL).
+        prev_close = close.shift(1)
+        true_range = pd.concat(
+            [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+        ).max(axis=1)
+        atr14 = true_range.rolling(14).mean().iloc[-1]
+        atr_14 = round(float(atr14), 2) if not pd.isna(atr14) else None
+        atr_pct = round(float(atr14) / price * 100, 2) if not pd.isna(atr14) and price else None
 
         # RSI 14 — quando os 14 dias não têm nenhuma queda, avg_loss = 0 e a
         # divisão vira NaN; json.dumps serializa isso como o token `NaN`, que
@@ -515,6 +538,8 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             "pct_above_sma50": _pct_diff(price, sma50),
             "pct_above_sma200": _pct_diff(price, sma200),
             "volume_ratio_5d_vs_20d": vol_ratio,
+            "atr_14": atr_14,
+            "atr_pct": atr_pct,
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
@@ -1173,7 +1198,13 @@ TOOLS = [
                     "description": (
                         "Variação percentual em relação ao fechamento anterior. "
                         "Negativo para quedas (ex: -7.5 = queda de 7,5%), "
-                        "positivo para altas (ex: 4.0 = alta de 4%)."
+                        "positivo para altas (ex: 4.0 = alta de 4%). "
+                        "NÃO use um valor fixo igual para todos os ativos — "
+                        "calibre pelo atr_pct de get_technical_indicators "
+                        "(threshold_pct ≈ atr_pct * 1.5). Um ativo com atr_pct "
+                        "alto (ex.: ARM ~8%) precisa de threshold bem maior que "
+                        "um com atr_pct baixo (ex.: GOOGL ~2%), senão o alerta "
+                        "dispara em ruído normal do dia a dia."
                     ),
                 },
                 "reason": {
