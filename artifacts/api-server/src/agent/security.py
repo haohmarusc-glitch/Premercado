@@ -63,6 +63,25 @@ def sanitize_url(url):
     return url
 
 
+def friendly_error(exc):
+    """Mensagem curta e sem detalhes técnicos pra devolver ao frontend quando uma
+    chamada de dados externa (yfinance, SEC EDGAR, etc.) falha -- nunca a exceção
+    Python crua (tipo "Failed to perform, curl: (56) CONNECT tunnel failed,
+    response 403" ou "'exchangeTimezoneName'"), que vaza detalhes de infra e é
+    ilegível pra quem não é dev. Quem chamar isso deve logar a exceção original
+    em stderr antes -- essa função só decide o texto exibido, não descarta o erro.
+    """
+    text = str(exc).lower()
+    network_markers = (
+        "connect", "tunnel", "timeout", "timed out", "403", "429",
+        "connection", "proxy", "refused", "reset", "unreachable", "dns",
+        "urlopen",
+    )
+    if any(m in text for m in network_markers):
+        return "Dados indisponíveis (falha de conexão com a fonte externa)"
+    return "Dados indisponíveis no momento"
+
+
 def mask_sensitive_data(text):
     if not text:
         return text

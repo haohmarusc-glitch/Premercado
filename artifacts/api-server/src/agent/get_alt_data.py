@@ -21,7 +21,7 @@ Output (stdout JSON): {
 """
 import sys, json, os
 import requests
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 def congress_trades(tickers: set[str]) -> dict:
     api_key = os.environ.get("QUIVER_API_KEY", "").strip()
@@ -53,7 +53,8 @@ def congress_trades(tickers: set[str]) -> dict:
         ]
         return {"configured": True, "trades": trades}
     except Exception as e:
-        return {"configured": True, "error": str(e)}
+        print(f"[get_alt_data] congress_trades: {e}", file=sys.stderr)
+        return {"configured": True, "error": friendly_error(e)}
 
 def dark_pool_flow(tickers: set[str]) -> dict:
     api_key = os.environ.get("UNUSUAL_WHALES_API_KEY", "").strip()
@@ -84,7 +85,8 @@ def dark_pool_flow(tickers: set[str]) -> dict:
         ]
         return {"configured": True, "trades": trades}
     except Exception as e:
-        return {"configured": True, "error": str(e)}
+        print(f"[get_alt_data] dark_pool_flow: {e}", file=sys.stderr)
+        return {"configured": True, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())

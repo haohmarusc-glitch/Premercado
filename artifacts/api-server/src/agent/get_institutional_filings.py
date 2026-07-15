@@ -16,6 +16,7 @@ Input (stdin JSON):  {}  (sem parâmetros -- lista vem de env/default)
 Output (stdout JSON): {"filers": [{cik, label, name, latestFiling, previousFiling, isNew}, ...]}
 """
 import sys, json, os, urllib.request
+from security import friendly_error
 
 SEC_USER_AGENT = "Jefferson Investor jefferson@example.com"
 
@@ -55,7 +56,8 @@ def fetch_filer(cik: str, label: str) -> dict:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        return {"cik": cik, "label": label, "error": str(e)}
+        print(f"[get_institutional_filings] {cik} ({label}): {e}", file=sys.stderr)
+        return {"cik": cik, "label": label, "error": friendly_error(e)}
 
     name = data.get("name") or label
     recent = data.get("filings", {}).get("recent", {})

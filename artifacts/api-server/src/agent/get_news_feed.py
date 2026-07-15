@@ -6,7 +6,7 @@ Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, sou
 import sys, json, re
 import requests
 import yfinance as yf
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
@@ -71,7 +71,8 @@ def for_ticker(ticker: str, max_items: int) -> dict:
             })
         return {"ticker": ticker, "news": out}
     except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
+        print(f"[get_news_feed] {ticker}: {e}", file=sys.stderr)
+        return {"ticker": ticker, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())

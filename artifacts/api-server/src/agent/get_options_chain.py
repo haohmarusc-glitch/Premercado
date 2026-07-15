@@ -5,7 +5,7 @@ Output (stdout JSON): {"items": [ {ticker, putCallRatio, atmIvPct, ...}, ... ]}
 """
 import sys, json
 import yfinance as yf
-from security import sanitize_ticker
+from security import sanitize_ticker, friendly_error
 
 def for_ticker(ticker: str) -> dict:
     try:
@@ -45,7 +45,8 @@ def for_ticker(ticker: str) -> dict:
             "sentiment": sentiment,
         }
     except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
+        print(f"[get_options_chain] {ticker}: {e}", file=sys.stderr)
+        return {"ticker": ticker, "error": friendly_error(e)}
 
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
