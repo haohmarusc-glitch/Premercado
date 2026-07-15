@@ -33,6 +33,7 @@ import { CandleChart } from "@/components/candle-chart";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
+import { MarketAlertsCard } from "@/components/market-alerts-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -468,6 +469,8 @@ export default function Dashboard() {
           </p>
         </div>
       </div>
+
+      <MarketAlertsCard />
 
       {/* ── Chart (seletor de ticker aqui em cima -- não precisa rolar até os
            cards de cotação pra trocar de ativo) ── */}

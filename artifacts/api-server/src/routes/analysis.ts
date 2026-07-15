@@ -26,6 +26,36 @@ function runPython(script: string, payload: object): Promise<unknown> {
   });
 }
 
+// get_market_alerts_snapshot.py precisa rodar via `-m agent.xxx` (import
+// absoluto do pacote), diferente de runPython() acima (caminho direto do
+// script) -- market_alerts.py faz `from .cache import cached`, import
+// relativo que só resolve nesse contexto de pacote. Mesmo padrão de
+// routes/quotes.ts (get_quotes.py) e routes/chart.ts (get_chart.py).
+function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const py = spawn(getPythonBin(), ["-m", "agent.get_market_alerts_snapshot"], {
+      cwd: agentDir,
+      env: { ...process.env, PYTHONPATH: agentDir },
+    });
+    py.stdin.write(JSON.stringify(payload));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    // 120s (mesmo timeout de runPython() acima) -- run_all_alerts faz MUITAS
+    // chamadas de rede por conta própria (peers, macro, e por ticker:
+    // overbought/volume/candles/earnings/analistas/geopolítico/halt), além
+    // da busca de manchetes que já é paralela.
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 120_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) return reject(new Error(err || "Script failed"));
+      try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
+    });
+  });
+}
+
 async function resolveTickers(raw: string): Promise<string[]> {
   const trimmed = raw.trim();
   if (trimmed) return trimmed.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
@@ -99,6 +129,27 @@ router.get("/institutional-filings", async (_req, res): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "Failed: /institutional-filings");
     res.status(500).json({ error: "Failed to fetch institutional filings" });
+  }
+});
+
+// Snapshot ao vivo dos alertas de market_alerts.py (setor, macro, técnico,
+// geopolítico -- inclui as categorias de risco macro: petróleo, Taiwan,
+// Irã/Ormuz, Coreia do Norte, independência do Fed, rating soberano) pro
+// card "Alertas de Mercado" do Dashboard. NÃO passa pelo loop do agente/LLM
+// -- é o mesmo check_market_alerts que o agente chama, só que direto via
+// HTTP, sem custo de token.
+router.get("/market-alerts", async (_req, res): Promise<void> => {
+  try {
+    const tickers = await resolveTickers(String(_req.query.tickers ?? ""));
+    const key = tickers.join(",");
+    const hit = cached("market-alerts", key);
+    if (hit) { res.json(hit); return; }
+    const data = await runMarketAlertsSnapshot({ tickers });
+    setCache("market-alerts", key, data);
+    res.json(data);
+  } catch (err) {
+    logger.error({ err }, "Failed: /market-alerts");
+    res.status(500).json({ error: "Failed to fetch market alerts" });
   }
 });
 
