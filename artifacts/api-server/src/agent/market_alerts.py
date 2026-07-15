@@ -105,7 +105,8 @@ ABOVE_200DMA_PCT    = 25.0
 NEAR_52W_HIGH_PCT   = 3.0
 EARNINGS_WINDOW_DAYS = 7
 VOLUME_SPIKE_MULT   = 2.0
-GAP_PCT             = 5.0
+GAP_PCT             = 5.0  # fallback quando ATR não está disponível (histórico curto)
+GAP_ATR_MULT        = 1.5  # gap só é alerta se >= 1.5x a volatilidade média (ATR%) do ativo
 MACRO_WINDOW_DAYS   = 1
 
 DOWNGRADE_KW = [
@@ -226,6 +227,37 @@ def _rsi(ticker: str, period: int = 14) -> Optional[float]:
     rsi   = 100 - (100 / (1 + rs))
     val   = rsi.iloc[-1]
     return None if pd.isna(val) else round(float(val), 1)
+
+
+def _atr_pct(ticker: str, period: int = 14) -> Optional[float]:
+    """ATR(14) como % do preço — volatilidade real do ativo, pra calibrar
+    limiares de gap/movimento por ticker em vez de um % fixo pra todo mundo
+    (ver GAP_ATR_MULT em check_volume_gap)."""
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < period + 1:
+        return None
+    high, low, close = df["High"], df["Low"], df["Close"]
+    prev_close = close.shift(1)
+    true_range = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    atr = true_range.rolling(period).mean().iloc[-1]
+    last_price = close.iloc[-1]
+    if pd.isna(atr) or not last_price:
+        return None
+    return round(float(atr) / float(last_price) * 100, 2)
+
+
+def _rsi_overbought_threshold(ticker: str) -> float:
+    """Banda de sobrecompra calibrada por volatilidade (ATR%) — mesma regra
+    de tools.get_technical_indicators: ativos de ATR alto (NVDA/SMCI/ARM)
+    ficam esticados por muito mais tempo que big techs estáveis antes de
+    reverter de verdade, então usar RSI_OVERBOUGHT fixo (75) sinaliza
+    reversão prematura demais nesses ativos."""
+    atr_pct = _atr_pct(ticker)
+    if atr_pct is None:
+        return RSI_OVERBOUGHT
+    return 80.0 if atr_pct >= 6.0 else 75.0
 
 
 def _dist_from_200dma_pct(ticker: str) -> Optional[float]:
@@ -690,11 +722,12 @@ def check_overbought(ticker: str) -> list[Alert]:
     alerts: list[Alert] = []
 
     rsi = _rsi(ticker)
-    if rsi is not None and rsi >= RSI_OVERBOUGHT:
+    rsi_threshold = _rsi_overbought_threshold(ticker)
+    if rsi is not None and rsi >= rsi_threshold:
         alerts.append(Alert(
             ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
             title="Sobrecomprado (RSI)",
-            detail=f"RSI(14) = {rsi}. Esticado; risco de realizacao de lucro.",
+            detail=f"RSI(14) = {rsi} (limiar {rsi_threshold:.0f}). Esticado; risco de realizacao de lucro.",
             value=rsi,
         ))
 
@@ -731,14 +764,24 @@ def check_volume_gap(ticker: str) -> list[Alert]:
         ))
 
     gap = _gap_pct(ticker)
-    if gap is not None and abs(gap) >= GAP_PCT:
-        sev = Severity.CRITICO if abs(gap) >= GAP_PCT * 1.5 else Severity.ATENCAO
-        alerts.append(Alert(
-            ticker=ticker, category=Category.TECNICO, severity=sev,
-            title="Gap de abertura",
-            detail=f"Abriu {gap:+}% vs fechamento anterior. Reacao a evento.",
-            value=gap,
-        ))
+    if gap is not None:
+        atr_pct = _atr_pct(ticker)
+        # Limiar por volatilidade real do ativo (ATR%); cai pro fixo só se
+        # não houver histórico suficiente pra calcular ATR.
+        threshold = atr_pct * GAP_ATR_MULT if atr_pct is not None else GAP_PCT
+        if abs(gap) >= threshold:
+            sev = Severity.CRITICO if abs(gap) >= threshold * 1.5 else Severity.ATENCAO
+            alerts.append(Alert(
+                ticker=ticker, category=Category.TECNICO, severity=sev,
+                title="Gap de abertura",
+                detail=(
+                    f"Abriu {gap:+}% vs fechamento anterior "
+                    f"(limiar {threshold:.1f}%, ATR {atr_pct:.1f}%). Reacao a evento."
+                    if atr_pct is not None
+                    else f"Abriu {gap:+}% vs fechamento anterior. Reacao a evento."
+                ),
+                value=gap,
+            ))
     return alerts
 
 
