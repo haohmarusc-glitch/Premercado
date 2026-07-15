@@ -108,6 +108,8 @@ VOLUME_SPIKE_MULT   = 2.0
 GAP_PCT             = 5.0  # fallback quando ATR não está disponível (histórico curto)
 GAP_ATR_MULT        = 1.5  # gap só é alerta se >= 1.5x a volatilidade média (ATR%) do ativo
 MACRO_WINDOW_DAYS   = 1
+DEAD_CAT_LOOKBACK_DAYS = 5  # T-5: mesmo dia da semana anterior (5 pregões)
+DEAD_CAT_T5_ATR_MULT   = 2.0  # volatilidade de ~5 pregões escala aprox. por sqrt(5) ~= 2.2x a diária
 
 DOWNGRADE_KW = [
     "downgrade", "cuts price target", "lowers price target", "lowered to",
@@ -412,6 +414,57 @@ def check_candle_patterns(ticker: str, lookback: int = 3) -> list[Alert]:
             detail=f"{p['date']}: {p['note']}",
         ))
     return alerts
+
+
+def check_dead_cat_bounce(ticker: str, lookback: int = DEAD_CAT_LOOKBACK_DAYS) -> list[Alert]:
+    """Compara o movimento de hoje (T-1, mesma janela que check_volume_gap/
+    check_sell_the_news ja leem) contra o nivel de `lookback` pregoes atras
+    (T-5, "mesmo dia da semana passada") pra distinguir reversao real de
+    dead-cat-bounce: uma alta forte hoje que ainda deixa o papel bem abaixo
+    do nivel de uma semana atras e' recuperacao dentro de uma queda maior,
+    nao reversao de tendencia -- e o inverso pra uma queda forte dentro de
+    uma alta maior. So dispara quando as duas janelas apontam em direcoes
+    opostas com magnitude relevante (limiar calibrado pelo ATR% do ativo,
+    mesma logica de check_volume_gap). Reaproveita o historico de 6mo ja
+    cacheado por check_overbought/_atr_pct/check_candle_patterns -- zero
+    chamada de rede extra."""
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < lookback + 2:
+        return []
+    close = df["Close"]
+    now, t1, t5 = close.iloc[-1], close.iloc[-2], close.iloc[-1 - lookback]
+    if t1 == 0 or t5 == 0:
+        return []
+    chg_t1 = round((now / t1 - 1) * 100, 2)
+    chg_t5 = round((now / t5 - 1) * 100, 2)
+
+    atr_pct = _atr_pct(ticker)
+    t1_threshold = atr_pct if atr_pct is not None else GAP_PCT / GAP_ATR_MULT
+    t5_threshold = t1_threshold * DEAD_CAT_T5_ATR_MULT
+
+    if chg_t1 >= t1_threshold and chg_t5 <= -t5_threshold:
+        return [Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+            title="Possivel dead-cat bounce",
+            detail=f"Alta de {chg_t1:+.2f}% hoje, mas ainda {chg_t5:+.2f}% vs "
+                   f"{lookback} pregoes atras (mesmo dia da semana passada). "
+                   f"Pode ser recuperacao tecnica dentro de uma queda maior, nao "
+                   f"reversao de tendencia -- cruzar com volume e noticias antes "
+                   f"de tratar como confirmacao.",
+            value=chg_t1,
+        )]
+    if chg_t1 <= -t1_threshold and chg_t5 >= t5_threshold:
+        return [Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+            title="Possivel realizacao de lucro (nao reversao)",
+            detail=f"Queda de {chg_t1:+.2f}% hoje, mas ainda {chg_t5:+.2f}% vs "
+                   f"{lookback} pregoes atras (mesmo dia da semana passada). "
+                   f"Pode ser realizacao de lucro dentro de uma alta maior, nao "
+                   f"reversao de tendencia -- cruzar com volume e noticias antes "
+                   f"de tratar como confirmacao.",
+            value=chg_t1,
+        )]
+    return []
 
 
 @cached("next_earnings:{0}", ttl=21600)
@@ -1196,6 +1249,7 @@ def run_all_alerts(tickers: list[str],
         alerts += check_overbought(t)
         alerts += check_volume_gap(t)
         alerts += check_candle_patterns(t)
+        alerts += check_dead_cat_bounce(t)
         alerts += check_earnings_proximity(t, today)
         if t == "HCC":
             alerts += check_hcc_setup(t)
