@@ -105,12 +105,18 @@ ABOVE_200DMA_PCT    = 25.0
 NEAR_52W_HIGH_PCT   = 3.0
 EARNINGS_WINDOW_DAYS = 7
 VOLUME_SPIKE_MULT   = 2.0
-GAP_PCT             = 5.0
+GAP_PCT             = 5.0  # fallback quando ATR não está disponível (histórico curto)
+GAP_ATR_MULT        = 1.5  # gap só é alerta se >= 1.5x a volatilidade média (ATR%) do ativo
 MACRO_WINDOW_DAYS   = 1
 
 DOWNGRADE_KW = [
     "downgrade", "cuts price target", "lowers price target", "lowered to",
     "underperform", "sell rating", "initiates sell", "rebaixa", "corta preco-alvo",
+]
+UPGRADE_KW = [
+    "upgrade", "raises price target", "raised price target", "raised to",
+    "outperform", "buy rating", "initiates buy", "initiates outperform",
+    "eleva recomendacao", "eleva preco-alvo",
 ]
 POSITIVE_KW = [
     "approval", "qualified", "supplier", "wins", "deal", "contract", "record",
@@ -228,6 +234,37 @@ def _rsi(ticker: str, period: int = 14) -> Optional[float]:
     return None if pd.isna(val) else round(float(val), 1)
 
 
+def _atr_pct(ticker: str, period: int = 14) -> Optional[float]:
+    """ATR(14) como % do preço — volatilidade real do ativo, pra calibrar
+    limiares de gap/movimento por ticker em vez de um % fixo pra todo mundo
+    (ver GAP_ATR_MULT em check_volume_gap)."""
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < period + 1:
+        return None
+    high, low, close = df["High"], df["Low"], df["Close"]
+    prev_close = close.shift(1)
+    true_range = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    atr = true_range.rolling(period).mean().iloc[-1]
+    last_price = close.iloc[-1]
+    if pd.isna(atr) or not last_price:
+        return None
+    return round(float(atr) / float(last_price) * 100, 2)
+
+
+def _rsi_overbought_threshold(ticker: str) -> float:
+    """Banda de sobrecompra calibrada por volatilidade (ATR%) — mesma regra
+    de tools.get_technical_indicators: ativos de ATR alto (NVDA/SMCI/ARM)
+    ficam esticados por muito mais tempo que big techs estáveis antes de
+    reverter de verdade, então usar RSI_OVERBOUGHT fixo (75) sinaliza
+    reversão prematura demais nesses ativos."""
+    atr_pct = _atr_pct(ticker)
+    if atr_pct is None:
+        return RSI_OVERBOUGHT
+    return 80.0 if atr_pct >= 6.0 else 75.0
+
+
 def _dist_from_200dma_pct(ticker: str) -> Optional[float]:
     df = _history(ticker, period="1y")
     if df is None or len(df) < 200:
@@ -259,6 +296,122 @@ def _volume_spike(ticker: str) -> Optional[float]:
     if avg_vol == 0:
         return None
     return round(today_vol / avg_vol, 2)
+
+
+def detect_candle_patterns_in_hist(hist: pd.DataFrame, lookback: int = 5) -> list[dict]:
+    """Nucleo de deteccao de padroes de candlestick (Doji, Martelo/Enforcado,
+    Estrela Cadente/Invertido, Engolfo, Estrela da Manha/Noite), separado de
+    tools.detect_candle_patterns para poder ser reaproveitado por
+    check_candle_patterns() sobre um historico ja baixado (sem round-trip de
+    rede extra). Unica fonte de verdade das regras -- tools.py delega pra cá."""
+    o, h, l, c = hist["Open"], hist["High"], hist["Low"], hist["Close"]
+    n = len(hist)
+    start = max(3, n - lookback)
+
+    def body(i: int) -> float:
+        return abs(c.iloc[i] - o.iloc[i])
+
+    def rng(i: int) -> float:
+        r = h.iloc[i] - l.iloc[i]
+        return r if r > 0 else 1e-9
+
+    def upper_wick(i: int) -> float:
+        return h.iloc[i] - max(o.iloc[i], c.iloc[i])
+
+    def lower_wick(i: int) -> float:
+        return min(o.iloc[i], c.iloc[i]) - l.iloc[i]
+
+    def is_bullish(i: int) -> bool:
+        return c.iloc[i] > o.iloc[i]
+
+    def is_bearish(i: int) -> bool:
+        return c.iloc[i] < o.iloc[i]
+
+    def trend_before(i: int) -> str:
+        ref = max(0, i - 4)
+        return "down" if c.iloc[i - 1] < c.iloc[ref] else "up"
+
+    found: list[dict] = []
+    for i in range(start, n):
+        date = hist.index[i].strftime("%Y-%m-%d")
+        b, r = body(i), rng(i)
+        body_pct = b / r
+
+        if body_pct < 0.1:
+            found.append({
+                "date": date, "pattern": "Doji", "direction": "neutral",
+                "note": "Indecisão — corpo minúsculo, pode antecipar reversão.",
+            })
+        elif lower_wick(i) >= 2 * b and upper_wick(i) <= b * 0.5 and body_pct < 0.4:
+            if trend_before(i) == "down":
+                found.append({
+                    "date": date, "pattern": "Martelo", "direction": "bullish",
+                    "note": "Pavio inferior longo após queda — possível reversão para alta.",
+                })
+            else:
+                found.append({
+                    "date": date, "pattern": "Enforcado", "direction": "bearish",
+                    "note": "Mesma forma do martelo, mas após alta — possível reversão para baixa; confirmar no próximo candle.",
+                })
+        elif upper_wick(i) >= 2 * b and lower_wick(i) <= b * 0.5 and body_pct < 0.4:
+            if trend_before(i) == "up":
+                found.append({
+                    "date": date, "pattern": "Estrela Cadente", "direction": "bearish",
+                    "note": "Pavio superior longo após alta — possível reversão para baixa.",
+                })
+            else:
+                found.append({
+                    "date": date, "pattern": "Martelo Invertido", "direction": "bullish",
+                    "note": "Mesma forma da estrela cadente, mas após queda — possível reversão para alta; confirmar no próximo candle.",
+                })
+
+        if i >= 1:
+            if is_bearish(i - 1) and is_bullish(i) and o.iloc[i] <= c.iloc[i - 1] and c.iloc[i] >= o.iloc[i - 1]:
+                found.append({
+                    "date": date, "pattern": "Engolfo de Alta", "direction": "bullish",
+                    "note": "Corpo de alta engole o corpo de baixa do candle anterior — reversão forte.",
+                })
+            elif is_bullish(i - 1) and is_bearish(i) and o.iloc[i] >= c.iloc[i - 1] and c.iloc[i] <= o.iloc[i - 1]:
+                found.append({
+                    "date": date, "pattern": "Engolfo de Baixa", "direction": "bearish",
+                    "note": "Corpo de baixa engole o corpo de alta do candle anterior — reversão forte.",
+                })
+
+        if i >= 2:
+            long0 = body(i - 2) / rng(i - 2) > 0.5
+            small1 = body(i - 1) / rng(i - 1) < 0.35
+            mid0 = (o.iloc[i - 2] + c.iloc[i - 2]) / 2
+            if long0 and is_bearish(i - 2) and small1 and is_bullish(i) and c.iloc[i] > mid0:
+                found.append({
+                    "date": date, "pattern": "Estrela da Manhã", "direction": "bullish",
+                    "note": "3 candles: queda forte, indecisão, retomada de alta — reversão clássica de fundo.",
+                })
+            elif long0 and is_bullish(i - 2) and small1 and is_bearish(i) and c.iloc[i] < mid0:
+                found.append({
+                    "date": date, "pattern": "Estrela da Noite", "direction": "bearish",
+                    "note": "3 candles: alta forte, indecisão, queda — reversão clássica de topo.",
+                })
+
+    return found
+
+
+def check_candle_patterns(ticker: str, lookback: int = 3) -> list[Alert]:
+    """Padroes de candlestick nos ultimos `lookback` candles, reaproveitando o
+    historico de 6mo que check_overbought/_atr_pct ja deixam no _HIST_CACHE
+    (zero chamadas de rede extras)."""
+    df = _history(ticker, period="6mo")
+    if df is None or len(df) < 10:
+        return []
+    found = detect_candle_patterns_in_hist(df, lookback=lookback)
+    alerts: list[Alert] = []
+    for p in found:
+        sev = Severity.ATENCAO if p["direction"] in ("bullish", "bearish") else Severity.INFO
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=sev,
+            title=f"Padrao de candle: {p['pattern']}",
+            detail=f"{p['date']}: {p['note']}",
+        ))
+    return alerts
 
 
 @cached("next_earnings:{0}", ttl=21600)
@@ -690,11 +843,12 @@ def check_overbought(ticker: str) -> list[Alert]:
     alerts: list[Alert] = []
 
     rsi = _rsi(ticker)
-    if rsi is not None and rsi >= RSI_OVERBOUGHT:
+    rsi_threshold = _rsi_overbought_threshold(ticker)
+    if rsi is not None and rsi >= rsi_threshold:
         alerts.append(Alert(
             ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
             title="Sobrecomprado (RSI)",
-            detail=f"RSI(14) = {rsi}. Esticado; risco de realizacao de lucro.",
+            detail=f"RSI(14) = {rsi} (limiar {rsi_threshold:.0f}). Esticado; risco de realizacao de lucro.",
             value=rsi,
         ))
 
@@ -731,14 +885,24 @@ def check_volume_gap(ticker: str) -> list[Alert]:
         ))
 
     gap = _gap_pct(ticker)
-    if gap is not None and abs(gap) >= GAP_PCT:
-        sev = Severity.CRITICO if abs(gap) >= GAP_PCT * 1.5 else Severity.ATENCAO
-        alerts.append(Alert(
-            ticker=ticker, category=Category.TECNICO, severity=sev,
-            title="Gap de abertura",
-            detail=f"Abriu {gap:+}% vs fechamento anterior. Reacao a evento.",
-            value=gap,
-        ))
+    if gap is not None:
+        atr_pct = _atr_pct(ticker)
+        # Limiar por volatilidade real do ativo (ATR%); cai pro fixo só se
+        # não houver histórico suficiente pra calcular ATR.
+        threshold = atr_pct * GAP_ATR_MULT if atr_pct is not None else GAP_PCT
+        if abs(gap) >= threshold:
+            sev = Severity.CRITICO if abs(gap) >= threshold * 1.5 else Severity.ATENCAO
+            alerts.append(Alert(
+                ticker=ticker, category=Category.TECNICO, severity=sev,
+                title="Gap de abertura",
+                detail=(
+                    f"Abriu {gap:+}% vs fechamento anterior "
+                    f"(limiar {threshold:.1f}%, ATR {atr_pct:.1f}%). Reacao a evento."
+                    if atr_pct is not None
+                    else f"Abriu {gap:+}% vs fechamento anterior. Reacao a evento."
+                ),
+                value=gap,
+            ))
     return alerts
 
 
@@ -767,6 +931,12 @@ def check_analyst_changes(ticker: str, headlines) -> list[Alert]:
             alerts.append(Alert(
                 ticker=ticker, category=Category.NOTICIA, severity=Severity.CRITICO,
                 title="Mudanca de rating (negativa)",
+                detail=f'Manchete: "{h.strip()[:120]}"',
+            ))
+        elif any(kw in low for kw in UPGRADE_KW):
+            alerts.append(Alert(
+                ticker=ticker, category=Category.NOTICIA, severity=Severity.INFO,
+                title="Mudanca de rating (positiva)",
                 detail=f'Manchete: "{h.strip()[:120]}"',
             ))
     return alerts
@@ -999,6 +1169,7 @@ def run_all_alerts(tickers: list[str],
         heads = headlines_by_ticker.get(t, [])
         alerts += check_overbought(t)
         alerts += check_volume_gap(t)
+        alerts += check_candle_patterns(t)
         alerts += check_earnings_proximity(t, today)
         if t == "HCC":
             alerts += check_hcc_setup(t)
