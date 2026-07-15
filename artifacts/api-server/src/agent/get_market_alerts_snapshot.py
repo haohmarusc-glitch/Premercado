@@ -27,15 +27,25 @@ Busca manchetes reais direto via yfinance, em PARALELO (ThreadPoolExecutor,
 mesmo padrão de get_technicals.py) -- função própria, não importa
 get_news_feed.py (aquele usa `from security import ...` top-level, que só
 resolve quando invocado por CAMINHO direto; nesse contexto de import via
-pacote quebraria, mesmo motivo documentado acima). Sem tradução: as keywords
-de GEO_KEYWORDS cobrem inglês, que é o que sai cru do yfinance -- tradução
-só importa pra exibição, não pro match de keyword.
+pacote quebraria, mesmo motivo documentado acima).
+
+O MATCH de keyword (GEO_KEYWORDS) roda sempre contra o texto ORIGINAL em
+inglês -- é o que sai cru do yfinance e é o que as keywords cobrem melhor.
+A TRADUÇÃO pra pt-BR acontece DEPOIS, só nos `detail` já montados pelos
+alerts (regex genérica pega qualquer trecho entre aspas, cobre tanto
+`Manchete: "..."` de check_geopolitical_news quanto `categoria -- "..."` de
+check_macro_regime_risk) -- mesmo endpoint gratuito do Google Translate já
+usado em get_news_feed.py (não importado por aqui pelo mesmo motivo de
+import citado acima; reimplementado local). Fail-open: se a tradução falhar
+(ex.: rede bloqueada), mantém o texto original em inglês -- nunca quebra o
+card por causa disso.
 
 Input (stdin JSON): {"tickers": ["NVDA", ...]}  (default: config.TICKERS)
 Output (stdout JSON): {"total": N, "alerts": [...]}
 """
 import sys
 import json
+import re
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -77,6 +87,52 @@ def _headlines_by_ticker(tickers: list[str], max_items: int = 5) -> dict[str, li
     return out
 
 
+# Trecho entre aspas com pelo menos 8 caracteres -- comprimento mínimo evita
+# pegar aspas curtas incidentais (não há nenhuma nos alerts atuais, mas é
+# uma rede de segurança barata). Único trecho entre aspas por `detail` em
+# todos os alerts que este script gera (title/detail nunca aninham aspas
+# fora da manchete citada).
+_QUOTED_RE = re.compile(r'"([^"]{8,})"')
+
+
+def _translate_batch(texts: list[str]) -> list[str]:
+    """en->pt-BR via endpoint gratuito do Google Translate (mesmo padrão de
+    get_news_feed.py). Uma única requisição pra todas as manchetes da run.
+    Retorna os originais se algo falhar (timeout, rede bloqueada, etc.)."""
+    if not texts:
+        return texts
+    import requests
+    joined = "\n".join(texts)
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
+        )
+        r.raise_for_status()
+        data = r.json()
+        translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
+        lines = translated.split("\n")
+        if len(lines) == len(texts):
+            return [ln.strip() for ln in lines]
+    except Exception as e:
+        print(f"[get_market_alerts_snapshot] translation failed: {e}", file=sys.stderr)
+    return texts
+
+
+def _translate_alert_headlines(alerts: list) -> None:
+    """Traduz só o trecho entre aspas de cada `detail` (a manchete citada),
+    em lote -- muta os Alert in-place. Cada `detail` tem no máximo 1 trecho
+    citado hoje (ver _QUOTED_RE)."""
+    matches = [(a, m) for a in alerts for m in [_QUOTED_RE.search(a.detail)] if m]
+    if not matches:
+        return
+    translated = _translate_batch([m.group(1) for _, m in matches])
+    for (a, m), pt in zip(matches, translated):
+        a.detail = a.detail[: m.start(1)] + pt + a.detail[m.end(1) :]
+
+
 if __name__ == "__main__":
     try:
         args = json.loads(sys.stdin.read() or "{}")
@@ -94,6 +150,8 @@ if __name__ == "__main__":
 
     order = {Severity.CRITICO: 0, Severity.ATENCAO: 1, Severity.INFO: 2}
     alerts.sort(key=lambda a: order[a.severity])
+
+    _translate_alert_headlines(alerts)
 
     result = {
         "total": len(alerts),

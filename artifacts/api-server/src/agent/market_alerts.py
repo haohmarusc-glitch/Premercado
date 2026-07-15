@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -172,6 +173,22 @@ GEO_CRITICAL_CATEGORIES = {
     "independencia do fed/politica monetaria",
     "rating soberano eua/teto da divida",
 }
+
+# Match com LIMITE DE PALAVRA (\b), nao substring cru -- "war" batia dentro
+# de "hardware"/"Warren" e "dma" batia dentro de "YieldMax" com `kw in low`
+# (visto em produção: "Dell leads broader AI hardware selloff" virou alerta
+# de "conflito armado/guerra", "YieldMax launches a new SpaceX options ETF"
+# virou "antitruste/regulatorio"). \b ainda funciona pra frases de varias
+# palavras (ex.: "trade war") porque so importa a borda do INICIO e do FIM
+# da frase toda.
+_GEO_KW_PATTERNS: dict[str, list[re.Pattern]] = {
+    categoria: [re.compile(r"\b" + re.escape(kw) + r"\b") for kw in kws]
+    for categoria, kws in GEO_KEYWORDS.items()
+}
+
+
+def _geo_kw_match(low: str, categoria: str) -> bool:
+    return any(p.search(low) for p in _GEO_KW_PATTERNS[categoria])
 
 # Circuit breakers (S&P 500)
 CB_TICKER    = "^GSPC"
@@ -1048,7 +1065,7 @@ def check_macro_regime_risk(headlines_by_ticker: Optional[dict[str, list]] = Non
         for h in _normalize_headlines(heads):
             low = h.lower()
             for categoria in geo_categorias_relevantes:
-                if any(kw in low for kw in GEO_KEYWORDS[categoria]):
+                if _geo_kw_match(low, categoria):
                     geo_hit = f'{categoria} -- "{h.strip()[:90]}"'
                     break
             if geo_hit:
@@ -1246,8 +1263,8 @@ def check_geopolitical_news(ticker: str, headlines) -> list[Alert]:
     alerts: list[Alert] = []
     for h in _normalize_headlines(headlines):
         low = h.lower()
-        for categoria, kws in GEO_KEYWORDS.items():
-            if any(kw in low for kw in kws):
+        for categoria in GEO_KEYWORDS:
+            if _geo_kw_match(low, categoria):
                 sev = Severity.CRITICO if categoria in GEO_CRITICAL_CATEGORIES else Severity.ATENCAO
                 alerts.append(Alert(
                     ticker=ticker, category=Category.NOTICIA, severity=sev,
