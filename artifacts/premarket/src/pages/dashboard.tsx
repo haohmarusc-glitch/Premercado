@@ -35,6 +35,7 @@ import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
 import { MarketAlertsCard } from "@/components/market-alerts-card";
 import { AlertsChangeSummaryCard } from "@/components/alerts-change-summary-card";
+import { ExitPlanSummaryCard } from "@/components/exit-plan-summary-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -472,6 +473,8 @@ export default function Dashboard() {
       </div>
 
       <AlertsChangeSummaryCard />
+
+      <ExitPlanSummaryCard />
 
       <MarketAlertsCard />
 

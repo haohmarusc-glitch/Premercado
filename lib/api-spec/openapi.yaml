@@ -25,6 +25,8 @@ tags:
     description: Ticker watchlist
   - name: journal
     description: Trade journal
+  - name: exit-plan
+    description: Phased portfolio exit plan (target dates, tied events, status)
 
 paths:
   /auth/signup:
@@ -966,6 +968,82 @@ paths:
         "404":
           description: Not found
 
+  /exit-plan:
+    get:
+      operationId: listExitPlan
+      tags: [exit-plan]
+      summary: List exit plan items
+      responses:
+        "200":
+          description: Exit plan items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExitPlanItem"
+    post:
+      operationId: createExitPlanItem
+      tags: [exit-plan]
+      summary: Create an exit plan item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExitPlanItemCreate"
+      responses:
+        "201":
+          description: Created item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExitPlanItem"
+        "400":
+          description: Invalid input
+
+  /exit-plan/{id}:
+    patch:
+      operationId: updateExitPlanItem
+      tags: [exit-plan]
+      summary: Update an exit plan item (e.g. mark sold/skipped)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExitPlanItemUpdate"
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExitPlanItem"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteExitPlanItem
+      tags: [exit-plan]
+      summary: Delete an exit plan item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
 components:
   schemas:
     AuthCredentials:
@@ -1697,3 +1775,56 @@ components:
         exitPrice: { type: ["number", "null"] }
         result: { type: ["string", "null"] }
         notes: { type: ["string", "null"] }
+
+    ExitPlanItem:
+      type: object
+      required:
+        [
+          id,
+          ticker,
+          phase,
+          phaseLabel,
+          targetDate,
+          action,
+          rationale,
+          eventDate,
+          status,
+          soldAt,
+          soldPrice,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        phase: { type: integer }
+        phaseLabel: { type: string }
+        targetDate: { type: string }
+        action: { type: string }
+        rationale: { type: string }
+        eventDate: { type: ["string", "null"] }
+        status: { type: string }
+        soldAt: { type: ["string", "null"] }
+        soldPrice: { type: ["number", "null"] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    ExitPlanItemCreate:
+      type: object
+      required: [ticker, phase, phaseLabel, targetDate, action, rationale]
+      properties:
+        ticker: { type: string, minLength: 1, maxLength: 10 }
+        phase: { type: integer }
+        phaseLabel: { type: string }
+        targetDate: { type: string }
+        action: { type: string }
+        rationale: { type: string }
+        eventDate: { type: ["string", "null"] }
+        status: { type: string }
+
+    ExitPlanItemUpdate:
+      type: object
+      properties:
+        status: { type: string }
+        soldAt: { type: ["string", "null"] }
+        soldPrice: { type: ["number", "null"] }

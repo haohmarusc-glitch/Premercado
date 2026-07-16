@@ -354,3 +354,30 @@ export const intradaySpikesTable = pgTable("intraday_spikes", {
   index("idx_intraday_spikes_fired_at").on(t.firedAt),
 ]);
 export type IntradaySpike = typeof intradaySpikesTable.$inferSelect;
+
+// Itens de um plano de saída de carteira: cada linha é "vender TICKER até
+// targetDate, motivo X", opcionalmente amarrado a um evento (earnings) que
+// justifica o prazo. Gerado manualmente (por análise no chat) ou por uma
+// futura rotina do agente -- não é recálculo automático de nível de preço,
+// é o registro do plano combinado com o usuário, que a UI cruza com a data
+// de hoje pra sinalizar "vencido"/"prazo perto".
+export const exitPlanItemsTable = pgTable("exit_plan_items", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull(),
+  phase: integer("phase").notNull(),
+  phaseLabel: text("phase_label").notNull(),
+  targetDate: text("target_date").notNull(),
+  action: text("action").notNull(),
+  rationale: text("rationale").notNull(),
+  eventDate: text("event_date"),
+  status: text("status").notNull().default("pending"),
+  soldAt: text("sold_at"),
+  soldPrice: money("sold_price"),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_exit_plan_items_user_id").on(t.userId),
+  index("idx_exit_plan_items_ticker").on(t.ticker),
+]);
+export type ExitPlanItem = typeof exitPlanItemsTable.$inferSelect;

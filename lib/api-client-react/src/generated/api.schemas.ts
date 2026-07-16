@@ -579,6 +579,49 @@ export interface JournalEntryUpdate {
   notes?: string | null;
 }
 
+export interface ExitPlanItem {
+  id: number;
+  ticker: string;
+  phase: number;
+  phaseLabel: string;
+  targetDate: string;
+  action: string;
+  rationale: string;
+  /** @nullable */
+  eventDate: string | null;
+  status: string;
+  /** @nullable */
+  soldAt: string | null;
+  /** @nullable */
+  soldPrice: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExitPlanItemCreate {
+  /**
+     * @minLength 1
+     * @maxLength 10
+     */
+  ticker: string;
+  phase: number;
+  phaseLabel: string;
+  targetDate: string;
+  action: string;
+  rationale: string;
+  /** @nullable */
+  eventDate?: string | null;
+  status?: string;
+}
+
+export interface ExitPlanItemUpdate {
+  status?: string;
+  /** @nullable */
+  soldAt?: string | null;
+  /** @nullable */
+  soldPrice?: number | null;
+}
+
 export type ListObservationsParams = {
 ticker?: string;
 tickers?: string;
