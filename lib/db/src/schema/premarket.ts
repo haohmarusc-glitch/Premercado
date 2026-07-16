@@ -333,3 +333,24 @@ export const tradeJournalTable = pgTable("trade_journal", {
   index("idx_trade_journal_user_id").on(t.userId),
 ]);
 export type TradeJournalEntry = typeof tradeJournalTable.$inferSelect;
+
+// Picos intraday de volume/preço (candles de 1min) detectados pelo poller de
+// background (alert-checker.ts, a cada 5min) via agent/get_intraday_spikes.py
+// -- persistido pra sobreviver entre polls e aparecer no card "Alertas de
+// Mercado" mesmo se o usuário não estiver com a página aberta no minuto exato
+// do spike. Sem userId: é sinal de mercado (mesmos tickers monitorados pra
+// todo mundo), não uma preferência por usuário.
+export const intradaySpikesTable = pgTable("intraday_spikes", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull(),
+  kind: text("kind").notNull(), // 'volume' | 'price'
+  severity: text("severity").notNull(), // 'info' | 'atencao' | 'critico'
+  title: text("title").notNull(),
+  detail: text("detail").notNull(),
+  value: money("value"),
+  firedAt: timestamp("fired_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_intraday_spikes_ticker").on(t.ticker),
+  index("idx_intraday_spikes_fired_at").on(t.firedAt),
+]);
+export type IntradaySpike = typeof intradaySpikesTable.$inferSelect;
