@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
+import { desc, gte } from "drizzle-orm";
+import { db, intradaySpikesTable, type IntradaySpike } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
@@ -132,21 +134,85 @@ router.get("/institutional-filings", async (_req, res): Promise<void> => {
   }
 });
 
+interface MarketAlertItem {
+  ticker: string;
+  category: string;
+  severity: "info" | "atencao" | "critico";
+  title: string;
+  detail: string;
+  value: number | null;
+  timestamp: string;
+}
+
+interface MarketAlertsPayload {
+  total: number;
+  criticalCount: number;
+  alerts: MarketAlertItem[];
+}
+
+const SEVERITY_ORDER: Record<string, number> = { critico: 0, atencao: 1, info: 2 };
+// Janela de exibição dos picos intraday persistidos (alert-checker.ts insere
+// a cada 5min, cooldown de dedup de 15min) -- 45min cobre alguns ciclos de
+// poll mesmo se algum for perdido, sem deixar picos velhos/irrelevantes
+// acumulando no card indefinidamente.
+const INTRADAY_SPIKE_WINDOW_MS = 45 * 60_000;
+
+// Mescla os picos intraday (candle de 1min, persistidos pelo poller de
+// background em alert-checker.ts) nos alertas de market_alerts.py (que são
+// computados sob demanda a cada request, sem estado) -- sem isso, um pico
+// que aconteceu entre duas visitas ao Dashboard nunca apareceria.
+async function mergeIntradaySpikes(base: MarketAlertsPayload): Promise<MarketAlertsPayload> {
+  let rows: IntradaySpike[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(intradaySpikesTable)
+      .where(gte(intradaySpikesTable.firedAt, new Date(Date.now() - INTRADAY_SPIKE_WINDOW_MS)))
+      .orderBy(desc(intradaySpikesTable.firedAt));
+  } catch (err) {
+    logger.warn({ err }, "market-alerts: failed to load intraday spikes");
+    return base;
+  }
+  if (!rows.length) return base;
+
+  const spikeAlerts: MarketAlertItem[] = rows.map((r) => ({
+    ticker: r.ticker,
+    category: "tecnico",
+    severity: r.severity as MarketAlertItem["severity"],
+    title: r.title,
+    detail: r.detail,
+    value: r.value,
+    timestamp: r.firedAt.toISOString(),
+  }));
+
+  const alerts = [...base.alerts, ...spikeAlerts].sort(
+    (a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3),
+  );
+
+  return {
+    total: alerts.length,
+    criticalCount: alerts.filter((a) => a.severity === "critico").length,
+    alerts,
+  };
+}
+
 // Snapshot ao vivo dos alertas de market_alerts.py (setor, macro, técnico,
 // geopolítico -- inclui as categorias de risco macro: petróleo, Taiwan,
 // Irã/Ormuz, Coreia do Norte, independência do Fed, rating soberano) pro
 // card "Alertas de Mercado" do Dashboard. NÃO passa pelo loop do agente/LLM
 // -- é o mesmo check_market_alerts que o agente chama, só que direto via
-// HTTP, sem custo de token.
+// HTTP, sem custo de token. Também mescla os picos intraday de volume/preço
+// detectados em background (ver mergeIntradaySpikes acima).
 router.get("/market-alerts", async (_req, res): Promise<void> => {
   try {
     const tickers = await resolveTickers(String(_req.query.tickers ?? ""));
     const key = tickers.join(",");
-    const hit = cached("market-alerts", key);
-    if (hit) { res.json(hit); return; }
-    const data = await runMarketAlertsSnapshot({ tickers });
-    setCache("market-alerts", key, data);
-    res.json(data);
+    let data = cached("market-alerts", key) as MarketAlertsPayload | null;
+    if (!data) {
+      data = (await runMarketAlertsSnapshot({ tickers })) as MarketAlertsPayload;
+      setCache("market-alerts", key, data);
+    }
+    res.json(await mergeIntradaySpikes(data));
   } catch (err) {
     logger.error({ err }, "Failed: /market-alerts");
     res.status(500).json({ error: "Failed to fetch market alerts" });
