@@ -722,6 +722,229 @@ def get_short_interest(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
+# ── Setup de squeeze + reversão técnica ─────────────────────────────────────────
+# Detector combinado: risco de short squeeze (short interest + days-to-cover)
+# só importa de verdade se houver confirmação técnica de que o preço está
+# revertendo de um fundo, não em queda livre. Não é sinal de compra — é um
+# "vale a pena olhar de perto" que o agente pode citar no relatório com o
+# contexto completo (a decisão continua sendo do usuário).
+
+_SQUEEZE_SHORT_PCT_DANGER = 20.0  # % do float — mesmo limiar de get_short_interest "alto"
+_SQUEEZE_DTC_DANGER = 5.0  # dias pra cobrir
+_SUPPORT_TOUCH_PCT = 5.0  # "tocou o suporte" = dentro de 5% da mínima rolante
+_BOTTOM_VOLUME_MULT = 1.5  # 150% da média de 20 dias, pedido explícito do usuário
+_BREAKOUT_LOOKBACK_DAYS = 20
+_BREAKOUT_VOLUME_MULT = 3.0
+_DIVERGENCE_LOOKBACK_DAYS = 40
+
+
+def _local_minima_idx(values, order: int = 3) -> list[int]:
+    """Índices posicionais de mínimos locais (menor valor numa janela de
+    `order` dias pra cada lado). Implementação direta sem scipy (não é
+    dependência do projeto) — suficiente pra uma janela de ~40 dias."""
+    idx = []
+    for i in range(order, len(values) - order):
+        window = values[i - order : i + order + 1]
+        if values[i] == window.min() and (window == values[i]).sum() == 1:
+            idx.append(i)
+    return idx
+
+
+def _bullish_rsi_divergence(close, rsi, lookback: int) -> dict | None:
+    """Divergência bullish clássica: preço faz uma mínima MAIS BAIXA que a
+    mínima anterior, mas o RSI naquele ponto está MAIS ALTO — sinal de que
+    o movimento de queda está perdendo força mesmo com o preço ainda
+    caindo. Compara os 2 mínimos locais mais recentes dentro da janela."""
+    tail_close = close.iloc[-lookback:]
+    tail_rsi = rsi.iloc[-lookback:]
+    minima = _local_minima_idx(tail_close.values, order=3)
+    if len(minima) < 2:
+        return None
+    i1, i2 = minima[-2], minima[-1]  # i1 mais antigo, i2 mais recente
+    price1, price2 = float(tail_close.iloc[i1]), float(tail_close.iloc[i2])
+    rsi1, rsi2 = float(tail_rsi.iloc[i1]), float(tail_rsi.iloc[i2])
+    if pd.isna(rsi1) or pd.isna(rsi2):
+        return None  # RSI ainda aquecendo (rolling(14)) -- sem dado confiavel pra comparar
+    if price2 < price1 and rsi2 > rsi1:
+        return {
+            "date_low_anterior": str(tail_close.index[i1].date()),
+            "date_low_recente": str(tail_close.index[i2].date()),
+            "preco_low_anterior": round(price1, 2),
+            "preco_low_recente": round(price2, 2),
+            "rsi_low_anterior": round(rsi1, 2),
+            "rsi_low_recente": round(rsi2, 2),
+        }
+    return None
+
+
+@cached("squeeze_setup:{0}", ttl=1800)
+def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
+    """Detector combinado de "catalisador de squeeze + reversão técnica":
+    só faz sentido combinar risco de short squeeze com sinais de reversão
+    técnica de fundo — squeeze sozinho pode continuar caindo, reversão
+    técnica sozinha pode ser só um repique comum sem o combustível extra
+    de shorts sendo forçados a cobrir.
+
+    Risco de squeeze (via yfinance — sem Finviz/Ortex/borrow fee, que
+    exigem assinatura paga; ver 'squeeze_risk_level'):
+    - short_pct_of_float >= 20% = perigoso
+    - days_to_cover >= 5 dias = perigoso
+    - "alto" = os dois juntos; "moderado" = só um; "baixo" = nenhum
+
+    Confirmações de reversão técnica (soma em 'reversal_confirmations',
+    precisa de pelo menos 2 pra 'reversal_confirmed'=true — 1 sinal
+    isolado é ruído comum demais):
+    - candle bullish (Martelo, Martelo Invertido, Engolfo de Alta,
+      Estrela da Manhã — via detect_candle_patterns) ou Doji (indecisão)
+    - divergência bullish RSI (preço faz mínima mais baixa, RSI mais alto)
+    - volume >= 150% da média de 20 dias E preço perto (≤5%) de um fundo
+      de 50 dias ("volume de pânico no fundo")
+    - toque no suporte: preço dentro de 5% da mínima de 50 OU 200 pregões
+
+    Catalisador (opcional, só enriquece — não é obrigatório pro alerta):
+    - técnico: rompimento da máxima de 20 pregões com volume >=3x a média
+    - manchete: passe `headlines` (do get_news) — bate contra as mesmas
+      palavras-chave de upgrade/notícia positiva do resto do projeto
+      (contrato, guidance elevado, aprovação, recorde, etc.)
+    - macro: se hoje/amanhã cair num evento do calendário (FOMC/CPI/PPI/
+      JOBS/PCE), sinaliza a janela mas NÃO sabe se o resultado vai surpreender
+      pra cima ou pra baixo — isso não é um dado disponível via yfinance.
+    """
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    try:
+        import pandas as pd
+
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        hist = t.history(period="1y", auto_adjust=False)
+        if hist.empty or len(hist) < 60:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
+
+        close, volume = hist["Close"], hist["Volume"]
+        price = float(close.iloc[-1])
+
+        # ── Risco de squeeze ──
+        short_pct = info.get("shortPercentOfFloat")
+        days_to_cover = info.get("shortRatio")
+        short_pct_num = round(short_pct * 100, 2) if short_pct else None
+        short_dangerous = bool(short_pct_num is not None and short_pct_num >= _SQUEEZE_SHORT_PCT_DANGER)
+        dtc_dangerous = bool(days_to_cover is not None and days_to_cover >= _SQUEEZE_DTC_DANGER)
+        squeeze_risk_level = (
+            "alto" if short_dangerous and dtc_dangerous
+            else "moderado" if short_dangerous or dtc_dangerous
+            else "baixo"
+        )
+
+        # ── RSI (série completa, pra divergência) + candle patterns ──
+        delta = close.diff()
+        avg_gain = delta.clip(lower=0).rolling(14).mean()
+        avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rsi = 100 - 100 / (1 + avg_gain / avg_loss.replace(0, float("nan")))
+        rsi = rsi.where(avg_loss != 0, 100.0)
+        rsi_now = round(float(rsi.iloc[-1]), 2) if not pd.isna(rsi.iloc[-1]) else None
+
+        patterns = _ma.detect_candle_patterns_in_hist(hist, lookback=3)
+        bullish_candle = next((p for p in patterns if p["direction"] == "bullish"), None)
+        doji_candle = next((p for p in patterns if p["pattern"] == "Doji"), None)
+
+        divergence = _bullish_rsi_divergence(close, rsi, _DIVERGENCE_LOOKBACK_DAYS)
+
+        # ── Suporte (mínima rolante, não média móvel) ──
+        support = {}
+        for window in (50, 200):
+            if len(close) >= window:
+                low = float(close.iloc[-window:].min())
+                dist = round((price / low - 1) * 100, 2) if low else None
+                support[f"low_{window}d"] = round(low, 2)
+                support[f"dist_from_low_{window}d_pct"] = dist
+            else:
+                support[f"low_{window}d"] = None
+                support[f"dist_from_low_{window}d_pct"] = None
+        support_touch = any(
+            support[f"dist_from_low_{w}d_pct"] is not None and support[f"dist_from_low_{w}d_pct"] <= _SUPPORT_TOUCH_PCT
+            for w in (50, 200)
+        )
+
+        # ── Volume no fundo ──
+        vol_avg20 = float(volume.iloc[-21:-1].mean()) if len(volume) >= 21 else None
+        vol_today = float(volume.iloc[-1])
+        volume_mult_20d = round(vol_today / vol_avg20, 2) if vol_avg20 else None
+        dist_low_50 = support.get("dist_from_low_50d_pct")
+        volume_at_bottom = bool(
+            volume_mult_20d is not None and volume_mult_20d >= _BOTTOM_VOLUME_MULT
+            and dist_low_50 is not None and dist_low_50 <= _SUPPORT_TOUCH_PCT * 2
+        )
+
+        # ── Confirmações de reversão técnica (conta quantas bateram) ──
+        confirmations = []
+        if bullish_candle:
+            confirmations.append(f"candle {bullish_candle['pattern']} ({bullish_candle['date']})")
+        elif doji_candle:
+            confirmations.append(f"Doji ({doji_candle['date']}) — indecisão, confirmar próximo candle")
+        if divergence:
+            confirmations.append("divergência bullish RSI")
+        if volume_at_bottom:
+            confirmations.append(f"volume {volume_mult_20d:.1f}x a média de 20d perto de um fundo")
+        if support_touch:
+            w = 50 if (support.get("dist_from_low_50d_pct") or 999) <= _SUPPORT_TOUCH_PCT else 200
+            confirmations.append(f"toque no suporte de {w} pregões")
+
+        # ── Catalisador (opcional) ──
+        breakout = None
+        if len(close) >= _BREAKOUT_LOOKBACK_DAYS + 21:
+            prior_high = float(close.iloc[-_BREAKOUT_LOOKBACK_DAYS - 1 : -1].max())
+            if price > prior_high and vol_avg20 and volume_mult_20d and volume_mult_20d >= _BREAKOUT_VOLUME_MULT:
+                breakout = {
+                    "prior_resistance": round(prior_high, 2),
+                    "volume_mult_20d": volume_mult_20d,
+                }
+
+        headline_catalyst = None
+        for h in _ma._normalize_headlines(headlines or []):
+            low = h.lower()
+            if any(kw in low for kw in _ma.POSITIVE_KW) or any(kw in low for kw in _ma.UPGRADE_KW):
+                headline_catalyst = h.strip()[:160]
+                break
+
+        macro_window = [
+            {"evento": tipo, "data": d}
+            for tipo, datas in _ma.MACRO_EVENTS.items()
+            for d in datas
+            if 0 <= (pd.Timestamp(d).date() - pd.Timestamp.today().date()).days <= 1
+        ]
+
+        return {
+            "ticker": ticker,
+            "price": round(price, 2),
+            "squeeze_risk": {
+                "level": squeeze_risk_level,
+                "short_pct_of_float": short_pct_num,
+                "short_pct_danger_threshold": _SQUEEZE_SHORT_PCT_DANGER,
+                "days_to_cover": round(days_to_cover, 2) if days_to_cover else None,
+                "days_to_cover_danger_threshold": _SQUEEZE_DTC_DANGER,
+                "borrow_fee": None,
+                "borrow_fee_note": "Indisponível — não há fonte gratuita (Finviz/Ortex/IBKR exigem assinatura ou conta própria).",
+            },
+            "rsi_14": rsi_now,
+            "reversal_confirmations": confirmations,
+            "reversal_confirmed": len(confirmations) >= 2,
+            "divergence": divergence,
+            "support": support,
+            "volume_mult_vs_20d_avg": volume_mult_20d,
+            "catalyst": {
+                "technical_breakout": breakout,
+                "headline": headline_catalyst,
+                "macro_calendar_window": macro_window or None,
+            },
+            "squeeze_setup_detected": squeeze_risk_level == "alto" and len(confirmations) >= 2,
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
 # ── Calendário de resultados ──────────────────────────────────────────────────
 
 
@@ -1433,7 +1656,8 @@ TOOLS = [
             "categorizados por severidade (critico / atencao / info). Inclui: "
             "(1) contágio de setor — bellwethers NVDA, AVGO, TSM, SOXX, SMH caindo >4%; "
             "(2) pares asiáticos de memória — SK Hynix e Samsung (sinal antecedente para MU); "
-            "(3) gatilhos macro — FOMC, CPI, PPI, JOBS (Payroll), juro de 10 anos, calendário 2026 completo; "
+            "(3) gatilhos macro — FOMC, CPI, PCE (inflação preferida do Fed), PPI, JOBS (Payroll), "
+            "juro de 10 anos, choque de petróleo, calendário 2026; "
             "(4) técnico por ativo — RSI sobrecomprado, distância da MM200, proximidade da máxima de 52s, "
             "spike de volume, gap de abertura; "
             "(5) earnings — alerta se resultado estiver em até 7 dias; "
@@ -1489,6 +1713,37 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "check_squeeze_setup",
+        "description": (
+            "Detector combinado de 'catalisador de squeeze + reversão técnica' pra um ticker: "
+            "só faz sentido combinar risco de short squeeze com reversão técnica de fundo — "
+            "squeeze sozinho pode continuar caindo, reversão sozinha pode ser só um repique comum. "
+            "Risco de squeeze via yfinance: short_pct_of_float >= 20% E days_to_cover >= 5 dias = "
+            "'alto' (borrow fee não está disponível — exige Finviz/Ortex/IBKR pagos). "
+            "Confirmações de reversão técnica (precisa de 2+ pra reversal_confirmed=true): candle "
+            "bullish (Martelo/Engolfo de Alta/Estrela da Manhã) ou Doji, divergência bullish RSI "
+            "(preço faz mínima mais baixa com RSI mais alto), volume >=150% da média de 20d perto "
+            "de um fundo, toque na mínima de 50 ou 200 pregões (suporte real, não média móvel). "
+            "Catalisador opcional (não obrigatório pro alerta): rompimento técnico de resistência "
+            "com volume 3x, manchete positiva (passe headlines do get_news), ou janela de evento "
+            "macro (FOMC/CPI/PPI/JOBS/PCE) — o calendário não diz se o resultado vai surpreender "
+            "pra cima ou pra baixo, só sinaliza a data. squeeze_setup_detected=true exige risco "
+            "'alto' E 2+ confirmações técnicas juntos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo, ex: MU."},
+                "headlines": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Manchetes recentes do ticker (do get_news), pra tentar achar catalisador de notícia.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 DISPATCH = {
@@ -1512,4 +1767,5 @@ DISPATCH = {
     "detect_sector_contagion": detect_sector_contagion,
     "get_global_market_snapshot": get_global_market_snapshot,
     "get_europe_regime_signal": get_europe_regime_signal,
+    "check_squeeze_setup": check_squeeze_setup,
 }

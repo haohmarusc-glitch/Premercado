@@ -59,6 +59,13 @@ MACRO_EVENTS: dict[str, list[str]] = {
     "CPI":  ["2026-06-10", "2026-07-14"],
     "JOBS": ["2026-07-02"],
     "PPI":  ["2026-07-15"],
+    # PCE (Personal Consumption Expenditures) -- indice de inflacao PREFERIDO
+    # do Fed (guia decisao de juros mais que o CPI). Datas confirmadas via
+    # bea.gov/news/schedule (Personal Income and Outlays); calendario 2026 foi
+    # bagunçado pelo shutdown do governo out-nov/2025, entao so as datas ja
+    # publicadas oficialmente pela BEA entram aqui -- atualizar quando saírem
+    # as proximas (mesmo cuidado de manutencao dos demais eventos acima).
+    "PCE":  ["2026-04-30", "2026-05-28", "2026-06-25", "2026-07-30"],
 }
 
 # Palavras-chave geopoliticas / regulatorias
@@ -974,9 +981,13 @@ def check_macro_triggers(today: Optional[dt.date] = None) -> list[Alert]:
         "PPI":  "Inflacao ao produtor. Antecede pressao de custos/margens.",
         "JOBS": "Relatorio de empregos. Payroll forte -> juros sobem -> risco para "
                 "acoes de crescimento.",
+        "PCE":  "Inflacao preferida do Fed (guia decisao de juros mais que o CPI). "
+                "Abaixo do esperado -> expectativa de corte de juros -> alivio pra "
+                "growth/tech; acima do esperado -> efeito oposto do CPI.",
     }
     sev = {"FOMC": Severity.CRITICO, "CPI": Severity.ATENCAO,
-           "PPI":  Severity.ATENCAO, "JOBS": Severity.ATENCAO}
+           "PPI":  Severity.ATENCAO, "JOBS": Severity.ATENCAO,
+           "PCE":  Severity.ATENCAO}
 
     for tipo, datas in MACRO_EVENTS.items():
         for ds in datas:
