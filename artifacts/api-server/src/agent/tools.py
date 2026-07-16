@@ -89,8 +89,10 @@ def get_stock_data(ticker: str) -> dict:
 
 
 @cached("news:{0}:{1}", ttl=600)
-def get_news(ticker: str, max_items: int = 6) -> list[dict]:
-    """Retorna manchetes recentes do ticker via yfinance (resumo truncado para economizar tokens)."""
+def _get_news_for_ticker(ticker: str, max_items: int = 6) -> list[dict]:
+    """Manchetes recentes de UM ticker via yfinance (resumo truncado para economizar
+    tokens). Cacheada por ticker — chamada internamente por get_news, que agrupa vários
+    tickers numa única ferramenta sem perder o cache individual de cada um."""
     try:
         ticker = sanitize_ticker(ticker)
     except ValueError as e:
@@ -119,6 +121,19 @@ def get_news(ticker: str, max_items: int = 6) -> list[dict]:
         return result
     except Exception as e:
         return [{"error": str(e)}]
+
+
+def get_news(tickers: list[str], max_items: int = 6) -> dict[str, list[dict]]:
+    """Retorna as manchetes mais recentes de UM OU MAIS tickers numa única chamada.
+
+    Sempre passe TODOS os tickers relevantes juntos nesta única chamada (nunca
+    um por vez em turnos separados) — o retorno já vem no formato
+    {ticker: [manchetes...]}, pronto para ser usado direto como
+    headlines_by_ticker em check_market_alerts.
+    """
+    if isinstance(tickers, str):
+        tickers = [tickers]  # tolerância a chamada acidental com string única
+    return {ticker: _get_news_for_ticker(ticker, max_items) for ticker in tickers}
 
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────
@@ -836,7 +851,8 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
 
     Catalisador (opcional, só enriquece — não é obrigatório pro alerta):
     - técnico: rompimento da máxima de 20 pregões com volume >=3x a média
-    - manchete: passe `headlines` (do get_news) — bate contra as mesmas
+    - manchete: passe `headlines` (a lista do ticker dentro do resultado de
+      get_news, ex.: get_news_result[ticker]) — bate contra as mesmas
       palavras-chave de upgrade/notícia positiva do resto do projeto
       (contrato, guidance elevado, aprovação, recorde, etc.)
     - macro: se hoje/amanhã cair num evento do calendário (FOMC/CPI/PPI/
@@ -1315,14 +1331,22 @@ TOOLS = [
     },
     {
         "name": "get_news",
-        "description": "Retorna as manchetes mais recentes sobre um ticker.",
+        "description": (
+            "Retorna as manchetes mais recentes de um ou mais tickers em UMA ÚNICA "
+            "chamada. Sempre inclua TODOS os tickers que você precisa analisar nesta "
+            "mesma chamada (lista), nunca um por vez em chamadas separadas."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string"},
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Lista de símbolos, ex: ["MU", "SMCI", "NVDA"]',
+                },
                 "max_items": {"type": "integer", "default": 8},
             },
-            "required": ["ticker"],
+            "required": ["tickers"],
         },
     },
     {
@@ -1720,7 +1744,8 @@ TOOLS = [
                 "headlines_by_ticker": {
                     "type": "object",
                     "description": (
-                        "Manchetes coletadas por ticker (do get_news). Ativa checks geopolítico, "
+                        "Manchetes coletadas por ticker — passe DIRETO o resultado de get_news "
+                        "(já vem no formato {ticker: [manchetes]}). Ativa checks geopolítico, "
                         "downgrade e sell-the-news. "
                         'Ex: {"MU": ["Micron downgraded...", "Export controls..."], "SMCI": [...]}'
                     ),
@@ -1768,7 +1793,8 @@ TOOLS = [
             "(preço faz mínima mais baixa com RSI mais alto), volume >=150% da média de 20d perto "
             "de um fundo, toque na mínima de 50 ou 200 pregões (suporte real, não média móvel). "
             "Catalisador opcional (não obrigatório pro alerta): rompimento técnico de resistência "
-            "com volume 3x, manchete positiva (passe headlines do get_news), ou janela de evento "
+            "com volume 3x, manchete positiva (passe headlines com a lista do ticker dentro do "
+            "resultado de get_news), ou janela de evento "
             "macro (FOMC/CPI/PPI/JOBS/PCE) — o calendário não diz se o resultado vai surpreender "
             "pra cima ou pra baixo, só sinaliza a data. squeeze_setup_detected=true exige risco "
             "'alto' E 2+ confirmações técnicas juntos."
@@ -1780,7 +1806,7 @@ TOOLS = [
                 "headlines": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Manchetes recentes do ticker (do get_news), pra tentar achar catalisador de notícia.",
+                    "description": "Manchetes recentes do ticker (a lista desse ticker dentro do resultado de get_news), pra tentar achar catalisador de notícia.",
                 },
             },
             "required": ["ticker"],
