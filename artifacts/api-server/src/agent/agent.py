@@ -109,7 +109,8 @@ antes de passar ao próximo; em vez disso, complete uma CATEGORIA para
 TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 
 1. Cotação e pré-mercado — get_stock_data
-2. Manchetes — get_news
+2. Manchetes — get_news (UMA chamada só, passando a lista com TODOS os
+   tickers do Grupo A juntos — get_news já aceita a lista inteira de uma vez)
 3. Indicadores técnicos — get_technical_indicators
 4. Padrões de candlestick — detect_candle_patterns
 5. Exposição short — get_short_interest
@@ -128,13 +129,17 @@ TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 OBRIGATÓRIO — agrupe tool calls por categoria, não por ativo:
 Se o Grupo A tem N ativos, a categoria 1 (get_stock_data) deve ser UMA
 resposta sua com N chamadas de ferramenta juntas — não N respostas
-separadas. O mesmo vale para cada categoria seguinte.
+separadas. O mesmo vale para cada categoria seguinte (get_news é a única
+exceção: ela já recebe a lista inteira de tickers numa chamada única).
 
 Exemplo correto com Grupo A = [MU, NVDA, SMCI]:
   Turno X: você chama get_stock_data(MU) + get_stock_data(NVDA) +
            get_stock_data(SMCI) — as 3 JUNTAS na mesma resposta.
-  Turno X+1: você chama get_news(MU) + get_news(NVDA) + get_news(SMCI)
-           — de novo as 3 juntas, e assim por diante a cada categoria.
+  Turno X+1: você chama get_news(tickers=["MU", "NVDA", "SMCI"]) — UMA
+           única chamada com os 3 juntos, não uma por ticker.
+  Turno X+2: get_technical_indicators(MU) + get_technical_indicators(NVDA)
+           + get_technical_indicators(SMCI) — de novo as 3 juntas, e assim
+           por diante a cada categoria seguinte.
 Padrão ERRADO a evitar: get_stock_data(MU), depois get_news(MU), depois
 get_technical_indicators(MU) — terminando a MU inteira antes de tocar
 em NVDA. Isso multiplica o número de turnos sem necessidade.
@@ -302,7 +307,7 @@ Ativos da carteira: {", ".join(tickers)}.
 **Fluxo obrigatório — siga EXATAMENTE esta sequência sem pular etapas:**
 1. get_fear_greed_index — sentimento macro
 2. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
-3. get_news — manchetes de TODOS os ativos juntos
+3. get_news — UMA chamada só, passando tickers=[{", ".join(tickers)}] (todos juntos, não um por vez)
 4. get_technical_indicators — indicadores de TODOS os ativos juntos
 5. detect_candle_patterns — padrões de vela de TODOS os ativos juntos. Se um
    padrão de reversão coincidir (mesma data ou ±1 dia) com uma manchete do
