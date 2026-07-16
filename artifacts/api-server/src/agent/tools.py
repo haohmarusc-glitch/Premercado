@@ -731,11 +731,38 @@ def get_short_interest(ticker: str) -> dict:
 
 _SQUEEZE_SHORT_PCT_DANGER = 20.0  # % do float — mesmo limiar de get_short_interest "alto"
 _SQUEEZE_DTC_DANGER = 5.0  # dias pra cobrir
+_SQUEEZE_BORROW_FEE_DANGER = 30.0  # % ao ano
 _SUPPORT_TOUCH_PCT = 5.0  # "tocou o suporte" = dentro de 5% da mínima rolante
 _BOTTOM_VOLUME_MULT = 1.5  # 150% da média de 20 dias, pedido explícito do usuário
 _BREAKOUT_LOOKBACK_DAYS = 20
 _BREAKOUT_VOLUME_MULT = 3.0
 _DIVERGENCE_LOOKBACK_DAYS = 40
+_IBORROWDESK_HEADERS = {"User-Agent": "Mozilla/5.0"}  # sem UA de navegador, o site devolve 403
+
+
+def _fetch_borrow_fee(ticker: str) -> tuple[float | None, str]:
+    """Taxa de aluguel (borrow fee) anualizada, via iBorrowDesk — espelha
+    dado público do próprio IBKR, sem custo e sem precisar de API key
+    (github.com/iborrowdesk, iborrowdesk.com/api/ticker/{ticker}). Fail-open:
+    qualquer falha de rede/parsing devolve (None, nota explicando o motivo)
+    sem derrubar o resto do detector."""
+    try:
+        r = requests.get(
+            f"https://iborrowdesk.com/api/ticker/{ticker}",
+            headers=_IBORROWDESK_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        daily = (r.json() or {}).get("daily") or []
+        if not daily:
+            return None, "iBorrowDesk sem dado de aluguel pra este ticker (pode não ser negociado via IBKR)."
+        latest = max(daily, key=lambda d: d.get("date", ""))
+        fee = latest.get("fee")
+        if fee is None:
+            return None, "iBorrowDesk retornou sem o campo de taxa de aluguel."
+        return round(float(fee), 2), "Fonte: iBorrowDesk (espelha dado público do IBKR, sem custo)."
+    except Exception as e:
+        return None, f"iBorrowDesk indisponível no momento ({e})."
 
 
 def _local_minima_idx(values, order: int = 3) -> list[int]:
@@ -755,6 +782,8 @@ def _bullish_rsi_divergence(close, rsi, lookback: int) -> dict | None:
     mínima anterior, mas o RSI naquele ponto está MAIS ALTO — sinal de que
     o movimento de queda está perdendo força mesmo com o preço ainda
     caindo. Compara os 2 mínimos locais mais recentes dentro da janela."""
+    import pandas as pd
+
     tail_close = close.iloc[-lookback:]
     tail_rsi = rsi.iloc[-lookback:]
     minima = _local_minima_idx(tail_close.values, order=3)
@@ -785,11 +814,15 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
     técnica sozinha pode ser só um repique comum sem o combustível extra
     de shorts sendo forçados a cobrir.
 
-    Risco de squeeze (via yfinance — sem Finviz/Ortex/borrow fee, que
-    exigem assinatura paga; ver 'squeeze_risk_level'):
+    Risco de squeeze (short_pct/days_to_cover via yfinance, borrow_fee via
+    iBorrowDesk — espelha dado público do IBKR, grátis, sem API key; ver
+    'squeeze_risk_level'):
     - short_pct_of_float >= 20% = perigoso
     - days_to_cover >= 5 dias = perigoso
-    - "alto" = os dois juntos; "moderado" = só um; "baixo" = nenhum
+    - borrow_fee >= 30% ao ano = perigoso (None se o ticker não é
+      negociado via IBKR ou a fonte estiver fora do ar no momento)
+    - "alto" = 2 ou mais dos sinais disponíveis perigosos; "moderado" = 1;
+      "baixo" = nenhum
 
     Confirmações de reversão técnica (soma em 'reversal_confirmations',
     precisa de pelo menos 2 pra 'reversal_confirmed'=true — 1 sinal
@@ -829,12 +862,18 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         # ── Risco de squeeze ──
         short_pct = info.get("shortPercentOfFloat")
         days_to_cover = info.get("shortRatio")
+        borrow_fee, borrow_fee_note = _fetch_borrow_fee(ticker)
         short_pct_num = round(short_pct * 100, 2) if short_pct else None
         short_dangerous = bool(short_pct_num is not None and short_pct_num >= _SQUEEZE_SHORT_PCT_DANGER)
         dtc_dangerous = bool(days_to_cover is not None and days_to_cover >= _SQUEEZE_DTC_DANGER)
+        borrow_fee_dangerous = bool(borrow_fee is not None and borrow_fee >= _SQUEEZE_BORROW_FEE_DANGER)
+        # "alto" exige 2+ sinais perigosos entre os disponíveis -- com só
+        # short_pct/days_to_cover (borrow_fee indisponível) isso equivale a
+        # "os dois juntos", igual ao critério original antes do iBorrowDesk.
+        n_dangerous = sum((short_dangerous, dtc_dangerous, borrow_fee_dangerous))
         squeeze_risk_level = (
-            "alto" if short_dangerous and dtc_dangerous
-            else "moderado" if short_dangerous or dtc_dangerous
+            "alto" if n_dangerous >= 2
+            else "moderado" if n_dangerous == 1
             else "baixo"
         )
 
@@ -925,8 +964,9 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
                 "short_pct_danger_threshold": _SQUEEZE_SHORT_PCT_DANGER,
                 "days_to_cover": round(days_to_cover, 2) if days_to_cover else None,
                 "days_to_cover_danger_threshold": _SQUEEZE_DTC_DANGER,
-                "borrow_fee": None,
-                "borrow_fee_note": "Indisponível — não há fonte gratuita (Finviz/Ortex/IBKR exigem assinatura ou conta própria).",
+                "borrow_fee": borrow_fee,
+                "borrow_fee_danger_threshold": _SQUEEZE_BORROW_FEE_DANGER,
+                "borrow_fee_note": borrow_fee_note,
             },
             "rsi_14": rsi_now,
             "reversal_confirmations": confirmations,
@@ -1719,8 +1759,10 @@ TOOLS = [
             "Detector combinado de 'catalisador de squeeze + reversão técnica' pra um ticker: "
             "só faz sentido combinar risco de short squeeze com reversão técnica de fundo — "
             "squeeze sozinho pode continuar caindo, reversão sozinha pode ser só um repique comum. "
-            "Risco de squeeze via yfinance: short_pct_of_float >= 20% E days_to_cover >= 5 dias = "
-            "'alto' (borrow fee não está disponível — exige Finviz/Ortex/IBKR pagos). "
+            "Risco de squeeze: short_pct_of_float >= 20% (yfinance), days_to_cover >= 5 dias "
+            "(yfinance) e borrow_fee >= 30% ao ano (iBorrowDesk, espelha dado público do IBKR, "
+            "grátis — None se o ticker não é negociado via IBKR ou a fonte estiver fora do ar). "
+            "'alto' = 2+ desses 3 sinais perigosos juntos; 'moderado' = só 1; 'baixo' = nenhum. "
             "Confirmações de reversão técnica (precisa de 2+ pra reversal_confirmed=true): candle "
             "bullish (Martelo/Engolfo de Alta/Estrela da Manhã) ou Doji, divergência bullish RSI "
             "(preço faz mínima mais baixa com RSI mais alto), volume >=150% da média de 20d perto "
