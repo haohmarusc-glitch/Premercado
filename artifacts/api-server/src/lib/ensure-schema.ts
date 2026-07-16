@@ -135,4 +135,24 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (agent provider/budget columns)");
   }
+
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS intraday_spikes (
+        id serial PRIMARY KEY,
+        ticker text NOT NULL,
+        kind text NOT NULL,
+        severity text NOT NULL,
+        title text NOT NULL,
+        detail text NOT NULL,
+        value numeric(15, 4),
+        fired_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_intraday_spikes_ticker ON intraday_spikes(ticker)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_intraday_spikes_fired_at ON intraday_spikes(fired_at)`);
+    logger.info("Schema check ok (intraday_spikes table)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (intraday_spikes table)");
+  }
 }

@@ -237,6 +237,14 @@ GAP_PCT             = 5.0  # fallback quando ATR não está disponível (histór
 GAP_ATR_MULT        = 1.5  # gap só é alerta se >= 1.5x a volatilidade média (ATR%) do ativo
 MACRO_WINDOW_DAYS   = 1
 DEAD_CAT_LOOKBACK_DAYS = 5  # T-5: mesmo dia da semana anterior (5 pregões)
+
+# Pico intraday (candle de 1min) -- sinal mais rápido que VOLUME_SPIKE_MULT/
+# GAP_PCT acima (aqueles comparam o pregão inteiro de hoje contra a média
+# diária; isto aqui compara minuto a minuto, tipo fluxo institucional/reação
+# a notícia em tempo real). Limiares pedidos pelo usuário.
+INTRADAY_VOLUME_SPIKE_MULT   = 3.0
+INTRADAY_PRICE_CHANGE_PCT    = 0.5
+INTRADAY_VOLUME_LOOKBACK_MIN = 20
 DEAD_CAT_T5_ATR_MULT   = 2.0  # volatilidade de ~5 pregões escala aprox. por sqrt(5) ~= 2.2x a diária
 
 DOWNGRADE_KW = [
@@ -318,6 +326,25 @@ class Alert:
 # =============================================================================
 
 _HIST_CACHE: dict[str, pd.DataFrame] = {}
+_INTRADAY_CACHE: dict[str, pd.DataFrame] = {}
+
+
+def _intraday_1m(ticker: str) -> Optional[pd.DataFrame]:
+    """Candles de 1 minuto do pregão de hoje -- cache separado de _history()
+    porque tem granularidade (interval) diferente, não só period. Fora do
+    horário de pregão regular o yfinance devolve poucos/nenhum candle; quem
+    chama trata isso como "sem dado suficiente", não como erro."""
+    if ticker in _INTRADAY_CACHE:
+        return _INTRADAY_CACHE[ticker]
+    try:
+        df = yf.Ticker(ticker).history(period="1d", interval="1m", auto_adjust=False)
+        if df is None or df.empty:
+            return None
+        _INTRADAY_CACHE[ticker] = df
+        return df
+    except Exception as e:
+        print(f"[market_alerts] erro intraday {ticker}: {e}", file=sys.stderr)
+        return None
 
 
 def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
@@ -1208,6 +1235,45 @@ def check_volume_gap(ticker: str) -> list[Alert]:
                 ),
                 value=gap,
             ))
+    return alerts
+
+
+def check_intraday_spike(ticker: str) -> list[Alert]:
+    """Pico de volume ou preço num único candle de 1 minuto -- sinal de fluxo
+    institucional/reação a notícia em tempo real, mais rápido que o volume
+    anômalo diário do check_volume_gap. Só faz sentido durante o pregão
+    regular (fora disso o próprio yfinance devolve poucos/nenhum candle de
+    1min, e a função simplesmente não gera alerta)."""
+    alerts: list[Alert] = []
+    df = _intraday_1m(ticker)
+    if df is None or len(df) < INTRADAY_VOLUME_LOOKBACK_MIN + 2:
+        return alerts
+
+    current, previous = df.iloc[-1], df.iloc[-2]
+    recent_avg_volume = df["Volume"].iloc[-(INTRADAY_VOLUME_LOOKBACK_MIN + 1) : -1].mean()
+
+    if previous["Close"]:
+        price_change_pct = (current["Close"] / previous["Close"] - 1) * 100
+        if abs(price_change_pct) >= INTRADAY_PRICE_CHANGE_PCT:
+            alerts.append(Alert(
+                ticker=ticker, category=Category.TECNICO,
+                severity=Severity.CRITICO if abs(price_change_pct) >= INTRADAY_PRICE_CHANGE_PCT * 2 else Severity.ATENCAO,
+                title="Pico de volatilidade intraday",
+                detail=f"Variação de {price_change_pct:+.2f}% num único minuto (preço atual ${current['Close']:.2f}).",
+                value=round(price_change_pct, 2),
+            ))
+
+    if recent_avg_volume and current["Volume"] >= recent_avg_volume * INTRADAY_VOLUME_SPIKE_MULT:
+        vmult = current["Volume"] / recent_avg_volume
+        alerts.append(Alert(
+            ticker=ticker, category=Category.TECNICO, severity=Severity.ATENCAO,
+            title="Pico de volume intraday",
+            detail=(
+                f"Volume do minuto {vmult:.1f}x a média dos últimos {INTRADAY_VOLUME_LOOKBACK_MIN}min "
+                f"({int(current['Volume']):,} vs {int(recent_avg_volume):,})."
+            ),
+            value=round(vmult, 2),
+        ))
     return alerts
 
 
