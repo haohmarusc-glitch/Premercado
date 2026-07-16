@@ -8,9 +8,18 @@ Além dos campos do pregão regular (via fast_info), tenta enriquecer com dados
 de pré-mercado / after-hours via uma chamada batch ao endpoint de cotações do
 Yahoo. Se essa chamada falhar (rate limit, bloqueio), os campos extended ficam
 nulos e o restante continua funcionando (fail-open).
+
+Busca em PARALELO (ThreadPoolExecutor, mesmo padrão de get_technicals.py/
+get_market_alerts_snapshot.py) -- cada símbolo faz DUAS chamadas de rede
+(fast_info + .info), e buscar sequencialmente estourava o timeout de 30s do
+lado Node (portfolio-alerts.ts) com poucos tickers já, principalmente quando
+o yfinance está lento (visto em produção: "get_quotes timeout" recorrente no
+checker de carteira, a cada ~15min). A ordem do array de saída não importa --
+quem consome (portfolio-alerts.ts) monta um Map por `symbol`, não por índice.
 """
 import sys
 import json
+from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 from agent.security import friendly_error
 
@@ -106,5 +115,6 @@ if __name__ == "__main__":
         print("[]")
         sys.exit(0)
 
-    results = [fetch_quote(s) for s in symbols]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(fetch_quote, symbols))
     print(json.dumps(results))
