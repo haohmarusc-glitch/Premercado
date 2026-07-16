@@ -3,6 +3,26 @@ name: TSM earnings swing — entrada pós-resultado, saída em 3 pregões
 description: TSM reporta 16/07/2026 pré-mercado com expectativas já muito altas; plano é confirmar a reação real antes de entrar, não comprar às cegas antes do resultado
 ---
 
+## REVISÃO 16/07/2026 09h~ ET: o gap foi de BAIXA, não de alta
+
+O resultado saiu excelente (receita +34-36% YoY, lucro líquido +77-80% YoY,
+recorde; guidance de receita e capex do ano ELEVADOS) — mas a ação abriu o
+pré-mercado em queda forte: fechamento anterior $420,39 → pré-mercado
+~$403,40 (**-3,83%**), print do próprio usuário via TradingView. A queda
+bateu forte logo após a divulgação (~2h ET) e desde então vem consolidando
+entre ~$400-404. Confirma exatamente o risco de "sell the news" já
+sinalizado antes do resultado (expectativa "excepcionalmente alta demais",
+citação de gestor via MarketWatch) — e um selloff mais amplo no setor de
+semicondutores de IA no mesmo dia (AMD, Dell, Intel, MU também caindo).
+
+**O plano original abaixo (confirmar gap de ALTA segurando com volume) NÃO
+se aplica mais.** Nova tese, contrária: com fundamentos genuinamente fortes
+e consenso de analistas "Strong Buy" (PT $493, ~22% de upside do preço de
+pré-mercado), pode valer comprar a queda -- mas só COM confirmação de
+estabilização na abertura regular, não às cegas. Ver critério de
+confirmação atualizado em
+`.agents/scheduled-tasks/tsm-earnings-swing-entry/SKILL.md`.
+
 # TSM (Taiwan Semiconductor) — swing de earnings, 16-21/07/2026
 
 ## Contexto (levantado 16/07/2026, dados reais via FMP + Alpha Vantage)
