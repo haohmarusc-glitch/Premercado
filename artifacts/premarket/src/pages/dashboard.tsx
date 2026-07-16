@@ -34,6 +34,7 @@ import { TradingViewChart } from "@/components/tradingview-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
 import { MarketAlertsCard } from "@/components/market-alerts-card";
+import { AlertsChangeSummaryCard } from "@/components/alerts-change-summary-card";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -469,6 +470,8 @@ export default function Dashboard() {
           </p>
         </div>
       </div>
+
+      <AlertsChangeSummaryCard />
 
       <MarketAlertsCard />
 
