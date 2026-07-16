@@ -1241,13 +1241,27 @@ def check_volume_gap(ticker: str) -> list[Alert]:
 def check_intraday_spike(ticker: str) -> list[Alert]:
     """Pico de volume ou preço num único candle de 1 minuto -- sinal de fluxo
     institucional/reação a notícia em tempo real, mais rápido que o volume
-    anômalo diário do check_volume_gap. Só faz sentido durante o pregão
-    regular (fora disso o próprio yfinance devolve poucos/nenhum candle de
-    1min, e a função simplesmente não gera alerta)."""
+    anômalo diário do check_volume_gap.
+
+    Fora do pregão regular (pré/pós-mercado, fim de semana, feriado) o
+    yfinance às vezes devolve o ÚLTIMO CANDLE DA SESSÃO ANTERIOR em vez de
+    não devolver nada -- e o último minuto de qualquer pregão carrega volume
+    de leilão de fechamento, tipicamente bem acima do normal. Sem checar a
+    idade do candle mais recente, isso dispara "pico de volume" em quase
+    todos os tickers ao mesmo tempo todo dia pouco antes da abertura --
+    falso positivo sistemático, não um sinal real de agora (visto em
+    produção: 9 tickers "disparando" juntos às 8h17 ET, antes do pregão
+    abrir às 9h30 ET). Por isso a idade do candle é checada explicitamente,
+    em vez de confiar em "sem dado = sem alerta"."""
     alerts: list[Alert] = []
     df = _intraday_1m(ticker)
     if df is None or len(df) < INTRADAY_VOLUME_LOOKBACK_MIN + 2:
         return alerts
+
+    bar_ts = df.index[-1]
+    now_ts = pd.Timestamp.now(tz=bar_ts.tzinfo)
+    if (now_ts - bar_ts) > pd.Timedelta(minutes=5):
+        return alerts  # candle mais recente é velho demais -- provavelmente sessão anterior
 
     current, previous = df.iloc[-1], df.iloc[-2]
     recent_avg_volume = df["Volume"].iloc[-(INTRADAY_VOLUME_LOOKBACK_MIN + 1) : -1].mean()
