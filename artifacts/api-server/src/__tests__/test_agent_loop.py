@@ -12,6 +12,9 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_agent_lo
 (conftest.py no mesmo diretório já cuida do sys.path)
 """
 
+import json as _json
+import time
+
 from agent import agent as agent_module
 from agent.provider import NormalizedResponse, TextBlock, ToolUseBlock
 
@@ -106,3 +109,56 @@ def test_normal_tool_use_turn_still_works(monkeypatch):
 
     assert "Relatório final completo" in result
     assert len(client.calls) == 2
+
+
+def test_multi_tool_call_turn_runs_in_parallel_and_preserves_result_mapping(monkeypatch):
+    """As ferramentas de um turno agora rodam em paralelo (ThreadPoolExecutor)
+    pra evitar o timeout de processo em runs com muitos ativos (cada tool call
+    de rede levava vários segundos, e eram executadas em série). Este teste
+    garante que, mesmo com tempos de resposta diferentes por ferramenta (a
+    mais lenta termina por último), cada tool_result acaba pareado com o
+    tool_use_id correto -- e que roda de fato em paralelo (tempo total ~=
+    max(delays), não soma dos delays)."""
+    delays = {"toolu_slow": 0.15, "toolu_fast": 0.01, "toolu_mid": 0.05}
+
+    def fake_run_tool(name, args):
+        time.sleep(delays[args["id"]])
+        return _json.dumps({"id": args["id"]})
+
+    monkeypatch.setattr(agent_module, "run_tool", fake_run_tool)
+
+    blocks = [
+        ToolUseBlock(id="toolu_slow", name="get_options_data", input={"id": "toolu_slow"}),
+        ToolUseBlock(id="toolu_fast", name="get_options_data", input={"id": "toolu_fast"}),
+        ToolUseBlock(id="toolu_mid", name="get_options_data", input={"id": "toolu_mid"}),
+    ]
+    responses = [
+        NormalizedResponse(content=blocks, stop_reason="tool_use"),
+        NormalizedResponse(content=[TextBlock(text="Relatório final completo " * 10)], stop_reason="end_turn"),
+    ]
+    client = _FakeClient(responses)
+
+    start = time.monotonic()
+    result = agent_module._agent_loop(
+        client=client,
+        model="claude-sonnet-5",
+        system="system prompt",
+        tools=[],
+        messages=[{"role": "user", "content": "start"}],
+        max_turns=5,
+        max_tokens=1024,
+    )
+    elapsed = time.monotonic() - start
+
+    assert "Relatório final completo" in result
+    # Em série seria >= 0.15+0.01+0.05 = 0.21s; em paralelo fica perto do
+    # maior delay (0.15s). Margem generosa pra não flakar em CI lento.
+    assert elapsed < 0.19
+
+    second_call_messages = client.calls[1]
+    tool_result_msg = second_call_messages[-1]
+    by_id = {b["tool_use_id"]: _json.loads(b["content"])["id"] for b in tool_result_msg["content"]}
+    assert by_id == {"toolu_slow": "toolu_slow", "toolu_fast": "toolu_fast", "toolu_mid": "toolu_mid"}
+    # Ordem no histórico segue a ordem dos tool_use blocks, não a ordem de
+    # conclusão (fast terminou primeiro, mas slow ainda deve vir primeiro).
+    assert [b["tool_use_id"] for b in tool_result_msg["content"]] == ["toolu_slow", "toolu_fast", "toolu_mid"]

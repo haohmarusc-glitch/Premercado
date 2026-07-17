@@ -7,6 +7,7 @@ import datetime
 import json as _json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from . import config
 from . import memory
@@ -393,11 +394,27 @@ def _agent_loop(
             # continuação — batia com 400 invalid_request_error ("tool_use
             # ids were found without tool_result blocks"). Bug visto em
             # produção com claude-sonnet-5 em 17/07.
+            if progress_callback:
+                if len(tool_use_blocks) > 1:
+                    names = ", ".join(dict.fromkeys(b.name for b in tool_use_blocks))
+                    progress_callback(f"{step_prefix}Executando {len(tool_use_blocks)} ferramentas em paralelo ({names})...")
+                else:
+                    progress_callback(f"{step_prefix}Executando ferramenta: {tool_use_blocks[0].name}")
+
+            # As ferramentas de um turno são I/O-bound (rede: yfinance, EDGAR,
+            # API interna) -- rodar em série (uma aguardando a outra) foi o
+            # maior fator no timeout de 18min do runner.ts em runs com muitos
+            # ativos (o modelo já pede fan-out "N chamadas paralelas" no
+            # prompt, mas o loop as executava sequencialmente mesmo assim).
+            # Usar threads aqui é seguro: cada tool call é independente
+            # (request HTTP própria ou yf.Ticker próprio), sem estado
+            # compartilhado mutável exceto o cache em disco, que já ganhou
+            # lock em cache.py pra essa mudança.
+            with ThreadPoolExecutor(max_workers=len(tool_use_blocks)) as pool:
+                results = list(pool.map(lambda b: run_tool(b.name, b.input), tool_use_blocks))
+
             tool_results = []
-            for block in tool_use_blocks:
-                if progress_callback:
-                    progress_callback(f"Executando ferramenta: {block.name}")
-                result = run_tool(block.name, block.input)
+            for block, result in zip(tool_use_blocks, results):
                 if block.name == "save_observation":
                     saved_ok = False
                     try:
