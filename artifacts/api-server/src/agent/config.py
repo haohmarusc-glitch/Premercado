@@ -14,7 +14,7 @@ PORTFOLIO_TICKERS = (
     or ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
 )
 
-MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-4-6")
+MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-5")
 MODEL_FLASH = os.environ.get("ANTHROPIC_MODEL_FLASH", "claude-haiku-4-5")
 MODEL_CHAT = os.environ.get("ANTHROPIC_MODEL_CHAT", "claude-haiku-4-5")
 MODEL_FALLBACK = os.environ.get("ANTHROPIC_MODEL_FALLBACK", "claude-haiku-4-5")
