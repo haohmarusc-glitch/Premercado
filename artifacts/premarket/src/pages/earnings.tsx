@@ -142,7 +142,7 @@ export default function EarningsPage() {
                   <div className="flex-1 border-t border-border/40" />
                   <span className="text-[10px] font-mono text-muted-foreground">{items.length}</span>
                 </div>
-                <div className="border border-border rounded-lg overflow-hidden">
+                <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
                   <table className="w-full font-mono text-sm">
                     <tbody>
                       {items.map((item, idx) => {

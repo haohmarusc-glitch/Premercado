@@ -117,7 +117,7 @@ export default function ScreenerPage() {
           </span>
         </div>
       ) : (
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        <div className="border border-border rounded-lg overflow-hidden overflow-x-auto bg-card">
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="border-b border-border bg-secondary/30 text-[10px] uppercase tracking-widest text-muted-foreground">

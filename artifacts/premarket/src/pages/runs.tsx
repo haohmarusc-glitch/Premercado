@@ -162,7 +162,7 @@ export default function Runs() {
       </div>
 
       {/* Status do sistema — sempre visível, independe de haver histórico */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         <div className="border border-border rounded-lg p-4 bg-card">
           <div className="text-xs font-mono text-muted-foreground uppercase mb-1 flex items-center gap-1.5">
             <Power className="h-3 w-3" /> Quantidade de Runs
@@ -187,7 +187,7 @@ export default function Runs() {
 
       {/* Summary stats */}
       {runs && runs.length > 0 && (
-        <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
           <div className="border border-border rounded-lg p-4 bg-card">
             <div className="text-xs font-mono text-muted-foreground uppercase mb-1">Total</div>
             <div className="text-2xl font-bold font-mono" data-testid="text-total-runs">{runs.length}</div>
@@ -224,7 +224,7 @@ export default function Runs() {
       )}
 
       {runs && runs.length > 0 && (
-        <div className="border border-border rounded-lg overflow-hidden">
+        <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
