@@ -35,6 +35,16 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# runner.ts passa um epoch (ms) com folga antes do SIGTERM de hard-kill --
+# quando o agent loop cruza esse instante, ele força UM turno final sem
+# ferramentas (tools=[]) pra escrever o relatório com o que já foi coletado,
+# em vez de deixar o processo ser morto sem nunca produzir REPORT: (visto em
+# produção: runs de 18-19min mortas no timeout viravam falha total, mesmo já
+# tendo gasto o dinheiro das chamadas parciais). Ausente/vazio = sem deadline
+# suave (ex.: rodando fora do runner.ts, como em testes/CLI manual).
+_soft_deadline_ms = os.environ.get("AGENT_SOFT_DEADLINE_MS", "")
+SOFT_DEADLINE_TS = float(_soft_deadline_ms) / 1000.0 if _soft_deadline_ms else None
+
 # ETFs/fundos e índices nunca têm data de resultados/fundamentos no Yahoo Finance
 # — consultar isso pra eles sempre falha (404 "No fundamentals data found") depois
 # de um round-trip de rede completo. Pular isso de cara evita gastar o tempo de

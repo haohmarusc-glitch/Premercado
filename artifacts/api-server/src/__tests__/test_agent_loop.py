@@ -27,6 +27,7 @@ class _FakeClient:
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = []
+        self.tools_per_call = []
 
     def create(self, **kwargs):
         # messages é mutado in-place pelo loop (append) -- precisa copiar a
@@ -34,6 +35,7 @@ class _FakeClient:
         # pro mesmo objeto (o estado final), mascarando o snapshot de cada
         # chamada.
         self.calls.append(list(kwargs["messages"]))
+        self.tools_per_call.append(kwargs.get("tools"))
         return self._responses.pop(0)
 
 
@@ -162,3 +164,64 @@ def test_multi_tool_call_turn_runs_in_parallel_and_preserves_result_mapping(monk
     # Ordem no histórico segue a ordem dos tool_use blocks, não a ordem de
     # conclusão (fast terminou primeiro, mas slow ainda deve vir primeiro).
     assert [b["tool_use_id"] for b in tool_result_msg["content"]] == ["toolu_slow", "toolu_fast", "toolu_mid"]
+
+
+def test_deadline_forces_final_report_without_tools(monkeypatch):
+    """Quando o deadline_ts (folga antes do SIGTERM do runner.ts) já passou,
+    o loop deve parar de fazer turnos normais e forçar UMA chamada final com
+    tools=[] pra garantir que a resposta seja só texto -- sem isso, a run
+    corria o risco de ser morta pelo processo pai sem nunca imprimir
+    REPORT:, perdendo o progresso e o dinheiro já gasto nas chamadas
+    parciais (ver runner.ts, AGENT_SOFT_DEADLINE_MS)."""
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+
+    responses = [
+        NormalizedResponse(content=[TextBlock(text="Relatório parcial por tempo esgotado " * 5)], stop_reason="end_turn"),
+    ]
+    client = _FakeClient(responses)
+
+    result = agent_module._agent_loop(
+        client=client,
+        model="claude-sonnet-5",
+        system="system prompt",
+        tools=[{"name": "get_stock_data"}],
+        messages=[{"role": "user", "content": "start"}],
+        max_turns=20,
+        max_tokens=1024,
+        deadline_ts=time.time() - 1,  # já passou
+    )
+
+    assert "Relatório parcial por tempo esgotado" in result
+    # Só uma chamada -- o deadline dispara já na primeira iteração do loop,
+    # antes de qualquer turno normal.
+    assert len(client.calls) == 1
+    # Garantia estrutural do fix: tools=[] torna impossível a resposta vir
+    # com tool_use pendente perto do fim (mesmo que `tools` normal do run
+    # tivesse ferramentas disponíveis).
+    assert client.tools_per_call == [[]]
+
+
+def test_deadline_none_does_not_affect_normal_flow(monkeypatch):
+    """deadline_ts=None (default) não deve mudar o comportamento normal do
+    loop -- é o caso de run_premarket/run_chat_stream, que não passam esse
+    parâmetro."""
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+
+    responses = [
+        NormalizedResponse(content=[TextBlock(text="Relatório final completo " * 10)], stop_reason="end_turn"),
+    ]
+    client = _FakeClient(responses)
+
+    result = agent_module._agent_loop(
+        client=client,
+        model="claude-sonnet-5",
+        system="system prompt",
+        tools=[],
+        messages=[{"role": "user", "content": "start"}],
+        max_turns=5,
+        max_tokens=1024,
+        deadline_ts=None,
+    )
+
+    assert "Relatório final completo" in result
+    assert len(client.calls) == 1

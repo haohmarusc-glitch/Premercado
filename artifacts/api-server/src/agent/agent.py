@@ -7,6 +7,7 @@ import datetime
 import json as _json
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import config
@@ -362,6 +363,7 @@ def _agent_loop(
     step_prefix: str = "",
     require_observations: bool = False,
     min_observations: int = 1,
+    deadline_ts: float | None = None,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
@@ -369,6 +371,38 @@ def _agent_loop(
     observations_saved = 0
     nudges_left = 2  # cobranças de save_observation antes de aceitar o fim da run
     for turn in range(max_turns):
+        if deadline_ts is not None and time.time() >= deadline_ts:
+            # runner.ts vai mandar SIGTERM em breve (deadline_ts já reserva a
+            # folga necessária) -- em vez de deixar o processo morrer sem
+            # nunca imprimir REPORT: (run marcada como falha total mesmo já
+            # tendo gasto o dinheiro das chamadas parciais), força um turno
+            # final SEM ferramentas: tools=[] garante que a resposta só pode
+            # ser texto, então esse turno não corre o risco de gerar mais
+            # tool_use pendente perto do fim.
+            if progress_callback:
+                progress_callback(f"{step_prefix}Tempo esgotando — fechando relatório com os dados já coletados...")
+            messages.append({"role": "user", "content": (
+                "O tempo disponível para esta execução está acabando. NÃO "
+                "chame mais nenhuma ferramenta. Escreva AGORA o relatório "
+                "final em Markdown com os dados que você já coletou até "
+                "aqui, mesmo que incompleto — avise no início do relatório "
+                "que a análise foi encerrada antes do previsto por limite "
+                "de tempo."
+            )})
+            resp = client.create(
+                model=model, max_tokens=max_tokens, system=system, tools=[], messages=messages,
+            )
+            messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
+            for block in resp.content:
+                if isinstance(block, TextBlock):
+                    final_text = block.text
+            if not final_text.strip():
+                final_text = (
+                    "Análise incompleta: o tempo disponível se esgotou antes "
+                    "da conclusão, e o modelo não produziu um relatório final."
+                )
+            break
+
         if progress_callback:
             label = f"{step_prefix}Turno {turn + 1} — consultando {client.provider_name}..."
             progress_callback(label)
@@ -557,6 +591,7 @@ def run(progress_callback=None) -> str:
         # contágio fora da carteira somam mais chamadas, mas sua contagem
         # exata só é conhecida em runtime, então não entram no piso.
         min_observations=len(config.PORTFOLIO_TICKERS),
+        deadline_ts=config.SOFT_DEADLINE_TS,
     )
 
 
@@ -582,6 +617,7 @@ def run_portfolio(progress_callback=None) -> str:
         step_prefix="[Carteira] ",
         require_observations=True,
         min_observations=n,
+        deadline_ts=config.SOFT_DEADLINE_TS,
     )
 
 
