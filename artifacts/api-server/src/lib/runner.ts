@@ -149,21 +149,6 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
   const effectiveProvider = await getEffectiveAgentProvider();
 
-  const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
-    cwd: agentDir,
-    env: {
-      ...process.env,
-      INTERNAL_API_URL: apiUrl,
-      PYTHONPATH: agentDir,
-      AGENT_TICKERS: tickers.join(","),
-      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
-      AGENT_MODE: mode,
-      ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
-      ...(effectiveProvider ? { AGENT_PROVIDER: effectiveProvider } : {}),
-      OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
-    },
-  });
-
   // Default subiu de 10 -> 18 -> 30 min. O gargalo já não é mais a lentidão
   // pontual do yfinance (10 -> 18min, resolvido por ferramentas mais rápidas
   // e cache) nem a execução em série das ferramentas de um turno (18min,
@@ -175,6 +160,30 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   // paralelização. Configurável via env var para dar folga sem precisar de
   // outro deploy.
   const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) > 0 ? Number(process.env.AGENT_TIMEOUT_MS) : 30 * 60 * 1000;
+  // Folga reservada pro agente fechar sozinho com um relatório parcial (um
+  // turno final sem ferramentas) antes do SIGTERM chegar -- sem isso, a run
+  // simplesmente morre sem nunca imprimir REPORT:, e todo o progresso e
+  // dinheiro já gasto nas chamadas parciais viram uma falha total registrada
+  // sem relatório nenhum (ver agent.py::_agent_loop, deadline_ts).
+  const SOFT_DEADLINE_BUFFER_MS = 120 * 1000;
+  const softDeadlineMs = Date.now() + TIMEOUT_MS - SOFT_DEADLINE_BUFFER_MS;
+
+  const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
+    cwd: agentDir,
+    env: {
+      ...process.env,
+      INTERNAL_API_URL: apiUrl,
+      PYTHONPATH: agentDir,
+      AGENT_TICKERS: tickers.join(","),
+      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
+      AGENT_MODE: mode,
+      AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
+      ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
+      ...(effectiveProvider ? { AGENT_PROVIDER: effectiveProvider } : {}),
+      OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
+    },
+  });
+
   const killTimer = setTimeout(() => {
     logger.warn(`Agent timeout (${Math.round(TIMEOUT_MS / 60000)} min) — killing process`);
     py.kill("SIGTERM");
