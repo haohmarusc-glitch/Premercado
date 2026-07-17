@@ -2231,6 +2231,7 @@ export default function PortfolioPage() {
                 {soldRows.length}
               </Badge>
             </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="border-b border-border bg-muted/20 text-muted-foreground text-[11px]">
@@ -2325,6 +2326,7 @@ export default function PortfolioPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}

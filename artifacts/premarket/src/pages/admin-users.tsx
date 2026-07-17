@@ -102,7 +102,7 @@ export default function AdminUsersPage() {
       )}
 
       {!isLoading && users && users.length > 0 && (
-        <div className="border border-border rounded-lg overflow-hidden">
+        <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
