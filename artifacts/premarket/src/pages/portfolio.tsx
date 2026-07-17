@@ -688,6 +688,23 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
       }, 0)
     : null;
 
+  // Calculado uma vez só e reaproveitado nas duas apresentações (tabela
+  // desktop e cards mobile) -- evita duplicar a lógica de P&L em dois lugares
+  // que podem divergir com o tempo.
+  const enrichedPurchases = purchases.map((p) => {
+    const qty = p.purchasePrice ? p.amount / p.purchasePrice : null;
+    const isSold = !!p.saleDate && !!p.salePrice;
+    const unrealizedPnl = !isSold && qty && currentPrice > 0 && p.purchasePrice
+      ? qty * (currentPrice - p.purchasePrice)
+      : null;
+    const unrealizedPct = unrealizedPnl != null && p.amount > 0 ? (unrealizedPnl / p.amount) * 100 : null;
+    const realizedPnl = isSold && qty && p.purchasePrice && p.salePrice
+      ? qty * (p.salePrice - p.purchasePrice)
+      : null;
+    const realizedPct = realizedPnl != null && p.amount > 0 ? (realizedPnl / p.amount) * 100 : null;
+    return { p, qty, isSold, unrealizedPnl, unrealizedPct, realizedPnl, realizedPct };
+  });
+
   const body = (
     <>
       <div className="text-[10px] font-mono font-semibold text-muted-foreground mb-3 uppercase tracking-widest">
@@ -696,6 +713,148 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
 
           {isLoading ? (
             <div className="text-xs text-muted-foreground font-mono">Carregando...</div>
+          ) : isMobile ? (
+            <div className="space-y-2">
+              {enrichedPurchases.length === 0 && (
+                <div className="text-xs text-muted-foreground font-mono italic">Nenhuma compra registrada.</div>
+              )}
+              {enrichedPurchases.map(({ p, qty, isSold, unrealizedPnl, unrealizedPct, realizedPnl, realizedPct }) => (
+                <div key={p.id} className="border border-border/30 rounded p-3 text-xs font-mono space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold inline-flex items-center gap-1">
+                      {p.priceManuallyEdited && (
+                        <span title="Preço confirmado manualmente — não é sobrescrito por 'Corrigir preços reais'">
+                          <Lock className="h-2.5 w-2.5 text-muted-foreground" />
+                        </span>
+                      )}
+                      {p.purchaseDate}
+                    </span>
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-semibold",
+                      isSold ? "bg-muted text-muted-foreground" : "bg-green-500/10 text-green-400")}>
+                      {isSold ? "Fechada" : "Aberta"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    <div>
+                      <div className="text-muted-foreground text-[10px] uppercase">Preço compra</div>
+                      <div className="tabular-nums">{p.purchasePrice ? `$${p.purchasePrice.toFixed(2)}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground text-[10px] uppercase">Preço atual</div>
+                      <div className="tabular-nums">{currentPrice > 0 ? <span className="text-blue-400">${currentPrice.toFixed(2)}</span> : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground text-[10px] uppercase">Total invest.</div>
+                      <div className="tabular-nums">{fmt$(p.amount)}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground text-[10px] uppercase">Valor atual</div>
+                      <div className="tabular-nums font-semibold">
+                        {!isSold && qty && currentPrice > 0 ? <span className="text-blue-400">{fmt$(qty * currentPrice)}</span> : "—"}
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-muted-foreground text-[10px] uppercase">Lucro/Perda atual</div>
+                      <div className={cn("tabular-nums font-semibold",
+                        unrealizedPnl == null ? "text-muted-foreground" : unrealizedPnl >= 0 ? "text-green-400" : "text-red-400")}>
+                        {unrealizedPnl != null
+                          ? `${unrealizedPnl >= 0 ? "+" : "-"}${fmt$(unrealizedPnl)} (${unrealizedPct! >= 0 ? "+" : ""}${unrealizedPct!.toFixed(2)}%)`
+                          : isSold ? "vendida" : "—"}
+                      </div>
+                    </div>
+                    {isSold && (
+                      <>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Data venda</div>
+                          <div>{p.saleDate ?? "—"}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground text-[10px] uppercase">Preço venda</div>
+                          <div className="tabular-nums">{p.salePrice ? `$${p.salePrice.toFixed(2)}` : "—"}</div>
+                        </div>
+                        <div className="col-span-2">
+                          <div className="text-muted-foreground text-[10px] uppercase">Lucro/Perda venda</div>
+                          <div className={cn("tabular-nums font-semibold",
+                            realizedPnl == null ? "text-muted-foreground" : realizedPnl >= 0 ? "text-green-400" : "text-red-400")}>
+                            {realizedPnl != null
+                              ? `${realizedPnl >= 0 ? "+" : "-"}${fmt$(realizedPnl)} (${realizedPct! >= 0 ? "+" : ""}${realizedPct!.toFixed(2)}%)`
+                              : "—"}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    {!isSold ? (
+                      <Button size="sm" variant="outline"
+                        className="h-6 px-2 text-[10px] font-mono text-green-400 border-green-500/30 hover:bg-green-500/10"
+                        onClick={() => handleSaleOpen(p.id)}
+                      >
+                        Vender
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline"
+                        className="h-6 px-2 text-[10px] font-mono text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                        onClick={async () => {
+                          await fetch(`/api/portfolio/purchases/${p.id}`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ saleDate: null, salePrice: null }),
+                            credentials: "include",
+                          });
+                          invalidate();
+                        }}
+                      >
+                        ↩ Desfazer
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost"
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => handleEditOpen(p)}
+                      title="Editar valor/preço de compra"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button size="sm" variant="ghost"
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDelete(p.id)}
+                      disabled={deletePurchase.isPending}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {enrichedPurchases.length > 0 && (
+                <div className="border border-border/30 rounded p-3 text-xs font-mono bg-muted/20 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground text-[10px] uppercase">Total investido</span>
+                    <span className="tabular-nums font-semibold">{fmt$(totalInvested)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground text-[10px] uppercase">P&amp;L aberto</span>
+                    <span className={cn("tabular-nums font-semibold",
+                      totalUnrealizedPnl == null ? "text-muted-foreground" : totalUnrealizedPnl >= 0 ? "text-green-400" : "text-red-400")}>
+                      {totalUnrealizedPnl != null ? `${totalUnrealizedPnl >= 0 ? "+" : "-"}${fmt$(totalUnrealizedPnl)}` : "—"}
+                    </span>
+                  </div>
+                  {totalSold > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground text-[10px] uppercase">Total vendido</span>
+                      <span className="tabular-nums">{fmt$(totalSold)}</span>
+                    </div>
+                  )}
+                  {totalRealizedPnl !== 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground text-[10px] uppercase">P&amp;L realizado</span>
+                      <span className={cn("tabular-nums font-semibold", totalRealizedPnl > 0 ? "text-green-400" : "text-red-400")}>
+                        {totalRealizedPnl >= 0 ? "+" : "-"}{fmt$(totalRealizedPnl)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs font-mono border border-border/30 rounded">
@@ -720,24 +879,7 @@ function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number
                       <td colSpan={10} className="py-3 px-3 text-muted-foreground italic">Nenhuma compra registrada.</td>
                     </tr>
                   )}
-                  {purchases.map((p) => {
-                    const qty = p.purchasePrice ? p.amount / p.purchasePrice : null;
-                    const isSold = !!p.saleDate && !!p.salePrice;
-
-                    // Lucro/perda atual (não vendido)
-                    const unrealizedPnl = !isSold && qty && currentPrice > 0 && p.purchasePrice
-                      ? qty * (currentPrice - p.purchasePrice)
-                      : null;
-                    const unrealizedPct = unrealizedPnl != null && p.amount > 0
-                      ? (unrealizedPnl / p.amount) * 100 : null;
-
-                    // Lucro/perda da venda
-                    const realizedPnl = isSold && qty && p.purchasePrice && p.salePrice
-                      ? qty * (p.salePrice - p.purchasePrice)
-                      : null;
-                    const realizedPct = realizedPnl != null && p.amount > 0
-                      ? (realizedPnl / p.amount) * 100 : null;
-
+                  {enrichedPurchases.map(({ p, qty, isSold, unrealizedPnl, unrealizedPct, realizedPnl, realizedPct }) => {
                     return (
                       <tr key={p.id} className="border-t border-border/20 hover:bg-muted/10">
                         <td className="px-3 py-2 font-semibold">{p.purchaseDate}</td>
@@ -1632,8 +1774,11 @@ export default function PortfolioPage() {
             )}
           </CardContent>
         </Card>
-        {/* Patrimônio total = valor atual + caixa */}
-        <Card className="border-primary/40 bg-card">
+        {/* Patrimônio total = valor atual + caixa -- ocupa a linha inteira no
+            mobile (col-span-2): tem 5 linhas de valor, os outros cards do
+            grid só têm 1, então espremer isso em meia largura estourava o
+            card (números cortados fora da borda). */}
+        <Card className="border-primary/40 bg-card col-span-2 md:col-span-1">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-mono text-primary uppercase tracking-wide">Patrimônio total</span>
