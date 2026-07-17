@@ -469,7 +469,7 @@ class TestTruncateHistoryForFallback:
 
 class TestResolveTier:
     def test_known_model_resolves_to_tier(self):
-        assert _resolve_tier("claude-sonnet-4-6") == "full"
+        assert _resolve_tier("claude-sonnet-5") == "full"
         assert _resolve_tier("claude-haiku-4-5") in ("flash", "chat")
 
     def test_unknown_model_returns_none(self):
