@@ -381,6 +381,41 @@ def _agent_loop(
         )
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
+        tool_use_blocks = [b for b in resp.content if isinstance(b, ToolUseBlock)]
+        if tool_use_blocks:
+            # A Anthropic exige um tool_result pra CADA tool_use na mensagem
+            # seguinte, mesmo quando o stop_reason normalizado não é
+            # "tool_use" — a API crua pode devolver "max_tokens"/"pause_turn"
+            # com blocos de tool_use já completos antes do corte (o
+            # normalizador em provider.py achata esses casos pra "end_turn").
+            # Resolver só quando stop_reason == "tool_use" deixava esses
+            # blocos órfãos no histórico, e a próxima chamada — nudge ou
+            # continuação — batia com 400 invalid_request_error ("tool_use
+            # ids were found without tool_result blocks"). Bug visto em
+            # produção com claude-sonnet-5 em 17/07.
+            tool_results = []
+            for block in tool_use_blocks:
+                if progress_callback:
+                    progress_callback(f"Executando ferramenta: {block.name}")
+                result = run_tool(block.name, block.input)
+                if block.name == "save_observation":
+                    saved_ok = False
+                    try:
+                        saved_ok = _json.loads(result).get("saved") is True
+                    except Exception:
+                        pass
+                    if saved_ok:
+                        observations_saved += 1
+                    else:
+                        print(f"[agent] save_observation falhou: {result}", flush=True)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
         if resp.stop_reason != "tool_use":
             # Só aceita o texto do turno como candidato a relatório final
             # quando o modelo sinaliza que terminou (sem mais tool_use).
@@ -464,35 +499,6 @@ def _agent_loop(
                     "mesmo após ser cobrado para completar."
                 )
             break
-
-        tool_results = []
-        for block in resp.content:
-            if isinstance(block, ToolUseBlock):
-                if progress_callback:
-                    progress_callback(f"Executando ferramenta: {block.name}")
-                result = run_tool(block.name, block.input)
-                if block.name == "save_observation":
-                    # save_observation NUNCA levanta exceção — em falha (rede,
-                    # validação no server, etc.) ela retorna {"saved": False,
-                    # "error": ...} normalmente. Checar só a ausência de
-                    # "[erro" contava falhas como sucesso e destravava a
-                    # cobrança sem nada persistido de fato (bug visto em
-                    # produção em 03/07 — run completa, zero observações).
-                    saved_ok = False
-                    try:
-                        saved_ok = _json.loads(result).get("saved") is True
-                    except Exception:
-                        pass
-                    if saved_ok:
-                        observations_saved += 1
-                    else:
-                        print(f"[agent] save_observation falhou: {result}", flush=True)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-        messages.append({"role": "user", "content": tool_results})
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
