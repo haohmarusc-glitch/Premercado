@@ -31,6 +31,11 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     # sem esse desconto, veio ~40% acima do valor cobrado).
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40, "cache_read": 0.01},
     "gemini-2.5-flash": {"input": 0.30, "output": 2.50, "cache_read": 0.03},
+    # Preço do tier <=200k de contexto (nosso prompt do fluxo DAILY fica bem
+    # abaixo disso); acima de 200k a Google cobra $2,50/M de entrada. Ainda
+    # não confirmado contra faturamento real (modelo só entrou em uso em
+    # 17/07) -- ajustar se divergir, como já foi feito com o flash em 03/07.
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00, "cache_read": 0.31},
     "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
     "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
     "moonshot-v1-32k": {"input": 1.00, "output": 3.00},
@@ -247,12 +252,23 @@ PROVIDERS = {
         "api_key_env": "GEMINI_API_KEY",
         "models": {
             # gemini-2.0-flash foi desativado pelo Google em 01/06/2026 (404
-            # em produção). No tier "full" usamos o 2.5-flash (não-lite):
-            # o flash-lite abandona o fluxo multi-turno no meio (visto em
-            # produção em 03/07 — parou no turno 7 sem save_observation).
-            # Custo ~3x maior, ainda ~US$0.13/run diária. Nota: o 2.5-flash
-            # tem desligamento anunciado para 16/10/2026 — checar nessa época.
-            "full": "gemini-2.5-flash",
+            # em produção). O 2.5-flash (não-lite) foi tentado no tier "full"
+            # depois que o flash-lite abandonava o fluxo multi-turno no meio
+            # (visto em produção em 03/07 — parou no turno 7 sem
+            # save_observation) -- mas o 2.5-flash tem o MESMO problema em
+            # escala maior: visto em produção em 17/07 completando as 12
+            # rodadas do fluxo DAILY completo (17 ferramentas) sem nunca
+            # chamar save_observation, mesmo após duas cobranças, gerando
+            # relatório vazio ("análise incompleta", 0 observações) que ainda
+            # assim volta como run "success" pro runner.ts. O tier "full" só
+            # é usado quando o orçamento diário do Anthropic estoura e o
+            # sistema cai pro cheapProvider (ver runner.ts,
+            # getEffectiveAgentProvider) -- nesse fallback, ainda vale gastar
+            # mais por chamada pra ter uma chance real de completar o fluxo
+            # em vez de queimar a run inteira. Nota: o 2.5-flash tem
+            # desligamento anunciado para 16/10/2026 — checar nessa época se
+            # ainda for usado em algum tier.
+            "full": "gemini-2.5-pro",
             "flash": "gemini-2.5-flash-lite",
             "chat": "gemini-2.5-flash-lite",
         },
