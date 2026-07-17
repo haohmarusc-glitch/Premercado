@@ -16,6 +16,7 @@ Design:
 import inspect
 import json
 import os
+import threading
 import time
 from typing import Any, Callable
 
@@ -24,6 +25,11 @@ from . import config
 _CACHE_PATH = os.environ.get("AGENT_CACHE_PATH", "/tmp/premercado_tools_cache.json")
 _mem: dict[str, tuple[float, Any]] = {}
 _loaded = False
+# O agent loop agora roda as ferramentas de um turno em paralelo (threads) --
+# sem lock, duas threads que dão cache miss ao mesmo tempo podiam interleavar
+# a escrita do JSON em _flush() e corromper o arquivo. Falha aberta continua
+# valendo (ver docstring do módulo), o lock só evita a corrupção evitável.
+_lock = threading.Lock()
 
 
 def _load() -> None:
@@ -64,25 +70,29 @@ def cached(key: str, ttl: int | None = None) -> Callable:
             if not config.CACHE_ENABLED:
                 return fn(*args, **kwargs)
 
-            _load()
-            try:
-                # Resolve both positional and keyword args to parameter names so
-                # {0}-style keys work whether the caller used positional or keyword
-                # args (the Anthropic tool-use SDK always passes keyword args).
-                bound = sig.bind(*args, **kwargs)
-                bound.apply_defaults()
-                positional_vals = list(bound.arguments.values())
-                cache_key = key.format(*positional_vals, **bound.arguments)
-            except Exception:
-                cache_key = key  # chave sem placeholders, ou args não combinam
+            with _lock:
+                _load()
+                try:
+                    # Resolve both positional and keyword args to parameter names so
+                    # {0}-style keys work whether the caller used positional or keyword
+                    # args (the Anthropic tool-use SDK always passes keyword args).
+                    bound = sig.bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    positional_vals = list(bound.arguments.values())
+                    cache_key = key.format(*positional_vals, **bound.arguments)
+                except Exception:
+                    cache_key = key  # chave sem placeholders, ou args não combinam
 
-            now = time.time()
-            hit = _mem.get(cache_key)
-            if hit is not None:
-                ts, value = hit
-                if now - ts < effective_ttl:
-                    return value
+                now = time.time()
+                hit = _mem.get(cache_key)
+                if hit is not None:
+                    ts, value = hit
+                    if now - ts < effective_ttl:
+                        return value
 
+            # A chamada de rede em si fica FORA do lock -- é a parte lenta, e
+            # travar aqui serializaria as ferramentas de novo, anulando o
+            # ganho de paralelizar o turno inteiro.
             result = fn(*args, **kwargs)
 
             # Não cacheia erros — uma falha temporária de rede não deve "travar"
@@ -93,8 +103,9 @@ def cached(key: str, ttl: int | None = None) -> Callable:
                 or (isinstance(result, str) and result.startswith("[erro"))
             )
             if not is_error:
-                _mem[cache_key] = (now, result)
-                _flush()
+                with _lock:
+                    _mem[cache_key] = (now, result)
+                    _flush()
 
             return result
         wrapper.__name__ = getattr(fn, "__name__", "wrapped")
