@@ -164,11 +164,17 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     },
   });
 
-  // Default 10 min historicamente já foi suficiente, mas o yfinance às vezes
-  // fica lento (chamadas de ~10s viram 30-40s) e o run é morto no meio antes
-  // de terminar de coletar dados — nunca chega a escrever o relatório.
-  // Configurável via env var para dar folga sem precisar de outro deploy.
-  const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) > 0 ? Number(process.env.AGENT_TIMEOUT_MS) : 18 * 60 * 1000;
+  // Default subiu de 10 -> 18 -> 30 min. O gargalo já não é mais a lentidão
+  // pontual do yfinance (10 -> 18min, resolvido por ferramentas mais rápidas
+  // e cache) nem a execução em série das ferramentas de um turno (18min,
+  // resolvido pela paralelização em agent.py) -- scans maiores (17+ ativos,
+  // várias categorias de ferramenta) simplesmente precisam de mais turnos, e
+  // cada turno tem um custo fixo de latência do próprio modelo (chamada à
+  // API) que a paralelização de ferramentas não reduz. Visto em produção:
+  // runs matando aos 18min consistentemente (18/07) mesmo já com o fix de
+  // paralelização. Configurável via env var para dar folga sem precisar de
+  // outro deploy.
+  const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) > 0 ? Number(process.env.AGENT_TIMEOUT_MS) : 30 * 60 * 1000;
   const killTimer = setTimeout(() => {
     logger.warn(`Agent timeout (${Math.round(TIMEOUT_MS / 60000)} min) — killing process`);
     py.kill("SIGTERM");
