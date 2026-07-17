@@ -290,7 +290,7 @@ export default function BacktestPage() {
             thresholds do score configurados abaixo (padrão ±60).
           </p>
         )}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             { label: "Fração Posição (0.1–1.0)", val: positionFraction, set: setPositionFraction, step: "0.1" },
             { label: "Comissão (ex: 0.001 = 0.1%)", val: commissionPct, set: setCommissionPct, step: "0.0001" },
@@ -429,7 +429,7 @@ export default function BacktestPage() {
               <span>{basketResult.tickersOk}/{basketResult.tickersRequested} tickers com dados suficientes</span>
             </div>
 
-            <div className="border border-border rounded-lg overflow-hidden">
+            <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
               <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
                 Por ticker (ordenado por retorno)
               </div>
@@ -464,7 +464,7 @@ export default function BacktestPage() {
             </div>
 
             {basketResult.bySector && basketResult.bySector.length > 0 && (
-              <div className="border border-border rounded-lg overflow-hidden">
+              <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
                 <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
                   Por setor (ordenado por retorno médio)
                 </div>
@@ -606,7 +606,7 @@ export default function BacktestPage() {
 
             {/* Trades table */}
             {result.trades.length > 0 && (
-              <div className="border border-border rounded-lg overflow-hidden">
+              <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
                 <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
                   Últimas {result.trades.length} Operações
                 </div>
@@ -680,7 +680,7 @@ export default function BacktestPage() {
                 return acc;
               }, {})
             ).map(([param, rows]) => (
-              <div key={param} className="border border-border rounded-lg overflow-hidden">
+              <div key={param} className="border border-border rounded-lg overflow-hidden overflow-x-auto">
                 <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
                   {SENSITIVITY_PARAM_LABEL[param] ?? param}
                 </div>

@@ -97,7 +97,7 @@ export default function WatchlistPage() {
           Watchlist vazia. Adicione seu primeiro ativo.
         </div>
       ) : (
-        <div className="border border-border rounded-lg overflow-hidden">
+        <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
           <table className="w-full font-mono text-sm">
             <thead className="bg-secondary/40 border-b border-border">
               <tr>
