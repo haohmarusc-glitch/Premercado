@@ -17,6 +17,10 @@ from .security import mask_sensitive_data
 # à parte (Anthropic: write 1.25x, read ~0.1x; OpenAI: cached input a 50%).
 # Modelos ausentes daqui têm custo reportado como None (desconhecido), não 0.
 MODEL_PRICING: dict[str, dict[str, float]] = {
+    # Preço promocional de lançamento, vale até 31/08/2026 -- depois volta pro
+    # padrão $3,00/$15,00 (mesmo nível do Sonnet 4.6). Atualizar essa linha
+    # quando a promoção expirar.
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
     "gpt-4o": {"input": 2.50, "output": 10.00, "cache_read": 1.25},
@@ -223,7 +227,7 @@ PROVIDERS = {
         "base_url": None,
         "api_key_env": "ANTHROPIC_API_KEY",
         "models": {
-            "full": "claude-sonnet-4-6",
+            "full": "claude-sonnet-5",
             "flash": "claude-haiku-4-5",
             "chat": "claude-haiku-4-5",
         },
