@@ -899,3 +899,81 @@ export const DeleteJournalEntryParams = zod.object({
 })
 
 
+/**
+ * @summary List exit plan items
+ */
+export const ListExitPlanResponseItem = zod.object({
+  "id": zod.coerce.number(),
+  "ticker": zod.string(),
+  "phase": zod.coerce.number(),
+  "phaseLabel": zod.string(),
+  "targetDate": zod.string(),
+  "action": zod.string(),
+  "rationale": zod.string(),
+  "eventDate": zod.string().nullable(),
+  "status": zod.string(),
+  "soldAt": zod.string().nullable(),
+  "soldPrice": zod.coerce.number().nullable(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+export const ListExitPlanResponse = zod.array(ListExitPlanResponseItem)
+
+
+/**
+ * @summary Create an exit plan item
+ */
+export const createExitPlanItemBodyTickerMax = 10;
+
+
+
+export const CreateExitPlanItemBody = zod.object({
+  "ticker": zod.string().min(1).max(createExitPlanItemBodyTickerMax),
+  "phase": zod.number(),
+  "phaseLabel": zod.string(),
+  "targetDate": zod.string(),
+  "action": zod.string(),
+  "rationale": zod.string(),
+  "eventDate": zod.string().nullish(),
+  "status": zod.string().optional()
+})
+
+
+/**
+ * @summary Update an exit plan item (e.g. mark sold/skipped)
+ */
+export const UpdateExitPlanItemParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateExitPlanItemBody = zod.object({
+  "status": zod.string().optional(),
+  "soldAt": zod.string().nullish(),
+  "soldPrice": zod.number().nullish()
+})
+
+export const UpdateExitPlanItemResponse = zod.object({
+  "id": zod.coerce.number(),
+  "ticker": zod.string(),
+  "phase": zod.coerce.number(),
+  "phaseLabel": zod.string(),
+  "targetDate": zod.string(),
+  "action": zod.string(),
+  "rationale": zod.string(),
+  "eventDate": zod.string().nullable(),
+  "status": zod.string(),
+  "soldAt": zod.string().nullable(),
+  "soldPrice": zod.coerce.number().nullable(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Delete an exit plan item
+ */
+export const DeleteExitPlanItemParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+

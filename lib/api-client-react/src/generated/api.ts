@@ -38,6 +38,9 @@ import type {
   ChatMessage,
   ChatSession,
   ClaimSeedAccountBody,
+  ExitPlanItem,
+  ExitPlanItemCreate,
+  ExitPlanItemUpdate,
   FxRate,
   GetNewsParams,
   GetTickerChartParams,
@@ -3879,5 +3882,295 @@ export const useDeleteJournalEntry = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteJournalEntryMutationOptions(options));
+    }
+
+export const getListExitPlanUrl = () => {
+
+
+
+
+  return `/api/exit-plan`
+}
+
+/**
+ * @summary List exit plan items
+ */
+export const listExitPlan = async ( options?: RequestInit): Promise<ExitPlanItem[]> => {
+
+  return customFetch<ExitPlanItem[]>(getListExitPlanUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListExitPlanQueryKey = () => {
+    return [
+    `/api/exit-plan`
+    ] as const;
+    }
+
+
+export const getListExitPlanQueryOptions = <TData = Awaited<ReturnType<typeof listExitPlan>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExitPlan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListExitPlanQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listExitPlan>>> = ({ signal }) => listExitPlan({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listExitPlan>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListExitPlanQueryResult = NonNullable<Awaited<ReturnType<typeof listExitPlan>>>
+export type ListExitPlanQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List exit plan items
+ */
+
+export function useListExitPlan<TData = Awaited<ReturnType<typeof listExitPlan>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExitPlan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListExitPlanQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getCreateExitPlanItemUrl = () => {
+
+
+
+
+  return `/api/exit-plan`
+}
+
+/**
+ * @summary Create an exit plan item
+ */
+export const createExitPlanItem = async (exitPlanItemCreate: ExitPlanItemCreate, options?: RequestInit): Promise<ExitPlanItem> => {
+
+  return customFetch<ExitPlanItem>(getCreateExitPlanItemUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      exitPlanItemCreate,)
+  }
+);}
+
+
+
+
+export const getCreateExitPlanItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createExitPlanItem>>, TError,{data: BodyType<ExitPlanItemCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createExitPlanItem>>, TError,{data: BodyType<ExitPlanItemCreate>}, TContext> => {
+
+const mutationKey = ['createExitPlanItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createExitPlanItem>>, {data: BodyType<ExitPlanItemCreate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createExitPlanItem(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateExitPlanItemMutationResult = NonNullable<Awaited<ReturnType<typeof createExitPlanItem>>>
+    export type CreateExitPlanItemMutationBody = BodyType<ExitPlanItemCreate>
+    export type CreateExitPlanItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Create an exit plan item
+ */
+export const useCreateExitPlanItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createExitPlanItem>>, TError,{data: BodyType<ExitPlanItemCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createExitPlanItem>>,
+        TError,
+        {data: BodyType<ExitPlanItemCreate>},
+        TContext
+      > => {
+      return useMutation(getCreateExitPlanItemMutationOptions(options));
+    }
+
+export const getUpdateExitPlanItemUrl = (id: number,) => {
+
+
+
+
+  return `/api/exit-plan/${id}`
+}
+
+/**
+ * @summary Update an exit plan item (e.g. mark sold/skipped)
+ */
+export const updateExitPlanItem = async (id: number,
+    exitPlanItemUpdate: ExitPlanItemUpdate, options?: RequestInit): Promise<ExitPlanItem> => {
+
+  return customFetch<ExitPlanItem>(getUpdateExitPlanItemUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      exitPlanItemUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateExitPlanItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateExitPlanItem>>, TError,{id: number;data: BodyType<ExitPlanItemUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateExitPlanItem>>, TError,{id: number;data: BodyType<ExitPlanItemUpdate>}, TContext> => {
+
+const mutationKey = ['updateExitPlanItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateExitPlanItem>>, {id: number;data: BodyType<ExitPlanItemUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateExitPlanItem(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateExitPlanItemMutationResult = NonNullable<Awaited<ReturnType<typeof updateExitPlanItem>>>
+    export type UpdateExitPlanItemMutationBody = BodyType<ExitPlanItemUpdate>
+    export type UpdateExitPlanItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Update an exit plan item (e.g. mark sold/skipped)
+ */
+export const useUpdateExitPlanItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateExitPlanItem>>, TError,{id: number;data: BodyType<ExitPlanItemUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateExitPlanItem>>,
+        TError,
+        {id: number;data: BodyType<ExitPlanItemUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateExitPlanItemMutationOptions(options));
+    }
+
+export const getDeleteExitPlanItemUrl = (id: number,) => {
+
+
+
+
+  return `/api/exit-plan/${id}`
+}
+
+/**
+ * @summary Delete an exit plan item
+ */
+export const deleteExitPlanItem = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteExitPlanItemUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteExitPlanItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteExitPlanItem>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteExitPlanItem>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteExitPlanItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteExitPlanItem>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteExitPlanItem(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteExitPlanItemMutationResult = NonNullable<Awaited<ReturnType<typeof deleteExitPlanItem>>>
+
+    export type DeleteExitPlanItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete an exit plan item
+ */
+export const useDeleteExitPlanItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteExitPlanItem>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteExitPlanItem>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteExitPlanItemMutationOptions(options));
     }
 

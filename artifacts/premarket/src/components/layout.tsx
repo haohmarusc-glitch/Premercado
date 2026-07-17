@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -16,6 +16,8 @@ import {
   getListAlertsQueryKey,
   useGetTickerQuotes,
   getGetTickerQuotesQueryKey,
+  useListExitPlan,
+  getListExitPlanQueryKey,
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
@@ -43,10 +45,26 @@ function useFiringCount(): number {
   }).length;
 }
 
+function useExitPlanDueCount(): number {
+  const { data: items } = useListExitPlan({
+    query: { queryKey: getListExitPlanQueryKey(), refetchInterval: 5 * 60_000, staleTime: 4 * 60_000 },
+  });
+  if (!items) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return items.filter((i) => {
+    if (i.status !== "pending") return false;
+    const target = new Date(i.targetDate + "T00:00:00");
+    const days = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+    return days <= 3; // vencido ou vencendo em até 3 dias
+  }).length;
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const queryClient = useQueryClient();
   const firingCount = useFiringCount();
+  const exitPlanDueCount = useExitPlanDueCount();
   const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("theme") as "dark" | "light") ?? "dark");
   const { viewMode, toggleViewMode } = useViewMode();
   const isMobile = viewMode === "mobile";
@@ -238,6 +256,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
             {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
             {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
+            {navLink("/plano-saida", <Flag className="h-4 w-4" />, "Plano de Saída", exitPlanDueCount)}
             {navLink("/earnings", <Calendar className="h-4 w-4" />, "Earnings")}
             {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
             {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}

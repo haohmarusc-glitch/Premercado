@@ -21,6 +21,7 @@ import SectorAI from "@/pages/sector-ai";
 import CalculatorPage from "@/pages/calculator";
 import WatchlistPage from "@/pages/watchlist";
 import JournalPage from "@/pages/journal";
+import ExitPlanPage from "@/pages/exit-plan";
 import EarningsPage from "@/pages/earnings";
 import PerformancePage from "@/pages/performance";
 import BacktestPage from "@/pages/backtest";
@@ -63,6 +64,7 @@ function Router() {
         <Route path="/calculadora" component={CalculatorPage} />
         <Route path="/watchlist" component={WatchlistPage} />
         <Route path="/journal" component={JournalPage} />
+        <Route path="/plano-saida" component={ExitPlanPage} />
         <Route path="/earnings" component={EarningsPage} />
         <Route path="/performance" component={PerformancePage} />
         <Route path="/backtest" component={BacktestPage} />
