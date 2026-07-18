@@ -66,14 +66,22 @@ async function getEffectiveAgentProvider(): Promise<string | undefined> {
 async function getPortfolioTickers(): Promise<string[]> {
   try {
     const rows = await db
-      .select({ ticker: portfolioPositionsTable.ticker })
+      .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf })
       .from(portfolioPositionsTable)
       .orderBy(asc(portfolioPositionsTable.createdAt));
-    if (rows.length > 0) return rows.map((r) => r.ticker);
+    // ETFs (ex.: SGOV) ficam de fora da análise de carteira -- são
+    // instrumentos de caixa, sem notícia/sentimento pra analisar como uma
+    // ação real, e o fluxo (news, technicals, candle patterns, etc.) não faz
+    // sentido pra eles.
+    const stocks = rows.filter((r) => !r.isEtf);
+    if (stocks.length > 0) return stocks.map((r) => r.ticker);
   } catch (err) {
     logger.error({ err }, "Failed to read portfolio tickers; using defaults");
   }
-  return ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"];
+  // Carteira real (Nomad) conferida posição a posição em 17/07 -- MU e INTC
+  // foram vendidos, AVGO/MRVL/SKHY são posições novas (ver config.py,
+  // PORTFOLIO_TICKERS, mesma lista mantida em sincronia).
+  return ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"];
 }
 
 const workspaceRoot = process.cwd().endsWith(
