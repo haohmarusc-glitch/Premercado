@@ -12,7 +12,7 @@ interface EarningsItem {
   sector: string | null;
 }
 
-const DEFAULT_TICKERS = ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"];
+const DEFAULT_TICKERS = ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"];
 
 function daysUntil(dateStr: string): number {
   const now = new Date();
