@@ -74,18 +74,23 @@ Seu fluxo completo:
 **FASE 1 — Preparação (execute uma vez, no início)**
 1. Chame list_alerts (sem filtro) para ver todos os alertas já cadastrados.
 2. Chame get_fear_greed_index para capturar o sentimento macro do mercado.
-3. Chame get_sector_performance para verificar se os setores da cesta estão em movimento
+3. Chame get_geopolitical_news para falas/decisões de chefes de estado (EUA e
+   outros países) sobre tarifas/comércio, guerra, petróleo, Big Techs e
+   controle de exportação de semicondutores. Se algo relevante aparecer,
+   cite explicitamente no resumo do(s) ativo(s)/setor(es) afetado(s) nas
+   fases seguintes — não é só contexto genérico, é catalisador real.
+4. Chame get_sector_performance para verificar se os setores da cesta estão em movimento
    antes de analisar ativos individuais (semis: SMH/SOXX; saúde: XLV/IBB; amplo: SPY/QQQ).
-4. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
-5. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
+5. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
+6. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
 {_sector_groups_text()}
    Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
    Para captura intradiária: period='1d', interval='5m'.
-6. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
+7. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
    overlap e futuros de índice. É só contexto informativo — não é um sinal de
    compra/venda; não ajuste thresholds com base nele sem validação histórica prévia.
-7. Chame get_europe_regime_signal — sinal de regime validado por backtest real
-   (não é contexto genérico como o passo 6: só existe recomendação quando a
+8. Chame get_europe_regime_signal — sinal de regime validado por backtest real
+   (não é contexto genérico como o passo 7: só existe recomendação quando a
    Nasdaq está fora de tendência de alta, e mesmo assim é um sinal SOMENTE
    sobre o índice ^IXIC, nunca aplique como sinal de entrada/saída de um
    ativo individual da cesta sem dizer explicitamente essa limitação no relatório.
@@ -93,7 +98,7 @@ Seu fluxo completo:
 **FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
 
 *Grupo A — análise COMPLETA*:
-  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
+  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 6)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
 
 **Regra de economia (dias calmos):** se detect_sector_contagion NÃO apontar
@@ -230,7 +235,8 @@ Ativos monitorados: {", ".join(config.TICKERS)}.
 
 Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
 detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
-get_analyst_ratings, get_options_data.
+get_analyst_ratings, get_options_data, get_geopolitical_news (falas/decisões de
+chefes de estado, guerra, petróleo, Big Techs, semicondutores).
 
 Regras:
 - Responda à pergunta do usuário de forma direta e concisa.
@@ -280,6 +286,7 @@ _CHAT_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
     "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
+    "get_geopolitical_news",
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 
@@ -297,7 +304,7 @@ PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_N
 _PORTFOLIO_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
     "detect_candle_patterns", "get_short_interest", "get_analyst_ratings",
-    "save_observation", "get_fear_greed_index",
+    "save_observation", "get_fear_greed_index", "get_geopolitical_news",
 }
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
 
@@ -308,20 +315,23 @@ Ativos da carteira: {", ".join(tickers)}.
 
 **Fluxo obrigatório — siga EXATAMENTE esta sequência sem pular etapas:**
 1. get_fear_greed_index — sentimento macro
-2. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
-3. get_news — UMA chamada só, passando tickers=[{", ".join(tickers)}] (todos juntos, não um por vez)
-4. get_technical_indicators — indicadores de TODOS os ativos juntos
-5. detect_candle_patterns — padrões de vela de TODOS os ativos juntos. Se um
+2. get_geopolitical_news — falas/decisões de chefes de estado (tarifas, comércio),
+   guerra, petróleo, Big Techs e controle de exportação de semicondutores. Se algo
+   relevante aparecer, cite no resumo do(s) ativo(s) afetado(s).
+3. get_stock_data — cotação de TODOS os ativos juntos (N chamadas paralelas)
+4. get_news — UMA chamada só, passando tickers=[{", ".join(tickers)}] (todos juntos, não um por vez)
+5. get_technical_indicators — indicadores de TODOS os ativos juntos
+6. detect_candle_patterns — padrões de vela de TODOS os ativos juntos. Se um
    padrão de reversão coincidir (mesma data ou ±1 dia) com uma manchete do
    get_news, destaque isso no resumo — é sinal mais forte que qualquer um isolado.
-6. get_short_interest — short interest de TODOS os ativos juntos
-7. get_analyst_ratings — consenso de TODOS os ativos juntos
-8. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
+7. get_short_interest — short interest de TODOS os ativos juntos
+8. get_analyst_ratings — consenso de TODOS os ativos juntos
+9. **OBRIGATÓRIO — NÃO PULE:** save_observation para CADA ativo individualmente.
    Você DEVE chamar save_observation {len(tickers)} vezes (uma por ativo: {", ".join(tickers)}).
    Somente após salvar TODAS as observações escreva o relatório final.
 
-**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 8 (save_observation).
-Se você pular o passo 8, a análise é considerada incompleta e inválida.
+**ATENÇÃO:** Não escreva o relatório final antes de completar o passo 9 (save_observation).
+Se você pular o passo 9, a análise é considerada incompleta e inválida.
 
 **Regras:**
 - Agrupe por categoria, nunca por ativo.

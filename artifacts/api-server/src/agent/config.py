@@ -9,9 +9,14 @@ _DEFAULT_TICKERS = [
 _env_tickers = os.environ.get("AGENT_TICKERS", "")
 TICKERS = [t.strip().upper() for t in _env_tickers.split(",") if t.strip()] or _DEFAULT_TICKERS
 _env_portfolio = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
+# Carteira real (Nomad), conferida posição a posição contra o extrato em
+# 17/07 -- MU e INTC foram vendidos (ver "Ações Vendidas" na Carteira do
+# app) e saíram; AVGO, MRVL e SKHY são posições novas. SGOV fica de fora:
+# é um ETF de caixa (T-bill), sem notícia/sentimento pra analisar como as
+# demais (já está em config.NO_EARNINGS_TICKERS por não ter fundamentos).
 PORTFOLIO_TICKERS = (
     [t.strip().upper() for t in _env_portfolio.split(",") if t.strip()]
-    or ["NVDA", "MU", "INTC", "ARM", "GOOGL", "TSLA", "SMCI"]
+    or ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"]
 )
 
 MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-5")
