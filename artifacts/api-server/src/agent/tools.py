@@ -88,6 +88,31 @@ def get_stock_data(ticker: str) -> dict:
 # ── Notícias ──────────────────────────────────────────────────────────────────
 
 
+def _parse_news_items(news: list, max_items: int) -> list[dict]:
+    """Normaliza a lista bruta de `Ticker.news` do yfinance pro formato
+    enxuto usado pelo agente (resumo truncado pra economizar tokens de
+    input). Compartilhado por _get_news_for_ticker e _get_news_for_macro_proxy."""
+    result = []
+    for item in news[:max_items]:
+        content = item.get("content", {})
+        summary = content.get("summary", item.get("summary", "")) or ""
+        result.append(
+            {
+                "title": sanitize_for_llm(content.get("title", item.get("title", ""))),
+                "published": content.get(
+                    "pubDate", item.get("providerPublishTime", "")
+                ),
+                # Truncado: o modelo precisa do gist, não do texto completo da notícia.
+                "summary": sanitize_for_llm(summary[:280] + ("..." if len(summary) > 280 else "")),
+                "source": content.get("provider", {}).get("displayName", "")
+                if isinstance(content.get("provider"), dict)
+                else "",
+                # url removida do payload — não é usada na análise e só consome tokens de input.
+            }
+        )
+    return result
+
+
 @cached("news:{0}:{1}", ttl=600)
 def _get_news_for_ticker(ticker: str, max_items: int = 6) -> list[dict]:
     """Manchetes recentes de UM ticker via yfinance (resumo truncado para economizar
@@ -99,26 +124,7 @@ def _get_news_for_ticker(ticker: str, max_items: int = 6) -> list[dict]:
         return [{"error": str(e)}]
     try:
         t = yf.Ticker(ticker)
-        news = t.news or []
-        result = []
-        for item in news[:max_items]:
-            content = item.get("content", {})
-            summary = content.get("summary", item.get("summary", "")) or ""
-            result.append(
-                {
-                    "title": sanitize_for_llm(content.get("title", item.get("title", ""))),
-                    "published": content.get(
-                        "pubDate", item.get("providerPublishTime", "")
-                    ),
-                    # Truncado: o modelo precisa do gist, não do texto completo da notícia.
-                    "summary": sanitize_for_llm(summary[:280] + ("..." if len(summary) > 280 else "")),
-                    "source": content.get("provider", {}).get("displayName", "")
-                    if isinstance(content.get("provider"), dict)
-                    else "",
-                    # url removida do payload — não é usada na análise e só consome tokens de input.
-                }
-            )
-        return result
+        return _parse_news_items(t.news or [], max_items)
     except Exception as e:
         return [{"error": str(e)}]
 
@@ -134,6 +140,48 @@ def get_news(tickers: list[str], max_items: int = 6) -> dict[str, list[dict]]:
     if isinstance(tickers, str):
         tickers = [tickers]  # tolerância a chamada acidental com string única
     return {ticker: _get_news_for_ticker(ticker, max_items) for ticker in tickers}
+
+
+# Proxies de mercado amplo cujas manchetes do yfinance naturalmente cobrem
+# falas/decisões de chefes de estado (tarifas, sanções, política econômica),
+# guerra, petróleo e controle de exportação de semicondutores -- sem precisar
+# de API paga de rede social (X/Twitter exige plano pago desde 2023 pra
+# busca; ver decisão do usuário em 18/07). Cada entrada usa o MESMO
+# mecanismo já validado em produção (Ticker.news) que get_news, só que
+# apontado pra um índice/futuro/ETF em vez de uma ação específica.
+_MACRO_NEWS_PROXIES = {
+    "^GSPC": "mercado_amplo_eua",  # S&P 500 -- tarifas, Fed, geopolítica geral
+    "^NDX": "big_techs",  # Nasdaq-100 -- antitrust/regulação de Big Techs, IA
+    "CL=F": "petroleo_wti",  # petróleo WTI -- guerra, OPEC, sanções
+    "SOXX": "semicondutores",  # ETF de semicondutores -- export controls China/Taiwan
+}
+
+
+@cached("macro_news:{0}:{1}", ttl=1800)
+def _get_news_for_macro_proxy(proxy_ticker: str, max_items: int = 6) -> list[dict]:
+    """Mesma lógica de _get_news_for_ticker, mas pra um índice/futuro/ETF
+    usado como proxy de tema macro (não uma ação da carteira). Cache mais
+    longo (30min) que notícia de ação (10min) — esse tipo de manchete muda
+    com menos frequência ao longo do dia."""
+    try:
+        t = yf.Ticker(proxy_ticker)
+        return _parse_news_items(t.news or [], max_items)
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def get_geopolitical_news(max_items: int = 6) -> dict[str, list[dict]]:
+    """Retorna manchetes recentes sobre temas macro/geopolíticos que
+    impactam a bolsa: falas e decisões de chefes de estado (EUA e outros
+    países) sobre tarifas/comércio, guerra, preço do petróleo, Big Techs
+    (antitrust/regulação/IA) e controle de exportação de semicondutores
+    (China/Taiwan). Não precisa de ticker — chame isso UMA vez por
+    execução, já cobre todos os temas de uma vez. Complementa get_news (que
+    é por ativo específico da carteira)."""
+    return {
+        label: _get_news_for_macro_proxy(proxy_ticker, max_items)
+        for proxy_ticker, label in _MACRO_NEWS_PROXIES.items()
+    }
 
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────
@@ -1625,6 +1673,27 @@ TOOLS = [
         },
     },
     {
+        "name": "get_geopolitical_news",
+        "description": (
+            "Retorna manchetes recentes sobre temas macro/geopolíticos que impactam a bolsa: "
+            "falas e decisões de chefes de estado (EUA e outros países) sobre tarifas/comércio, "
+            "guerra, preço do petróleo, Big Techs (antitrust/regulação/IA) e controle de "
+            "exportação de semicondutores (China/Taiwan). Não precisa de ticker — chame UMA vez "
+            "por execução, já cobre todos os temas de uma vez. Complementa get_news (que é por "
+            "ativo específico da carteira), não substitui."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "max_items": {
+                    "type": "integer",
+                    "description": "Máximo de manchetes por tema. Default: 6.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "get_analyst_ratings",
         "description": (
             "Retorna o consenso de analistas (compra forte / compra / manter / venda), "
@@ -1831,6 +1900,7 @@ DISPATCH = {
     "get_short_interest": get_short_interest,
     "get_earnings_calendar": get_earnings_calendar,
     "get_fear_greed_index": get_fear_greed_index,
+    "get_geopolitical_news": get_geopolitical_news,
     "get_analyst_ratings": get_analyst_ratings,
     "detect_sector_contagion": detect_sector_contagion,
     "get_global_market_snapshot": get_global_market_snapshot,
