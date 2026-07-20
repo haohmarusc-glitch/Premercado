@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -270,6 +270,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/analistas", <Users className="h-4 w-4" />, "Analistas")}
             {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
             {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
+            {navLink("/cripto", <Bitcoin className="h-4 w-4" />, "Cripto")}
 
             {navSection("Sistema")}
             {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}

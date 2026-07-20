@@ -33,6 +33,7 @@ import AnalystsPage from "@/pages/analysts";
 import OptionsPage from "@/pages/options";
 import NewsPage from "@/pages/news";
 import MacroPage from "@/pages/macro";
+import CryptoPage from "@/pages/cripto";
 import { Layout } from "@/components/layout";
 import { ViewModeProvider } from "@/lib/view-mode";
 
@@ -76,6 +77,7 @@ function Router() {
         <Route path="/opcoes" component={OptionsPage} />
         <Route path="/noticias" component={NewsPage} />
         <Route path="/macro" component={MacroPage} />
+        <Route path="/cripto" component={CryptoPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
