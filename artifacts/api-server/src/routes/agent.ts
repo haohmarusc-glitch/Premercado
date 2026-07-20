@@ -10,7 +10,13 @@ router.post("/agent/run", async (req, res): Promise<void> => {
     return;
   }
   const rawMode = req.body?.mode;
-  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : "manual";
+  // "scheduled" é usado pelo Replit Scheduled Deployment externo (ver
+  // scripts/trigger-scheduled-run.sh) -- acorda o deploy Autoscale via HTTP
+  // e dispara a mesma análise diária completa que o node-cron interno
+  // (scheduler.ts) chamaria, só que sem depender do processo já estar
+  // acordado no horário exato. Mantém o rótulo correto no histórico de runs
+  // em vez de aparecer como "manual".
+  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "scheduled" ? "scheduled" : "manual";
   const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
   runAgent(mode, maxTurns);
   const message =
