@@ -91,7 +91,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isRunning = status?.running;
   const { toast } = useToast();
   const runAgent = useRunAgent();
-  const runFastMode = (mode: "portfolio" | "premarket" | "manual" | "coal" | "ai", maxTurns?: number) =>
+  const runFastMode = (mode: "portfolio" | "premarket" | "manual" | "coal" | "ai" | "news", maxTurns?: number) =>
     fetch("/api/agent/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -121,6 +121,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const runPremarket = useMutation({
     mutationFn: () => { navigate("/"); return runFastMode("premarket"); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
+    },
+  });
+
+  const runNews = useMutation({
+    mutationFn: () => { navigate("/"); return runFastMode("news"); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() });
     },
@@ -340,6 +347,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   variant: "outline" as const,
                 },
                 {
+                  icon: <Newspaper className="h-4 w-4 shrink-0" />,
+                  label: "NOTÍCIAS",
+                  desc: "Só notícias · por ativo + macro/geopolítica · sem técnicos",
+                  onClick: () => runNews.mutate(),
+                  variant: "outline" as const,
+                },
+                {
                   icon: <Zap className="h-4 w-4 shrink-0" />,
                   label: "CARVÃO",
                   desc: "HCC · AMR · ARCH · CEIX · BTU — análise completa do setor",
@@ -357,7 +371,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <button
                   key={label}
                   onClick={onClick}
-                  disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runCoal.isPending || runAI.isPending}
+                  disabled={isRunning || runAgent.isPending || runPortfolio.isPending || runPremarket.isPending || runNews.isPending || runCoal.isPending || runAI.isPending}
                   className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
                     ${variant === "default"
                       ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
