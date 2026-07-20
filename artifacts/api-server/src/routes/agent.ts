@@ -16,7 +16,7 @@ router.post("/agent/run", async (req, res): Promise<void> => {
   // (scheduler.ts) chamaria, só que sem depender do processo já estar
   // acordado no horário exato. Mantém o rótulo correto no histórico de runs
   // em vez de aparecer como "manual".
-  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "scheduled" ? "scheduled" : "manual";
+  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "news" ? "news" : rawMode === "scheduled" ? "scheduled" : "manual";
   const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
   runAgent(mode, maxTurns);
   const message =
@@ -24,6 +24,7 @@ router.post("/agent/run", async (req, res): Promise<void> => {
     mode === "premarket" ? "Varredura pré-mercado iniciada. Aguarde a conclusão." :
     mode === "coal" ? "Análise do setor de carvão iniciada. Aguarde a conclusão." :
     mode === "ai" ? "Análise do setor de IA iniciada. Aguarde a conclusão." :
+    mode === "news" ? "Varredura de notícias iniciada. Aguarde a conclusão." :
     "Agente iniciado. Aguarde a conclusão.";
   res.json(RunAgentResponse.parse({ reportId: 0, message }));
 });
