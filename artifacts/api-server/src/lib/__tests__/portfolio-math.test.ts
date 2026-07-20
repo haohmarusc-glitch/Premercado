@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeOpenLotTotals } from "../portfolio-math";
+import { computeOpenLotTotals, isActivePosition } from "../portfolio-math";
 
 describe("computeOpenLotTotals", () => {
   it("returns zeroed totals for no open lots", () => {
@@ -48,5 +48,26 @@ describe("computeOpenLotTotals", () => {
     expect(totals.quantity).toBe(0);
     expect(totals.avgCost).toBe(0);
     expect(totals.investedAmount).toBeCloseTo(500, 6);
+  });
+});
+
+describe("isActivePosition", () => {
+  it("treats zero quantity as not active (fully sold)", () => {
+    expect(isActivePosition(0)).toBe(false);
+  });
+
+  it("treats a real held quantity as active", () => {
+    expect(isActivePosition(1.5)).toBe(true);
+  });
+
+  it("treats a tiny floating-point residual near zero as not active", () => {
+    // O driver pg devolve `numeric` como string -- e recomputePosition pode
+    // deixar um resíduo de ponto flutuante em vez de exatamente 0 quando
+    // todos os lotes são vendidos (ver comentário da função).
+    expect(isActivePosition("0.0000001")).toBe(false);
+  });
+
+  it("accepts string quantities from the pg numeric column", () => {
+    expect(isActivePosition("2.5")).toBe(true);
   });
 });

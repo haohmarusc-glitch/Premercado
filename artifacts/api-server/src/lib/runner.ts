@@ -10,6 +10,7 @@ import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTabl
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
+import { isActivePosition } from "./portfolio-math";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -66,14 +67,17 @@ async function getEffectiveAgentProvider(): Promise<string | undefined> {
 async function getPortfolioTickers(): Promise<string[]> {
   try {
     const rows = await db
-      .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf })
+      .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
       .from(portfolioPositionsTable)
       .orderBy(asc(portfolioPositionsTable.createdAt));
     // ETFs (ex.: SGOV) ficam de fora da análise de carteira -- são
     // instrumentos de caixa, sem notícia/sentimento pra analisar como uma
     // ação real, e o fluxo (news, technicals, candle patterns, etc.) não faz
-    // sentido pra eles.
-    const stocks = rows.filter((r) => !r.isEtf);
+    // sentido pra eles. Posições totalmente vendidas (quantity = 0 -- ver
+    // recomputePosition em routes/portfolio.ts) também ficam de fora: a
+    // linha continua no banco só pra preservar o histórico de compra/venda
+    // exibido na Carteira, não representa mais um ativo realmente possuído.
+    const stocks = rows.filter((r) => !r.isEtf && isActivePosition(r.quantity));
     if (stocks.length > 0) return stocks.map((r) => r.ticker);
   } catch (err) {
     logger.error({ err }, "Failed to read portfolio tickers; using defaults");

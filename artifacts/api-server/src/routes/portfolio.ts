@@ -122,11 +122,15 @@ router.get("/portfolio", async (req, res): Promise<void> => {
     .from(portfolioPositionsTable)
     .where(eq(portfolioPositionsTable.userId, req.userId!))
     .orderBy(asc(portfolioPositionsTable.createdAt));
-  // Posicoes totalmente vendidas ficam com quantity = 0 (ver recomputePosition)
-  // e nao devem aparecer como holding ativo -- mas a linha continua no banco
-  // preservando o historico de compras/vendas.
-  const active = rows.filter((r) => Number(r.quantity) > 0.00001);
-  res.json(ListPortfolioPositionsResponse.parse(active.map(serPos)));
+  // Posicoes totalmente vendidas ficam com quantity = 0 (ver recomputePosition),
+  // mas a linha continua no banco preservando o historico de compras/vendas --
+  // e o frontend PRECISA dela aqui pra montar a seção "Ações Vendidas" (ele
+  // busca os lotes de compra de cada posição desta lista; uma posição vendida
+  // que sumisse daqui nunca apareceria como vendida, só desapareceria da
+  // Carteira sem deixar rastro). O próprio frontend já separa ativas de
+  // vendidas com sua própria lógica (baseada em saleDate/salePrice dos
+  // lotes, não em quantity) -- não precisamos filtrar aqui.
+  res.json(ListPortfolioPositionsResponse.parse(rows.map(serPos)));
 });
 
 // GET /portfolio/cash — caixa disponível (por modo) do usuário logado.

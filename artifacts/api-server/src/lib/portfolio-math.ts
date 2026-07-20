@@ -31,3 +31,16 @@ export function computeOpenLotTotals(open: OpenLot[]): PositionTotals {
   const avgCost = totalShares > 0 ? pricedInvested / totalShares : 0;
   return { quantity: totalShares, avgCost, investedAmount: totalInvested };
 }
+
+// Piso pra considerar uma posição "ativa" (ainda possuída de fato) --
+// abaixo disso é resíduo de ponto flutuante de uma posição totalmente
+// vendida (todos os lotes com saleDate, ver recomputePosition em
+// routes/portfolio.ts, que zera quantity/avgCost/investedAmount nesse
+// caso). Usado só por quem precisa saber "o usuário ainda possui isso pra
+// valer" (ex.: getPortfolioTickers() em runner.ts, pra não incluir um
+// ticker já vendido na análise de carteira do agente) -- GET /portfolio
+// (routes/portfolio.ts) NÃO filtra por isso: a Carteira do app precisa da
+// posição zerada de volta pra montar a seção "Ações Vendidas".
+export function isActivePosition(quantity: number | string): boolean {
+  return Number(quantity) > 0.00001;
+}
