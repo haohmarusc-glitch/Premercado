@@ -5,6 +5,7 @@ Writes STEP: lines to stdout for progress tracking, and REPORT: <content> at the
 AGENT_MODE env var controls the run type:
   daily     (default) — full pre-market analysis
   premarket           — fast intraday flash scan
+  news                — fast news-only scan (get_news + get_geopolitical_news)
 """
 
 import json
@@ -66,6 +67,8 @@ if __name__ == "__main__":
     try:
         if mode == "premarket":
             report = a.run_premarket(progress_callback=progress)
+        elif mode == "news":
+            report = a.run_news(progress_callback=progress)
         elif mode in ("portfolio", "coal", "ai"):
             # Garante os tickers corretos mesmo que o Node.js não os passe via env var
             if mode == "coal" and not os.environ.get("AGENT_PORTFOLIO_TICKERS"):

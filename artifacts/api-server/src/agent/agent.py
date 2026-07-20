@@ -227,6 +227,33 @@ list_alerts, create_alert, delete_alert.
 Limite: no máximo 350 palavras. Seja direto e factual."""
 
 
+def build_news_prompt() -> str:
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    now = datetime.datetime.now().strftime("%H:%M")
+    return f"""Você é um analista de ações fazendo uma VARREDURA RÁPIDA SÓ DE NOTÍCIAS às {now} de {today}.
+Ativos sob cobertura: {", ".join(config.TICKERS)}.
+
+Esta é uma varredura só de notícias — NÃO é o relatório diário completo, não
+tem técnicos, opções, candles ou EDGAR. Seja conciso.
+
+**Fluxo obrigatório (execute na ordem):**
+1. get_geopolitical_news — falas/decisões de chefes de estado (tarifas, comércio),
+   guerra, petróleo, Big Techs, controle de exportação de semicondutores
+2. get_news — UMA chamada só, passando TODOS os tickers sob cobertura juntos
+   (nunca um por vez em turnos separados)
+
+**NÃO USE:** nenhuma outra ferramenta (sem técnicos, opções, candles, EDGAR,
+short interest, analistas, alertas, save_observation).
+
+**Formato da saída — "## 📰 Notícias {now}":**
+- Seção de contexto macro/geopolítico (2-4 linhas, só se algo relevante apareceu)
+- Por ativo: só os que tiveram manchete relevante nas últimas ~24h — 1-2 linhas
+  cada, citando a manchete e por que importa
+- Ativos sem notícia relevante: omitir da lista (não escreva "sem notícias" pra cada um)
+
+Limite: no máximo 400 palavras. Seja direto e factual."""
+
+
 def build_chat_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     now = datetime.datetime.now().strftime("%H:%M")
@@ -307,6 +334,11 @@ _PORTFOLIO_TOOL_NAMES = {
     "save_observation", "get_fear_greed_index", "get_geopolitical_news",
 }
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
+
+# Subconjunto para a varredura rápida SÓ de notícias -- sem técnicos, opções,
+# candles, EDGAR etc., só get_news (por ativo) + get_geopolitical_news (macro).
+_NEWS_TOOL_NAMES = {"get_news", "get_geopolitical_news"}
+NEWS_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _NEWS_TOOL_NAMES]
 
 
 def _system_stable_portfolio(tickers: list[str]) -> str:
@@ -643,6 +675,21 @@ def run_premarket(progress_callback=None) -> str:
         max_tokens=config.MAX_TOKENS_PREMARKET,
         progress_callback=progress_callback,
         step_prefix="[Flash] ",
+    )
+
+
+def run_news(progress_callback=None) -> str:
+    client = _get_client()
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=build_news_prompt(),
+        tools=NEWS_TOOLS,
+        messages=[{"role": "user", "content": "Faça a varredura rápida de notícias agora."}],
+        max_turns=min(config.MAX_AGENT_TURNS, 6),
+        max_tokens=config.MAX_TOKENS_PREMARKET,
+        progress_callback=progress_callback,
+        step_prefix="[Notícias] ",
     )
 
 
