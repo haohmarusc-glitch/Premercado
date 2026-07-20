@@ -263,7 +263,8 @@ Ativos monitorados: {", ".join(config.TICKERS)}.
 Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
 detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
 get_analyst_ratings, get_options_data, get_geopolitical_news (falas/decisões de
-chefes de estado, guerra, petróleo, Big Techs, semicondutores).
+chefes de estado, guerra, petróleo, Big Techs, semicondutores), check_squeeze_setup
+(risco de short squeeze + confirmação técnica de reversão pra um ticker).
 
 Regras:
 - Responda à pergunta do usuário de forma direta e concisa.
@@ -313,7 +314,7 @@ _CHAT_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
     "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
-    "get_geopolitical_news",
+    "get_geopolitical_news", "check_squeeze_setup",
 }
 CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 
