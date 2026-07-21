@@ -3,13 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { MarkdownContent } from "@/components/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { useViewMode } from "@/lib/view-mode";
+import { cn } from "@/lib/utils";
 import {
   useListChatSessions,
   getListChatSessionsQueryKey,
   useDeleteChatSession,
 } from "@workspace/api-client-react";
 import type { ChatSession } from "@workspace/api-client-react";
-import { Send, Trash2, MessageSquare, Plus, Clock } from "lucide-react";
+import { Send, Trash2, MessageSquare, Plus, Clock, X } from "lucide-react";
 
 interface LocalMsg {
   localId: number;
@@ -38,6 +40,9 @@ function fmtDate(iso: string) {
 
 export default function Chat() {
   const queryClient = useQueryClient();
+  const { viewMode } = useViewMode();
+  const isMobile = viewMode === "mobile";
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<LocalMsg[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const sessionIdRef = useRef<number | null>(null);
@@ -66,6 +71,7 @@ export default function Chat() {
     sessionIdRef.current = id;
     setStep(null);
     setLoading(false);
+    setSidebarOpen(false);
   }
 
   function newConversation() {
@@ -74,6 +80,7 @@ export default function Chat() {
     sessionIdRef.current = null;
     setStep(null);
     setLoading(false);
+    setSidebarOpen(false);
     textareaRef.current?.focus();
   }
 
@@ -204,20 +211,46 @@ export default function Chat() {
         </p>
       </div>
 
-      {/* 2-column layout */}
-      <div className="flex gap-0 border border-border rounded-lg overflow-hidden" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+      {/* 2-column layout (a barra de sessões vira gaveta sobreposta no
+          celular -- em largura fixa ela espremia a caixa de digitação até
+          sobrar só ~1 caractere de largura, ver bug reportado 20/07) */}
+      <div className="relative flex gap-0 border border-border rounded-lg overflow-hidden" style={{ height: "calc(100vh - 220px)", minHeight: "500px" }}>
+
+        {isMobile && sidebarOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
 
         {/* ── Sessions sidebar ── */}
-        <div className="w-52 flex-shrink-0 border-r border-border bg-secondary/10 flex flex-col">
-          <div className="p-3 border-b border-border">
+        <div
+          className={cn(
+            "w-52 flex-shrink-0 border-r border-border bg-secondary/10 flex flex-col",
+            isMobile && "fixed inset-y-0 left-0 z-50 transition-transform duration-200",
+            isMobile && (sidebarOpen ? "translate-x-0" : "-translate-x-full"),
+          )}
+        >
+          <div className="p-3 border-b border-border flex items-center gap-2">
             <button
               type="button"
               onClick={newConversation}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/30 text-primary font-mono text-xs font-bold hover:bg-primary/20 transition-colors"
+              className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/30 text-primary font-mono text-xs font-bold hover:bg-primary/20 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" />
               Nova conversa
             </button>
+            {isMobile && (
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                aria-label="Fechar histórico"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -264,6 +297,18 @@ export default function Chat() {
 
         {/* ── Chat panel ── */}
         <div className="flex-1 flex flex-col min-w-0">
+          {isMobile && (
+            <div className="flex items-center border-b border-border px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="flex items-center gap-2 px-2 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors font-mono text-xs"
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Histórico
+              </button>
+            </div>
+          )}
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {empty && (
