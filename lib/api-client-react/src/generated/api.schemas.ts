@@ -625,6 +625,13 @@ export interface ExitPlanItemUpdate {
   soldAt?: string | null;
   /** @nullable */
   soldPrice?: number | null;
+  phase?: number;
+  phaseLabel?: string;
+  targetDate?: string;
+  action?: string;
+  rationale?: string;
+  /** @nullable */
+  eventDate?: string | null;
 }
 
 export type ListObservationsParams = {

@@ -424,6 +424,106 @@ def delete_alert(alert_id: int, reason: str) -> dict:
         return {"deleted": False, "error": str(e)}
 
 
+# ── Plano de Saída ─────────────────────────────────────────────────────────────
+
+
+def get_exit_plan_items() -> list[dict]:
+    """Lista os itens do Plano de Saída (metas/janelas de venda por posição,
+    cadastradas manualmente pelo usuário ou por uma reavaliação anterior do
+    agente). Use isso primeiro em toda reavaliação, antes de decidir o que
+    manter/ajustar por ticker."""
+    try:
+        r = requests.get(
+            f"{_api_url()}/api/exit-plan",
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def update_exit_plan_item(
+    item_id: int,
+    target_date: str | None = None,
+    action: str | None = None,
+    rationale: str | None = None,
+    phase: int | None = None,
+    phase_label: str | None = None,
+    event_date: str | None = None,
+) -> dict:
+    """Atualiza um item existente do Plano de Saída após reavaliar o ticker
+    com dados atuais (preço, técnicos, notícias). Só envie os campos que
+    de fato mudaram -- omita o resto. target_date: nova data-alvo (YYYY-MM-DD).
+    action: nova ação/instrução (texto curto, ex: "Vender 50% na abertura").
+    rationale: novo motivo/justificativa (cite o dado que mudou sua avaliação).
+    phase/phase_label: só se a fase do plano mudou. event_date: data de
+    evento associado (ex: earnings), ou null pra remover."""
+    payload = {
+        k: v
+        for k, v in {
+            "targetDate": target_date,
+            "action": action,
+            "rationale": rationale,
+            "phase": phase,
+            "phaseLabel": phase_label,
+            "eventDate": event_date,
+        }.items()
+        if v is not None
+    }
+    try:
+        r = requests.patch(
+            f"{_api_url()}/api/exit-plan/{item_id}",
+            json=payload,
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        return {"updated": True, "id": item_id, "item": r.json()}
+    except Exception as e:
+        return {"updated": False, "id": item_id, "error": str(e)}
+
+
+def create_exit_plan_item(
+    ticker: str,
+    phase: int,
+    phase_label: str,
+    target_date: str,
+    action: str,
+    rationale: str,
+    event_date: str | None = None,
+) -> dict:
+    """Cria um item novo no Plano de Saída -- use quando reavaliar encontrar
+    uma posição da carteira que ainda não tem plano de saída cadastrado.
+    phase: número da fase (agrupamento visual, ex: 1, 2, 3). phase_label:
+    rótulo curto da fase (ex: "Curto prazo", "Pós-earnings")."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"created": False, "error": str(e)}
+    payload = {
+        "ticker": ticker,
+        "phase": phase,
+        "phaseLabel": phase_label,
+        "targetDate": target_date,
+        "action": action,
+        "rationale": rationale,
+        "eventDate": event_date,
+    }
+    try:
+        r = requests.post(
+            f"{_api_url()}/api/exit-plan",
+            json=payload,
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        return {"created": True, "item": r.json()}
+    except Exception as e:
+        return {"created": False, "error": str(e)}
+
+
 # ── Opções ────────────────────────────────────────────────────────────────────
 
 
@@ -1878,6 +1978,54 @@ TOOLS = [
         },
     },
     {
+        "name": "get_exit_plan_items",
+        "description": (
+            "Lista os itens do Plano de Saída (metas/janelas de venda por posição). "
+            "Use isso primeiro numa reavaliação, antes de decidir o que manter/ajustar."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "update_exit_plan_item",
+        "description": (
+            "Atualiza um item existente do Plano de Saída após reavaliar o ticker com "
+            "dados atuais. Só envie os campos que mudaram."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "integer", "description": "ID do item (de get_exit_plan_items)."},
+                "target_date": {"type": "string", "description": "Nova data-alvo, formato YYYY-MM-DD."},
+                "action": {"type": "string", "description": "Nova ação/instrução, texto curto."},
+                "rationale": {"type": "string", "description": "Novo motivo -- cite o dado que mudou a avaliação."},
+                "phase": {"type": "integer", "description": "Nova fase (número), só se mudou."},
+                "phase_label": {"type": "string", "description": "Novo rótulo da fase, só se mudou."},
+                "event_date": {"type": "string", "description": "Data de evento associado (ex: earnings), YYYY-MM-DD."},
+            },
+            "required": ["item_id"],
+        },
+    },
+    {
+        "name": "create_exit_plan_item",
+        "description": (
+            "Cria um item novo no Plano de Saída -- use quando uma posição da carteira "
+            "ainda não tem plano de saída cadastrado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo."},
+                "phase": {"type": "integer", "description": "Número da fase (agrupamento visual)."},
+                "phase_label": {"type": "string", "description": "Rótulo curto da fase, ex: 'Curto prazo'."},
+                "target_date": {"type": "string", "description": "Data-alvo, formato YYYY-MM-DD."},
+                "action": {"type": "string", "description": "Ação/instrução, texto curto."},
+                "rationale": {"type": "string", "description": "Motivo/justificativa."},
+                "event_date": {"type": "string", "description": "Data de evento associado (ex: earnings), opcional."},
+            },
+            "required": ["ticker", "phase", "phase_label", "target_date", "action", "rationale"],
+        },
+    },
+    {
         "name": "get_options_data",
         "description": (
             "Retorna dados de opções do ticker: put/call ratio, IV ATM (%), "
@@ -2334,6 +2482,9 @@ DISPATCH = {
     "list_alerts": list_alerts,
     "create_alert": create_alert,
     "delete_alert": delete_alert,
+    "get_exit_plan_items": get_exit_plan_items,
+    "update_exit_plan_item": update_exit_plan_item,
+    "create_exit_plan_item": create_exit_plan_item,
     "check_market_alerts": check_market_alerts,
     "get_options_data": get_options_data,
     "get_technical_indicators": get_technical_indicators,

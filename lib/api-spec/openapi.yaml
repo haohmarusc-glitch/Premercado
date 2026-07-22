@@ -1831,3 +1831,9 @@ components:
         status: { type: string }
         soldAt: { type: ["string", "null"] }
         soldPrice: { type: ["number", "null"] }
+        phase: { type: integer }
+        phaseLabel: { type: string }
+        targetDate: { type: string }
+        action: { type: string }
+        rationale: { type: string }
+        eventDate: { type: ["string", "null"] }

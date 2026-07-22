@@ -950,7 +950,13 @@ export const UpdateExitPlanItemParams = zod.object({
 export const UpdateExitPlanItemBody = zod.object({
   "status": zod.string().optional(),
   "soldAt": zod.string().nullish(),
-  "soldPrice": zod.number().nullish()
+  "soldPrice": zod.number().nullish(),
+  "phase": zod.number().optional(),
+  "phaseLabel": zod.string().optional(),
+  "targetDate": zod.string().optional(),
+  "action": zod.string().optional(),
+  "rationale": zod.string().optional(),
+  "eventDate": zod.string().nullish()
 })
 
 export const UpdateExitPlanItemResponse = zod.object({

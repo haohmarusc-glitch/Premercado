@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   useListExitPlan,
   useCreateExitPlanItem,
@@ -9,6 +9,8 @@ import {
   useListAlerts,
   useCreateAlert,
   getListAlertsQueryKey,
+  useGetAgentStatus,
+  getGetAgentStatusQueryKey,
 } from "@workspace/api-client-react";
 import type { ExitPlanItem, PriceAlert } from "@workspace/api-client-react";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { Flag, Plus, Trash2, CheckCircle2, SkipForward, RotateCcw, Newspaper, BellPlus, ChevronDown, ChevronUp } from "lucide-react";
+import { Flag, Plus, Trash2, CheckCircle2, SkipForward, RotateCcw, Newspaper, BellPlus, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { useTacticalContext, tacticalSignal, type TacticalContext, type Tone } from "@/hooks/use-tactical-context";
 
 // ─── Plano de saída — 16/jul/2026 ────────────────────────────────────────────
@@ -346,6 +348,32 @@ export default function ExitPlanPage() {
     }
   }
 
+  // ── Reavaliar plano (agente) ────────────────────────────────────────────────
+  // Mesmo padrão do runFastMode em components/layout.tsx: POST direto em
+  // /api/agent/run (o hook gerado useRunAgent não é usado ali por esse motivo).
+  const { data: status } = useGetAgentStatus({
+    query: { queryKey: getGetAgentStatusQueryKey(), refetchInterval: 5_000 },
+  });
+  const isAgentRunning = status?.running ?? false;
+  const reevaluate = useMutation({
+    mutationFn: () =>
+      fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "exit_plan" }),
+      }).then((r) => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: getGetAgentStatusQueryKey() }),
+  });
+  // Quando o run em andamento termina (running: true -> false), busca os itens
+  // de novo -- é assim que as mudanças feitas pelo agente aparecem na tela.
+  const wasRunningRef = useRef(isAgentRunning);
+  useEffect(() => {
+    if (wasRunningRef.current && !isAgentRunning) {
+      qc.invalidateQueries({ queryKey: getListExitPlanQueryKey() });
+    }
+    wasRunningRef.current = isAgentRunning;
+  }, [isAgentRunning, qc]);
+
   const items = data ?? [];
   const pendingCount = items.filter((i) => i.status === "pending").length;
   const overdueCount = items.filter((i) => i.status === "pending" && daysUntil(i.targetDate) < 0).length;
@@ -383,9 +411,21 @@ export default function ExitPlanPage() {
             {dueSoonCount > 0 && <span className="text-amber-400"> · {dueSoonCount} no prazo curto</span>}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setShowForm((s) => !s)}>
-          <Plus className="h-4 w-4 mr-1" /> Novo item
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => reevaluate.mutate()}
+            disabled={isAgentRunning || reevaluate.isPending}
+            title="Reavalia cada item pendente com preço/técnicos/notícias atuais e ajusta data-alvo, ação ou motivo quando fizer sentido"
+          >
+            <RefreshCw className={cn("h-4 w-4 mr-1", isAgentRunning && "animate-spin")} />
+            {isAgentRunning ? (status?.currentStep ?? "Reavaliando...") : "Reavaliar plano"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowForm((s) => !s)}>
+            <Plus className="h-4 w-4 mr-1" /> Novo item
+          </Button>
+        </div>
       </div>
 
       {showForm && (

@@ -254,6 +254,38 @@ short interest, analistas, alertas, save_observation).
 Limite: no máximo 400 palavras. Seja direto e factual."""
 
 
+def build_exit_plan_prompt() -> str:
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    return f"""Você é um analista de ações reavaliando o PLANO DE SAÍDA da carteira em {today}.
+
+O Plano de Saída é uma lista de metas/janelas de venda por posição (data-alvo, ação,
+motivo), cadastrada manualmente pelo usuário ou por uma reavaliação sua anterior.
+Preços mudam bastante -- saltos de +15-25% num único pregão não são raros --
+então um plano de dias atrás pode já estar desatualizado.
+
+**Fluxo obrigatório (execute na ordem):**
+1. get_exit_plan_items -- traz todos os itens atuais (ticker, fase, data-alvo,
+   ação, motivo, status).
+2. Para cada item com status "pending" (ignore "sold"/"skipped"/"vendido"):
+   busque dado atual do ticker (get_stock_data sempre; get_technical_indicators,
+   get_news, get_analyst_ratings, check_squeeze_setup, get_earnings_calendar
+   conforme a situação pedir) e decida:
+   - MANTER como está, se o plano ainda faz sentido -- não chame
+     update_exit_plan_item em item que não precisa mudar.
+   - ATUALIZAR (update_exit_plan_item) se o preço/contexto mudou o bastante
+     pra alterar a data-alvo, a ação ou o motivo -- sempre cite o dado real
+     que mudou sua avaliação no rationale, nunca invente número.
+3. Se um ticker relevante da carteira aparecer sem item no plano (ex.: posição
+   nova, ou visto em outra ferramenta), considere criar um item
+   (create_exit_plan_item) -- só se fizer sentido, não force um plano pra
+   tudo.
+
+**NÃO USE:** save_observation, alertas, EDGAR, opções.
+
+Ao final, responda com um resumo curto (até 300 palavras): o que mudou e por
+quê. Não repita o que já estava certo -- foque nas mudanças de fato feitas."""
+
+
 def build_chat_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     now = datetime.datetime.now().strftime("%H:%M")
@@ -354,6 +386,16 @@ PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_N
 # candles, EDGAR etc., só get_news (por ativo) + get_geopolitical_news (macro).
 _NEWS_TOOL_NAMES = {"get_news", "get_geopolitical_news"}
 NEWS_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _NEWS_TOOL_NAMES]
+
+# Subconjunto pra reavaliação do Plano de Saída -- leitura/escrita do plano
+# em si (get/update/create_exit_plan_item) + dado atual por ticker pra
+# justificar qualquer mudança de data-alvo/ação/motivo.
+_EXIT_PLAN_TOOL_NAMES = {
+    "get_exit_plan_items", "update_exit_plan_item", "create_exit_plan_item",
+    "get_stock_data", "get_technical_indicators", "get_news",
+    "check_squeeze_setup", "get_analyst_ratings", "get_earnings_calendar",
+}
+EXIT_PLAN_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _EXIT_PLAN_TOOL_NAMES]
 
 
 def _system_stable_portfolio(tickers: list[str]) -> str:
@@ -705,6 +747,22 @@ def run_news(progress_callback=None) -> str:
         max_tokens=config.MAX_TOKENS_PREMARKET,
         progress_callback=progress_callback,
         step_prefix="[Notícias] ",
+    )
+
+
+def run_exit_plan_review(progress_callback=None) -> str:
+    client = _get_client()
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=build_exit_plan_prompt(),
+        tools=EXIT_PLAN_TOOLS,
+        messages=[{"role": "user", "content": "Reavalie o plano de saída agora com dados atuais."}],
+        max_turns=max(config.MAX_AGENT_TURNS, 24),
+        max_tokens=config.MAX_TOKENS,
+        progress_callback=progress_callback,
+        step_prefix="[Plano de Saída] ",
+        deadline_ts=config.SOFT_DEADLINE_TS,
     )
 
 
