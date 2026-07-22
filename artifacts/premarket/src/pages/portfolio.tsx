@@ -63,6 +63,24 @@ function getMaxUpAlert(pnlPct: number, thresholds: number[]): number | null {
   return crossed.length ? Math.max(...crossed) : null;
 }
 
+type ExtendedQuoteFields = {
+  marketState?: string | null;
+  preMarketPrice?: number | null;
+  postMarketPrice?: number | null;
+};
+
+// Prioriza o preço de pré/pós-mercado quando existir -- o pregão regular só
+// reabre no dia seguinte, então usar só `price` esconde movimentos grandes
+// fora do horário (ex.: pop de after-hours após guidance/resultado).
+function pickExtendedPrice(q: ExtendedQuoteFields): { price: number; label: "Pré" | "Pós" } | null {
+  const st = q.marketState ?? "";
+  if (st.startsWith("PRE") && q.preMarketPrice != null) return { price: q.preMarketPrice, label: "Pré" };
+  if (st.startsWith("POST") && q.postMarketPrice != null) return { price: q.postMarketPrice, label: "Pós" };
+  if (q.postMarketPrice != null) return { price: q.postMarketPrice, label: "Pós" };
+  if (q.preMarketPrice != null) return { price: q.preMarketPrice, label: "Pré" };
+  return null;
+}
+
 // ── Position form ─────────────────────────────────────────────────────────────
 
 interface PosForm {
@@ -1500,32 +1518,44 @@ export default function PortfolioPage() {
     }
   };
 
+  // Preço atual da posição: usa pré/pós-mercado quando existir (ver
+  // pickExtendedPrice), senão cai pro último preço do pregão regular.
   const priceMap = useMemo(() => {
     const m = new Map<string, number>();
-    for (const q of quotes as Array<{ symbol: string; price?: number | null }>) {
-      m.set(q.symbol, q.price ?? 0);
+    for (const q of quotes as Array<{ symbol: string; price?: number | null } & ExtendedQuoteFields>) {
+      const ext = pickExtendedPrice(q);
+      m.set(q.symbol, ext?.price ?? q.price ?? 0);
     }
     return m;
   }, [quotes]);
+  // Var. $/% acompanham o mesmo preço de priceMap -- quando há preço
+  // estendido, recalcula a variação contra o fechamento anterior (em vez do
+  // "change" do pregão regular vindo do servidor) pra não misturar preço
+  // pós-mercado com % do pregão regular.
   const changeMap = useMemo(() => {
     const m = new Map<string, { change: number | null; changePct: number | null }>();
-    for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null }>) {
-      m.set(q.symbol, { change: q.change ?? null, changePct: q.changePct ?? null });
+    for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null; previousClose?: number | null } & ExtendedQuoteFields>) {
+      const ext = pickExtendedPrice(q);
+      if (ext && q.previousClose != null && q.previousClose !== 0) {
+        m.set(q.symbol, {
+          change: ext.price - q.previousClose,
+          changePct: ((ext.price - q.previousClose) / q.previousClose) * 100,
+        });
+      } else {
+        m.set(q.symbol, { change: q.change ?? null, changePct: q.changePct ?? null });
+      }
     }
     return m;
   }, [quotes]);
-  // Pré-mercado / after-hours por ticker (movimento fora do pregão)
+  // Badge informativo: só a variação dentro da própria sessão estendida
+  // (pré ou pós), separado da variação total (já embutida em changeMap)
   const extMap = useMemo(() => {
     const m = new Map<string, { label: string; pct: number }>();
-    for (const q of quotes as Array<{ symbol: string; marketState?: string | null; preMarketPrice?: number | null; preMarketChangePct?: number | null; postMarketPrice?: number | null; postMarketChangePct?: number | null }>) {
-      const st = q.marketState ?? "";
-      let label: string | null = null;
-      let pct: number | null = null;
-      if (st.startsWith("PRE") && q.preMarketPrice != null) { label = "Pré"; pct = q.preMarketChangePct ?? null; }
-      else if (st.startsWith("POST") && q.postMarketPrice != null) { label = "Pós"; pct = q.postMarketChangePct ?? null; }
-      else if (q.postMarketPrice != null) { label = "Pós"; pct = q.postMarketChangePct ?? null; }
-      else if (q.preMarketPrice != null) { label = "Pré"; pct = q.preMarketChangePct ?? null; }
-      if (label != null && pct != null) m.set(q.symbol, { label, pct });
+    for (const q of quotes as Array<{ symbol: string; preMarketChangePct?: number | null; postMarketChangePct?: number | null } & ExtendedQuoteFields>) {
+      const ext = pickExtendedPrice(q);
+      if (!ext) continue;
+      const pct = ext.label === "Pré" ? q.preMarketChangePct : q.postMarketChangePct;
+      if (pct != null) m.set(q.symbol, { label: ext.label, pct });
     }
     return m;
   }, [quotes]);
@@ -1994,7 +2024,12 @@ export default function PortfolioPage() {
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-2 text-xs font-mono ml-5">
                         <div>
                           <div className="text-muted-foreground text-[10px] uppercase">Preço atual</div>
-                          <div className="font-semibold text-blue-400 tabular-nums">{hasPrice ? fmtMoney(price, isBrl) : "—"}</div>
+                          <div className="font-semibold text-blue-400 tabular-nums">
+                            {hasPrice ? fmtMoney(price, isBrl) : "—"}
+                            {extMap.has(pos.ticker) && (
+                              <span className="ml-1 text-[9px] text-muted-foreground font-normal lowercase">{extMap.get(pos.ticker)!.label}</span>
+                            )}
+                          </div>
                         </div>
                         <div>
                           <div className="text-muted-foreground text-[10px] uppercase">Qtde</div>
@@ -2129,7 +2164,7 @@ export default function PortfolioPage() {
                             <Badge
                               className={cn("h-4 px-1 text-[9px] font-mono border",
                                 up ? "bg-green-500/15 text-green-400 border-green-500/30" : "bg-red-500/15 text-red-400 border-red-500/30")}
-                              title={`Movimento de ${ext.label === "Pré" ? "pré-mercado" : "after-hours"} vs. fechamento`}
+                              title={`Preço atual já é de ${ext.label === "Pré" ? "pré-mercado" : "after-hours"} -- variação desta sessão estendida`}
                             >
                               {ext.label} {up ? "▲+" : "▼"}{ext.pct.toFixed(1)}%
                             </Badge>
@@ -2143,7 +2178,14 @@ export default function PortfolioPage() {
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmtQty(quantity)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(avgCost, isBrl)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
-                      {hasPrice ? fmtMoney(price, isBrl) : <span className="text-muted-foreground">—</span>}
+                      {hasPrice
+                        ? <>
+                            {fmtMoney(price, isBrl)}
+                            {extMap.has(pos.ticker) && (
+                              <span className="ml-1 text-[9px] text-muted-foreground font-normal lowercase">{extMap.get(pos.ticker)!.label}</span>
+                            )}
+                          </>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(invested, isBrl)}</td>
                     <td className="py-2.5 pr-3 text-right tabular-nums font-semibold text-blue-400">
