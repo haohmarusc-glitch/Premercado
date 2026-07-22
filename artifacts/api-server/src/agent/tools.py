@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 import re
+import sys
 
 import requests
 import yfinance as yf
@@ -1183,6 +1184,7 @@ def get_macro_indicators() -> dict:
             else:
                 result[field] = None
         except Exception as e:
+            print(f"[tools] get_macro_indicators({series_id}): {e}", file=sys.stderr)
             result[field] = None
             result.setdefault("errors", []).append(f"{series_id}: {e}")
     return result
@@ -1223,6 +1225,7 @@ def get_retail_sentiment(ticker: str) -> dict:
                 break
         return {"ticker": ticker, "found": False, "note": "Não está entre os tickers mais mencionados no momento (ApeWisdom)."}
     except Exception as e:
+        print(f"[tools] get_retail_sentiment({ticker}): {e}", file=sys.stderr)
         return {"ticker": ticker, "error": str(e)}
 
 
@@ -1251,12 +1254,15 @@ def get_gamma_exposure(ticker: str) -> dict:
             timeout=15,
         )
         if r.status_code == 429:
+            print(f"[tools] get_gamma_exposure({ticker}): HTTP 429, limite diário atingido", file=sys.stderr)
             return {"configured": True, "error": "Limite diário grátis da FlashAlpha (5 req/dia) já foi atingido hoje."}
         r.raise_for_status()
         data = r.json()
         data["configured"] = True
         return data
     except Exception as e:
+        body = getattr(getattr(e, "response", None), "text", "")[:500]
+        print(f"[tools] get_gamma_exposure({ticker}): {type(e).__name__}: {e} | body={body}", file=sys.stderr)
         return {"configured": True, "error": str(e)}
 
 
@@ -1285,6 +1291,7 @@ def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
             timeout=20,
         )
         if r.status_code == 429:
+            print(f"[tools] get_earnings_transcript({ticker}): HTTP 429, limite/minuto atingido", file=sys.stderr)
             return {"configured": True, "error": "Limite de requisições/minuto da Roic AI atingido -- tente de novo em instantes."}
         r.raise_for_status()
         data = r.json() or {}
@@ -1299,6 +1306,8 @@ def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
             "content": content[:max_chars] + (" [TRUNCADO]" if truncated else ""),
         }
     except Exception as e:
+        body = getattr(getattr(e, "response", None), "text", "")[:500]
+        print(f"[tools] get_earnings_transcript({ticker}): {type(e).__name__}: {e} | body={body}", file=sys.stderr)
         return {"configured": True, "error": str(e)}
 
 
@@ -1358,6 +1367,11 @@ def get_fundamentals_valuation(ticker: str) -> dict:
             "ev_to_ebitda_ttm": metrics.get("evToEbitdaTTM"),
         }
     except Exception as e:
+        # Corpo da resposta (se veio de um raise_for_status) costuma trazer o
+        # motivo real da FMP (chave inválida, endpoint fora do plano grátis
+        # etc.) -- str(e) sozinho só traz "403 Client Error" sem contexto.
+        body = getattr(getattr(e, "response", None), "text", "")[:500]
+        print(f"[tools] get_fundamentals_valuation({ticker}): {type(e).__name__}: {e} | body={body}", file=sys.stderr)
         return {"configured": True, "error": str(e)}
 
 
