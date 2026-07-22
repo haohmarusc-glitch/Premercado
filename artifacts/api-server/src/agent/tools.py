@@ -796,6 +796,7 @@ def get_short_interest(ticker: str) -> dict:
 _SQUEEZE_SHORT_PCT_DANGER = 20.0  # % do float — mesmo limiar de get_short_interest "alto"
 _SQUEEZE_DTC_DANGER = 5.0  # dias pra cobrir
 _SQUEEZE_BORROW_FEE_DANGER = 30.0  # % ao ano
+_SQUEEZE_SHORT_VOLUME_DANGER = 50.0  # % do volume do pregão vendido a descoberto (FINRA Reg SHO)
 _SUPPORT_TOUCH_PCT = 5.0  # "tocou o suporte" = dentro de 5% da mínima rolante
 _BOTTOM_VOLUME_MULT = 1.5  # 150% da média de 20 dias, pedido explícito do usuário
 _BREAKOUT_LOOKBACK_DAYS = 20
@@ -853,6 +854,44 @@ def _fetch_dark_pool_activity(ticker: str) -> tuple[dict | None, str]:
     }, "Fonte: Unusual Whales (prints de dark pool recentes)."
 
 
+def _fetch_short_volume_ratio(ticker: str) -> tuple[float | None, str]:
+    """% do volume do pregão vendido a descoberto, via arquivo público diário
+    da FINRA (Reg SHO) -- grátis, sem API key. Diferente do short_pct_of_float
+    (yfinance, publicado só de 15 em 15 dias): isso é o pregão de ONTEM,
+    mostra se a pressão vendedora está subindo ou caindo dia a dia. Tenta os
+    últimos dias úteis até achar um arquivo publicado (finais de semana e
+    feriados não têm arquivo). Fail-open: sem achar em ~7 dias corridos, ou
+    qualquer falha de rede/parsing, devolve (None, nota) sem quebrar o resto
+    do detector."""
+    today = datetime.date.today()
+    for days_back in range(1, 8):
+        day = today - datetime.timedelta(days=days_back)
+        if day.weekday() >= 5:  # sábado/domingo, sem arquivo
+            continue
+        url = f"https://cdn.finra.org/equity/regsho/daily/CNMSshvol{day.strftime('%Y%m%d')}.txt"
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 404:
+                continue
+            r.raise_for_status()
+        except Exception:
+            continue
+        for line in r.text.splitlines()[1:]:
+            parts = line.split("|")
+            if len(parts) >= 5 and parts[1].strip().upper() == ticker:
+                try:
+                    short_vol = float(parts[2])
+                    total_vol = float(parts[4])
+                except ValueError:
+                    return None, "FINRA Reg SHO: linha do ticker em formato inesperado."
+                if total_vol <= 0:
+                    return None, f"FINRA Reg SHO: volume total zerado no pregão de {day.isoformat()}."
+                ratio = round(short_vol / total_vol * 100, 2)
+                return ratio, f"Fonte: FINRA Reg SHO, pregão de {day.isoformat()} (grátis, sem API key)."
+        return None, f"FINRA Reg SHO: ticker não encontrado no arquivo de {day.isoformat()}."
+    return None, "FINRA Reg SHO: nenhum arquivo publicado nos últimos 7 dias corridos."
+
+
 def _local_minima_idx(values, order: int = 3) -> list[int]:
     """Índices posicionais de mínimos locais (menor valor numa janela de
     `order` dias pra cada lado). Implementação direta sem scipy (não é
@@ -903,12 +942,16 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
     de shorts sendo forçados a cobrir.
 
     Risco de squeeze (short_pct/days_to_cover via yfinance, borrow_fee via
-    iBorrowDesk — espelha dado público do IBKR, grátis, sem API key; ver
-    'squeeze_risk_level'):
+    iBorrowDesk, short_volume_ratio via FINRA Reg SHO — todos grátis, sem
+    API key; ver 'squeeze_risk_level'):
     - short_pct_of_float >= 20% = perigoso
     - days_to_cover >= 5 dias = perigoso
     - borrow_fee >= 30% ao ano = perigoso (None se o ticker não é
       negociado via IBKR ou a fonte estiver fora do ar no momento)
+    - short_volume_ratio >= 50% do volume do pregão de ontem = perigoso
+      (None se a FINRA ainda não publicou o arquivo do dia) -- diferente do
+      short_pct_of_float (publicado só de 15 em 15 dias), esse é diário,
+      mostra se a pressão vendedora está subindo ou caindo agora
     - "alto" = 2 ou mais dos sinais disponíveis perigosos; "moderado" = 1;
       "baixo" = nenhum
 
@@ -957,14 +1000,16 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         short_pct = info.get("shortPercentOfFloat")
         days_to_cover = info.get("shortRatio")
         borrow_fee, borrow_fee_note = _fetch_borrow_fee(ticker)
+        short_volume_ratio, short_volume_note = _fetch_short_volume_ratio(ticker)
         short_pct_num = round(short_pct * 100, 2) if short_pct else None
         short_dangerous = bool(short_pct_num is not None and short_pct_num >= _SQUEEZE_SHORT_PCT_DANGER)
         dtc_dangerous = bool(days_to_cover is not None and days_to_cover >= _SQUEEZE_DTC_DANGER)
         borrow_fee_dangerous = bool(borrow_fee is not None and borrow_fee >= _SQUEEZE_BORROW_FEE_DANGER)
+        short_volume_dangerous = bool(short_volume_ratio is not None and short_volume_ratio >= _SQUEEZE_SHORT_VOLUME_DANGER)
         # "alto" exige 2+ sinais perigosos entre os disponíveis -- com só
-        # short_pct/days_to_cover (borrow_fee indisponível) isso equivale a
+        # short_pct/days_to_cover (os demais indisponíveis) isso equivale a
         # "os dois juntos", igual ao critério original antes do iBorrowDesk.
-        n_dangerous = sum((short_dangerous, dtc_dangerous, borrow_fee_dangerous))
+        n_dangerous = sum((short_dangerous, dtc_dangerous, borrow_fee_dangerous, short_volume_dangerous))
         squeeze_risk_level = (
             "alto" if n_dangerous >= 2
             else "moderado" if n_dangerous == 1
@@ -1063,6 +1108,9 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
                 "borrow_fee": borrow_fee,
                 "borrow_fee_danger_threshold": _SQUEEZE_BORROW_FEE_DANGER,
                 "borrow_fee_note": borrow_fee_note,
+                "short_volume_ratio": short_volume_ratio,
+                "short_volume_danger_threshold": _SQUEEZE_SHORT_VOLUME_DANGER,
+                "short_volume_note": short_volume_note,
             },
             "rsi_14": rsi_now,
             "reversal_confirmations": confirmations,
@@ -1081,6 +1129,249 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
+
+
+# ── Fontes adicionais (grátis / tier limitado) ────────────────────────────────
+# Levantamento pedido pelo usuário: fontes novas ou pouco exploradas que
+# agregam informação sem custo (ou com tier gratuito genuinamente utilizável)
+# pro agente. Todas fail-open -- sem a env var configurada, ou se o provedor
+# estourar o limite de requisições, a ferramenta devolve um dict com
+# "configured": false ou "error" em vez de derrubar o restante do turno.
+
+_FRED_SERIES = {
+    "cpi_index": "CPIAUCSL",
+    "unemployment_rate_pct": "UNRATE",
+    "fed_funds_rate_pct": "FEDFUNDS",
+    "yield_curve_10y_2y_pct": "T10Y2Y",
+}
+
+
+@cached("macro_indicators", ttl=21600)
+def get_macro_indicators() -> dict:
+    """Indicadores macro oficiais via FRED (Federal Reserve Economic Data,
+    grátis, chave instantânea em fred.stlouisfed.org) -- CPI, desemprego,
+    taxa de juros do Fed e o spread da curva de juros 10 anos - 2 anos
+    (negativo = curva invertida, sinal clássico de recessão). Complementa o
+    calendário de eventos macro (que só sabe a DATA, não o número real).
+    Sem FRED_API_KEY configurada, ou se algum indicador falhar, o campo
+    correspondente vem None sem derrubar os demais."""
+    api_key = os.environ.get("FRED_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "configured": False,
+            "message": "FRED_API_KEY não configurada — cadastre-se em fred.stlouisfed.org (grátis, instantâneo) para ativar.",
+        }
+    result: dict = {"configured": True}
+    for field, series_id in _FRED_SERIES.items():
+        try:
+            r = requests.get(
+                "https://api.stlouisfed.org/fred/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": api_key,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    "limit": 1,
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+            obs = (r.json() or {}).get("observations") or []
+            if obs and obs[0].get("value") not in (None, "."):
+                result[field] = float(obs[0]["value"])
+                result[f"{field}_date"] = obs[0].get("date")
+            else:
+                result[field] = None
+        except Exception as e:
+            result[field] = None
+            result.setdefault("errors", []).append(f"{series_id}: {e}")
+    return result
+
+
+@cached("retail_sentiment:{0}", ttl=900)
+def get_retail_sentiment(ticker: str) -> dict:
+    """Ranking de menções no Reddit (WallStreetBets e afins) via ApeWisdom
+    -- grátis, sem chave. Só contagem/ranking, sem análise de sentimento:
+    serve de termômetro de "hype" de varejo (relevante em movimentos tipo
+    meme-stock, onde o preço tem componente de manada além do fundamento).
+    Procura o ticker nas primeiras páginas do ranking geral; se não estiver
+    entre os mais mencionados agora, devolve found=false (não é erro)."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    try:
+        for page in range(1, 6):
+            r = requests.get(
+                f"https://apewisdom.io/api/v1.0/filter/all-stocks/page/{page}",
+                timeout=15,
+            )
+            r.raise_for_status()
+            body = r.json() or {}
+            for row in body.get("results") or []:
+                if str(row.get("ticker", "")).upper() == ticker:
+                    return {
+                        "ticker": ticker,
+                        "found": True,
+                        "rank": row.get("rank"),
+                        "mentions": row.get("mentions"),
+                        "mentions_24h_ago": row.get("mentions_24h_ago"),
+                        "upvotes": row.get("upvotes"),
+                        "rank_24h_ago": row.get("rank_24h_ago"),
+                    }
+            if page >= (body.get("pages") or 1):
+                break
+        return {"ticker": ticker, "found": False, "note": "Não está entre os tickers mais mencionados no momento (ApeWisdom)."}
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
+@cached("gamma_exposure:{0}", ttl=1800)
+def get_gamma_exposure(ticker: str) -> dict:
+    """Exposição de gamma dos market makers via FlashAlpha (GEX, paredes de
+    call/put, gamma flip) -- tier grátis de só 5 requisições/DIA, por isso
+    essa ferramenta só fica disponível no Chat (nunca nas varreduras
+    automáticas de carteira/pré-mercado, que estourariam o limite num único
+    ciclo). Sem FLASHALPHA_API_KEY configurada, ou se o limite diário já
+    tiver acabado (HTTP 429), devolve o motivo em vez de erro."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    api_key = os.environ.get("FLASHALPHA_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "configured": False,
+            "message": "FLASHALPHA_API_KEY não configurada — cadastre-se em flashalpha.com (tier grátis, 5 requisições/dia) para ativar.",
+        }
+    try:
+        r = requests.get(
+            f"https://lab.flashalpha.com/v1/exposure/gex/{ticker}",
+            headers={"X-Api-Key": api_key},
+            timeout=15,
+        )
+        if r.status_code == 429:
+            return {"configured": True, "error": "Limite diário grátis da FlashAlpha (5 req/dia) já foi atingido hoje."}
+        r.raise_for_status()
+        data = r.json()
+        data["configured"] = True
+        return data
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+
+@cached("earnings_transcript:{0}", ttl=21600)
+def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
+    """Transcrição completa da última teleconferência de resultados via Roic
+    AI -- tier grátis (5 requisições/min, todos os tickers, 2 anos de
+    histórico). Só disponível no Chat (o rate limit por minuto é apertado
+    demais pra uma varredura automática chamando vários tickers em
+    paralelo). Deixa o agente citar trecho real do guidance da diretoria em
+    vez de só resumir a manchete de notícia sobre o resultado."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    api_key = os.environ.get("ROIC_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "configured": False,
+            "message": "ROIC_API_KEY não configurada — cadastre-se em roic.ai (tier grátis) para ativar.",
+        }
+    try:
+        r = requests.get(
+            f"https://api.roic.ai/v2/company/earnings-calls/latest/{ticker}",
+            params={"apikey": api_key},
+            timeout=20,
+        )
+        if r.status_code == 429:
+            return {"configured": True, "error": "Limite de requisições/minuto da Roic AI atingido -- tente de novo em instantes."}
+        r.raise_for_status()
+        data = r.json() or {}
+        content = sanitize_for_llm(data.get("content") or "")
+        truncated = len(content) > max_chars
+        return {
+            "configured": True,
+            "ticker": ticker,
+            "year": data.get("year"),
+            "quarter": data.get("quarter"),
+            "date": data.get("date"),
+            "content": content[:max_chars] + (" [TRUNCADO]" if truncated else ""),
+        }
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+
+@cached("fundamentals_valuation:{0}", ttl=21600)
+def get_fundamentals_valuation(ticker: str) -> dict:
+    """Valuation fundamentalista via Financial Modeling Prep -- tier grátis
+    de 250 requisições/dia. DCF (valor justo estimado) + múltiplos TTM
+    (P/L, P/VP, ROE, EV/EBITDA) -- nenhuma ferramenta do agente hoje calcula
+    valor justo ou compara múltiplos de valuation, só técnicos/opções/
+    sentimento. Complementa análises de longo prazo (o agente já cobre bem
+    timing de curto prazo via técnicos, mas não "está caro ou barato?")."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    api_key = os.environ.get("FMP_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "configured": False,
+            "message": "FMP_API_KEY não configurada — cadastre-se em financialmodelingprep.com (tier grátis, 250 req/dia) para ativar.",
+        }
+    try:
+        dcf_resp = requests.get(
+            f"https://financialmodelingprep.com/api/v3/discounted-cash-flow/{ticker}",
+            params={"apikey": api_key},
+            timeout=15,
+        )
+        dcf_resp.raise_for_status()
+        dcf_rows = dcf_resp.json() or []
+        dcf = dcf_rows[0] if dcf_rows else {}
+
+        metrics_resp = requests.get(
+            f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}",
+            params={"apikey": api_key},
+            timeout=15,
+        )
+        metrics_resp.raise_for_status()
+        metrics_rows = metrics_resp.json() or []
+        metrics = metrics_rows[0] if metrics_rows else {}
+
+        dcf_value = dcf.get("dcf")
+        stock_price = dcf.get("Stock Price")
+        upside_pct = (
+            round((dcf_value - stock_price) / stock_price * 100, 2)
+            if dcf_value is not None and stock_price not in (None, 0)
+            else None
+        )
+        return {
+            "configured": True,
+            "ticker": ticker,
+            "current_price": stock_price,
+            "dcf_fair_value": dcf_value,
+            "dcf_implied_upside_pct": upside_pct,
+            "pe_ratio_ttm": metrics.get("peRatioTTM"),
+            "pb_ratio_ttm": metrics.get("pbRatioTTM"),
+            "roe_ttm": metrics.get("roeTTM"),
+            "ev_to_ebitda_ttm": metrics.get("evToEbitdaTTM"),
+        }
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+
+def get_insider_trades(ticker: str) -> dict:
+    """Compra/venda de insiders da PRÓPRIA empresa (CEO, CFO, diretoria --
+    Form 4 da SEC) via Form4API, tier grátis (15 mil requisições/mês, sem
+    cartão). Diferente de dark pool / congress trading: aqui é quem dirige
+    o negócio agindo com informação privilegiada de dentro -- insider
+    comprando perto de um fundo é confirmação clássica de reversão."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    return _alt_data.insider_trades({ticker})
 
 
 # ── Calendário de resultados ──────────────────────────────────────────────────
@@ -1888,19 +2179,22 @@ TOOLS = [
             "só faz sentido combinar risco de short squeeze com reversão técnica de fundo — "
             "squeeze sozinho pode continuar caindo, reversão sozinha pode ser só um repique comum. "
             "Risco de squeeze: short_pct_of_float >= 20% (yfinance), days_to_cover >= 5 dias "
-            "(yfinance) e borrow_fee >= 30% ao ano (iBorrowDesk, espelha dado público do IBKR, "
-            "grátis — None se o ticker não é negociado via IBKR ou a fonte estiver fora do ar). "
-            "'alto' = 2+ desses 3 sinais perigosos juntos; 'moderado' = só 1; 'baixo' = nenhum. "
+            "(yfinance), borrow_fee >= 30% ao ano (iBorrowDesk, espelha dado público do IBKR, "
+            "grátis — None se o ticker não é negociado via IBKR) e short_volume_ratio >= 50% do "
+            "volume do pregão de ontem (FINRA Reg SHO, grátis, diário — mostra pressão vendedora "
+            "atual, diferente do short_pct_of_float que só atualiza de 15 em 15 dias). "
+            "'alto' = 2+ desses 4 sinais perigosos juntos; 'moderado' = só 1; 'baixo' = nenhum. "
             "Confirmações de reversão técnica (precisa de 2+ pra reversal_confirmed=true): candle "
             "bullish (Martelo/Engolfo de Alta/Estrela da Manhã) ou Doji, divergência bullish RSI "
             "(preço faz mínima mais baixa com RSI mais alto), volume >=150% da média de 20d perto "
             "de um fundo, toque na mínima de 50 ou 200 pregões (suporte real, não média móvel). "
             "Catalisador opcional (não obrigatório pro alerta): rompimento técnico de resistência "
             "com volume 3x, manchete positiva (passe headlines com a lista do ticker dentro do "
-            "resultado de get_news), ou janela de evento "
+            "resultado de get_news), janela de evento "
             "macro (FOMC/CPI/PPI/JOBS/PCE) — o calendário não diz se o resultado vai surpreender "
-            "pra cima ou pra baixo, só sinaliza a data. squeeze_setup_detected=true exige risco "
-            "'alto' E 2+ confirmações técnicas juntos."
+            "pra cima ou pra baixo, só sinaliza a data — ou atividade de dark pool (Unusual "
+            "Whales, opcional, requer UNUSUAL_WHALES_API_KEY). squeeze_setup_detected=true exige "
+            "risco 'alto' E 2+ confirmações técnicas juntos."
         ),
         "input_schema": {
             "type": "object",
@@ -1912,6 +2206,92 @@ TOOLS = [
                     "description": "Manchetes recentes do ticker (a lista desse ticker dentro do resultado de get_news), pra tentar achar catalisador de notícia.",
                 },
             },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_macro_indicators",
+        "description": (
+            "Indicadores macro oficiais via FRED (Federal Reserve) -- CPI, taxa de desemprego, "
+            "Fed funds rate e o spread da curva de juros 10 anos - 2 anos (negativo = curva "
+            "invertida, sinal clássico de recessão). Sem tickers, é contexto macro geral. "
+            "Requer FRED_API_KEY (grátis); sem a chave, volta configured=false."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_retail_sentiment",
+        "description": (
+            "Ranking de menções de um ticker no Reddit (WallStreetBets e afins) via ApeWisdom -- "
+            "grátis, sem chave. Só contagem/ranking, sem sentimento: termômetro de hype de varejo, "
+            "útil em movimentos com componente de manada (meme-stock)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Símbolo do ativo, ex: SMCI."}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_fundamentals_valuation",
+        "description": (
+            "Valuation fundamentalista via Financial Modeling Prep: valor justo estimado (DCF) e "
+            "upside implícito vs. preço atual, mais múltiplos TTM (P/L, P/VP, ROE, EV/EBITDA). "
+            "Nenhuma outra ferramenta calcula 'está caro ou barato'. Requer FMP_API_KEY (grátis, "
+            "250 req/dia); sem a chave, volta configured=false."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Símbolo do ativo, ex: NVDA."}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_insider_trades",
+        "description": (
+            "Compra/venda de insiders da PRÓPRIA empresa (CEO, CFO, diretoria -- Form 4 da SEC) "
+            "via Form4API, últimos 90 dias. Diferente de dark pool ou congress trading: aqui é "
+            "quem dirige o negócio. Requer FORM4API_KEY (grátis, 15k req/mês); sem a chave, volta "
+            "configured=false."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Símbolo do ativo, ex: MU."}},
+            "required": ["ticker"],
+        },
+    },
+]
+
+# Ferramentas com tier grátis apertado demais pra varredura automática de
+# carteira (5 req/dia ou 5 req/min) -- ficam FORA de TOOLS de propósito, só
+# entram no schema do Chat (ver CHAT_ONLY_TOOLS em agent.py), pra nunca
+# serem chamadas em paralelo pros N tickers de um scan e estourar o limite.
+CHAT_ONLY_TOOLS = [
+    {
+        "name": "get_gamma_exposure",
+        "description": (
+            "Exposição de gamma dos market makers (GEX) via FlashAlpha -- paredes de call/put, "
+            "nível de gamma flip, sinal institucional de suporte/resistência e risco de gamma "
+            "squeeze. Tier grátis de só 5 req/DIA -- use com parcimônia, um ticker por vez. "
+            "Requer FLASHALPHA_API_KEY; sem a chave, volta configured=false."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Símbolo do ativo, ex: SPY."}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_earnings_transcript",
+        "description": (
+            "Transcrição completa da última teleconferência de resultados via Roic AI (truncada). "
+            "Deixa citar trecho real do guidance da diretoria em vez de só resumir a manchete "
+            "sobre o resultado. Tier grátis de 5 req/min -- use com parcimônia. Requer "
+            "ROIC_API_KEY; sem a chave, volta configured=false."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Símbolo do ativo, ex: TSLA."}},
             "required": ["ticker"],
         },
     },
@@ -1940,4 +2320,10 @@ DISPATCH = {
     "get_global_market_snapshot": get_global_market_snapshot,
     "get_europe_regime_signal": get_europe_regime_signal,
     "check_squeeze_setup": check_squeeze_setup,
+    "get_macro_indicators": get_macro_indicators,
+    "get_retail_sentiment": get_retail_sentiment,
+    "get_fundamentals_valuation": get_fundamentals_valuation,
+    "get_insider_trades": get_insider_trades,
+    "get_gamma_exposure": get_gamma_exposure,
+    "get_earnings_transcript": get_earnings_transcript,
 }
