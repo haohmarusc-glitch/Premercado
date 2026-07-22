@@ -312,6 +312,7 @@ export const GetTickerQuotesResponseItem = zod.object({
   "preMarketChangePct": zod.coerce.number().nullish(),
   "postMarketPrice": zod.coerce.number().nullish(),
   "postMarketChangePct": zod.coerce.number().nullish(),
+  "regularMarketPrice": zod.coerce.number().nullish().describe('Preço do pregão regular explícito do Yahoo, separado de pré\/pós-mercado.'),
   "error": zod.string().nullish()
 })
 export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)
