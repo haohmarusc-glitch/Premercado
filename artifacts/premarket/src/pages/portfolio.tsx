@@ -1533,16 +1533,21 @@ export default function PortfolioPage() {
   }, [quotes]);
   // Var. $/% tem duas variantes por ticker: "total" acompanha priceMap (usa
   // preço estendido contra o fechamento anterior quando existir -- inclui o
-  // movimento de pré/pós-mercado) e "regular" é sempre só o pregão regular
-  // (change/changePct como o servidor manda, igual ao critério que a maioria
-  // das corretoras -- Nomad inclusive -- usa pro "ganho do dia"). O toggle
-  // varMode escolhe qual delas alimenta as colunas Var $/% e o card Var. hoje.
+  // movimento de pré/pós-mercado) e "regular" usa regularMarketPrice (campo
+  // explícito do Yahoo pro preço do pregão regular). Importante: NÃO dá pra
+  // usar fast_info.last_price (o "price"/"change" que o servidor manda) como
+  // "só regular" -- na prática ele já reflete o último trade mesmo fora do
+  // pregão, então ficava contaminado com o mesmo movimento estendido do modo
+  // "total". regularMarketPrice separa isso de verdade. Fail-open pro
+  // change/changePct do servidor se o campo não vier. O toggle varMode
+  // escolhe qual variante alimenta as colunas Var $/% e o card Var. hoje.
   const changeMap = useMemo(() => {
     const m = new Map<string, { change: number | null; changePct: number | null; regularChange: number | null; regularChangePct: number | null }>();
-    for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null; previousClose?: number | null } & ExtendedQuoteFields>) {
+    for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null; previousClose?: number | null; regularMarketPrice?: number | null } & ExtendedQuoteFields>) {
       const ext = pickExtendedPrice(q);
-      const regularChange = q.change ?? null;
-      const regularChangePct = q.changePct ?? null;
+      const hasRegular = q.regularMarketPrice != null && q.previousClose != null && q.previousClose !== 0;
+      const regularChange = hasRegular ? q.regularMarketPrice! - q.previousClose! : (q.change ?? null);
+      const regularChangePct = hasRegular ? ((q.regularMarketPrice! - q.previousClose!) / q.previousClose!) * 100 : (q.changePct ?? null);
       if (ext && q.previousClose != null && q.previousClose !== 0) {
         m.set(q.symbol, {
           change: ext.price - q.previousClose,

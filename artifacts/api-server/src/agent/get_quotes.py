@@ -43,6 +43,10 @@ def fetch_extended(ticker) -> dict:
         "preMarketChangePct": _round(info.get("preMarketChangePercent")),
         "postMarketPrice": _round(info.get("postMarketPrice")),
         "postMarketChangePct": _round(info.get("postMarketChangePercent")),
+        # Preço do pregão regular explícito do Yahoo -- diferente de
+        # fast_info.last_price, que pode já refletir o último trade de
+        # pré/pós-mercado (não é confiável pra isolar "só pregão regular").
+        "regularMarketPrice": _round(info.get("regularMarketPrice")),
     }
 
 
@@ -84,6 +88,7 @@ def fetch_quote(symbol: str) -> dict:
             "preMarketChangePct": e.get("preMarketChangePct"),
             "postMarketPrice": e.get("postMarketPrice"),
             "postMarketChangePct": e.get("postMarketChangePct"),
+            "regularMarketPrice": e.get("regularMarketPrice"),
             "error": None,
         }
     except Exception as ex:
@@ -105,6 +110,7 @@ def fetch_quote(symbol: str) -> dict:
             "preMarketChangePct": None,
             "postMarketPrice": None,
             "postMarketChangePct": None,
+            "regularMarketPrice": None,
             "error": friendly_error(ex),
         }
 

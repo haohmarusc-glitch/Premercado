@@ -38,6 +38,11 @@ export interface TickerQuote {
   postMarketPrice?: number | null;
   /** @nullable */
   postMarketChangePct?: number | null;
+  /**
+     * Preço do pregão regular explícito do Yahoo, separado de pré/pós-mercado.
+     * @nullable
+     */
+  regularMarketPrice?: number | null;
   /** @nullable */
   error?: string | null;
 }

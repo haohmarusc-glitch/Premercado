@@ -1342,6 +1342,9 @@ components:
           type: ["number", "null"]
         postMarketChangePct:
           type: ["number", "null"]
+        regularMarketPrice:
+          type: ["number", "null"]
+          description: Preço do pregão regular explícito do Yahoo, separado de pré/pós-mercado.
         error:
           type: ["string", "null"]
 
