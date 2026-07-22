@@ -117,13 +117,13 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" = "manual", maxTurns?: number): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" = "manual", maxTurns?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : "daily";
 
   state.running = true;
   state.currentStep =
@@ -132,6 +132,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     trigger === "coal" ? "Iniciando análise do setor de carvão..." :
     trigger === "ai" ? "Iniciando análise do setor de IA..." :
     trigger === "news" ? "Iniciando varredura de notícias..." :
+    trigger === "exit_plan" ? "Reavaliando plano de saída..." :
     "Iniciando agente...";
   state.lastRunAt = new Date().toISOString();
 
