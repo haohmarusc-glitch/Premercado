@@ -264,7 +264,12 @@ Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
 detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
 get_analyst_ratings, get_options_data, get_geopolitical_news (falas/decisões de
 chefes de estado, guerra, petróleo, Big Techs, semicondutores), check_squeeze_setup
-(risco de short squeeze + confirmação técnica de reversão pra um ticker).
+(risco de short squeeze + confirmação técnica de reversão pra um ticker),
+get_macro_indicators (CPI/desemprego/juros do Fed via FRED), get_retail_sentiment
+(menções no Reddit/WSB), get_fundamentals_valuation (DCF + múltiplos via FMP),
+get_insider_trades (compra/venda de executivos da empresa), get_gamma_exposure
+(GEX/paredes de opções — use no máximo 1x por resposta, tier grátis é de só 5/dia)
+e get_earnings_transcript (transcrição da última teleconferência de resultados).
 
 Regras:
 - Responda à pergunta do usuário de forma direta e concisa.
@@ -315,8 +320,14 @@ _CHAT_TOOL_NAMES = {
     "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
     "get_geopolitical_news", "check_squeeze_setup",
+    "get_macro_indicators", "get_retail_sentiment", "get_fundamentals_valuation",
+    "get_insider_trades",
 }
-CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
+# get_gamma_exposure/get_earnings_transcript (CHAT_ONLY_TOOLS em tools.py)
+# ficam de FORA de t.TOOLS de propósito -- tier grátis de 5 req/dia e 5
+# req/min, respectivamente, estouraria numa varredura automática com vários
+# tickers. Só entram aqui, no Chat, onde o usuário pede um ticker por vez.
+CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES] + t.CHAT_ONLY_TOOLS
 
 # Subconjunto para a varredura rápida intradiária. O prompt do premarket já
 # proíbe as demais ferramentas; aqui cortamos de fato o schema delas do request,
@@ -324,6 +335,7 @@ CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES]
 _PREMARKET_TOOL_NAMES = {
     "get_fear_greed_index", "get_sector_performance",
     "detect_sector_contagion", "get_stock_data", "get_options_data",
+    "get_macro_indicators",
 }
 PREMARKET_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PREMARKET_TOOL_NAMES]
 
@@ -333,6 +345,8 @@ _PORTFOLIO_TOOL_NAMES = {
     "get_stock_data", "get_news", "get_technical_indicators",
     "detect_candle_patterns", "get_short_interest", "get_analyst_ratings",
     "save_observation", "get_fear_greed_index", "get_geopolitical_news",
+    "get_macro_indicators", "get_retail_sentiment", "get_fundamentals_valuation",
+    "get_insider_trades",
 }
 PORTFOLIO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _PORTFOLIO_TOOL_NAMES]
 
