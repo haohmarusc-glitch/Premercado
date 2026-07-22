@@ -1466,6 +1466,9 @@ export default function PortfolioPage() {
   const { viewMode } = useViewMode();
   const isMobile = viewMode === "mobile";
   const [mode, setMode] = useState<"real" | "simulated">("real");
+  // "total" inclui pré/pós-mercado na Var $/% e no card Var. hoje; "regular"
+  // usa só o pregão regular, igual ao "ganho do dia" que a corretora mostra.
+  const [varMode, setVarMode] = useState<"total" | "regular">("total");
 
   const { data: allPositions = [], isLoading } = useListPortfolioPositions();
   const positions = (allPositions as Array<typeof allPositions[0] & { isSimulated?: boolean }>)
@@ -1528,21 +1531,27 @@ export default function PortfolioPage() {
     }
     return m;
   }, [quotes]);
-  // Var. $/% acompanham o mesmo preço de priceMap -- quando há preço
-  // estendido, recalcula a variação contra o fechamento anterior (em vez do
-  // "change" do pregão regular vindo do servidor) pra não misturar preço
-  // pós-mercado com % do pregão regular.
+  // Var. $/% tem duas variantes por ticker: "total" acompanha priceMap (usa
+  // preço estendido contra o fechamento anterior quando existir -- inclui o
+  // movimento de pré/pós-mercado) e "regular" é sempre só o pregão regular
+  // (change/changePct como o servidor manda, igual ao critério que a maioria
+  // das corretoras -- Nomad inclusive -- usa pro "ganho do dia"). O toggle
+  // varMode escolhe qual delas alimenta as colunas Var $/% e o card Var. hoje.
   const changeMap = useMemo(() => {
-    const m = new Map<string, { change: number | null; changePct: number | null }>();
+    const m = new Map<string, { change: number | null; changePct: number | null; regularChange: number | null; regularChangePct: number | null }>();
     for (const q of quotes as Array<{ symbol: string; change?: number | null; changePct?: number | null; previousClose?: number | null } & ExtendedQuoteFields>) {
       const ext = pickExtendedPrice(q);
+      const regularChange = q.change ?? null;
+      const regularChangePct = q.changePct ?? null;
       if (ext && q.previousClose != null && q.previousClose !== 0) {
         m.set(q.symbol, {
           change: ext.price - q.previousClose,
           changePct: ((ext.price - q.previousClose) / q.previousClose) * 100,
+          regularChange,
+          regularChangePct,
         });
       } else {
-        m.set(q.symbol, { change: q.change ?? null, changePct: q.changePct ?? null });
+        m.set(q.symbol, { change: regularChange, changePct: regularChangePct, regularChange, regularChangePct });
       }
     }
     return m;
@@ -1603,8 +1612,8 @@ export default function PortfolioPage() {
       const hasPrice = priceMap.has(p.ticker);
       const price = priceMap.get(p.ticker) ?? 0;
       const entry = changeMap.get(p.ticker);
-      const qChange = entry?.change ?? null;
-      const qChangePct = entry?.changePct ?? null;
+      const qChange = (varMode === "total" ? entry?.change : entry?.regularChange) ?? null;
+      const qChangePct = (varMode === "total" ? entry?.changePct : entry?.regularChangePct) ?? null;
       const currentValue = hasPrice ? quantity * price : 0;
       const pnlDollar = hasPrice ? currentValue - invested : 0;
       const pnlPct = hasPrice && invested > 0 ? (pnlDollar / invested) * 100 : 0;
@@ -1620,7 +1629,7 @@ export default function PortfolioPage() {
       const isSoldOut = soldPositionIds.has(p.id);
       return { pos: p, quantity, invested, avgCost, price, currentValue, pnlDollar, pnlPct, dailyChange, dailyChangePct, weight, downAlert, upAlert, is30d, isSoldOut, isBrl, investedUsd, currentValueUsd, dailyChangeUsd };
     });
-  }, [positions, priceMap, changeMap, soldPositionIds, purchasesMap, fxRate]);
+  }, [positions, priceMap, changeMap, varMode, soldPositionIds, purchasesMap, fxRate]);
 
   const rows = useMemo(() => allRows.filter((r) => !r.isSoldOut), [allRows]);
   const soldRows = useMemo(() => allRows.filter((r) => r.isSoldOut), [allRows]);
@@ -1939,6 +1948,22 @@ export default function PortfolioPage() {
                 ? `${totals.dailyChange >= 0 ? "+" : "-"}${fmt$(totals.dailyChange)}`
                 : "—"}
             </div>
+            <div className="flex gap-1 mt-2" title="Total inclui pré/pós-mercado; Regular é só o pregão, igual a maioria das corretoras">
+              <button
+                onClick={() => setVarMode("total")}
+                className={cn("px-1.5 py-0.5 rounded text-[9px] font-mono uppercase border transition-colors",
+                  varMode === "total" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:bg-secondary")}
+              >
+                Total
+              </button>
+              <button
+                onClick={() => setVarMode("regular")}
+                className={cn("px-1.5 py-0.5 rounded text-[9px] font-mono uppercase border transition-colors",
+                  varMode === "regular" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:bg-secondary")}
+              >
+                Regular
+              </button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -2095,8 +2120,8 @@ export default function PortfolioPage() {
                 <th className="text-right pr-3">Preço atual</th>
                 <th className="text-right pr-3">Investido</th>
                 <th className="text-right pr-3">Valor atual</th>
-                <th className="text-right pr-3">Var. $</th>
-                <th className="text-right pr-3">Var. %</th>
+                <th className="text-right pr-3" title={varMode === "total" ? "Inclui pré/pós-mercado" : "Só pregão regular"}>Var. $ {varMode === "regular" && "(reg)"}</th>
+                <th className="text-right pr-3" title={varMode === "total" ? "Inclui pré/pós-mercado" : "Só pregão regular"}>Var. % {varMode === "regular" && "(reg)"}</th>
                 <th className="text-right pr-3">P&amp;L $</th>
                 <th className="text-right pr-3">P&amp;L %</th>
                 <th className="text-right pr-3">Peso</th>
