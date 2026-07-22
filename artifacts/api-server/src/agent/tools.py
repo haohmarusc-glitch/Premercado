@@ -1318,7 +1318,14 @@ def get_fundamentals_valuation(ticker: str) -> dict:
     (P/L, P/VP, ROE, EV/EBITDA) -- nenhuma ferramenta do agente hoje calcula
     valor justo ou compara múltiplos de valuation, só técnicos/opções/
     sentimento. Complementa análises de longo prazo (o agente já cobre bem
-    timing de curto prazo via técnicos, mas não "está caro ou barato?")."""
+    timing de curto prazo via técnicos, mas não "está caro ou barato?").
+
+    Usa a API "stable" da FMP (/stable/..., query params) -- a legada
+    (/api/v3/discounted-cash-flow/{ticker}) foi descontinuada pra contas
+    novas em 31/08/2025 (só quem já era assinante antes disso ainda
+    acessa, confirmado em produção via o log de erro da FMP). O preço
+    atual, se a FMP não devolver, cai pro yfinance (já é dependência do
+    projeto, sem custo extra) pra garantir que o upside % sempre calcula."""
     try:
         ticker = sanitize_ticker(ticker)
     except ValueError as e:
@@ -1331,25 +1338,32 @@ def get_fundamentals_valuation(ticker: str) -> dict:
         }
     try:
         dcf_resp = requests.get(
-            f"https://financialmodelingprep.com/api/v3/discounted-cash-flow/{ticker}",
-            params={"apikey": api_key},
+            "https://financialmodelingprep.com/stable/discounted-cash-flow",
+            params={"symbol": ticker, "apikey": api_key},
             timeout=15,
         )
         dcf_resp.raise_for_status()
-        dcf_rows = dcf_resp.json() or []
-        dcf = dcf_rows[0] if dcf_rows else {}
+        dcf_body = dcf_resp.json() or []
+        dcf = (dcf_body[0] if dcf_body else {}) if isinstance(dcf_body, list) else dcf_body
 
         metrics_resp = requests.get(
-            f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}",
-            params={"apikey": api_key},
+            "https://financialmodelingprep.com/stable/key-metrics-ttm",
+            params={"symbol": ticker, "apikey": api_key},
             timeout=15,
         )
         metrics_resp.raise_for_status()
-        metrics_rows = metrics_resp.json() or []
-        metrics = metrics_rows[0] if metrics_rows else {}
+        metrics_body = metrics_resp.json() or []
+        metrics = (metrics_body[0] if metrics_body else {}) if isinstance(metrics_body, list) else metrics_body
 
-        dcf_value = dcf.get("dcf")
-        stock_price = dcf.get("Stock Price")
+        # Nomes de campo variaram entre a API legada e a stable -- tenta as
+        # duas variantes conhecidas antes de desistir.
+        dcf_value = dcf.get("dcf") if dcf.get("dcf") is not None else dcf.get("equityValuePerShare")
+        stock_price = dcf.get("Stock Price") or dcf.get("stockPrice") or dcf.get("price")
+        if stock_price is None:
+            try:
+                stock_price = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
+            except Exception:
+                stock_price = None
         upside_pct = (
             round((dcf_value - stock_price) / stock_price * 100, 2)
             if dcf_value is not None and stock_price not in (None, 0)
@@ -1361,10 +1375,10 @@ def get_fundamentals_valuation(ticker: str) -> dict:
             "current_price": stock_price,
             "dcf_fair_value": dcf_value,
             "dcf_implied_upside_pct": upside_pct,
-            "pe_ratio_ttm": metrics.get("peRatioTTM"),
-            "pb_ratio_ttm": metrics.get("pbRatioTTM"),
-            "roe_ttm": metrics.get("roeTTM"),
-            "ev_to_ebitda_ttm": metrics.get("evToEbitdaTTM"),
+            "pe_ratio_ttm": metrics.get("peRatioTTM") or metrics.get("peRatio"),
+            "pb_ratio_ttm": metrics.get("pbRatioTTM") or metrics.get("pbRatio"),
+            "roe_ttm": metrics.get("roeTTM") or metrics.get("returnOnEquityTTM") or metrics.get("roe"),
+            "ev_to_ebitda_ttm": metrics.get("evToEbitdaTTM") or metrics.get("evToEBITDATTM") or metrics.get("evToEbitda"),
         }
     except Exception as e:
         # Corpo da resposta (se veio de um raise_for_status) costuma trazer o
