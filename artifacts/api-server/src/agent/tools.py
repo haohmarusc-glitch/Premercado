@@ -10,6 +10,7 @@ import re
 import requests
 import yfinance as yf
 
+from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
 from . import sector_contagion as _sc
 from .cache import cached
@@ -828,6 +829,30 @@ def _fetch_borrow_fee(ticker: str) -> tuple[float | None, str]:
         return None, f"iBorrowDesk indisponível no momento ({e})."
 
 
+def _fetch_dark_pool_activity(ticker: str) -> tuple[dict | None, str]:
+    """Prints recentes de dark pool via Unusual Whales (get_alt_data.py já
+    tem essa integração, usada hoje só num painel separado da UI -- aqui só
+    reaproveita pro squeeze detector). Opcional: sem UNUSUAL_WHALES_API_KEY
+    configurada, volta (None, nota explicando) sem quebrar o resto do
+    detector -- mesmo padrão fail-open do borrow_fee/iBorrowDesk acima."""
+    try:
+        result = _alt_data.dark_pool_flow({ticker})
+    except Exception as e:
+        return None, f"Unusual Whales indisponível no momento ({e})."
+    if not result.get("configured"):
+        return None, result.get("message", "UNUSUAL_WHALES_API_KEY não configurada.")
+    if result.get("error"):
+        return None, f"Unusual Whales indisponível no momento ({result['error']})."
+    trades = result.get("trades") or []
+    if not trades:
+        return None, "Sem prints de dark pool recentes pra este ticker (Unusual Whales)."
+    total_premium = sum(float(t["premium"]) for t in trades if t.get("premium") is not None)
+    return {
+        "trade_count": len(trades),
+        "total_premium": round(total_premium, 2),
+    }, "Fonte: Unusual Whales (prints de dark pool recentes)."
+
+
 def _local_minima_idx(values, order: int = 3) -> list[int]:
     """Índices posicionais de mínimos locais (menor valor numa janela de
     `order` dias pra cada lado). Implementação direta sem scipy (não é
@@ -906,6 +931,11 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
     - macro: se hoje/amanhã cair num evento do calendário (FOMC/CPI/PPI/
       JOBS/PCE), sinaliza a janela mas NÃO sabe se o resultado vai surpreender
       pra cima ou pra baixo — isso não é um dado disponível via yfinance.
+    - dark pool: prints recentes via Unusual Whales (mesma integração que já
+      existe em get_alt_data.py) -- opcional de verdade, requer
+      UNUSUAL_WHALES_API_KEY configurada; sem a chave, 'dark_pool_activity'
+      vem None e 'dark_pool_note' explica o motivo (fail-open, não derruba
+      o resto do detector).
     """
     try:
         ticker = sanitize_ticker(ticker)
@@ -1019,6 +1049,8 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
             if 0 <= (pd.Timestamp(d).date() - pd.Timestamp.today().date()).days <= 1
         ]
 
+        dark_pool_activity, dark_pool_note = _fetch_dark_pool_activity(ticker)
+
         return {
             "ticker": ticker,
             "price": round(price, 2),
@@ -1042,6 +1074,8 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
                 "technical_breakout": breakout,
                 "headline": headline_catalyst,
                 "macro_calendar_window": macro_window or None,
+                "dark_pool_activity": dark_pool_activity,
+                "dark_pool_note": dark_pool_note,
             },
             "squeeze_setup_detected": squeeze_risk_level == "alto" and len(confirmations) >= 2,
         }
