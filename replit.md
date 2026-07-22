@@ -17,9 +17,17 @@ alertas de preço e chat conversacional.
 - Opcional (fallback chain): `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`
 - Opcional (dados alternativos "smart money" — sem a chave, a seção correspondente
   some/mostra como ativar em vez de quebrar): `QUIVER_API_KEY` (negociações do
-  Congresso via Quiver Quant), `UNUSUAL_WHALES_API_KEY` (dark pool/opções não-usuais
-  via Unusual Whales), `INSTITUTIONAL_CIKS` (lista de gestores 13F acompanhados,
-  formato `cik:Rótulo,cik:Rótulo` — tem default sem precisar configurar)
+  Congresso via Quiver Quant, pago), `UNUSUAL_WHALES_API_KEY` (dark pool/opções
+  não-usuais via Unusual Whales, pago), `FORM4API_KEY` (insider trading/Form 4 via
+  Form4API, tier grátis 15k req/mês), `INSTITUTIONAL_CIKS` (lista de gestores 13F
+  acompanhados, formato `cik:Rótulo,cik:Rótulo` — tem default sem precisar configurar)
+- Opcional (fontes de mercado adicionais, mesmo padrão fail-open): `FRED_API_KEY`
+  (macro via Federal Reserve, grátis), `FMP_API_KEY` (valuation/DCF via Financial
+  Modeling Prep, tier grátis 250 req/dia), `FLASHALPHA_API_KEY` (gamma exposure,
+  tier grátis 5 req/dia — ferramenta só disponível no Chat), `ROIC_API_KEY`
+  (transcrição de earnings call, tier grátis 5 req/min — só no Chat).
+  `get_retail_sentiment` (menções no Reddit/WSB via ApeWisdom) e o short volume
+  diário via FINRA Reg SHO não precisam de chave nenhuma.
 
 ## Stack
 
