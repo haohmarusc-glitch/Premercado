@@ -21,7 +21,14 @@ Output (stdout JSON): {
 """
 import sys, json, os
 import requests
-from security import sanitize_ticker, friendly_error
+try:
+    # Rodando como script standalone (spawn direto do .py, sem -m agent.xxx)
+    # -- Python coloca o diretório do próprio script no sys.path.
+    from security import sanitize_ticker, friendly_error
+except ImportError:
+    # Importado como agent.get_alt_data de dentro do processo principal
+    # (ex.: tools.py) -- aqui `agent` já é um pacote, precisa de import relativo.
+    from .security import sanitize_ticker, friendly_error
 
 def congress_trades(tickers: set[str]) -> dict:
     api_key = os.environ.get("QUIVER_API_KEY", "").strip()
