@@ -167,6 +167,34 @@ class TestFundamentalsValuation:
             result = tools.get_fundamentals_valuation("NVDA")
         assert result["configured"] is True
         assert result["dcf_fair_value"] == 220.0
+
+    def test_uses_stable_endpoint_and_field_names(self, monkeypatch):
+        # A API legada (/api/v3/discounted-cash-flow) foi descontinuada pra
+        # contas novas -- a stable devolve "equityValuePerShare" em vez de
+        # "dcf", e sem "Stock Price"; o preço precisa cair pro yfinance.
+        monkeypatch.setenv("FMP_API_KEY", "test-key")
+        dcf_payload = {"symbol": "NVDA", "equityValuePerShare": 220.0}
+        metrics_payload = {"peRatio": 45.2, "pbRatio": 30.1}
+        calls = []
+
+        def fake_get(url, params=None, timeout=None):
+            calls.append(url)
+            assert "/stable/" in url
+            if "discounted-cash-flow" in url:
+                return _FakeResponse(dcf_payload)
+            return _FakeResponse(metrics_payload)
+
+        fake_fast_info = type("FastInfo", (), {"last_price": 200.0})()
+        fake_ticker = type("Ticker", (), {"fast_info": fake_fast_info})()
+        with mock.patch.object(tools, "requests") as mreq, \
+             mock.patch.object(tools.yf, "Ticker", return_value=fake_ticker):
+            mreq.get.side_effect = fake_get
+            result = tools.get_fundamentals_valuation("NVDA")
+        assert result["configured"] is True
+        assert result["dcf_fair_value"] == 220.0
+        assert result["current_price"] == 200.0
+        assert result["dcf_implied_upside_pct"] == 10.0
+        assert result["pe_ratio_ttm"] == 45.2
         assert result["dcf_implied_upside_pct"] == 10.0
         assert result["pe_ratio_ttm"] == 45.2
 
