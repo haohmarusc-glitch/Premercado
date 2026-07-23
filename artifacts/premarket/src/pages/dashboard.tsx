@@ -63,6 +63,11 @@ function fmtVol(n: number | null | undefined) {
   return n.toString();
 }
 
+// Fonte/cor dos eixos do gráfico de preço + painéis auxiliares -- maior e
+// mais clara que o texto secundário padrão, pra ficar legível em cima do fundo escuro.
+const AXIS_TICK = { fontSize: 11, fontFamily: "monospace", fill: "#d4d4d8" };
+const CROSSHAIR_STROKE = "#a1a1aa";
+
 function fmtLabel(ts: number, period: string) {
   const d = new Date(ts);
   if (period === "1d") return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -263,6 +268,11 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // candle, o CandleChart (SVG puro) converte a posição do clique direto.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const hoverPriceRef = useRef<number | null>(null);
+  // Crosshair: linha horizontal no preço sob o cursor, acompanhando a linha
+  // vertical (cursor do tooltip, sincronizado com os painéis auxiliares
+  // abaixo via syncId) -- precisa ser state (não só o ref acima) pra
+  // re-renderizar e mover a <ReferenceLine> a cada movimento do mouse.
+  const [hoverY, setHoverY] = useState<number | null>(null);
   const openChartMenu = useCallback((price: number, clientX: number, clientY: number) => {
     const x = Math.min(clientX, window.innerWidth - 230);
     const y = Math.min(clientY, window.innerHeight - 120);
@@ -270,8 +280,12 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   }, []);
   const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: { price?: number } }[] }) => {
     const price = state?.activePayload?.[0]?.payload?.price;
-    if (typeof price === "number") hoverPriceRef.current = price;
+    if (typeof price === "number") {
+      hoverPriceRef.current = price;
+      setHoverY(price);
+    }
   }, []);
+  const handleChartMouseLeave = useCallback(() => setHoverY(null), []);
   const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
     if (hoverPriceRef.current == null) return;
     e.preventDefault();
@@ -353,6 +367,10 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // Indicadores técnicos: anexa as séries por índice e expande o domínio do
   // eixo Y do painel de preço se Bollinger/SMA passarem do range de fechamentos.
   const chartDataInd = attachIndicatorFields(chartData, closes);
+  // Sincroniza o crosshair (linha vertical) entre o painel de preço e os
+  // painéis auxiliares -- recharts casa por índice quando compartilham o
+  // mesmo syncId. Só vale no modo line (candle usa o CandleChart, sem recharts).
+  const priceChartSyncId = `price-${symbol}`;
   const showVolume = indicators.has("volume");
   const showRsi = indicators.has("rsi");
   const showMacd = indicators.has("macd");
@@ -387,12 +405,12 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     <>
       {showVolume && (
         <div className="mt-1">
-          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">Volume</div>
+          <div className="text-[11px] font-mono text-zinc-300 mb-0.5">Volume</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
-            <ComposedChart data={chartDataInd} margin={{ top: 0, right: 8, bottom: 2, left: 0 }}>
+            <ComposedChart data={chartDataInd} margin={{ top: 0, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
               <XAxis
                 dataKey="label"
-                tick={lastSubpanel === "volume" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tick={lastSubpanel === "volume" ? AXIS_TICK : false}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
@@ -400,12 +418,13 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               />
               <YAxis
                 domain={[0, "dataMax"]}
-                tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+                tick={AXIS_TICK}
                 tickFormatter={(v: number) => fmtVol(v)}
                 width={60}
                 axisLine={false}
                 tickLine={false}
               />
+              <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <Bar dataKey="vol" fill="#52525b" isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -413,12 +432,12 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
       )}
       {showRsi && (
         <div className="mt-1">
-          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">IFR (RSI 14)</div>
+          <div className="text-[11px] font-mono text-zinc-300 mb-0.5">IFR (RSI 14)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
-            <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }}>
+            <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
               <XAxis
                 dataKey="label"
-                tick={lastSubpanel === "rsi" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tick={lastSubpanel === "rsi" ? AXIS_TICK : false}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
@@ -427,11 +446,12 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               <YAxis
                 domain={[0, 100]}
                 ticks={[30, 70]}
-                tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+                tick={AXIS_TICK}
                 width={60}
                 axisLine={false}
                 tickLine={false}
               />
+              <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
               <ReferenceLine y={30} stroke="#4ade80" strokeDasharray="3 3" />
               <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
@@ -441,18 +461,19 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
       )}
       {showMacd && (
         <div className="mt-1">
-          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">MACD (12,26,9)</div>
+          <div className="text-[11px] font-mono text-zinc-300 mb-0.5">MACD (12,26,9)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
-            <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }}>
+            <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
               <XAxis
                 dataKey="label"
-                tick={lastSubpanel === "macd" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tick={lastSubpanel === "macd" ? AXIS_TICK : false}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
                 minTickGap={60}
               />
-              <YAxis tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }} width={60} axisLine={false} tickLine={false} />
+              <YAxis tick={AXIS_TICK} width={60} axisLine={false} tickLine={false} />
+              <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <ReferenceLine y={0} stroke="#3f3f46" />
               <Bar dataKey="macdHistPos" fill="#4ade80" isAnimationActive={false} />
               <Bar dataKey="macdHistNeg" fill="#f87171" isAnimationActive={false} />
@@ -558,7 +579,9 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         data={chartDataInd}
         margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
         onMouseMove={handleChartMouseMove}
+        onMouseLeave={handleChartMouseLeave}
         onContextMenu={handleChartContextMenu}
+        syncId={priceChartSyncId}
       >
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
@@ -575,7 +598,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         </defs>
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+          tick={AXIS_TICK}
           tickLine={false}
           axisLine={false}
           interval="preserveStartEnd"
@@ -583,13 +606,14 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         />
         <YAxis
           domain={areaDomain}
-          tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+          tick={AXIS_TICK}
           tickLine={false}
           axisLine={false}
           width={60}
           tickFormatter={(v: number) => `$${fmt(v)}`}
         />
         <Tooltip
+          cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }}
           contentStyle={{
             background: "hsl(var(--card))",
             border: "1px solid hsl(var(--border))",
@@ -615,6 +639,15 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         {showSma50 && <Line dataKey="sma50" stroke={INDICATOR_COLORS.sma50} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
         {showBollinger && <Line dataKey="bbUpper" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
         {showBollinger && <Line dataKey="bbLower" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
+        {hoverY != null && (
+          <ReferenceLine
+            y={hoverY}
+            stroke={CROSSHAIR_STROKE}
+            strokeDasharray="3 3"
+            ifOverflow="visible"
+            label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 11, fontFamily: "monospace" }}
+          />
+        )}
       </ComposedChart>
     </ResponsiveContainer>
     {subpanelsEl}
