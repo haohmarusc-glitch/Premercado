@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   useGetLatestReport,
   getGetLatestReportQueryKey,
@@ -28,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, Maximize2, Minimize2 } from "lucide-react";
 import { exportToPDF } from "@/lib/export-pdf";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
@@ -235,7 +235,71 @@ function QuoteCard({
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
 function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: string; height?: number }) {
+  const [, navigate] = useLocation();
   const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
+  // Menu de botão direito ("criar alerta neste preço") -- só existe no
+  // gráfico próprio (line/candle), não dá pra interceptar clique dentro do
+  // iframe da TradingView. No modo line, o preço vem do hit-test que o
+  // próprio recharts já resolve via onMouseMove (mesmo do tooltip); no modo
+  // candle, o CandleChart (SVG puro) converte a posição do clique direto.
+  const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const hoverPriceRef = useRef<number | null>(null);
+  const openChartMenu = useCallback((price: number, clientX: number, clientY: number) => {
+    const x = Math.min(clientX, window.innerWidth - 230);
+    const y = Math.min(clientY, window.innerHeight - 120);
+    setChartMenu({ x, y, price });
+  }, []);
+  const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: { price?: number } }[] }) => {
+    const price = state?.activePayload?.[0]?.payload?.price;
+    if (typeof price === "number") hoverPriceRef.current = price;
+  }, []);
+  const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
+    if (hoverPriceRef.current == null) return;
+    e.preventDefault();
+    openChartMenu(hoverPriceRef.current, e.clientX, e.clientY);
+  }, [openChartMenu]);
+  useEffect(() => {
+    if (!chartMenu) return;
+    const close = () => setChartMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [chartMenu]);
+  const chartMenuEl = chartMenu && (
+    <div
+      className="fixed z-[60] min-w-[220px] rounded-md border border-border bg-card shadow-lg py-1 font-mono text-xs"
+      style={{ left: chartMenu.x, top: chartMenu.y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="px-3 py-1.5 text-muted-foreground border-b border-border/50">
+        {symbol} · ${chartMenu.price.toFixed(2)}
+      </div>
+      <button
+        type="button"
+        className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-1.5"
+        onClick={() => {
+          navigate(`/alerts?symbol=${symbol}&price=${chartMenu.price.toFixed(2)}&condition=above`);
+          setChartMenu(null);
+        }}
+      >
+        🔔 Alerta se subir acima de <span className="text-green-400 font-bold">${chartMenu.price.toFixed(2)}</span>
+      </button>
+      <button
+        type="button"
+        className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-1.5"
+        onClick={() => {
+          navigate(`/alerts?symbol=${symbol}&price=${chartMenu.price.toFixed(2)}&condition=below`);
+          setChartMenu(null);
+        }}
+      >
+        🔔 Alerta se cair abaixo de <span className="text-red-400 font-bold">${chartMenu.price.toFixed(2)}</span>
+      </button>
+    </div>
+  );
   const { data: trendData } = useTrend(symbol);
   const { data, isLoading } = useGetTickerChart(
     { symbol, period },
@@ -327,7 +391,14 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     return (
       <div>
         {toggle}
-        <CandleChart candles={candles} height={height} labelFor={(ts) => fmtLabel(ts, period)} markers={trendData?.news?.destaques} />
+        <CandleChart
+          candles={candles}
+          height={height}
+          labelFor={(ts) => fmtLabel(ts, period)}
+          markers={trendData?.news?.destaques}
+          onPriceContextMenu={openChartMenu}
+        />
+        {chartMenuEl}
       </div>
     );
   }
@@ -335,6 +406,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   return (
     <div>
     {toggle}
+    {chartMenuEl}
     {showSessionColors && (
       <div className="flex items-center justify-end gap-2 mb-1 text-[9px] font-mono text-muted-foreground">
         <span className="flex items-center gap-1">
@@ -346,7 +418,12 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
       </div>
     )}
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+      <AreaChart
+        data={chartData}
+        margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+        onMouseMove={handleChartMouseMove}
+        onContextMenu={handleChartContextMenu}
+      >
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.25} />

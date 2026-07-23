@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearch } from "wouter";
 import {
   useListAlerts,
   getListAlertsQueryKey,
@@ -34,6 +35,21 @@ const INDICATORS = [
   { key: "sma50", label: "SMA50" },
 ] as const;
 type IndicatorKey = (typeof INDICATORS)[number]["key"];
+
+// Lê o pré-preenchimento vindo do menu de botão direito no gráfico ("criar
+// alerta neste preço" -- ver PriceChart em portfolio.tsx): /alerts?symbol=
+// AVGO&price=396.81&condition=below.
+export function parseAlertPrefill(search: string): { symbol?: string; condition?: "above" | "below"; price?: string } {
+  const params = new URLSearchParams(search);
+  const result: { symbol?: string; condition?: "above" | "below"; price?: string } = {};
+  const qSymbol = params.get("symbol");
+  const qCondition = params.get("condition");
+  const qPrice = params.get("price");
+  if (qSymbol) result.symbol = qSymbol.toUpperCase();
+  if (qCondition === "above" || qCondition === "below") result.condition = qCondition;
+  if (qPrice && !isNaN(parseFloat(qPrice))) result.price = qPrice;
+  return result;
+}
 
 export function indicatorBadgeLabel(alert: {
   indicator?: string | null;
@@ -158,6 +174,18 @@ export default function Alerts() {
   const effectiveNotifyEmail = notifyEmail || user?.email || "";
 
   const availableSymbols = quotes?.map((q) => q.symbol) ?? [];
+
+  const search = useSearch();
+  useEffect(() => {
+    const prefill = parseAlertPrefill(search);
+    if (prefill.symbol) setSymbol(prefill.symbol);
+    if (prefill.condition) setCondition(prefill.condition);
+    if (prefill.price) {
+      setIndicator("price");
+      setAlertMode("price");
+      setThresholdPrice(prefill.price);
+    }
+  }, [search]);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();

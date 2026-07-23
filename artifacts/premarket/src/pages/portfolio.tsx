@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, Fragment, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment, useCallback } from "react";
+import { useLocation } from "wouter";
 import { useQueries } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -227,10 +228,43 @@ function fmtNewsDate(v: string | number | null | undefined): string {
 }
 
 function PriceChart({ ticker }: { ticker: string }) {
+  const [, navigate] = useLocation();
   const [period, setPeriod] = useState<ChartPeriod>("1d");
   const [visual, setVisual] = useState<PortfolioChartVisual>("line");
   // Notícias abertas na caixa (modal) ao tocar num marcador amarelo do gráfico.
   const [activeNews, setActiveNews] = useState<NewsItem[] | null>(null);
+  // Menu de botão direito ("criar alerta neste preço") -- só existe no
+  // gráfico próprio (line/candle), não dá pra interceptar clique dentro do
+  // iframe da TradingView. O preço vem do último ponto sob o cursor que o
+  // próprio recharts já resolveu via onMouseMove (mesmo hit-test do
+  // tooltip), guardado num ref pra não re-renderizar a cada movimento —
+  // só lido quando o context menu de fato abre.
+  const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const hoverPriceRef = useRef<number | null>(null);
+  const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: { v?: number; c?: number } }[] }) => {
+    const p = state?.activePayload?.[0]?.payload;
+    const price = p?.v ?? p?.c;
+    if (typeof price === "number") hoverPriceRef.current = price;
+  }, []);
+  const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
+    if (hoverPriceRef.current == null) return;
+    e.preventDefault();
+    // Evita o menu vazar pra fora da tela quando o clique é perto da borda direita/de baixo.
+    const x = Math.min(e.clientX, window.innerWidth - 230);
+    const y = Math.min(e.clientY, window.innerHeight - 120);
+    setChartMenu({ x, y, price: hoverPriceRef.current });
+  }, []);
+  useEffect(() => {
+    if (!chartMenu) return;
+    const close = () => setChartMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [chartMenu]);
   // "Expandir" agora é tela cheia de verdade (overlay fixed cobrindo a
   // viewport), não só um pouco mais alto -- ver useFullscreenChartHeight.
   const [expanded, setExpanded] = useState(false);
@@ -376,7 +410,12 @@ function PriceChart({ ticker }: { ticker: string }) {
         </div>
       ) : visual === "candle" ? (
         <ResponsiveContainer width="100%" height={chartHeight}>
-          <ComposedChart data={candleData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+          <ComposedChart
+            data={candleData}
+            margin={{ top: 2, right: 4, bottom: 2, left: 4 }}
+            onMouseMove={handleChartMouseMove}
+            onContextMenu={handleChartContextMenu}
+          >
             <XAxis
               dataKey="t"
               tickFormatter={(v) => formatXTick(v as number, period)}
@@ -422,7 +461,12 @@ function PriceChart({ ticker }: { ticker: string }) {
         </ResponsiveContainer>
       ) : (
         <ResponsiveContainer width="100%" height={chartHeight}>
-          <ComposedChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 2, right: 4, bottom: 2, left: 4 }}
+            onMouseMove={handleChartMouseMove}
+            onContextMenu={handleChartContextMenu}
+          >
             {showSessionColors && (
               <defs>
                 <linearGradient id={sessionGradientId} x1="0" y1="0" x2="1" y2="0">
@@ -475,6 +519,40 @@ function PriceChart({ ticker }: { ticker: string }) {
             <Bar dataKey="newsY" shape={(p: React.ComponentProps<typeof NewsMarkerShape>) => <NewsMarkerShape {...p} onSelect={setActiveNews} />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
+      )}
+
+      {/* Menu de botão direito no gráfico próprio -- "criar alerta neste
+          preço", direto pro preço sob o cursor no momento do clique. */}
+      {chartMenu && (
+        <div
+          className="fixed z-[60] min-w-[220px] rounded-md border border-border bg-card shadow-lg py-1 font-mono text-xs"
+          style={{ left: chartMenu.x, top: chartMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-muted-foreground border-b border-border/50">
+            {ticker} · ${chartMenu.price.toFixed(2)}
+          </div>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-1.5"
+            onClick={() => {
+              navigate(`/alerts?symbol=${ticker}&price=${chartMenu.price.toFixed(2)}&condition=above`);
+              setChartMenu(null);
+            }}
+          >
+            🔔 Alerta se subir acima de <span className="text-green-400 font-bold">${chartMenu.price.toFixed(2)}</span>
+          </button>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 hover:bg-secondary transition-colors flex items-center gap-1.5"
+            onClick={() => {
+              navigate(`/alerts?symbol=${ticker}&price=${chartMenu.price.toFixed(2)}&condition=below`);
+              setChartMenu(null);
+            }}
+          >
+            🔔 Alerta se cair abaixo de <span className="text-red-400 font-bold">${chartMenu.price.toFixed(2)}</span>
+          </button>
+        </div>
       )}
 
       {/* Caixa de notícias — abre ao tocar no marcador amarelo. Fica aberta até
