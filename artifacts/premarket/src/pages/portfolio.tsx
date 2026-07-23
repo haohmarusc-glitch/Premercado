@@ -1285,8 +1285,10 @@ interface PositionDialogProps {
 function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: PositionDialogProps) {
   const { toast } = useToast();
   const { user } = useAuth();
+  const qc = useQueryClient();
   const createPos = useCreatePortfolioPosition();
   const updatePos = useUpdatePortfolioPosition();
+  const createPurchase = useCreatePortfolioPurchase();
   const [form, setForm] = useState<PosForm>(editing ? posToForm(editing) : EMPTY_FORM);
 
   useEffect(() => {
@@ -1349,7 +1351,33 @@ function PositionDialog({ open, onClose, editing, onSaved, isSimulated }: Positi
     } else {
       createPos.mutate(
         { data: payload },
-        { onSuccess: () => { onSaved(); onClose(); }, onError: () => toast({ variant: "destructive", title: "Erro ao criar posição" }) },
+        {
+          onSuccess: (created) => {
+            // Cria o primeiro lote de compra junto, com os mesmos dados que
+            // o usuário já preencheu aqui (data/valor/preço) -- sem isso a
+            // posição nascia com totais agregados mas "Operações" vazio,
+            // obrigando a duplicar os mesmos números em "Adicionar compra"
+            // pra registrar até uma compra de 1 lote só.
+            createPurchase.mutate(
+              {
+                id: created.id,
+                data: {
+                  purchaseDate: payload.firstPurchaseDate,
+                  amount: payload.investedAmount,
+                  purchasePrice: payload.avgCost,
+                  priceManuallyEdited: true,
+                },
+              },
+              {
+                onSuccess: () => qc.invalidateQueries({ queryKey: getListPortfolioPurchasesQueryKey(created.id) }),
+                onError: () => toast({ variant: "destructive", title: "Posição criada, mas falhou ao registrar o primeiro lote de compra — adicione manualmente em Operações." }),
+              },
+            );
+            onSaved();
+            onClose();
+          },
+          onError: () => toast({ variant: "destructive", title: "Erro ao criar posição" }),
+        },
       );
     }
   };
