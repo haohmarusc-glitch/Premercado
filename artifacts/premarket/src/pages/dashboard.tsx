@@ -31,6 +31,8 @@ import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
+import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
+import { cn } from "@/lib/utils";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
@@ -286,9 +288,11 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // Modo TradingView busca os próprios dados no iframe deles -- não depende
   // do carregamento/disponibilidade do nosso /api/ticker-chart. Usa uma altura
   // bem maior que os outros modos, já que o widget tem toolbar própria e fica
-  // apertado em alturas pequenas.
+  // apertado em alturas pequenas. `height` só passa de 300 quando o gráfico
+  // está expandido (tela cheia) -- nesse caso usa a altura real da viewport
+  // em vez de forçar um valor fixo.
   if (mode === "tradingview") {
-    const tvHeight = height > 300 ? 900 : 480;
+    const tvHeight = height > 300 ? height : 480;
     return (
       <div>
         {toggle}
@@ -406,6 +410,8 @@ export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [period, setPeriod] = useState("1d");
   const [chartExpanded, setChartExpanded] = useState(false);
+  useFullscreenEscape(chartExpanded, () => setChartExpanded(false));
+  const chartHeight = useFullscreenChartHeight(chartExpanded, 220, 200);
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
   const [sectorTab, setSectorTab] = useState<string>("all");
 
@@ -501,7 +507,10 @@ export default function Dashboard() {
       {/* ── Chart (seletor de ticker aqui em cima -- não precisa rolar até os
            cards de cotação pra trocar de ativo) ── */}
       {activeSymbol && (
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        <div className={cn(
+          "border border-border rounded-lg overflow-hidden bg-card",
+          chartExpanded && "fixed inset-0 z-50 rounded-none overflow-y-auto",
+        )}>
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-secondary/30">
             <div className="flex items-center gap-2">
@@ -544,7 +553,7 @@ export default function Dashboard() {
                 onClick={() => setChartExpanded((v) => !v)}
                 className="p-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                 aria-label={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
-                title={chartExpanded ? "Recolher gráfico" : "Expandir gráfico"}
+                title={chartExpanded ? "Recolher gráfico (Esc)" : "Expandir gráfico (tela cheia)"}
               >
                 {chartExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
               </button>
@@ -553,7 +562,7 @@ export default function Dashboard() {
 
           {/* Chart body */}
           <div className="p-4">
-            <PriceChart symbol={activeSymbol} period={period} height={chartExpanded ? 420 : 200} />
+            <PriceChart symbol={activeSymbol} period={period} height={chartHeight} />
           </div>
         </div>
       )}
