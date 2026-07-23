@@ -24,6 +24,9 @@ interface CandleChartProps {
   height?: number;
   labelFor: (ts: number) => string;
   markers?: NewsMarker[];
+  // "Criar alerta neste preço" (botão direito) -- recebe o preço já convertido
+  // e as coordenadas de tela do clique, pro chamador posicionar o menu.
+  onPriceContextMenu?: (price: number, clientX: number, clientY: number) => void;
 }
 
 const UP = "#22c55e";
@@ -33,7 +36,7 @@ function fmtPrice(n: number) {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function CandleChart({ candles, height = 200, labelFor, markers }: CandleChartProps) {
+export function CandleChart({ candles, height = 200, labelFor, markers, onPriceContextMenu }: CandleChartProps) {
   const [hover, setHover] = useState<number | null>(null);
   const [openMarker, setOpenMarker] = useState<number | null>(null);
 
@@ -76,8 +79,21 @@ export function CandleChart({ candles, height = 200, labelFor, markers }: Candle
 
   if (!geom || !candles.length) return null;
 
-  const { y, x, bodyW, ticks, xIdx } = geom;
+  const { y, x, bodyW, ticks, xIdx, lo, hi, plotH } = geom;
   const hovered = hover != null ? candles[hover] : null;
+
+  // Converte a posição Y do clique (pixels reais da tela) pra unidades do
+  // viewBox (1000xH) e depois pra preço, invertendo a mesma escala que `y()`
+  // usa pra desenhar -- dá o preço exato sob o cursor, contínuo (não preso
+  // à vela mais próxima), igual o botão direito de plataformas de gráfico.
+  const handleContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!onPriceContextMenu) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const viewBoxY = ((e.clientY - rect.top) / rect.height) * H;
+    const price = hi - ((viewBoxY - PAD_T) / plotH) * (hi - lo);
+    onPriceContextMenu(price, e.clientX, e.clientY);
+  };
 
   // ── Marcadores de notícia: posiciona sobre a vela mais próxima da data ─────
   // Renderizados como divs HTML (não SVG): o preserveAspectRatio="none" do SVG
@@ -105,6 +121,7 @@ export function CandleChart({ candles, height = 200, labelFor, markers }: Candle
         style={{ height }}
         preserveAspectRatio="none"
         onMouseLeave={() => setHover(null)}
+        onContextMenu={handleContextMenu}
       >
         {/* linhas de grade + eixo Y */}
         {ticks.map((p, i) => (
