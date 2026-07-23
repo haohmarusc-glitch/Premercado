@@ -129,8 +129,12 @@ export const INDICATOR_COLORS = {
   sma21: "#38bdf8", // azul claro
   sma50: "#f97316", // laranja
   bollinger: "#a78bfa", // violeta
-  macdLine: "#38bdf8",
-  macdSignal: "#f97316",
+  // MACD fica no seu próprio painel, mas o tooltip lista todos os
+  // indicadores juntos -- por isso macdLine/macdSignal usam tons próprios
+  // (ciano/rosa) em vez de reaproveitar o azul/laranja do SMA21/SMA50,
+  // senão ficava impossível diferenciar as bolinhas coloridas no tooltip.
+  macdLine: "#22d3ee", // ciano
+  macdSignal: "#f472b6", // rosa
 } as const;
 
 export interface IndicatorSeries {

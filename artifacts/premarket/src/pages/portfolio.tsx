@@ -721,7 +721,7 @@ function PriceChart({ ticker }: { ticker: string }) {
                 tickLine={false}
               />
               <RechartsTooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
-              <Bar dataKey={volumeKey} fill="#52525b" isAnimationActive={false} />
+              <Bar dataKey={volumeKey} fill="#a1a1aa" isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
