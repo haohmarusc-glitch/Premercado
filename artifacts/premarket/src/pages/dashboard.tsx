@@ -389,7 +389,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   const areaDomain: [number, number] = overlayValues.length
     ? [Math.min(minP - pad, ...overlayValues), Math.max(maxP + pad, ...overlayValues)]
     : [minP - pad, maxP + pad];
-  const subpanelHeight = 70;
+  const subpanelHeight = 100;
   const lastSubpanel = showMacd ? "macd" : showRsi ? "rsi" : showVolume ? "volume" : null;
   // Tooltip com layout próprio (em vez de contentStyle/labelStyle/itemStyle)
   // pra destacar o ticker bem maior/mais forte que o preço -- esses três
@@ -452,7 +452,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   const subpanelsEl = (
     <>
       {showVolume && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">Volume</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={chartDataInd} margin={{ top: 0, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
@@ -479,7 +479,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         </div>
       )}
       {showRsi && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">IFR (RSI 14)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
@@ -502,13 +502,13 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
               <ReferenceLine y={30} stroke="#4ade80" strokeDasharray="3 3" />
-              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}
       {showMacd && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">MACD (12,26,9)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={chartDataInd} margin={{ top: 2, right: 8, bottom: 2, left: 0 }} syncId={priceChartSyncId}>
@@ -525,8 +525,8 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               <ReferenceLine y={0} stroke="#3f3f46" />
               <Bar dataKey="macdHistPos" fill="#4ade80" isAnimationActive={false} />
               <Bar dataKey="macdHistNeg" fill="#f87171" isAnimationActive={false} />
-              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
-              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
