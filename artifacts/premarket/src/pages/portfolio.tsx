@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape, parseNewsPublished } from "@/components/news-markers";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
+import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
 
@@ -230,9 +231,11 @@ function PriceChart({ ticker }: { ticker: string }) {
   const [visual, setVisual] = useState<PortfolioChartVisual>("line");
   // Notícias abertas na caixa (modal) ao tocar num marcador amarelo do gráfico.
   const [activeNews, setActiveNews] = useState<NewsItem[] | null>(null);
-  // Mesmo tamanho padrao/expandido do grafico do Dashboard (200/420 line-candle,
-  // 480/900 TradingView) -- antes ficava fixo em 220/480, sem opcao de expandir.
+  // "Expandir" agora é tela cheia de verdade (overlay fixed cobrindo a
+  // viewport), não só um pouco mais alto -- ver useFullscreenChartHeight.
   const [expanded, setExpanded] = useState(false);
+  useFullscreenEscape(expanded, () => setExpanded(false));
+  const chartHeight = useFullscreenChartHeight(expanded, 190, visual === "tradingview" ? 480 : 200);
   const { data, isLoading } = useGetTickerChart(
     { symbol: ticker, period },
     {
@@ -275,7 +278,7 @@ function PriceChart({ ticker }: { ticker: string }) {
   const candleNewsMarkers = candleData.filter((c) => c.newsItems.length > 0);
 
   return (
-    <div className="w-full mt-3">
+    <div className={cn("w-full mt-3", expanded && "fixed inset-0 z-50 bg-background p-4 overflow-y-auto")}>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
@@ -354,7 +357,7 @@ function PriceChart({ ticker }: { ticker: string }) {
             onClick={() => setExpanded((v) => !v)}
             className="p-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
             aria-label={expanded ? "Recolher gráfico" : "Expandir gráfico"}
-            title={expanded ? "Recolher gráfico" : "Expandir gráfico"}
+            title={expanded ? "Recolher gráfico (Esc)" : "Expandir gráfico (tela cheia)"}
           >
             {expanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
           </button>
@@ -362,7 +365,7 @@ function PriceChart({ ticker }: { ticker: string }) {
       </div>
 
       {visual === "tradingview" ? (
-        <TradingViewChart symbol={ticker} height={expanded ? 900 : 480} />
+        <TradingViewChart symbol={ticker} height={chartHeight} />
       ) : isLoading ? (
         <div className="h-24 flex items-center justify-center text-[10px] text-muted-foreground font-mono">
           carregando...
@@ -372,7 +375,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           sem dados
         </div>
       ) : visual === "candle" ? (
-        <ResponsiveContainer width="100%" height={expanded ? 420 : 200}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <ComposedChart data={candleData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             <XAxis
               dataKey="t"
@@ -418,7 +421,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           </ComposedChart>
         </ResponsiveContainer>
       ) : (
-        <ResponsiveContainer width="100%" height={expanded ? 420 : 200}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <ComposedChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
             {showSessionColors && (
               <defs>
