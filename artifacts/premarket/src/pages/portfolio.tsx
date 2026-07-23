@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock, GripVertical } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, ReferenceLine, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +35,7 @@ import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candl
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape, parseNewsPublished } from "@/components/news-markers";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
+import { useDraggableOffset } from "@/hooks/use-draggable-offset";
 import { IndicatorToggles } from "@/components/indicator-toggles";
 import { attachIndicatorFields, INDICATOR_COLORS, type IndicatorKey } from "@/lib/indicators";
 import { TradingViewChart } from "@/components/tradingview-chart";
@@ -264,6 +265,9 @@ function PriceChart({ ticker }: { ticker: string }) {
   // só lido quando o context menu de fato abre.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const hoverPriceRef = useRef<number | null>(null);
+  // Caixa de dados arrastável -- o usuário move pra onde quiser (a posição
+  // padrão no canto às vezes fica em cima das próprias linhas do gráfico).
+  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown } = useDraggableOffset("premercado:chart-hover-box-pos");
   // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
   // (em vez do tooltip flutuante do recharts, que ficava em cima do cursor
   // tapando as linhas) -- guarda a linha inteira sob o cursor, não só o
@@ -581,8 +585,24 @@ function PriceChart({ ticker }: { ticker: string }) {
       ) : visual === "candle" ? (
         <div className="relative">
           {hoverRow && (
-            <div className="absolute top-1 right-1 z-10 pointer-events-none max-w-[220px]">
-              {hoverBoxContent()}
+            <div
+              className="absolute z-10 max-w-[220px] pointer-events-none"
+              style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
+            >
+              <div className="relative">
+                <button
+                  type="button"
+                  onMouseDown={onBoxMouseDown}
+                  title="Arrastar caixa"
+                  className={cn(
+                    "absolute -top-2 -left-2 z-20 p-1 rounded bg-secondary border border-border text-muted-foreground hover:text-foreground pointer-events-auto",
+                    boxDragging ? "cursor-grabbing" : "cursor-grab",
+                  )}
+                >
+                  <GripVertical className="h-3 w-3" />
+                </button>
+                {hoverBoxContent()}
+              </div>
             </div>
           )}
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -645,8 +665,24 @@ function PriceChart({ ticker }: { ticker: string }) {
       ) : (
         <div className="relative">
           {hoverRow && (
-            <div className="absolute top-1 right-1 z-10 pointer-events-none max-w-[220px]">
-              {hoverBoxContent()}
+            <div
+              className="absolute z-10 max-w-[220px] pointer-events-none"
+              style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
+            >
+              <div className="relative">
+                <button
+                  type="button"
+                  onMouseDown={onBoxMouseDown}
+                  title="Arrastar caixa"
+                  className={cn(
+                    "absolute -top-2 -left-2 z-20 p-1 rounded bg-secondary border border-border text-muted-foreground hover:text-foreground pointer-events-auto",
+                    boxDragging ? "cursor-grabbing" : "cursor-grab",
+                  )}
+                >
+                  <GripVertical className="h-3 w-3" />
+                </button>
+                {hoverBoxContent()}
+              </div>
             </div>
           )}
           <ResponsiveContainer width="100%" height={chartHeight}>

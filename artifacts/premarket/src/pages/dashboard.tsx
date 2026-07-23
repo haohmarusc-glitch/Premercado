@@ -29,12 +29,13 @@ import { MarkdownContent } from "@/components/markdown";
 import { formatDateTime, todayBRTDateString } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, Maximize2, Minimize2 } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRing, Zap, ChevronDown, ChevronRight, Printer, Maximize2, Minimize2, GripVertical } from "lucide-react";
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link, useLocation } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
+import { useDraggableOffset } from "@/hooks/use-draggable-offset";
 import { IndicatorToggles } from "@/components/indicator-toggles";
 import { attachIndicatorFields, INDICATOR_COLORS, type IndicatorKey } from "@/lib/indicators";
 import { cn } from "@/lib/utils";
@@ -277,6 +278,9 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // candle, o CandleChart (SVG puro) converte a posição do clique direto.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const hoverPriceRef = useRef<number | null>(null);
+  // Caixa de dados arrastável -- o usuário move pra onde quiser (a posição
+  // padrão no canto às vezes fica em cima das próprias linhas do gráfico).
+  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown } = useDraggableOffset("premercado:chart-hover-box-pos");
   // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
   // (em vez do tooltip flutuante do recharts, que seguia o cursor e tapava
   // as linhas) -- guarda a linha inteira sob o cursor, sincronizado com os
@@ -631,8 +635,24 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     )}
     <div className="relative">
       {hoverRow && (
-        <div className="absolute top-1 right-1 z-10 pointer-events-none max-w-[220px]">
-          {hoverBoxContent()}
+        <div
+          className="absolute z-10 max-w-[220px] pointer-events-none"
+          style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
+        >
+          <div className="relative">
+            <button
+              type="button"
+              onMouseDown={onBoxMouseDown}
+              title="Arrastar caixa"
+              className={cn(
+                "absolute -top-2 -left-2 z-20 p-1 rounded bg-secondary border border-border text-muted-foreground hover:text-foreground pointer-events-auto",
+                boxDragging ? "cursor-grabbing" : "cursor-grab",
+              )}
+            >
+              <GripVertical className="h-3 w-3" />
+            </button>
+            {hoverBoxContent()}
+          </div>
         </div>
       )}
       <ResponsiveContainer width="100%" height={height}>
