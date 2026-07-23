@@ -502,7 +502,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
               <ReferenceLine y={30} stroke="#4ade80" strokeDasharray="3 3" />
-              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
+              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={8} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -525,8 +525,8 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
               <ReferenceLine y={0} stroke="#3f3f46" />
               <Bar dataKey="macdHistPos" fill="#4ade80" isAnimationActive={false} />
               <Bar dataKey="macdHistNeg" fill="#f87171" isAnimationActive={false} />
-              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
-              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={8} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={8} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
