@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { indicatorBadgeLabel } from "../pages/alerts";
+import { indicatorBadgeLabel, parseAlertPrefill } from "../pages/alerts";
 
 describe("indicatorBadgeLabel", () => {
   it("formats a price alert with an absolute threshold", () => {
@@ -25,5 +25,31 @@ describe("indicatorBadgeLabel", () => {
   it("formats sma20/sma50 alerts", () => {
     expect(indicatorBadgeLabel({ indicator: "sma20", condition: "above" })).toBe("preço cruzou acima da SMA20");
     expect(indicatorBadgeLabel({ indicator: "sma50", condition: "below" })).toBe("preço cruzou abaixo da SMA50");
+  });
+});
+
+describe("parseAlertPrefill", () => {
+  it("lê symbol/price/condition vindos do menu de botão direito no gráfico", () => {
+    expect(parseAlertPrefill("symbol=AVGO&price=396.81&condition=below")).toEqual({
+      symbol: "AVGO",
+      condition: "below",
+      price: "396.81",
+    });
+  });
+
+  it("deixa em maiúsculas o symbol vindo da URL", () => {
+    expect(parseAlertPrefill("symbol=avgo")).toEqual({ symbol: "AVGO" });
+  });
+
+  it("ignora condition inválida", () => {
+    expect(parseAlertPrefill("condition=sideways")).toEqual({});
+  });
+
+  it("ignora price não numérico", () => {
+    expect(parseAlertPrefill("price=abc")).toEqual({});
+  });
+
+  it("retorna objeto vazio pra query string vazia", () => {
+    expect(parseAlertPrefill("")).toEqual({});
   });
 });
