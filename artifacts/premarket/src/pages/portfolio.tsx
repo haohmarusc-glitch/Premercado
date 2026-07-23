@@ -379,7 +379,7 @@ function PriceChart({ ticker }: { ticker: string }) {
   // Só o painel auxiliar mais embaixo mostra os labels de data no eixo X --
   // senão fica repetido em cada painel (Volume/RSI/MACD).
   const lastSubpanel = showMacd ? "macd" : showRsi ? "rsi" : showVolume ? "volume" : null;
-  const subpanelHeight = 70;
+  const subpanelHeight = 100;
 
   // Tooltip com layout próprio (em vez de contentStyle/labelStyle/itemStyle)
   // pra poder destacar o ticker bem maior/mais forte que o resto do texto --
@@ -698,7 +698,7 @@ function PriceChart({ ticker }: { ticker: string }) {
       {/* Painéis auxiliares (confirmação/momento) -- cada um só aparece se
           ligado em "Indicadores"; só o mais embaixo mostra datas no eixo X. */}
       {visual !== "tradingview" && showVolume && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">Volume</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={volumeRows} margin={{ top: 0, right: 4, bottom: 2, left: 4 }} syncId={priceChartSyncId}>
@@ -728,7 +728,7 @@ function PriceChart({ ticker }: { ticker: string }) {
       )}
 
       {visual !== "tradingview" && showRsi && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">IFR (RSI 14)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={rsiRows} margin={{ top: 2, right: 4, bottom: 2, left: 4 }} syncId={priceChartSyncId}>
@@ -753,14 +753,14 @@ function PriceChart({ ticker }: { ticker: string }) {
               <RechartsTooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
               <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
               <ReferenceLine y={30} stroke="#4ade80" strokeDasharray="3 3" />
-              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}
 
       {visual !== "tradingview" && showMacd && (
-        <div className="mt-1">
+        <div className="mt-3">
           <div className="text-[11px] font-mono text-zinc-300 mb-0.5">MACD (12,26,9)</div>
           <ResponsiveContainer width="100%" height={subpanelHeight}>
             <ComposedChart data={macdRows} margin={{ top: 2, right: 4, bottom: 2, left: 4 }} syncId={priceChartSyncId}>
@@ -784,8 +784,8 @@ function PriceChart({ ticker }: { ticker: string }) {
               <ReferenceLine y={0} stroke="#3f3f46" />
               <Bar dataKey="macdHistPos" fill="#4ade80" isAnimationActive={false} />
               <Bar dataKey="macdHistNeg" fill="#f87171" isAnimationActive={false} />
-              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
-              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={2} isAnimationActive={false} connectNulls />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
