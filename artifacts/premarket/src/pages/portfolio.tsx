@@ -27,7 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock } from "lucide-react";
-import { Line, ComposedChart, Bar, ReferenceDot, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { Line, ComposedChart, Bar, ReferenceDot, ReferenceLine, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -35,6 +35,8 @@ import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candl
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape, parseNewsPublished } from "@/components/news-markers";
 import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { useFullscreenEscape, useFullscreenChartHeight } from "@/hooks/use-fullscreen-chart";
+import { IndicatorToggles } from "@/components/indicator-toggles";
+import { attachIndicatorFields, INDICATOR_COLORS, type IndicatorKey } from "@/lib/indicators";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
 
@@ -43,6 +45,12 @@ import { useViewMode } from "@/lib/view-mode";
 const fmt$ = (n: number) =>
   `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+const fmtVolumeShort = (n: number) => {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+};
 // Posições da B3 (sufixo .SA no Yahoo) são cotadas e cadastradas em reais;
 // os agregados da carteira convertem para USD pelo câmbio BRL=X ao vivo
 const isB3 = (ticker: string) => ticker.toUpperCase().endsWith(".SA");
@@ -265,6 +273,17 @@ function PriceChart({ ticker }: { ticker: string }) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [chartMenu]);
+  // Indicadores técnicos (tendência/momento, volatilidade e confirmação) --
+  // todos desligados por padrão, o usuário liga só o que quiser ver.
+  const [indicators, setIndicators] = useState<Set<IndicatorKey>>(new Set());
+  const toggleIndicator = useCallback((key: IndicatorKey) => {
+    setIndicators((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   // "Expandir" agora é tela cheia de verdade (overlay fixed cobrindo a
   // viewport), não só um pouco mais alto -- ver useFullscreenChartHeight.
   const [expanded, setExpanded] = useState(false);
@@ -293,7 +312,8 @@ function PriceChart({ ticker }: { ticker: string }) {
   const newsItemsList = newsData?.items?.[0]?.news ?? [];
 
   const candles = data?.candles ?? [];
-  const chartDataBase = candles.map((c) => ({ t: c.t, v: c.c, session: c.session }));
+  const closes = candles.map((c) => c.c);
+  const chartDataBase = candles.map((c) => ({ t: c.t, v: c.c, vol: c.v, session: c.session }));
   const isUp = candles.length >= 2
     ? (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0)
     : true;
@@ -310,6 +330,40 @@ function PriceChart({ ticker }: { ticker: string }) {
   const candleDomainRange = candleDomain(candles);
   const candleData = attachNewsMarkers(toCandleRangeData(candles), newsItemsList);
   const candleNewsMarkers = candleData.filter((c) => c.newsItems.length > 0);
+
+  // Indicadores técnicos (overlay no painel de preço + painéis auxiliares
+  // embaixo) -- anexados por índice tanto nos dados de linha quanto de vela.
+  const chartDataInd = attachIndicatorFields(chartData, closes);
+  const candleDataInd = attachIndicatorFields(candleData, closes);
+  const rsiRows = visual === "candle" ? candleDataInd : chartDataInd;
+  const macdRows = rsiRows;
+  const showVolume = indicators.has("volume");
+  const showRsi = indicators.has("rsi");
+  const showMacd = indicators.has("macd");
+  const showSma21 = indicators.has("sma21");
+  const showSma50 = indicators.has("sma50");
+  const showBollinger = indicators.has("bollinger");
+  // Bollinger/SMA podem passar do range de fechamentos -- expande o domínio
+  // do eixo Y do painel de preço pra não cortar as linhas de overlay.
+  const overlayValues: number[] = [];
+  for (const r of chartDataInd) {
+    if (showBollinger) {
+      if (r.bbUpper != null) overlayValues.push(r.bbUpper);
+      if (r.bbLower != null) overlayValues.push(r.bbLower);
+    }
+    if (showSma50 && r.sma50 != null) overlayValues.push(r.sma50);
+    if (showSma21 && r.sma21 != null) overlayValues.push(r.sma21);
+  }
+  const yMin = overlayValues.length ? Math.min(min, ...overlayValues) : min;
+  const yMax = overlayValues.length ? Math.max(max, ...overlayValues) : max;
+  const candleYMin = overlayValues.length ? Math.min(candleDomainRange[0], ...overlayValues) : candleDomainRange[0];
+  const candleYMax = overlayValues.length ? Math.max(candleDomainRange[1], ...overlayValues) : candleDomainRange[1];
+  const volumeRows = visual === "candle" ? candleDataInd : chartDataInd;
+  const volumeKey = visual === "candle" ? "v" : "vol";
+  // Só o painel auxiliar mais embaixo mostra os labels de data no eixo X --
+  // senão fica repetido em cada painel (Volume/RSI/MACD).
+  const lastSubpanel = showMacd ? "macd" : showRsi ? "rsi" : showVolume ? "volume" : null;
+  const subpanelHeight = 70;
 
   return (
     <div className={cn("w-full mt-3", expanded && "fixed inset-0 z-50 bg-background p-4 overflow-y-auto")}>
@@ -386,6 +440,9 @@ function PriceChart({ ticker }: { ticker: string }) {
             ))}
           </div>
           )}
+          {visual !== "tradingview" && (
+            <IndicatorToggles enabled={indicators} onToggle={toggleIndicator} />
+          )}
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -411,7 +468,7 @@ function PriceChart({ ticker }: { ticker: string }) {
       ) : visual === "candle" ? (
         <ResponsiveContainer width="100%" height={chartHeight}>
           <ComposedChart
-            data={candleData}
+            data={candleDataInd}
             margin={{ top: 2, right: 4, bottom: 2, left: 4 }}
             onMouseMove={handleChartMouseMove}
             onContextMenu={handleChartContextMenu}
@@ -425,7 +482,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <YAxis
-              domain={candleDomainRange}
+              domain={[candleYMin, candleYMax]}
               tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
               tickFormatter={(v) => `$${(v as number).toFixed(0)}`}
               width={42}
@@ -448,6 +505,10 @@ function PriceChart({ ticker }: { ticker: string }) {
               itemStyle={{ color: "#e4e4e7" }}
             />
             <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
+            {showSma21 && <Line dataKey="sma21" stroke={INDICATOR_COLORS.sma21} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
+            {showSma50 && <Line dataKey="sma50" stroke={INDICATOR_COLORS.sma50} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
+            {showBollinger && <Line dataKey="bbUpper" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
+            {showBollinger && <Line dataKey="bbLower" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
             {candleNewsMarkers.map((m) => (
               <ReferenceDot
                 key={m.t}
@@ -462,7 +523,7 @@ function PriceChart({ ticker }: { ticker: string }) {
       ) : (
         <ResponsiveContainer width="100%" height={chartHeight}>
           <ComposedChart
-            data={chartData}
+            data={chartDataInd}
             margin={{ top: 2, right: 4, bottom: 2, left: 4 }}
             onMouseMove={handleChartMouseMove}
             onContextMenu={handleChartContextMenu}
@@ -485,7 +546,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickLine={false}
             />
             <YAxis
-              domain={[min, max]}
+              domain={[yMin, yMax]}
               tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
               tickFormatter={(v) => `$${(v as number).toFixed(0)}`}
               width={42}
@@ -516,9 +577,100 @@ function PriceChart({ ticker }: { ticker: string }) {
               strokeWidth={1.5}
               isAnimationActive={false}
             />
+            {showSma21 && <Line dataKey="sma21" stroke={INDICATOR_COLORS.sma21} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
+            {showSma50 && <Line dataKey="sma50" stroke={INDICATOR_COLORS.sma50} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
+            {showBollinger && <Line dataKey="bbUpper" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
+            {showBollinger && <Line dataKey="bbLower" stroke={INDICATOR_COLORS.bollinger} strokeDasharray="4 3" dot={false} strokeWidth={1} isAnimationActive={false} connectNulls />}
             <Bar dataKey="newsY" shape={(p: React.ComponentProps<typeof NewsMarkerShape>) => <NewsMarkerShape {...p} onSelect={setActiveNews} />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
+      )}
+
+      {/* Painéis auxiliares (confirmação/momento) -- cada um só aparece se
+          ligado em "Indicadores"; só o mais embaixo mostra datas no eixo X. */}
+      {visual !== "tradingview" && showVolume && (
+        <div className="mt-1">
+          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">Volume</div>
+          <ResponsiveContainer width="100%" height={subpanelHeight}>
+            <ComposedChart data={volumeRows} margin={{ top: 0, right: 4, bottom: 2, left: 4 }}>
+              <XAxis
+                dataKey="t"
+                tickFormatter={lastSubpanel === "volume" ? (v) => formatXTick(v as number, period) : undefined}
+                tick={lastSubpanel === "volume" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tickCount={tickCount}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                domain={[0, "dataMax"]}
+                tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+                tickFormatter={(v) => fmtVolumeShort(v as number)}
+                width={42}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Bar dataKey={volumeKey} fill="#52525b" isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {visual !== "tradingview" && showRsi && (
+        <div className="mt-1">
+          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">IFR (RSI 14)</div>
+          <ResponsiveContainer width="100%" height={subpanelHeight}>
+            <ComposedChart data={rsiRows} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+              <XAxis
+                dataKey="t"
+                tickFormatter={lastSubpanel === "rsi" ? (v) => formatXTick(v as number, period) : undefined}
+                tick={lastSubpanel === "rsi" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tickCount={tickCount}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                domain={[0, 100]}
+                ticks={[30, 70]}
+                tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+                width={42}
+                axisLine={false}
+                tickLine={false}
+              />
+              <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
+              <ReferenceLine y={30} stroke="#4ade80" strokeDasharray="3 3" />
+              <Line dataKey="rsi" stroke="#facc15" dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {visual !== "tradingview" && showMacd && (
+        <div className="mt-1">
+          <div className="text-[9px] font-mono text-muted-foreground mb-0.5">MACD (12,26,9)</div>
+          <ResponsiveContainer width="100%" height={subpanelHeight}>
+            <ComposedChart data={macdRows} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+              <XAxis
+                dataKey="t"
+                tickFormatter={lastSubpanel === "macd" ? (v) => formatXTick(v as number, period) : undefined}
+                tick={lastSubpanel === "macd" ? { fontSize: 9, fontFamily: "monospace", fill: "#71717a" } : false}
+                tickCount={tickCount}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 9, fontFamily: "monospace", fill: "#71717a" }}
+                width={42}
+                axisLine={false}
+                tickLine={false}
+              />
+              <ReferenceLine y={0} stroke="#3f3f46" />
+              <Bar dataKey="macdHistPos" fill="#4ade80" isAnimationActive={false} />
+              <Bar dataKey="macdHistNeg" fill="#f87171" isAnimationActive={false} />
+              <Line dataKey="macdLine" stroke={INDICATOR_COLORS.macdLine} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+              <Line dataKey="macdSignal" stroke={INDICATOR_COLORS.macdSignal} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
       )}
 
       {/* Menu de botão direito no gráfico próprio -- "criar alerta neste
