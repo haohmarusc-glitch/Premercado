@@ -244,6 +244,15 @@ function QuoteCard({
 
 // ─── PriceChart ──────────────────────────────────────────────────────────────
 
+// Formato de cada ponto sob o cursor -- preço + indicadores anexados (ver
+// attachIndicatorFields).
+interface HoverRow {
+  t?: number; label?: string; price?: number; vol?: number;
+  sma21?: number | null; sma50?: number | null;
+  bbUpper?: number | null; bbLower?: number | null;
+  rsi?: number | null; macdLine?: number | null; macdSignal?: number | null;
+}
+
 function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: string; height?: number }) {
   const [, navigate] = useLocation();
   const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
@@ -268,24 +277,24 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // candle, o CandleChart (SVG puro) converte a posição do clique direto.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const hoverPriceRef = useRef<number | null>(null);
-  // Crosshair: linha horizontal no preço sob o cursor, acompanhando a linha
-  // vertical (cursor do tooltip, sincronizado com os painéis auxiliares
-  // abaixo via syncId) -- precisa ser state (não só o ref acima) pra
-  // re-renderizar e mover a <ReferenceLine> a cada movimento do mouse.
-  const [hoverY, setHoverY] = useState<number | null>(null);
+  // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
+  // (em vez do tooltip flutuante do recharts, que seguia o cursor e tapava
+  // as linhas) -- guarda a linha inteira sob o cursor, sincronizado com os
+  // painéis auxiliares abaixo via syncId.
+  const [hoverRow, setHoverRow] = useState<HoverRow | null>(null);
+  const hoverY = hoverRow?.price ?? null;
   const openChartMenu = useCallback((price: number, clientX: number, clientY: number) => {
     const x = Math.min(clientX, window.innerWidth - 230);
     const y = Math.min(clientY, window.innerHeight - 120);
     setChartMenu({ x, y, price });
   }, []);
-  const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: { price?: number } }[] }) => {
-    const price = state?.activePayload?.[0]?.payload?.price;
-    if (typeof price === "number") {
-      hoverPriceRef.current = price;
-      setHoverY(price);
-    }
+  const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: HoverRow }[] }) => {
+    const p = state?.activePayload?.[0]?.payload;
+    if (!p) return;
+    if (p.price != null) hoverPriceRef.current = p.price;
+    setHoverRow(p);
   }, []);
-  const handleChartMouseLeave = useCallback(() => setHoverY(null), []);
+  const handleChartMouseLeave = useCallback(() => setHoverRow(null), []);
   const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
     if (hoverPriceRef.current == null) return;
     e.preventDefault();
@@ -396,12 +405,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // props do recharts aplicam um único estilo pra tudo.
   // Linhas extras pros indicadores atualmente ligados -- só mostra o que
   // estiver visível no gráfico agora (mesmo critério do overlay/painéis).
-  const renderIndicatorRows = (p: {
-    sma21?: number | null; sma50?: number | null;
-    bbUpper?: number | null; bbLower?: number | null;
-    rsi?: number | null; macdLine?: number | null; macdSignal?: number | null;
-    vol?: number | null;
-  }) => {
+  const renderIndicatorRows = (p: HoverRow) => {
     const rows: { label: string; value: string; color: string }[] = [];
     if (showSma21 && p.sma21 != null) rows.push({ label: "SMA21", value: `$${p.sma21.toFixed(2)}`, color: INDICATOR_COLORS.sma21 });
     if (showSma50 && p.sma50 != null) rows.push({ label: "SMA50", value: `$${p.sma50.toFixed(2)}`, color: INDICATOR_COLORS.sma50 });
@@ -426,16 +430,19 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
       </div>
     );
   };
-  const priceTooltipContent = ({ active, label, payload }: { active?: boolean; label?: string; payload?: { value?: number; payload?: { sma21?: number | null; sma50?: number | null; bbUpper?: number | null; bbLower?: number | null; rsi?: number | null; macdLine?: number | null; macdSignal?: number | null; vol?: number | null } }[] }) => {
-    if (!active || !payload?.length || payload[0]?.value == null) return null;
+  // Caixa de dados fixa no canto do gráfico (em vez do tooltip flutuante do
+  // recharts, que seguia o cursor e tapava as linhas) -- conteúdo lido
+  // direto do state `hoverRow`, atualizado a cada onMouseMove.
+  const hoverBoxContent = () => {
+    if (!hoverRow || hoverRow.price == null) return null;
     return (
       <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
-        <div className="text-sm text-[#a1a1aa] mb-1">{label}</div>
+        <div className="text-sm text-[#a1a1aa] mb-1">{hoverRow.label}</div>
         <div className="flex items-baseline gap-3">
           <span className="text-2xl font-extrabold text-primary leading-none">{symbol}</span>
-          <span className="text-xl font-bold text-[#e4e4e7]">${fmt(payload[0].value)}</span>
+          <span className="text-xl font-bold text-[#e4e4e7]">${fmt(hoverRow.price)}</span>
         </div>
-        {payload[0].payload && renderIndicatorRows(payload[0].payload)}
+        {renderIndicatorRows(hoverRow)}
       </div>
     );
   };
@@ -622,7 +629,13 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         </span>
       </div>
     )}
-    <ResponsiveContainer width="100%" height={height}>
+    <div className="relative">
+      {hoverRow && (
+        <div className="absolute top-1 right-1 z-10 pointer-events-none max-w-[220px]">
+          {hoverBoxContent()}
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={height}>
       <ComposedChart
         data={chartDataInd}
         margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
@@ -662,7 +675,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         />
         <Tooltip
           cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }}
-          content={priceTooltipContent}
+          content={() => null}
         />
         <Area
           type="monotone"
@@ -688,7 +701,8 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
           />
         )}
       </ComposedChart>
-    </ResponsiveContainer>
+      </ResponsiveContainer>
+    </div>
     {subpanelsEl}
     </div>
   );
