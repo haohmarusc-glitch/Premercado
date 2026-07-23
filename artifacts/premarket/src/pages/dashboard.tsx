@@ -65,7 +65,7 @@ function fmtVol(n: number | null | undefined) {
 
 // Fonte/cor dos eixos do gráfico de preço + painéis auxiliares -- maior e
 // mais clara que o texto secundário padrão, pra ficar legível em cima do fundo escuro.
-const AXIS_TICK = { fontSize: 11, fontFamily: "monospace", fill: "#d4d4d8" };
+const AXIS_TICK = { fontSize: 14, fontFamily: "monospace", fill: "#d4d4d8" };
 const CROSSHAIR_STROKE = "#a1a1aa";
 
 function fmtLabel(ts: number, period: string) {
@@ -391,6 +391,21 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     : [minP - pad, maxP + pad];
   const subpanelHeight = 70;
   const lastSubpanel = showMacd ? "macd" : showRsi ? "rsi" : showVolume ? "volume" : null;
+  // Tooltip com layout próprio (em vez de contentStyle/labelStyle/itemStyle)
+  // pra destacar o ticker bem maior/mais forte que o preço -- esses três
+  // props do recharts aplicam um único estilo pra tudo.
+  const priceTooltipContent = ({ active, label, payload }: { active?: boolean; label?: string; payload?: { value?: number }[] }) => {
+    if (!active || !payload?.length || payload[0]?.value == null) return null;
+    return (
+      <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
+        <div className="text-sm text-[#a1a1aa] mb-1">{label}</div>
+        <div className="flex items-baseline gap-3">
+          <span className="text-2xl font-extrabold text-primary leading-none">{symbol}</span>
+          <span className="text-xl font-bold text-[#e4e4e7]">${fmt(payload[0].value)}</span>
+        </div>
+      </div>
+    );
+  };
   const indicatorToggleEl = (
     <IndicatorToggles
       enabled={indicators}
@@ -614,16 +629,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         />
         <Tooltip
           cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }}
-          contentStyle={{
-            background: "hsl(var(--card))",
-            border: "1px solid hsl(var(--border))",
-            borderRadius: "6px",
-            fontFamily: "monospace",
-            fontSize: "12px",
-          }}
-          labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
-          itemStyle={{ color }}
-          formatter={(val: number) => [`$${fmt(val)}`, "Price"]}
+          content={priceTooltipContent}
         />
         <Area
           type="monotone"
@@ -645,7 +651,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
             stroke={CROSSHAIR_STROKE}
             strokeDasharray="3 3"
             ifOverflow="visible"
-            label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 11, fontFamily: "monospace" }}
+            label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 15, fontWeight: 700, fontFamily: "monospace" }}
           />
         )}
       </ComposedChart>
@@ -768,7 +774,7 @@ export default function Dashboard() {
               <select
                 value={activeSymbol}
                 onChange={(e) => setSelectedSymbol(e.target.value)}
-                className="bg-background border border-border rounded px-2 py-1 font-mono font-bold text-primary text-sm tracking-widest focus:outline-none focus:ring-1 focus:ring-primary"
+                className="bg-background border border-border rounded px-2 py-1 font-mono font-extrabold text-primary text-2xl tracking-wide focus:outline-none focus:ring-1 focus:ring-primary"
                 aria-label="Selecionar ticker"
               >
                 {(quotes ?? []).map((q) => (

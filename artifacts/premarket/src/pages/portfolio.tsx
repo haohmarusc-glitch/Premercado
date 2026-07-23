@@ -53,7 +53,7 @@ const fmtVolumeShort = (n: number) => {
 };
 // Fonte/cor dos eixos do gráfico de preço + painéis auxiliares -- maior e
 // mais clara que o texto secundário padrão, pra ficar legível em cima do fundo escuro.
-const AXIS_TICK = { fontSize: 11, fontFamily: "monospace", fill: "#d4d4d8" };
+const AXIS_TICK = { fontSize: 14, fontFamily: "monospace", fill: "#d4d4d8" };
 const CROSSHAIR_STROKE = "#a1a1aa";
 // Posições da B3 (sufixo .SA no Yahoo) são cotadas e cadastradas em reais;
 // os agregados da carteira convertem para USD pelo câmbio BRL=X ao vivo
@@ -381,12 +381,61 @@ function PriceChart({ ticker }: { ticker: string }) {
   const lastSubpanel = showMacd ? "macd" : showRsi ? "rsi" : showVolume ? "volume" : null;
   const subpanelHeight = 70;
 
+  // Tooltip com layout próprio (em vez de contentStyle/labelStyle/itemStyle)
+  // pra poder destacar o ticker bem maior/mais forte que o resto do texto --
+  // esses três props do recharts aplicam um único estilo pra tudo, sem como
+  // diferenciar nome do ticker vs. preço/OHLC.
+  const fmtTooltipDate = (label: number) => {
+    const d = new Date(label);
+    if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+  };
+  const candleTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { payload?: { o: number; h: number; l: number; c: number } }[] }) => {
+    if (!active || !payload?.length) return null;
+    const p = payload[0]?.payload;
+    if (!p) return null;
+    return (
+      <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
+        <div className="text-sm text-[#a1a1aa] mb-1">{fmtTooltipDate(label as number)}</div>
+        <div className="text-2xl font-extrabold text-primary leading-none mb-1">{ticker}</div>
+        <div className="text-base text-[#e4e4e7]">
+          O {p.o.toFixed(2)} · H {p.h.toFixed(2)} · L {p.l.toFixed(2)} · C {p.c.toFixed(2)}
+        </div>
+      </div>
+    );
+  };
+  const lineTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { dataKey?: string; value?: number; payload?: { newsItems?: { title: string }[] } }[] }) => {
+    if (!active || !payload?.length) return null;
+    const newsEntry = payload.find((it) => it.dataKey === "newsY" && it.payload?.newsItems?.length);
+    if (newsEntry) {
+      const items = newsEntry.payload!.newsItems!;
+      return (
+        <div className="rounded-md border px-3 py-2 font-mono max-w-xs" style={{ background: "#09090b", borderColor: "#27272a" }}>
+          <div className="text-sm text-[#a1a1aa] mb-1">{fmtTooltipDate(label as number)}</div>
+          <div className="text-sm text-[#e4e4e7]">📰 {items.map((n) => n.title).join(" · ")}</div>
+        </div>
+      );
+    }
+    const priceEntry = payload.find((it) => it.dataKey === "v");
+    if (!priceEntry || priceEntry.value == null) return null;
+    return (
+      <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
+        <div className="text-sm text-[#a1a1aa] mb-1">{fmtTooltipDate(label as number)}</div>
+        <div className="flex items-baseline gap-3">
+          <span className="text-2xl font-extrabold text-primary leading-none">{ticker}</span>
+          <span className="text-xl font-bold text-[#e4e4e7]">${priceEntry.value.toFixed(2)}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className={cn("w-full mt-3", expanded && "fixed inset-0 z-50 bg-background p-4 overflow-y-auto")}>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
-            {ticker} — histórico
+          <span className="flex items-baseline gap-1.5 font-mono">
+            <span className="text-2xl font-extrabold text-primary tracking-wide">{ticker}</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">— histórico</span>
           </span>
           {visual === "line" && showSessionColors && (
             <span className="flex items-center gap-2 text-[9px] font-mono text-muted-foreground">
@@ -496,6 +545,8 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickFormatter={(v) => formatXTick(v as number, period)}
               tick={AXIS_TICK}
               tickCount={tickCount}
+              interval="preserveStartEnd"
+              minTickGap={50}
               axisLine={false}
               tickLine={false}
             />
@@ -509,19 +560,7 @@ function PriceChart({ ticker }: { ticker: string }) {
             />
             <RechartsTooltip
               cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }}
-              formatter={(_val: unknown, _name: string, item: { payload?: { o: number; h: number; l: number; c: number } }) => {
-                const p = item?.payload;
-                if (!p) return ["—", "OHLC"];
-                return [`O ${p.o.toFixed(2)} · H ${p.h.toFixed(2)} · L ${p.l.toFixed(2)} · C ${p.c.toFixed(2)}`, ticker];
-              }}
-              labelFormatter={(label) => {
-                const d = new Date(label as number);
-                if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-                return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
-              }}
-              contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
-              labelStyle={{ color: "#a1a1aa" }}
-              itemStyle={{ color: "#e4e4e7" }}
+              content={candleTooltipContent}
             />
             <Bar dataKey="range" shape={CandleShape} isAnimationActive={false} />
             {showSma21 && <Line dataKey="sma21" stroke={INDICATOR_COLORS.sma21} dot={false} strokeWidth={1.25} isAnimationActive={false} connectNulls />}
@@ -534,7 +573,7 @@ function PriceChart({ ticker }: { ticker: string }) {
                 stroke={CROSSHAIR_STROKE}
                 strokeDasharray="3 3"
                 ifOverflow="visible"
-                label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 11, fontFamily: "monospace" }}
+                label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 15, fontWeight: 700, fontFamily: "monospace" }}
               />
             )}
             {candleNewsMarkers.map((m) => (
@@ -572,6 +611,8 @@ function PriceChart({ ticker }: { ticker: string }) {
               tickFormatter={(v) => formatXTick(v as number, period)}
               tick={AXIS_TICK}
               tickCount={tickCount}
+              interval="preserveStartEnd"
+              minTickGap={50}
               axisLine={false}
               tickLine={false}
             />
@@ -585,20 +626,7 @@ function PriceChart({ ticker }: { ticker: string }) {
             />
             <RechartsTooltip
               cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }}
-              formatter={(value: number, name: string, item: { payload?: { newsItems?: { title: string }[] } }) => {
-                if (name === "newsY") {
-                  const items = item?.payload?.newsItems ?? [];
-                  return [<span style={{ color: "#e4e4e7" }}>{items.map((n) => n.title).join(" · ")}</span>, "📰 Notícia"];
-                }
-                return [`$${value.toFixed(2)}`, ticker];
-              }}
-              labelFormatter={(label) => {
-                const d = new Date(label as number);
-                if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-                return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
-              }}
-              contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
-              labelStyle={{ color: "#a1a1aa" }}
+              content={lineTooltipContent}
             />
             <Line
               type="monotone"
@@ -618,7 +646,7 @@ function PriceChart({ ticker }: { ticker: string }) {
                 stroke={CROSSHAIR_STROKE}
                 strokeDasharray="3 3"
                 ifOverflow="visible"
-                label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 11, fontFamily: "monospace" }}
+                label={{ value: `$${hoverY.toFixed(2)}`, position: "right", fill: "#e4e4e7", fontSize: 15, fontWeight: 700, fontFamily: "monospace" }}
               />
             )}
             <Bar dataKey="newsY" shape={(p: React.ComponentProps<typeof NewsMarkerShape>) => <NewsMarkerShape {...p} onSelect={setActiveNews} />} isAnimationActive={false} />
@@ -638,6 +666,8 @@ function PriceChart({ ticker }: { ticker: string }) {
                 tickFormatter={lastSubpanel === "volume" ? (v) => formatXTick(v as number, period) : undefined}
                 tick={lastSubpanel === "volume" ? AXIS_TICK : false}
                 tickCount={tickCount}
+                interval="preserveStartEnd"
+                minTickGap={50}
                 axisLine={false}
                 tickLine={false}
               />
@@ -666,6 +696,8 @@ function PriceChart({ ticker }: { ticker: string }) {
                 tickFormatter={lastSubpanel === "rsi" ? (v) => formatXTick(v as number, period) : undefined}
                 tick={lastSubpanel === "rsi" ? AXIS_TICK : false}
                 tickCount={tickCount}
+                interval="preserveStartEnd"
+                minTickGap={50}
                 axisLine={false}
                 tickLine={false}
               />
@@ -696,6 +728,8 @@ function PriceChart({ ticker }: { ticker: string }) {
                 tickFormatter={lastSubpanel === "macd" ? (v) => formatXTick(v as number, period) : undefined}
                 tick={lastSubpanel === "macd" ? AXIS_TICK : false}
                 tickCount={tickCount}
+                interval="preserveStartEnd"
+                minTickGap={50}
                 axisLine={false}
                 tickLine={false}
               />
