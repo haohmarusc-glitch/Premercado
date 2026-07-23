@@ -30,6 +30,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Minus, RefreshCw, Bell, BellRi
 import { exportToPDF } from "@/lib/export-pdf";
 import { Link } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
+import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { TrendCard, useTrend } from "@/components/trend-card";
 import { SmartMoneyCard } from "@/components/smart-money-card";
@@ -249,7 +250,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   );
 
   const candles = data?.candles ?? [];
-  const chartData = candles.map((c) => ({ t: c.t, price: c.c, label: fmtLabel(c.t, period) }));
+  const chartData = candles.map((c) => ({ t: c.t, price: c.c, label: fmtLabel(c.t, period), session: c.session }));
 
   const prices = chartData.map((d) => d.price).filter(Boolean) as number[];
   const minP = prices.length ? Math.min(...prices) : 0;
@@ -261,6 +262,8 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   const last = prices[prices.length - 1];
   const up = last != null && first != null && last >= first;
   const color = up ? "#22c55e" : "#ef4444";
+  const showSessionColors = hasExtendedSession(candles);
+  const sessionGradientId = `session-grad-${symbol}`;
 
   const toggle = (
     <div className="flex justify-end gap-1 mb-1">
@@ -328,6 +331,16 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   return (
     <div>
     {toggle}
+    {showSessionColors && (
+      <div className="flex items-center justify-end gap-2 mb-1 text-[9px] font-mono text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.pre }} /> pré
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.post }} /> pós
+        </span>
+      </div>
+    )}
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
         <defs>
@@ -335,6 +348,13 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
             <stop offset="5%" stopColor={color} stopOpacity={0.25} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
+          {showSessionColors && (
+            <linearGradient id={sessionGradientId} x1="0" y1="0" x2="1" y2="0">
+              {sessionGradientStops(chartData, color).map((s, i) => (
+                <stop key={i} offset={s.offset} stopColor={s.color} />
+              ))}
+            </linearGradient>
+          )}
         </defs>
         <XAxis
           dataKey="label"
@@ -367,7 +387,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
         <Area
           type="monotone"
           dataKey="price"
-          stroke={color}
+          stroke={showSessionColors ? `url(#${sessionGradientId})` : color}
           strokeWidth={1.5}
           fill={`url(#grad-${symbol})`}
           dot={false}

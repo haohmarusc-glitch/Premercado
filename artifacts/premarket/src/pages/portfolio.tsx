@@ -32,6 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CandleShape, toCandleRangeData, candleDomain } from "@/components/candle-shape";
 import { attachNewsMarkers, NewsMarkerShape, newsDotShape, parseNewsPublished } from "@/components/news-markers";
+import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
 
@@ -255,11 +256,13 @@ function PriceChart({ ticker }: { ticker: string }) {
   const newsItemsList = newsData?.items?.[0]?.news ?? [];
 
   const candles = data?.candles ?? [];
-  const chartDataBase = candles.map((c) => ({ t: c.t, v: c.c }));
+  const chartDataBase = candles.map((c) => ({ t: c.t, v: c.c, session: c.session }));
   const isUp = candles.length >= 2
     ? (candles[candles.length - 1]?.c ?? 0) >= (candles[0]?.c ?? 0)
     : true;
   const color = isUp ? "#4ade80" : "#f87171";
+  const showSessionColors = hasExtendedSession(candles);
+  const sessionGradientId = `session-grad-${ticker}`;
   const min = chartDataBase.length ? Math.min(...chartDataBase.map((d) => d.v)) * 0.998 : 0;
   const max = chartDataBase.length ? Math.max(...chartDataBase.map((d) => d.v)) * 1.002 : 100;
   const tickCount = Math.min(6, candles.length);
@@ -274,9 +277,21 @@ function PriceChart({ ticker }: { ticker: string }) {
   return (
     <div className="w-full mt-3">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
-          {ticker} — histórico
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+            {ticker} — histórico
+          </span>
+          {visual === "line" && showSessionColors && (
+            <span className="flex items-center gap-2 text-[9px] font-mono text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.pre }} /> pré
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.post }} /> pós
+              </span>
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex gap-0.5 border border-border rounded p-0.5">
             <button
@@ -405,6 +420,15 @@ function PriceChart({ ticker }: { ticker: string }) {
       ) : (
         <ResponsiveContainer width="100%" height={expanded ? 420 : 200}>
           <ComposedChart data={chartData} margin={{ top: 2, right: 4, bottom: 2, left: 4 }}>
+            {showSessionColors && (
+              <defs>
+                <linearGradient id={sessionGradientId} x1="0" y1="0" x2="1" y2="0">
+                  {sessionGradientStops(chartDataBase, color).map((s, i) => (
+                    <stop key={i} offset={s.offset} stopColor={s.color} />
+                  ))}
+                </linearGradient>
+              </defs>
+            )}
             <XAxis
               dataKey="t"
               tickFormatter={(v) => formatXTick(v as number, period)}
@@ -437,7 +461,14 @@ function PriceChart({ ticker }: { ticker: string }) {
               contentStyle={{ background: "#09090b", border: "1px solid #27272a", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace" }}
               labelStyle={{ color: "#a1a1aa" }}
             />
-            <Line type="monotone" dataKey="v" stroke={color} dot={false} strokeWidth={1.5} isAnimationActive={false} />
+            <Line
+              type="monotone"
+              dataKey="v"
+              stroke={showSessionColors ? `url(#${sessionGradientId})` : color}
+              dot={false}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+            />
             <Bar dataKey="newsY" shape={(p: React.ComponentProps<typeof NewsMarkerShape>) => <NewsMarkerShape {...p} onSelect={setActiveNews} />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>

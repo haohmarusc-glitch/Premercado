@@ -5,6 +5,7 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { CandleSession } from './candleSession';
 
 export interface Candle {
   t: number;
@@ -13,4 +14,6 @@ export interface Candle {
   l: number;
   c: number;
   v: number;
+  /** Sessão do pregão -- só populado pra períodos intradiários (1d/5d); "regular" pros demais. */
+  session?: CandleSession;
 }
