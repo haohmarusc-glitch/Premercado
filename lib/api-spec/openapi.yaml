@@ -1285,6 +1285,10 @@ components:
         l: { type: number }
         c: { type: number }
         v: { type: integer }
+        session:
+          type: string
+          enum: [pre, regular, post]
+          description: Sessão do pregão -- só populado pra períodos intradiários (1d/5d); "regular" pros demais.
 
     TickerChart:
       type: object
