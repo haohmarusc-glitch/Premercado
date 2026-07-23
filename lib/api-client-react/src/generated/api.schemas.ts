@@ -175,6 +175,18 @@ export interface AlertFiring {
   firedAt: string;
 }
 
+/**
+ * Sessão do pregão -- só populado pra períodos intradiários (1d/5d); "regular" pros demais.
+ */
+export type CandleSession = typeof CandleSession[keyof typeof CandleSession];
+
+
+export const CandleSession = {
+  pre: 'pre',
+  regular: 'regular',
+  post: 'post',
+} as const;
+
 export interface Candle {
   t: number;
   o: number;
@@ -182,6 +194,8 @@ export interface Candle {
   l: number;
   c: number;
   v: number;
+  /** Sessão do pregão -- só populado pra períodos intradiários (1d/5d); "regular" pros demais. */
+  session?: CandleSession;
 }
 
 export interface TickerChart {

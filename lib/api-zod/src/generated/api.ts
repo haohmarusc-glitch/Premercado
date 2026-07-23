@@ -286,7 +286,8 @@ export const GetTickerChartResponse = zod.object({
   "h": zod.coerce.number(),
   "l": zod.coerce.number(),
   "c": zod.coerce.number(),
-  "v": zod.coerce.number()
+  "v": zod.coerce.number(),
+  "session": zod.enum(['pre', 'regular', 'post']).optional().describe('Sessão do pregão -- só populado pra períodos intradiários (1d\/5d); \"regular\" pros demais.')
 })),
   "error": zod.string().nullish()
 })

@@ -21,6 +21,7 @@ export * from './authCredentials';
 export * from './authMeResponse';
 export * from './authUser';
 export * from './candle';
+export * from './candleSession';
 export * from './cashBalance';
 export * from './cashUpdate';
 export * from './cashUpdateMode';
