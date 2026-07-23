@@ -390,7 +390,46 @@ function PriceChart({ ticker }: { ticker: string }) {
     if (period === "1d") return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
   };
-  const candleTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { payload?: { o: number; h: number; l: number; c: number } }[] }) => {
+  // Linhas extras no tooltip pros indicadores atualmente ligados -- só mostra
+  // o que estiver visível no gráfico no momento (mesmo critério do overlay/
+  // painéis auxiliares), lendo os valores já anexados por índice em cada
+  // ponto (ver attachIndicatorFields). `volKey` muda porque o modo line usa
+  // "vol" (pra não colidir com o "v" que ali significa preço) e o candle usa
+  // o "v" de verdade (volume real do Candle).
+  const renderIndicatorRows = (p: {
+    sma21?: number | null; sma50?: number | null;
+    bbUpper?: number | null; bbLower?: number | null;
+    rsi?: number | null; macdLine?: number | null; macdSignal?: number | null;
+    vol?: number | null; v?: number | null;
+  }, volKey: "vol" | "v") => {
+    const rows: { label: string; value: string; color: string }[] = [];
+    if (showSma21 && p.sma21 != null) rows.push({ label: "SMA21", value: `$${p.sma21.toFixed(2)}`, color: INDICATOR_COLORS.sma21 });
+    if (showSma50 && p.sma50 != null) rows.push({ label: "SMA50", value: `$${p.sma50.toFixed(2)}`, color: INDICATOR_COLORS.sma50 });
+    if (showBollinger && p.bbUpper != null) rows.push({ label: "BB Sup", value: `$${p.bbUpper.toFixed(2)}`, color: INDICATOR_COLORS.bollinger });
+    if (showBollinger && p.bbLower != null) rows.push({ label: "BB Inf", value: `$${p.bbLower.toFixed(2)}`, color: INDICATOR_COLORS.bollinger });
+    if (showVolume) {
+      const vol = volKey === "vol" ? p.vol : p.v;
+      if (vol != null) rows.push({ label: "Volume", value: fmtVolumeShort(vol), color: "#a1a1aa" });
+    }
+    if (showRsi && p.rsi != null) rows.push({ label: "IFR", value: p.rsi.toFixed(1), color: "#facc15" });
+    if (showMacd && p.macdLine != null) rows.push({ label: "MACD", value: p.macdLine.toFixed(3), color: INDICATOR_COLORS.macdLine });
+    if (showMacd && p.macdSignal != null) rows.push({ label: "Sinal", value: p.macdSignal.toFixed(3), color: INDICATOR_COLORS.macdSignal });
+    if (!rows.length) return null;
+    return (
+      <div className="mt-1.5 pt-1.5 border-t border-[#27272a] space-y-0.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between gap-4 text-sm">
+            <span className="flex items-center gap-1.5 text-[#a1a1aa]">
+              <span className="inline-block h-2 w-2 rounded-full flex-shrink-0" style={{ background: r.color }} />
+              {r.label}
+            </span>
+            <span className="font-semibold text-[#e4e4e7]">{r.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+  const candleTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { payload?: { o: number; h: number; l: number; c: number; v?: number; sma21?: number | null; sma50?: number | null; bbUpper?: number | null; bbLower?: number | null; rsi?: number | null; macdLine?: number | null; macdSignal?: number | null } }[] }) => {
     if (!active || !payload?.length) return null;
     const p = payload[0]?.payload;
     if (!p) return null;
@@ -401,10 +440,11 @@ function PriceChart({ ticker }: { ticker: string }) {
         <div className="text-base text-[#e4e4e7]">
           O {p.o.toFixed(2)} · H {p.h.toFixed(2)} · L {p.l.toFixed(2)} · C {p.c.toFixed(2)}
         </div>
+        {renderIndicatorRows(p, "v")}
       </div>
     );
   };
-  const lineTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { dataKey?: string; value?: number; payload?: { newsItems?: { title: string }[] } }[] }) => {
+  const lineTooltipContent = ({ active, label, payload }: { active?: boolean; label?: number; payload?: { dataKey?: string; value?: number; payload?: { newsItems?: { title: string }[]; vol?: number | null; sma21?: number | null; sma50?: number | null; bbUpper?: number | null; bbLower?: number | null; rsi?: number | null; macdLine?: number | null; macdSignal?: number | null } }[] }) => {
     if (!active || !payload?.length) return null;
     const newsEntry = payload.find((it) => it.dataKey === "newsY" && it.payload?.newsItems?.length);
     if (newsEntry) {
@@ -425,6 +465,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           <span className="text-2xl font-extrabold text-primary leading-none">{ticker}</span>
           <span className="text-xl font-bold text-[#e4e4e7]">${priceEntry.value.toFixed(2)}</span>
         </div>
+        {priceEntry.payload && renderIndicatorRows(priceEntry.payload, "vol")}
       </div>
     );
   };

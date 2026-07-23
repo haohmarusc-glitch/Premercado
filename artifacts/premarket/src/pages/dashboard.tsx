@@ -394,7 +394,39 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // Tooltip com layout próprio (em vez de contentStyle/labelStyle/itemStyle)
   // pra destacar o ticker bem maior/mais forte que o preço -- esses três
   // props do recharts aplicam um único estilo pra tudo.
-  const priceTooltipContent = ({ active, label, payload }: { active?: boolean; label?: string; payload?: { value?: number }[] }) => {
+  // Linhas extras pros indicadores atualmente ligados -- só mostra o que
+  // estiver visível no gráfico agora (mesmo critério do overlay/painéis).
+  const renderIndicatorRows = (p: {
+    sma21?: number | null; sma50?: number | null;
+    bbUpper?: number | null; bbLower?: number | null;
+    rsi?: number | null; macdLine?: number | null; macdSignal?: number | null;
+    vol?: number | null;
+  }) => {
+    const rows: { label: string; value: string; color: string }[] = [];
+    if (showSma21 && p.sma21 != null) rows.push({ label: "SMA21", value: `$${p.sma21.toFixed(2)}`, color: INDICATOR_COLORS.sma21 });
+    if (showSma50 && p.sma50 != null) rows.push({ label: "SMA50", value: `$${p.sma50.toFixed(2)}`, color: INDICATOR_COLORS.sma50 });
+    if (showBollinger && p.bbUpper != null) rows.push({ label: "BB Sup", value: `$${p.bbUpper.toFixed(2)}`, color: INDICATOR_COLORS.bollinger });
+    if (showBollinger && p.bbLower != null) rows.push({ label: "BB Inf", value: `$${p.bbLower.toFixed(2)}`, color: INDICATOR_COLORS.bollinger });
+    if (showVolume && p.vol != null) rows.push({ label: "Volume", value: fmtVol(p.vol), color: "#a1a1aa" });
+    if (showRsi && p.rsi != null) rows.push({ label: "IFR", value: p.rsi.toFixed(1), color: "#facc15" });
+    if (showMacd && p.macdLine != null) rows.push({ label: "MACD", value: p.macdLine.toFixed(3), color: INDICATOR_COLORS.macdLine });
+    if (showMacd && p.macdSignal != null) rows.push({ label: "Sinal", value: p.macdSignal.toFixed(3), color: INDICATOR_COLORS.macdSignal });
+    if (!rows.length) return null;
+    return (
+      <div className="mt-1.5 pt-1.5 border-t border-[#27272a] space-y-0.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between gap-4 text-sm">
+            <span className="flex items-center gap-1.5 text-[#a1a1aa]">
+              <span className="inline-block h-2 w-2 rounded-full flex-shrink-0" style={{ background: r.color }} />
+              {r.label}
+            </span>
+            <span className="font-semibold text-[#e4e4e7]">{r.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+  const priceTooltipContent = ({ active, label, payload }: { active?: boolean; label?: string; payload?: { value?: number; payload?: { sma21?: number | null; sma50?: number | null; bbUpper?: number | null; bbLower?: number | null; rsi?: number | null; macdLine?: number | null; macdSignal?: number | null; vol?: number | null } }[] }) => {
     if (!active || !payload?.length || payload[0]?.value == null) return null;
     return (
       <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
@@ -403,6 +435,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
           <span className="text-2xl font-extrabold text-primary leading-none">{symbol}</span>
           <span className="text-xl font-bold text-[#e4e4e7]">${fmt(payload[0].value)}</span>
         </div>
+        {payload[0].payload && renderIndicatorRows(payload[0].payload)}
       </div>
     );
   };
