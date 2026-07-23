@@ -473,7 +473,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
                 tickLine={false}
               />
               <Tooltip cursor={{ stroke: CROSSHAIR_STROKE, strokeDasharray: "3 3" }} content={() => null} />
-              <Bar dataKey="vol" fill="#52525b" isAnimationActive={false} />
+              <Bar dataKey="vol" fill="#a1a1aa" isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
