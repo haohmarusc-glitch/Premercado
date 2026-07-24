@@ -4,6 +4,12 @@ import { useDraggableOffset } from "../hooks/use-draggable-offset";
 
 const KEY = "test:draggable-offset";
 
+function makeTouchEvent(type: string, clientX: number, clientY: number) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as unknown as TouchEvent;
+  Object.defineProperty(event, "touches", { value: [{ clientX, clientY }], configurable: true });
+  return event;
+}
+
 describe("useDraggableOffset", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -50,6 +56,43 @@ describe("useDraggableOffset", () => {
 
     act(() => {
       document.dispatchEvent(new MouseEvent("mouseup"));
+    });
+    expect(result.current.dragging).toBe(false);
+  });
+
+  it("arrasta por toque (celular) e atualiza o offset acompanhando o delta", () => {
+    const { result } = renderHook(() => useDraggableOffset(KEY));
+
+    act(() => {
+      result.current.onTouchStart({
+        stopPropagation: () => {},
+        touches: [{ clientX: 100, clientY: 100 }],
+      } as unknown as React.TouchEvent);
+    });
+    expect(result.current.dragging).toBe(true);
+
+    act(() => {
+      document.dispatchEvent(makeTouchEvent("touchmove", 70, 140));
+    });
+    expect(result.current.offset).toEqual({ x: -30, y: 40 });
+
+    act(() => {
+      document.dispatchEvent(new Event("touchend"));
+    });
+    expect(result.current.dragging).toBe(false);
+  });
+
+  it("para de arrastar por toque em touchcancel", () => {
+    const { result } = renderHook(() => useDraggableOffset(KEY));
+    act(() => {
+      result.current.onTouchStart({
+        stopPropagation: () => {},
+        touches: [{ clientX: 0, clientY: 0 }],
+      } as unknown as React.TouchEvent);
+    });
+    expect(result.current.dragging).toBe(true);
+    act(() => {
+      document.dispatchEvent(new Event("touchcancel"));
     });
     expect(result.current.dragging).toBe(false);
   });
