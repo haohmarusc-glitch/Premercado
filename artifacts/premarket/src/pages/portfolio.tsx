@@ -267,7 +267,7 @@ function PriceChart({ ticker }: { ticker: string }) {
   const hoverPriceRef = useRef<number | null>(null);
   // Caixa de dados arrastável -- o usuário move pra onde quiser (a posição
   // padrão no canto às vezes fica em cima das próprias linhas do gráfico).
-  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown } = useDraggableOffset("premercado:chart-hover-box-pos");
+  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown, onTouchStart: onBoxTouchStart } = useDraggableOffset("premercado:chart-hover-box-pos");
   // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
   // (em vez do tooltip flutuante do recharts, que ficava em cima do cursor
   // tapando as linhas) -- guarda a linha inteira sob o cursor, não só o
@@ -450,8 +450,9 @@ function PriceChart({ ticker }: { ticker: string }) {
   const dragHandle = (dateStr: string) => (
     <div
       onMouseDown={onBoxMouseDown}
+      onTouchStart={onBoxTouchStart}
       className={cn(
-        "flex items-center gap-1.5 px-3 py-1.5 border-b select-none pointer-events-auto",
+        "flex items-center gap-1.5 px-3 py-1.5 border-b select-none pointer-events-auto touch-none",
         boxDragging ? "cursor-grabbing" : "cursor-grab",
       )}
       style={{ borderColor: "#27272a" }}
