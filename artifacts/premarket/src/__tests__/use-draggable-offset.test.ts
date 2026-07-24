@@ -112,4 +112,83 @@ describe("useDraggableOffset", () => {
     });
     expect(JSON.parse(window.localStorage.getItem(KEY) ?? "null")).toEqual({ x: 10, y: 5 });
   });
+
+  // Grampeamento (containerRef informado): a caixa nunca pode sair do
+  // container, seja um offset salvo de antes desse grampeamento existir,
+  // seja arrastando demais durante o uso.
+  describe("com containerRef (grampeado dentro do container)", () => {
+    function makeContainer(width: number, height: number) {
+      const el = document.createElement("div");
+      Object.defineProperty(el, "clientWidth", { value: width, configurable: true });
+      Object.defineProperty(el, "clientHeight", { value: height, configurable: true });
+      return el;
+    }
+    function makeBox(width: number, height: number) {
+      const el = document.createElement("div");
+      Object.defineProperty(el, "offsetWidth", { value: width, configurable: true });
+      Object.defineProperty(el, "offsetHeight", { value: height, configurable: true });
+      return el;
+    }
+
+    it("autocorrige um offset salvo fora dos limites assim que a caixa aparece, sem precisar arrastar", () => {
+      // Container pequeno (200x100) com um offset salvo que arrastaria a
+      // caixa (180x60) bem pra fora -- cenário exato do bug: usuário arrastou
+      // pra cima/esquerda uma vez e ficou preso lá em toda visita futura.
+      window.localStorage.setItem(KEY, JSON.stringify({ x: -500, y: -500 }));
+      const containerRef = { current: makeContainer(200, 100) };
+      const { result } = renderHook(() => useDraggableOffset(KEY, containerRef));
+
+      act(() => {
+        result.current.boxRef(makeBox(180, 60));
+      });
+
+      expect(result.current.offset.x).toBeGreaterThanOrEqual(-16); // bw+2*MARGIN-cw = 180+8-200
+      expect(result.current.offset.y).toBe(0); // top não pode ficar acima da margem inicial
+    });
+
+    it("não deixa arrastar a caixa pra fora do container", () => {
+      const containerRef = { current: makeContainer(300, 150) };
+      const { result } = renderHook(() => useDraggableOffset(KEY, containerRef));
+      act(() => {
+        result.current.boxRef(makeBox(100, 50));
+      });
+
+      act(() => {
+        result.current.onMouseDown({
+          preventDefault: () => {},
+          stopPropagation: () => {},
+          clientX: 0,
+          clientY: 0,
+        } as unknown as React.MouseEvent);
+      });
+      // Arrasto enorme pra cima e pra esquerda -- sem grampeamento a caixa
+      // sairia muito além do container.
+      act(() => {
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: -1000, clientY: -1000 }));
+      });
+
+      // right = MARGIN - offset.x deve deixar a borda esquerda (cw - right - bw) >= MARGIN.
+      const right = Math.max(4, 4 - result.current.offset.x);
+      const left = 300 - right - 100;
+      expect(left).toBeGreaterThanOrEqual(4);
+      // top = MARGIN + offset.y não pode ficar negativo (acima do container).
+      expect(4 + result.current.offset.y).toBeGreaterThanOrEqual(4);
+    });
+
+    it("sem containerRef, continua sem grampear (comportamento antigo preservado)", () => {
+      const { result } = renderHook(() => useDraggableOffset(KEY));
+      act(() => {
+        result.current.onMouseDown({
+          preventDefault: () => {},
+          stopPropagation: () => {},
+          clientX: 0,
+          clientY: 0,
+        } as unknown as React.MouseEvent);
+      });
+      act(() => {
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: -1000, clientY: -1000 }));
+      });
+      expect(result.current.offset).toEqual({ x: -1000, y: -1000 });
+    });
+  });
 });
