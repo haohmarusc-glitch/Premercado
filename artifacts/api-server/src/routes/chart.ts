@@ -31,7 +31,11 @@ function fetchChart(symbol: string, period: string): Promise<unknown> {
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
-      if (err) logger.warn({ symbol: sym, period: per, stderr: err.trim() }, "get_chart stderr");
+      if (err) {
+        const msg = { symbol: sym, period: per, stderr: err.trim() };
+        if (code !== 0) logger.warn(msg, "get_chart stderr");
+        else logger.debug(msg, "get_chart stderr");
+      }
       if (code !== 0) { reject(new Error(`get_chart exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
