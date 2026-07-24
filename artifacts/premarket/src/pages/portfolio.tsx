@@ -265,12 +265,13 @@ function PriceChart({ ticker }: { ticker: string }) {
   // só lido quando o context menu de fato abre.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const hoverPriceRef = useRef<number | null>(null);
+  // Container do gráfico (a div "relative" que envolve o SVG/recharts) --
+  // grampeia o arraste da caixa de dados pra ela nunca sair da coluna do
+  // gráfico (ver useDraggableOffset).
+  const chartContainerRef = useRef<HTMLDivElement>(null);
   // Caixa de dados arrastável -- o usuário move pra onde quiser (a posição
   // padrão no canto às vezes fica em cima das próprias linhas do gráfico).
-  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown, onTouchStart: onBoxTouchStart } = useDraggableOffset("premercado:chart-hover-box-pos");
-  // Ref da caixa pra distinguir "saiu do gráfico de vez" de "entrou na
-  // própria caixa" no onMouseLeave abaixo (ver comentário lá).
-  const hoverBoxRef = useRef<HTMLDivElement>(null);
+  const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown, onTouchStart: onBoxTouchStart, boxRef: hoverBoxRef } = useDraggableOffset("premercado:chart-hover-box-pos", chartContainerRef);
   // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
   // (em vez do tooltip flutuante do recharts, que ficava em cima do cursor
   // tapando as linhas) -- guarda a linha inteira sob o cursor, não só o
@@ -618,7 +619,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           sem dados
         </div>
       ) : visual === "candle" ? (
-        <div className="relative">
+        <div className="relative" ref={chartContainerRef}>
           {hoverRow && (
             <div
               ref={hoverBoxRef}
@@ -686,7 +687,7 @@ function PriceChart({ ticker }: { ticker: string }) {
           </ResponsiveContainer>
         </div>
       ) : (
-        <div className="relative">
+        <div className="relative" ref={chartContainerRef}>
           {hoverRow && (
             <div
               ref={hoverBoxRef}
