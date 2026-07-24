@@ -277,6 +277,10 @@ function PriceChart({ ticker }: { ticker: string }) {
   // preço, pra poder montar a mesma caixa (data/ticker/indicadores) parada
   // no canto.
   const [hoverRow, setHoverRow] = useState<HoverRow | null>(null);
+  // Como a caixa não limpa mais sozinha no mouseleave (ver comentário
+  // abaixo), limpa manualmente ao trocar de ticker/período/visual pra não
+  // deixar o dado de um gráfico antigo parado na tela.
+  useEffect(() => setHoverRow(null), [ticker, period, visual]);
   const hoverY = hoverRow?.v ?? hoverRow?.c ?? null;
   const handleChartMouseMove = useCallback((state: { activePayload?: { payload?: HoverRow }[] }) => {
     const p = state?.activePayload?.[0]?.payload;
@@ -285,17 +289,13 @@ function PriceChart({ ticker }: { ticker: string }) {
     if (price != null) hoverPriceRef.current = price;
     setHoverRow(p);
   }, []);
-  // A barra de arrastar da caixa tem pointer-events:auto (pro clique
-  // funcionar) -- isso faz ela "roubar" o hit-test do gráfico embaixo assim
-  // que o cursor entra nela, disparando onMouseLeave do próprio gráfico. Sem
-  // esse check, a caixa sumia (limpando hoverRow) exatamente ao tentar
-  // alcançá-la pra arrastar, o que liberava o hit-test de novo, reexibindo a
-  // caixa, que voltava a bloquear -- um loop infinito de pisca-pisca. Só
-  // limpa de verdade quando o mouse vai pra fora da caixa também.
-  const handleChartMouseLeave = useCallback((_state: unknown, e: React.MouseEvent) => {
-    if (hoverBoxRef.current?.contains(e.relatedTarget as Node | null)) return;
-    setHoverRow(null);
-  }, []);
+  // A caixa NÃO some mais quando o mouse sai do gráfico -- ela fica parada
+  // mostrando o último ponto visto até o próximo hover atualizar. Antes ela
+  // sumia no mouseleave, o que quebrava o arrastar: quando o usuário movia o
+  // mouse do gráfico até a caixa (já arrastada pra longe), o cursor cruzava
+  // um espaço "morto" (nem gráfico, nem caixa) no meio do caminho, disparando
+  // o mouseleave e apagando a caixa antes do cursor chegar nela.
+  const handleChartMouseLeave = useCallback(() => {}, []);
   const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
     if (hoverPriceRef.current == null) return;
     e.preventDefault();
