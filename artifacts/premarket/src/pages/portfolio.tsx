@@ -443,40 +443,61 @@ function PriceChart({ ticker }: { ticker: string }) {
   };
   // Caixa de dados fixa no canto do gráfico (em vez do tooltip flutuante do
   // recharts, que seguia o cursor e tapava as linhas) -- conteúdo lido
-  // direto do state `hoverRow`, atualizado a cada onMouseMove.
+  // direto do state `hoverRow`, atualizado a cada onMouseMove. A barra do
+  // topo (não só um iconezinho no canto) é a área de arrastar -- inteira
+  // dentro dos limites da própria caixa, então não tem como ficar coberta/
+  // fora de alcance por causa de outro elemento por perto.
+  const dragHandle = (dateStr: string) => (
+    <div
+      onMouseDown={onBoxMouseDown}
+      className={cn(
+        "flex items-center gap-1.5 px-3 py-1.5 border-b select-none pointer-events-auto",
+        boxDragging ? "cursor-grabbing" : "cursor-grab",
+      )}
+      style={{ borderColor: "#27272a" }}
+      title="Arrastar caixa"
+    >
+      <GripVertical className="h-3.5 w-3.5 text-[#71717a] flex-shrink-0" />
+      <span className="text-sm text-[#a1a1aa]">{dateStr}</span>
+    </div>
+  );
   const hoverBoxContent = () => {
     if (!hoverRow || hoverRow.t == null) return null;
     const dateStr = fmtTooltipDate(hoverRow.t);
     if (visual === "line" && hoverRow.newsItems?.length) {
       return (
-        <div className="rounded-md border px-3 py-2 font-mono max-w-xs" style={{ background: "#09090b", borderColor: "#27272a" }}>
-          <div className="text-sm text-[#a1a1aa] mb-1">{dateStr}</div>
-          <div className="text-sm text-[#e4e4e7]">📰 {hoverRow.newsItems.map((n) => n.title).join(" · ")}</div>
+        <div className="rounded-md border font-mono max-w-xs overflow-hidden" style={{ background: "#09090b", borderColor: "#27272a" }}>
+          {dragHandle(dateStr)}
+          <div className="px-3 py-2 text-sm text-[#e4e4e7]">📰 {hoverRow.newsItems.map((n) => n.title).join(" · ")}</div>
         </div>
       );
     }
     if (visual === "candle") {
       if (hoverRow.o == null || hoverRow.h == null || hoverRow.l == null || hoverRow.c == null) return null;
       return (
-        <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
-          <div className="text-sm text-[#a1a1aa] mb-1">{dateStr}</div>
-          <div className="text-2xl font-extrabold text-primary leading-none mb-1">{ticker}</div>
-          <div className="text-base text-[#e4e4e7]">
-            O {hoverRow.o.toFixed(2)} · H {hoverRow.h.toFixed(2)} · L {hoverRow.l.toFixed(2)} · C {hoverRow.c.toFixed(2)}
+        <div className="rounded-md border font-mono overflow-hidden" style={{ background: "#09090b", borderColor: "#27272a" }}>
+          {dragHandle(dateStr)}
+          <div className="px-3 py-2">
+            <div className="text-2xl font-extrabold text-primary leading-none mb-1">{ticker}</div>
+            <div className="text-base text-[#e4e4e7]">
+              O {hoverRow.o.toFixed(2)} · H {hoverRow.h.toFixed(2)} · L {hoverRow.l.toFixed(2)} · C {hoverRow.c.toFixed(2)}
+            </div>
+            {renderIndicatorRows(hoverRow, "v")}
           </div>
-          {renderIndicatorRows(hoverRow, "v")}
         </div>
       );
     }
     if (hoverRow.v == null) return null;
     return (
-      <div className="rounded-md border px-3 py-2 font-mono" style={{ background: "#09090b", borderColor: "#27272a" }}>
-        <div className="text-sm text-[#a1a1aa] mb-1">{dateStr}</div>
-        <div className="flex items-baseline gap-3">
-          <span className="text-2xl font-extrabold text-primary leading-none">{ticker}</span>
-          <span className="text-xl font-bold text-[#e4e4e7]">${hoverRow.v.toFixed(2)}</span>
+      <div className="rounded-md border font-mono overflow-hidden" style={{ background: "#09090b", borderColor: "#27272a" }}>
+        {dragHandle(dateStr)}
+        <div className="px-3 py-2">
+          <div className="flex items-baseline gap-3">
+            <span className="text-2xl font-extrabold text-primary leading-none">{ticker}</span>
+            <span className="text-xl font-bold text-[#e4e4e7]">${hoverRow.v.toFixed(2)}</span>
+          </div>
+          {renderIndicatorRows(hoverRow, "vol")}
         </div>
-        {renderIndicatorRows(hoverRow, "vol")}
       </div>
     );
   };
@@ -589,20 +610,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               className="absolute z-10 max-w-[220px] pointer-events-none"
               style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
             >
-              <div className="relative">
-                <button
-                  type="button"
-                  onMouseDown={onBoxMouseDown}
-                  title="Arrastar caixa"
-                  className={cn(
-                    "absolute -top-2 -left-2 z-20 p-1 rounded bg-secondary border border-border text-muted-foreground hover:text-foreground pointer-events-auto",
-                    boxDragging ? "cursor-grabbing" : "cursor-grab",
-                  )}
-                >
-                  <GripVertical className="h-3 w-3" />
-                </button>
-                {hoverBoxContent()}
-              </div>
+              {hoverBoxContent()}
             </div>
           )}
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -669,20 +677,7 @@ function PriceChart({ ticker }: { ticker: string }) {
               className="absolute z-10 max-w-[220px] pointer-events-none"
               style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
             >
-              <div className="relative">
-                <button
-                  type="button"
-                  onMouseDown={onBoxMouseDown}
-                  title="Arrastar caixa"
-                  className={cn(
-                    "absolute -top-2 -left-2 z-20 p-1 rounded bg-secondary border border-border text-muted-foreground hover:text-foreground pointer-events-auto",
-                    boxDragging ? "cursor-grabbing" : "cursor-grab",
-                  )}
-                >
-                  <GripVertical className="h-3 w-3" />
-                </button>
-                {hoverBoxContent()}
-              </div>
+              {hoverBoxContent()}
             </div>
           )}
           <ResponsiveContainer width="100%" height={chartHeight}>
