@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Doces Beija-Flor — Clientes cadastrados</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #fff8f0; color: #5b3a29; padding: 20px; }
+    h1 { font-size: 1.4rem; color: #c93a68; margin-bottom: 16px; }
+    .login { display: flex; gap: 8px; max-width: 420px; }
+    input { flex: 1; padding: 11px 12px; font-size: 1rem; border: 2px solid #f0ddcf; border-radius: 10px; }
+    button { padding: 11px 18px; font-weight: 700; color: #fff; background: #e75480; border: none; border-radius: 10px; cursor: pointer; }
+    .error { color: #c0392b; margin-top: 10px; min-height: 1.2em; }
+    .stats { margin: 18px 0 10px; font-size: 0.95rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 3px 12px rgba(91,58,41,0.08); }
+    th, td { padding: 10px 12px; text-align: left; font-size: 0.9rem; border-bottom: 1px solid #f5e8dc; }
+    th { background: #fdeef4; color: #c93a68; }
+    td a { color: #128c7e; font-weight: 600; text-decoration: none; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #fdeef4; color: #c93a68; font-size: 0.78rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>🍬 Clientes cadastrados</h1>
+  <div class="login" id="login">
+    <input id="token" type="password" placeholder="Token de acesso" />
+    <button id="enter">Entrar</button>
+  </div>
+  <p class="error" id="error"></p>
+  <div id="content" style="display:none">
+    <p class="stats" id="stats"></p>
+    <table>
+      <thead><tr><th>Nome</th><th>WhatsApp</th><th>Origem</th><th>Cadastro</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <script>
+    const tokenInput = document.getElementById("token");
+    const errEl = document.getElementById("error");
+
+    async function load(token) {
+      errEl.textContent = "";
+      const resp = await fetch("/api/leads", { headers: { "X-Admin-Token": token } });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        errEl.textContent = data.error || "Erro ao carregar.";
+        sessionStorage.removeItem("adminToken");
+        return;
+      }
+      const leads = await resp.json();
+      sessionStorage.setItem("adminToken", token);
+      document.getElementById("login").style.display = "none";
+      document.getElementById("content").style.display = "block";
+      const fromIfood = leads.filter((l) => l.source.includes("ifood")).length;
+      document.getElementById("stats").textContent =
+        `${leads.length} cliente(s) — ${fromIfood} vindo(s) do iFood`;
+      document.getElementById("rows").innerHTML = leads
+        .slice()
+        .reverse()
+        .map((l) => {
+          const phone = l.whatsapp.replace(/^55/, "");
+          const pretty = `(${phone.slice(0, 2)}) ${phone.slice(2, -4)}-${phone.slice(-4)}`;
+          const when = new Date(l.createdAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+          return `<tr><td>${l.name.replace(/</g, "&lt;")}</td>` +
+            `<td><a href="https://wa.me/${l.whatsapp}" target="_blank" rel="noopener">${pretty}</a></td>` +
+            `<td><span class="tag">${l.source.replace(/</g, "&lt;")}</span></td><td>${when}</td></tr>`;
+        })
+        .join("");
+    }
+
+    document.getElementById("enter").addEventListener("click", () => load(tokenInput.value));
+    tokenInput.addEventListener("keydown", (e) => { if (e.key === "Enter") load(tokenInput.value); });
+    const saved = sessionStorage.getItem("adminToken");
+    if (saved) load(saved);
+  </script>
+</body>
+</html>
