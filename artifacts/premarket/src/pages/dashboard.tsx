@@ -281,6 +281,9 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
   // Caixa de dados arrastável -- o usuário move pra onde quiser (a posição
   // padrão no canto às vezes fica em cima das próprias linhas do gráfico).
   const { offset: boxOffset, dragging: boxDragging, onMouseDown: onBoxMouseDown, onTouchStart: onBoxTouchStart } = useDraggableOffset("premercado:chart-hover-box-pos");
+  // Ref da caixa pra distinguir "saiu do gráfico de vez" de "entrou na
+  // própria caixa" no onMouseLeave abaixo (ver comentário lá).
+  const hoverBoxRef = useRef<HTMLDivElement>(null);
   // Crosshair (linha horizontal) + caixa de dados fixa no canto do gráfico
   // (em vez do tooltip flutuante do recharts, que seguia o cursor e tapava
   // as linhas) -- guarda a linha inteira sob o cursor, sincronizado com os
@@ -298,7 +301,17 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     if (p.price != null) hoverPriceRef.current = p.price;
     setHoverRow(p);
   }, []);
-  const handleChartMouseLeave = useCallback(() => setHoverRow(null), []);
+  // A barra de arrastar da caixa tem pointer-events:auto (pro clique
+  // funcionar) -- isso faz ela "roubar" o hit-test do gráfico embaixo assim
+  // que o cursor entra nela, disparando onMouseLeave do próprio gráfico. Sem
+  // esse check, a caixa sumia (limpando hoverRow) exatamente ao tentar
+  // alcançá-la pra arrastar, o que liberava o hit-test de novo, reexibindo a
+  // caixa, que voltava a bloquear -- um loop infinito de pisca-pisca. Só
+  // limpa de verdade quando o mouse vai pra fora da caixa também.
+  const handleChartMouseLeave = useCallback((_state: unknown, e: React.MouseEvent) => {
+    if (hoverBoxRef.current?.contains(e.relatedTarget as Node | null)) return;
+    setHoverRow(null);
+  }, []);
   const handleChartContextMenu = useCallback((_state: unknown, e: React.MouseEvent) => {
     if (hoverPriceRef.current == null) return;
     e.preventDefault();
@@ -653,6 +666,7 @@ function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: 
     <div className="relative">
       {hoverRow && (
         <div
+          ref={hoverBoxRef}
           className="absolute z-10 max-w-[220px] pointer-events-none"
           style={{ top: 4 + boxOffset.y, right: Math.max(4, 4 - boxOffset.x) }}
         >
