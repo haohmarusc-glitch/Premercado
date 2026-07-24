@@ -47,19 +47,29 @@ def _fetch(symbol, params):
 _MARKET_OPEN = datetime.time(9, 30)
 _MARKET_CLOSE = datetime.time(16, 0)
 
+# B3 (Brasil, tickers .SA): pregão contínuo 10h-17h horário de Brasília, sem
+# pré-mercado (ver agent.py, instrução do agente pro chat) -- índice do
+# yfinance já vem localizado em America/Sao_Paulo pra esses ativos, igual o
+# caso dos EUA em America/New_York.
+_B3_MARKET_OPEN = datetime.time(10, 0)
+_B3_MARKET_CLOSE = datetime.time(17, 0)
 
-def _session_for(ts, intraday: bool) -> str:
+
+def _session_for(ts, intraday: bool, symbol: str = "") -> str:
     """"pre" | "regular" | "post" -- só tem sentido pra candles intradiários
     (1d/5d, onde o índice do yfinance já vem localizado no fuso do próprio
-    pregão, ex. America/New_York pra ativos dos EUA). Períodos diários/
-    semanais (1mo+) não têm essa distinção -- cada candle já é um pregão
-    inteiro, então sempre "regular"."""
+    pregão, ex. America/New_York pra ativos dos EUA, America/Sao_Paulo pra B3).
+    Períodos diários/semanais (1mo+) não têm essa distinção -- cada candle já
+    é um pregão inteiro, então sempre "regular"."""
     if not intraday:
         return "regular"
+    is_b3 = symbol.upper().endswith(".SA")
+    market_open = _B3_MARKET_OPEN if is_b3 else _MARKET_OPEN
+    market_close = _B3_MARKET_CLOSE if is_b3 else _MARKET_CLOSE
     t = ts.time()
-    if t < _MARKET_OPEN:
+    if t < market_open:
         return "pre"
-    if t >= _MARKET_CLOSE:
+    if t >= market_close:
         return "post"
     return "regular"
 
@@ -98,7 +108,7 @@ if __name__ == "__main__":
                     "l": round(float(row["Low"]),   4),
                     "c": round(float(row["Close"]), 4),
                     "v": int(row["Volume"]),
-                    "session": _session_for(ts, intraday),
+                    "session": _session_for(ts, intraday, symbol),
                 })
             except Exception as e:
                 print(f"[get_chart] skipping row {ts}: {e}", file=sys.stderr)

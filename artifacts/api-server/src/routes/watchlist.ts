@@ -7,6 +7,7 @@ import {
   CreateWatchlistBody,
   DeleteWatchlistItemParams as WatchlistItemParams,
 } from "@workspace/api-zod";
+import { normalizeTicker } from "../lib/ticker-normalize";
 
 const router: IRouter = Router();
 
@@ -30,7 +31,7 @@ router.post("/watchlist", async (req, res): Promise<void> => {
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const [row] = await db
     .insert(watchlistTable)
-    .values({ ticker: body.data.ticker.toUpperCase(), notes: body.data.notes ?? null, userId: req.userId! })
+    .values({ ticker: normalizeTicker(body.data.ticker), notes: body.data.notes ?? null, userId: req.userId! })
     .returning();
   res.status(201).json(WatchlistItemSchema.parse(ser(row)));
 });
