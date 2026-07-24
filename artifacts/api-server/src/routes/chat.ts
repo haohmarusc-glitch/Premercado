@@ -159,6 +159,14 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
+      if (!line) continue;
+      // Loga toda linha (não só STEP:/RESULT:/TITLE:) -- sem isso, os prints
+      // de diagnóstico de fallback entre provedores (ex.: "[provider] gemini
+      // failed: ...", "[provider] trying openrouter...") em provider.py, que
+      // vão pro stdout, eram descartados em silêncio, e só o erro final (se
+      // TODOS os provedores falhassem) aparecia no log via stderr. Mesmo
+      // padrão já usado em runner.ts pro agente diário.
+      logger.info({ line }, "Chat agent stdout");
       if (line.startsWith("STEP:")) {
         send("step", line.slice(5).trim());
       } else if (line.startsWith("RESULT:")) {
