@@ -187,7 +187,15 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   // simplesmente morre sem nunca imprimir REPORT:, e todo o progresso e
   // dinheiro já gasto nas chamadas parciais viram uma falha total registrada
   // sem relatório nenhum (ver agent.py::_agent_loop, deadline_ts).
-  const SOFT_DEADLINE_BUFFER_MS = 120 * 1000;
+  // Visto em produção (27/07, run das 08:30): a run falhou aos 30m2s -- ou
+  // seja, mesmo a chamada de resgate estourou os 2min de folga (API lenta
+  // pra gerar o relatório final, ou o turno em andamento no momento do
+  // deadline já tinha consumido parte da folga antes do aviso disparar).
+  // Dobrado pra 4min pra dar mais margem real pra essa última chamada
+  // completar. Configurável via env var, mesmo padrão do TIMEOUT_MS acima.
+  const SOFT_DEADLINE_BUFFER_MS = Number(process.env.AGENT_SOFT_DEADLINE_BUFFER_MS) > 0
+    ? Number(process.env.AGENT_SOFT_DEADLINE_BUFFER_MS)
+    : 240 * 1000;
   const softDeadlineMs = Date.now() + TIMEOUT_MS - SOFT_DEADLINE_BUFFER_MS;
 
   const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
