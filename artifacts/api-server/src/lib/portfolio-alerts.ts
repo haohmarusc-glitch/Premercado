@@ -11,7 +11,7 @@
 import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { agentDir, getPythonBin } from "./runner";
+import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendPortfolioHoldingEmail, sendRecompraEmail } from "./mailer";
 import { logger } from "./logger";
 
@@ -58,6 +58,16 @@ async function persistKey(key: string): Promise<void> {
 }
 
 async function checkPortfolioAlerts(): Promise<void> {
+  // O agente diário já satura CPU/rede com dezenas de chamadas Python em
+  // paralelo -- rodar fetchPrices (outro subprocesso Python) ao mesmo tempo
+  // faz os dois competirem e estourar o timeout de 30s (visto em produção).
+  // Pula o ciclo inteiro; o próximo (15 min depois) roda sem a agente por
+  // perto na maioria das vezes, já que a run dura poucos minutos.
+  if (agentState.running) {
+    logger.info("Portfolio alert checker: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
   const positions = await db.select().from(portfolioPositionsTable);
   if (!positions.length) return;
 
