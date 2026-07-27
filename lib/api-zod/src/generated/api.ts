@@ -334,6 +334,7 @@ export const GetAgentStatusResponse = zod.object({
   "running": zod.boolean(),
   "lastRunAt": zod.string().nullable(),
   "currentStep": zod.string().nullish(),
+  "stepLog": zod.array(zod.string()).optional().describe('Histórico dos últimos passos (linhas STEP:) da run atual\/mais recente, do mais antigo pro mais novo -- pra mostrar progresso ao vivo, não só o passo atual.'),
   "nextRunAt": zod.string().nullish(),
   "scheduleEnabled": zod.boolean().optional(),
   "uptimeSeconds": zod.coerce.number().optional().describe('Segundos desde que o processo do servidor subiu (process.uptime()).')

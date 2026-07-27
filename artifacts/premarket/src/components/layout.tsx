@@ -84,11 +84,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: status } = useGetAgentStatus({
     query: {
       queryKey: getGetAgentStatusQueryKey(),
-      refetchInterval: 30000,
+      // Poll mais rápido enquanto uma run está de fato acontecendo -- é
+      // quando o stepLog muda e vale a pena parecer "ao vivo"; sem run
+      // rodando, volta pro intervalo folgado de sempre.
+      refetchInterval: (query) => (query.state.data?.running ? 5000 : 30000),
     }
   });
 
   const isRunning = status?.running;
+  const stepLogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isRunning) stepLogRef.current?.scrollTo({ top: stepLogRef.current.scrollHeight });
+  }, [isRunning, status?.stepLog]);
   const { toast } = useToast();
   const runAgent = useRunAgent();
   const runFastMode = (mode: "portfolio" | "premarket" | "manual" | "coal" | "ai" | "news", maxTurns?: number) =>
@@ -299,9 +306,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <span className="text-muted-foreground">IDLE</span>
                 )}
               </div>
-              {isRunning && status?.currentStep && (
-                <div className="text-xs text-foreground font-mono bg-secondary p-2 rounded truncate" title={status.currentStep}>
-                  &gt; {status.currentStep}
+              {isRunning && status?.stepLog && status.stepLog.length > 0 && (
+                <div
+                  ref={stepLogRef}
+                  className="text-xs font-mono bg-secondary p-2 rounded max-h-28 overflow-y-auto space-y-0.5"
+                >
+                  {status.stepLog.map((step, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "truncate",
+                        i === status.stepLog!.length - 1 ? "text-primary" : "text-muted-foreground",
+                      )}
+                      title={step}
+                    >
+                      &gt; {step}
+                    </div>
+                  ))}
                 </div>
               )}
               {!isRunning && status?.lastRunAt && (
