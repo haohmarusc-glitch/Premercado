@@ -96,6 +96,8 @@ export interface AgentStatus {
   lastRunAt: string | null;
   /** @nullable */
   currentStep?: string | null;
+  /** Histórico dos últimos passos (linhas STEP:) da run atual/mais recente, do mais antigo pro mais novo -- pra mostrar progresso ao vivo, não só o passo atual. */
+  stepLog?: string[];
   /** @nullable */
   nextRunAt?: string | null;
   scheduleEnabled?: boolean;

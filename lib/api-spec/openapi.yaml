@@ -1208,6 +1208,10 @@ components:
           type: ["string", "null"]
         currentStep:
           type: ["string", "null"]
+        stepLog:
+          type: array
+          items: { type: string }
+          description: "Histórico dos últimos passos (linhas STEP:) da run atual/mais recente, do mais antigo pro mais novo -- pra mostrar progresso ao vivo, não só o passo atual."
         nextRunAt:
           type: ["string", "null"]
         scheduleEnabled:

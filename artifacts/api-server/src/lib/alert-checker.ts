@@ -12,7 +12,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { and, eq, gte } from "drizzle-orm";
 import { db, alertsTable, alertFiringsTable, intradaySpikesTable, type Alert } from "@workspace/db";
-import { agentDir, getPythonBin } from "./runner";
+import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail } from "./mailer";
 import { logger } from "./logger";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
@@ -123,6 +123,17 @@ async function fireAlert(
 }
 
 async function checkAlerts(): Promise<void> {
+  // O agente diário já satura CPU/rede com dezenas de chamadas Python em
+  // paralelo (technicals, candle patterns, short interest, etc.) -- rodar o
+  // checker de alertas (outro subprocesso Python) ao mesmo tempo faz os dois
+  // competirem e estourar o timeout de fetchQuotes/fetchTechnicals (visto em
+  // produção). Pula o ciclo inteiro; o próximo (5 min depois) roda sem a
+  // agente por perto na maioria das vezes, já que a run dura poucos minutos.
+  if (agentState.running) {
+    logger.info("Alert checker: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
   // Get all enabled alerts
   const alerts = await db
     .select()
@@ -244,6 +255,13 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
 // aberta bem naquele momento. Dedup por (ticker, title) dentro do cooldown
 // evita repetir a mesma linha a cada 5min enquanto a condição persistir.
 async function checkIntradaySpikes(): Promise<void> {
+  // Mesmo motivo do checkAlerts acima -- evita competir por CPU/rede com o
+  // agente diário e estourar o timeout do subprocesso get_intraday_spikes.
+  if (agentState.running) {
+    logger.info("Intraday spike checker: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
   const settings = await getOrCreateSettings();
   if (!settings.tickers.length) return;
 

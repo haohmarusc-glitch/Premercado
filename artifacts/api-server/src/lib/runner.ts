@@ -101,10 +101,16 @@ export function getPythonBin(): string {
   return existsSync(venvPython) ? venvPython : "python3";
 }
 
+// Quantos passos recentes manter no histórico exibido no painel de status --
+// alto o bastante pra cobrir uma run inteira (tipicamente <30 passos), baixo
+// o bastante pra não inflar o payload de /agent/status (polado a cada 30s).
+const STEP_LOG_MAX = 60;
+
 export interface AgentState {
   running: boolean;
   lastRunAt: string | null;
   currentStep: string | null;
+  stepLog: string[];
   nextRunAt: string | null;
   scheduleEnabled: boolean;
 }
@@ -113,6 +119,7 @@ export const state: AgentState = {
   running: false,
   lastRunAt: null,
   currentStep: null,
+  stepLog: [],
   nextRunAt: null,
   scheduleEnabled: true,
 };
@@ -134,6 +141,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     trigger === "news" ? "Iniciando varredura de notícias..." :
     trigger === "exit_plan" ? "Reavaliando plano de saída..." :
     "Iniciando agente...";
+  state.stepLog = [state.currentStep];
   state.lastRunAt = new Date().toISOString();
 
   const startedAt = new Date();
@@ -179,7 +187,15 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   // simplesmente morre sem nunca imprimir REPORT:, e todo o progresso e
   // dinheiro já gasto nas chamadas parciais viram uma falha total registrada
   // sem relatório nenhum (ver agent.py::_agent_loop, deadline_ts).
-  const SOFT_DEADLINE_BUFFER_MS = 120 * 1000;
+  // Visto em produção (27/07, run das 08:30): a run falhou aos 30m2s -- ou
+  // seja, mesmo a chamada de resgate estourou os 2min de folga (API lenta
+  // pra gerar o relatório final, ou o turno em andamento no momento do
+  // deadline já tinha consumido parte da folga antes do aviso disparar).
+  // Dobrado pra 4min pra dar mais margem real pra essa última chamada
+  // completar. Configurável via env var, mesmo padrão do TIMEOUT_MS acima.
+  const SOFT_DEADLINE_BUFFER_MS = Number(process.env.AGENT_SOFT_DEADLINE_BUFFER_MS) > 0
+    ? Number(process.env.AGENT_SOFT_DEADLINE_BUFFER_MS)
+    : 240 * 1000;
   const softDeadlineMs = Date.now() + TIMEOUT_MS - SOFT_DEADLINE_BUFFER_MS;
 
   const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
@@ -202,6 +218,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     logger.warn(`Agent timeout (${Math.round(TIMEOUT_MS / 60000)} min) — killing process`);
     py.kill("SIGTERM");
     state.currentStep = "Tempo limite atingido — encerrando...";
+    state.stepLog.push(state.currentStep);
   }, TIMEOUT_MS);
 
   let output = "";
@@ -212,6 +229,10 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     logger.info({ line }, "Agent stdout");
     if (line.startsWith("STEP:")) {
       state.currentStep = line.replace("STEP:", "").trim();
+      state.stepLog.push(state.currentStep);
+      if (state.stepLog.length > STEP_LOG_MAX) {
+        state.stepLog = state.stepLog.slice(-STEP_LOG_MAX);
+      }
     }
     output += data.toString();
   });
