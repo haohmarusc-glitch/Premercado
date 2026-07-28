@@ -542,7 +542,14 @@ export const GetChatMessagesResponseItem = zod.object({
   "sessionId": zod.coerce.number(),
   "role": zod.string(),
   "content": zod.string(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "inputTokens": zod.coerce.number().nullish(),
+  "outputTokens": zod.coerce.number().nullish(),
+  "cacheReadTokens": zod.coerce.number().nullish(),
+  "cacheWriteTokens": zod.coerce.number().nullish(),
+  "costUsd": zod.coerce.number().nullish(),
+  "llmProvider": zod.string().nullish(),
+  "llmModel": zod.string().nullish()
 })
 export const GetChatMessagesResponse = zod.array(GetChatMessagesResponseItem)
 

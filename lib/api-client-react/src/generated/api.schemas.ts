@@ -379,6 +379,20 @@ export interface ChatMessage {
   role: string;
   content: string;
   createdAt: string;
+  /** @nullable */
+  inputTokens?: number | null;
+  /** @nullable */
+  outputTokens?: number | null;
+  /** @nullable */
+  cacheReadTokens?: number | null;
+  /** @nullable */
+  cacheWriteTokens?: number | null;
+  /** @nullable */
+  costUsd?: number | null;
+  /** @nullable */
+  llmProvider?: string | null;
+  /** @nullable */
+  llmModel?: string | null;
 }
 
 export interface PortfolioPosition {

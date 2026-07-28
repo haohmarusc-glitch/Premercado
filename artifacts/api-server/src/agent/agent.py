@@ -862,3 +862,15 @@ def run_chat_stream(message: str, history: list) -> None:
                     break
         except Exception:
             pass
+
+    # Emite USAGE:{json} com tokens/custo de TODAS as chamadas desta mensagem
+    # (turnos do agente + geração de título, se houve) -- mesmo padrão de
+    # emit_usage() em run_agent.py, só que aqui a run inteira é uma única
+    # mensagem de chat em vez de um relatório diário.
+    from .provider import get_run_usage
+    try:
+        usage = get_run_usage()
+        if usage["calls"] > 0:
+            print("USAGE:" + _json.dumps(usage, ensure_ascii=False), flush=True)
+    except Exception:
+        pass

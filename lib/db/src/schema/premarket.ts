@@ -225,6 +225,15 @@ export const chatMessagesTable = pgTable("chat_messages", {
     .references(() => chatSessionsTable.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
   content: text("content").notNull(),
+  // Uso de LLM da resposta (só preenchido em mensagens role=assistant, via
+  // linha USAGE: emitida por run_chat_stream -- mesmo padrão de agent_runs).
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  cacheReadTokens: integer("cache_read_tokens"),
+  cacheWriteTokens: integer("cache_write_tokens"),
+  costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).$type<number>(),
+  llmProvider: text("llm_provider"),
+  llmModel: text("llm_model"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_chat_messages_session_id").on(t.sessionId, t.createdAt),
