@@ -760,6 +760,11 @@ def get_earnings_reaction_history(ticker: str, lookback: int = 8) -> dict:
     não no dia do anúncio -- por isso cada evento retorna as duas janelas
     (announcement_day e next_day); o summary já usa a de maior variação
     absoluta de cada evento, então não precisa escolher manualmente.
+
+    O summary também traz os níveis já projetados em $ sobre o preço atual
+    (current_price, r1_price/r2_price acima, s1_price/s2_price abaixo) --
+    são bandas estatísticas da reação histórica, não suporte/resistência
+    técnico de verdade; cite isso se usar esses níveis num relatório.
     """
     try:
         ticker = sanitize_ticker(ticker)
