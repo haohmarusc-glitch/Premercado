@@ -16,6 +16,20 @@ function cronExpr(hour: number, minute: number): string {
   return `${minute} ${hour} * * 1-5`;
 }
 
+// A gestão de alertas roda numa run própria, sempre um bom tempo depois do
+// horário configurado do diário -- runAgent() só permite uma run por vez
+// (state.running), então se agendarmos perto demais do horário do diário,
+// corremos o risco de cair bem no meio dele e a run de alertas ser
+// simplesmente pulada (o oposto do que essa separação deveria garantir).
+// TIMEOUT_MS do diário é 30min (ver runner.ts) -- 45min de folga cobre isso
+// com margem mesmo num dia de análise mais longa.
+const ALERTS_OFFSET_MIN = 45;
+
+function addMinutes(hour: number, minute: number, offsetMin: number): { hour: number; minute: number } {
+  const total = (hour * 60 + minute + offsetMin) % (24 * 60);
+  return { hour: Math.floor(total / 60), minute: total % 60 };
+}
+
 function nextOccurrence(hour: number, minute: number): Date {
   const now = new Date();
   const spNow = new Date(now.toLocaleString("en-US", { timeZone: TIMEZONE }));
@@ -45,6 +59,34 @@ function scheduleTask(hour: number, minute: number): void {
     },
     { timezone: TIMEZONE },
   );
+}
+
+// ── Alerts management scheduler (run própria, ver ALERTS_OFFSET_MIN acima) ────
+
+let alertsTask: ScheduledTask | null = null;
+
+function scheduleAlertsTask(hour: number, minute: number): void {
+  if (alertsTask) {
+    alertsTask.stop();
+    alertsTask = null;
+  }
+  const { hour: alertsHour, minute: alertsMinute } = addMinutes(hour, minute, ALERTS_OFFSET_MIN);
+  alertsTask = cron.schedule(
+    cronExpr(alertsHour, alertsMinute),
+    () => {
+      logger.info("Scheduled alerts-management run triggered");
+      runAgent("alerts");
+    },
+    { timezone: TIMEZONE },
+  );
+  logger.info({ hour: alertsHour, minute: alertsMinute, tz: TIMEZONE }, "Alerts-management scheduler started");
+}
+
+function stopAlertsTask(): void {
+  if (alertsTask) {
+    alertsTask.stop();
+    alertsTask = null;
+  }
 }
 
 // ── Intraday pre-market scheduler ─────────────────────────────────────────────
@@ -104,9 +146,11 @@ export function applySettings(settings: SchedulerSettings): void {
     if (currentTask) { currentTask.stop(); currentTask = null; }
     state.scheduleEnabled = false;
     state.nextRunAt = null;
+    stopAlertsTask();
     logger.info("Daily scheduler disabled via settings");
   } else {
     scheduleTask(settings.scheduleHour, settings.scheduleMinute);
+    scheduleAlertsTask(settings.scheduleHour, settings.scheduleMinute);
     state.scheduleEnabled = true;
     state.nextRunAt = nextOccurrence(settings.scheduleHour, settings.scheduleMinute).toISOString();
     logger.info(
@@ -141,6 +185,7 @@ export async function startScheduler(): Promise<void> {
   }
   // Defaults: 8:30 BRT, premarket disabled
   scheduleTask(8, 30);
+  scheduleAlertsTask(8, 30);
   state.scheduleEnabled = true;
   state.nextRunAt = nextOccurrence(8, 30).toISOString();
   logger.info(

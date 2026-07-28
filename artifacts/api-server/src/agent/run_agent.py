@@ -7,6 +7,7 @@ AGENT_MODE env var controls the run type:
   premarket           — fast intraday flash scan
   news                — fast news-only scan (get_news + get_geopolitical_news)
   exit_plan           — reavalia o Plano de Saída (metas/janelas de venda por posição)
+  alerts              — gestão de alertas isolada (cria/remove, calibrado por ATR)
 """
 
 import json
@@ -72,6 +73,8 @@ if __name__ == "__main__":
             report = a.run_news(progress_callback=progress)
         elif mode == "exit_plan":
             report = a.run_exit_plan_review(progress_callback=progress)
+        elif mode == "alerts":
+            report = a.run_alerts_management(progress_callback=progress)
         elif mode in ("portfolio", "coal", "ai"):
             # Garante os tickers corretos mesmo que o Node.js não os passe via env var
             if mode == "coal" and not os.environ.get("AGENT_PORTFOLIO_TICKERS"):

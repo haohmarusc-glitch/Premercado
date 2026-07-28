@@ -72,25 +72,24 @@ Ativos sob cobertura: {", ".join(config.TICKERS)}.
 Seu fluxo completo:
 
 **FASE 1 — Preparação (execute uma vez, no início)**
-1. Chame list_alerts (sem filtro) para ver todos os alertas já cadastrados.
-2. Chame get_fear_greed_index para capturar o sentimento macro do mercado.
-3. Chame get_geopolitical_news para falas/decisões de chefes de estado (EUA e
+1. Chame get_fear_greed_index para capturar o sentimento macro do mercado.
+2. Chame get_geopolitical_news para falas/decisões de chefes de estado (EUA e
    outros países) sobre tarifas/comércio, guerra, petróleo, Big Techs e
    controle de exportação de semicondutores. Se algo relevante aparecer,
    cite explicitamente no resumo do(s) ativo(s)/setor(es) afetado(s) nas
    fases seguintes — não é só contexto genérico, é catalisador real.
-4. Chame get_sector_performance para verificar se os setores da cesta estão em movimento
+3. Chame get_sector_performance para verificar se os setores da cesta estão em movimento
    antes de analisar ativos individuais (semis: SMH/SOXX; saúde: XLV/IBB; amplo: SPY/QQQ).
-5. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
-6. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
+4. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
+5. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
 {_sector_groups_text()}
    Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
    Para captura intradiária: period='1d', interval='5m'.
-7. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
+6. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
    overlap e futuros de índice. É só contexto informativo — não é um sinal de
    compra/venda; não ajuste thresholds com base nele sem validação histórica prévia.
-8. Chame get_europe_regime_signal — sinal de regime validado por backtest real
-   (não é contexto genérico como o passo 7: só existe recomendação quando a
+7. Chame get_europe_regime_signal — sinal de regime validado por backtest real
+   (não é contexto genérico como o passo 6: só existe recomendação quando a
    Nasdaq está fora de tendência de alta, e mesmo assim é um sinal SOMENTE
    sobre o índice ^IXIC, nunca aplique como sinal de entrada/saída de um
    ativo individual da cesta sem dizer explicitamente essa limitação no relatório.
@@ -98,7 +97,7 @@ Seu fluxo completo:
 **FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
 
 *Grupo A — análise COMPLETA*:
-  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 6)
+  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
 
 **Regra de economia (dias calmos):** se detect_sector_contagion NÃO apontar
@@ -163,11 +162,10 @@ Outras regras de eficiência:
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
 
-**FASE 3 — Gestão de alertas** (execute ao final)
-Com base em tudo que coletou, gerencie os alertas de forma dinâmica:
-- Criar novos alertas com create_alert quando identificar níveis técnicos relevantes
-- Remover alertas com delete_alert quando o nível já foi superado ou contexto mudou
-- Não crie mais de 3 alertas novos por execução
+A gestão de alertas de preço (criar/remover com create_alert/delete_alert)
+NÃO é parte deste fluxo — roda numa execução própria, separada, logo depois
+desta (ver run_alerts_management), pra nunca ser sacrificada quando esta
+análise principal estoura o tempo disponível.
 
 Princípios:
 - Seja factual e cite os números.
@@ -286,6 +284,34 @@ Ao final, responda com um resumo curto (até 300 palavras): o que mudou e por
 quê. Não repita o que já estava certo -- foque nas mudanças de fato feitas."""
 
 
+def build_alerts_management_prompt() -> str:
+    return f"""Você é um analista de ações revisando e calibrando os alertas de preço automáticos.
+Ativos sob cobertura: {", ".join(config.TICKERS)}. Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
+
+Esta é uma execução SÓ de gestão de alertas — não é o relatório diário
+completo. Você já tem acesso à memória das análises recentes (abaixo) pra
+saber o que já foi observado nos últimos dias, sem precisar refazer a
+pesquisa completa.
+
+**Fluxo obrigatório:**
+1. Chame list_alerts (sem filtro) pra ver todos os alertas cadastrados.
+2. Remova com delete_alert qualquer alerta obsoleto, duplicado (mesmo
+   symbol+condition repetido), ou sem threshold_pct coerente com a
+   volatilidade do ativo — sempre com motivo claro no reason.
+3. Chame detect_sector_contagion (period='1d', interval='5m') pra
+   identificar os tickers com movimento relevante hoje.
+4. Para até 5 candidatos (líderes/catch_up do passo 3 + posições da
+   carteira ainda sem alerta calibrado), chame get_technical_indicators
+   pra pegar o atr_pct de cada um.
+5. Crie até 3 alertas novos com create_alert, com threshold_pct ≈
+   atr_pct * 1.5 (nunca um valor fixo igual pra todos os ativos) e reason
+   justificando o nível escolhido.
+
+Ao final, responda com um resumo curto (até 200 palavras): quantos
+alertas removeu (e por quê) e quais criou (symbol, condition, threshold,
+motivo). Não repita o relatório de mercado do dia — foque só nos alertas."""
+
+
 def build_chat_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     now = datetime.datetime.now().strftime("%H:%M")
@@ -396,6 +422,20 @@ _EXIT_PLAN_TOOL_NAMES = {
     "check_squeeze_setup", "get_analyst_ratings", "get_earnings_calendar",
 }
 EXIT_PLAN_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _EXIT_PLAN_TOOL_NAMES]
+
+# Gestão de alertas isolada da análise diária completa (FASE 3 do run() antigo)
+# -- antes era a última etapa de um único loop com FASE 1/2/2.5, então quando
+# o run inteiro estourava o deadline (carteira grande, dia com muito
+# contágio), a gestão de alertas era sempre a primeira sacrificada mesmo
+# depois de já ter gasto o custo das fases anteriores. Rodando sozinha, sempre
+# completa (poucos turnos, tools leves), independente de quanto tempo a
+# análise principal levou naquele dia.
+_ALERTS_TOOL_NAMES = {
+    "list_alerts", "create_alert", "delete_alert",
+    "get_stock_data", "get_technical_indicators",
+    "detect_sector_contagion", "get_earnings_calendar",
+}
+ALERTS_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _ALERTS_TOOL_NAMES]
 
 
 def _system_stable_portfolio(tickers: list[str]) -> str:
@@ -762,6 +802,23 @@ def run_exit_plan_review(progress_callback=None) -> str:
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
         step_prefix="[Plano de Saída] ",
+        deadline_ts=config.SOFT_DEADLINE_TS,
+    )
+
+
+def run_alerts_management(progress_callback=None) -> str:
+    client = _get_client()
+    system = _system_blocks(build_alerts_management_prompt(), _system_volatile())
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=system,
+        tools=ALERTS_TOOLS,
+        messages=[{"role": "user", "content": "Revise e calibre os alertas de preço agora."}],
+        max_turns=min(config.MAX_AGENT_TURNS, 10),
+        max_tokens=config.MAX_TOKENS_PREMARKET,
+        progress_callback=progress_callback,
+        step_prefix="[Alertas] ",
         deadline_ts=config.SOFT_DEADLINE_TS,
     )
 
