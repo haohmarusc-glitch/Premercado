@@ -61,6 +61,89 @@ function SessionCell({ move }: { move: SessionMove | null }) {
   );
 }
 
+// Interpretação em texto puro, calculada em cima dos mesmos campos de summary/events
+// já retornados pelo backend -- nenhuma chamada de LLM, só regras diretas (mesmo
+// princípio "não usa LLM" da análise em si).
+function interpretResult(r: ReactionResult): string[] {
+  if (!r.summary) return [];
+  const s = r.summary;
+  const notes: string[] = [];
+
+  if (s.suggested_threshold_pct >= 8) {
+    notes.push(
+      `Volatilidade histórica alta: as reações passadas chegam a mover o preço ±${s.suggested_threshold_pct.toFixed(1)}% no extremo — vale reduzir o tamanho da posição e usar stops mais largos.`,
+    );
+  } else if (s.suggested_threshold_pct >= 4) {
+    notes.push(
+      `Volatilidade histórica moderada: espere oscilações de até ±${s.suggested_threshold_pct.toFixed(1)}% em torno do resultado.`,
+    );
+  } else {
+    notes.push(
+      `Volatilidade histórica baixa: as reações passadas ficaram dentro de ±${s.suggested_threshold_pct.toFixed(1)}%, sinal de que o mercado já precifica bem os resultados desse papel.`,
+    );
+  }
+
+  if (Math.abs(s.close_pct_mean) >= 1) {
+    const dir = s.close_pct_mean > 0 ? "positivo (alta)" : "negativo (queda)";
+    notes.push(
+      `Viés histórico ${dir}: em média o papel fechou ${fmtPct(s.close_pct_mean)} na janela de reação, com desvio de ${s.close_pct_std != null ? s.close_pct_std.toFixed(2) : "N/A"}pp — não é garantia de repetição.`,
+    );
+  } else {
+    notes.push(
+      `Sem viés direcional claro: a média de fechamento (${fmtPct(s.close_pct_mean)}) é próxima de zero, sugerindo reações historicamente equilibradas entre alta e baixa.`,
+    );
+  }
+
+  if (s.gap_pct_abs_mean > 0 && s.close_pct_abs_mean > s.gap_pct_abs_mean * 1.3) {
+    notes.push(
+      `O movimento tende a se ampliar ao longo do pregão: o gap médio de abertura (${s.gap_pct_abs_mean.toFixed(2)}%) é bem menor que a variação até o fechamento (${s.close_pct_abs_mean.toFixed(2)}%).`,
+    );
+  } else if (s.gap_pct_abs_mean > 0 && s.gap_pct_abs_mean > s.close_pct_abs_mean * 1.3) {
+    notes.push(
+      `A maior parte do movimento historicamente acontece já na abertura: o gap médio (${s.gap_pct_abs_mean.toFixed(2)}%) é próximo ou maior que a variação até o fechamento (${s.close_pct_abs_mean.toFixed(2)}%).`,
+    );
+  }
+
+  if (s.volume_ratio_mean != null && s.volume_ratio_mean >= 1.5) {
+    notes.push(
+      `O volume nos dias de reação costuma ser ${s.volume_ratio_mean.toFixed(1)}x a média do período — confirma que o mercado reage com convicção a esses resultados.`,
+    );
+  }
+
+  const events = r.events ?? [];
+  let nextBigger = 0;
+  let annBigger = 0;
+  let counted = 0;
+  for (const e of events) {
+    const a = e.announcement_day;
+    const n = e.next_day;
+    if (a && n) {
+      counted++;
+      if (Math.abs(n.close_pct) > Math.abs(a.close_pct)) nextBigger++;
+      else annBigger++;
+    }
+  }
+  if (counted >= 2) {
+    if (nextBigger > annBigger) {
+      notes.push(
+        `Em ${nextBigger} de ${counted} eventos com as duas janelas disponíveis, o pregão SEGUINTE ao anúncio teve a reação maior — sinal de que o resultado tende a sair depois do fechamento (AMC).`,
+      );
+    } else if (annBigger > nextBigger) {
+      notes.push(
+        `Em ${annBigger} de ${counted} eventos com as duas janelas disponíveis, o próprio dia do anúncio teve a reação maior — sinal de que o resultado tende a sair antes da abertura (BMO).`,
+      );
+    }
+  }
+
+  if (s.n_events < 4) {
+    notes.push(
+      `Amostra pequena (${s.n_events} evento${s.n_events === 1 ? "" : "s"}) — trate os pontos acima como indicativos, não estatisticamente robustos.`,
+    );
+  }
+
+  return notes;
+}
+
 export default function EarningsReactionPage() {
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
   const [lookback, setLookback] = useState("8");
@@ -217,6 +300,26 @@ export default function EarningsReactionPage() {
                       </table>
                     </div>
                   )}
+
+                  {(() => {
+                    const notes = interpretResult(r);
+                    if (notes.length === 0) return null;
+                    return (
+                      <div className="px-4 pb-4 pt-3 border-t border-border">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase mb-2">
+                          Interpretação
+                        </div>
+                        <ul className="space-y-1.5">
+                          {notes.map((note, idx) => (
+                            <li key={idx} className="font-mono text-xs text-muted-foreground leading-relaxed flex gap-2">
+                              <span className="text-primary shrink-0">›</span>
+                              <span>{note}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
                 </>
               ) : null}
             </div>
