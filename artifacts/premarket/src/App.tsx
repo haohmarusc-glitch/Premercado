@@ -23,6 +23,7 @@ import WatchlistPage from "@/pages/watchlist";
 import JournalPage from "@/pages/journal";
 import ExitPlanPage from "@/pages/exit-plan";
 import EarningsPage from "@/pages/earnings";
+import EarningsReactionPage from "@/pages/earnings-reaction";
 import PerformancePage from "@/pages/performance";
 import BacktestPage from "@/pages/backtest";
 import TechnicalsPage from "@/pages/technicals";
@@ -67,6 +68,7 @@ function Router() {
         <Route path="/journal" component={JournalPage} />
         <Route path="/plano-saida" component={ExitPlanPage} />
         <Route path="/earnings" component={EarningsPage} />
+        <Route path="/earnings-reaction" component={EarningsReactionPage} />
         <Route path="/performance" component={PerformancePage} />
         <Route path="/backtest" component={BacktestPage} />
         <Route path="/tecnicos" component={TechnicalsPage} />

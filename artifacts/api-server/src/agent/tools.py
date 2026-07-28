@@ -743,6 +743,38 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         return {"ticker": ticker, "error": str(e)}
 
 
+def get_earnings_reaction_history(ticker: str, lookback: int = 8) -> dict:
+    """Analisa a reação histórica de preço/volume nos últimos earnings do
+    ativo: gap de abertura, variação de fechamento, range intradiário e
+    volume vs média do período, agregados nos últimos `lookback` earnings.
+
+    Use quando o ticker tiver earnings iminente (get_earnings_calendar,
+    campo imminent) pra calibrar o threshold_pct de create_alert com a
+    volatilidade REAL de earnings do ativo, em vez do ATR de dia a dia
+    (get_technical_indicators) -- a reação a resultado costuma ser bem
+    maior que o ruído normal do papel (ex.: SMCI/AVGO já reagiram >20% a
+    earnings, muito acima do atr_pct típico). O campo summary.
+    suggested_threshold_pct já vem pronto pra usar em threshold_pct.
+
+    Earnings divulgado depois do fechamento (AMC) reage no pregão SEGUINTE,
+    não no dia do anúncio -- por isso cada evento retorna as duas janelas
+    (announcement_day e next_day); o summary já usa a de maior variação
+    absoluta de cada evento, então não precisa escolher manualmente.
+    """
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+    from .earnings_reaction_analysis import analyze_ticker
+
+    result = analyze_ticker(ticker, lookback_events=lookback)
+    # Poda a lista de eventos -- o summary já basta pro threshold; eventos
+    # individuais servem só de evidência pro reason do alerta, 3 já cobrem.
+    if "events" in result:
+        result["events"] = result["events"][:3]
+    return result
+
+
 def detect_candle_patterns(ticker: str, period: str = "1mo", lookback: int = 5) -> dict:
     """
     Detecta padrões clássicos de candlestick nos últimos `lookback` candles
@@ -2160,6 +2192,28 @@ TOOLS = [
         },
     },
     {
+        "name": "get_earnings_reaction_history",
+        "description": (
+            "Analisa a reação histórica de preço/volume nos últimos earnings do "
+            "ativo (gap de abertura, variação de fechamento, range intradiário, "
+            "volume vs média). Use pra calibrar threshold_pct de create_alert com "
+            "a volatilidade REAL de earnings do ativo (campo summary."
+            "suggested_threshold_pct), em vez do ATR de dia a dia -- a reação a "
+            "resultado costuma ser bem maior que o ruído normal do papel."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo"},
+                "lookback": {
+                    "type": "integer",
+                    "description": "Quantos earnings passados considerar (padrão 8).",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
         "name": "get_fear_greed_index",
         "description": (
             "Retorna o Índice Fear & Greed da CNN (0–100): sentimento atual do mercado americano. "
@@ -2492,6 +2546,7 @@ DISPATCH = {
     "get_sector_performance": get_sector_performance,
     "get_short_interest": get_short_interest,
     "get_earnings_calendar": get_earnings_calendar,
+    "get_earnings_reaction_history": get_earnings_reaction_history,
     "get_fear_greed_index": get_fear_greed_index,
     "get_geopolitical_news": get_geopolitical_news,
     "get_analyst_ratings": get_analyst_ratings,
