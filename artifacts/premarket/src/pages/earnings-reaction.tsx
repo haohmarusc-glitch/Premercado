@@ -26,6 +26,11 @@ interface ReactionSummary {
   intraday_range_pct_mean: number;
   volume_ratio_mean: number | null;
   suggested_threshold_pct: number;
+  current_price: number;
+  r1_price: number;
+  r2_price: number;
+  s1_price: number;
+  s2_price: number;
 }
 
 interface ReactionResult {
@@ -39,6 +44,10 @@ const DEFAULT_TICKERS = "NVDA,SMCI,AVGO,SKHY,ARM";
 
 function fmtPct(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+}
+
+function fmtUsd(v: number): string {
+  return `$${v.toFixed(2)}`;
 }
 
 function SessionCell({ move }: { move: SessionMove | null }) {
@@ -153,6 +162,37 @@ export default function EarningsReactionPage() {
                         {sub && <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{sub}</div>}
                       </div>
                     ))}
+                  </div>
+
+                  <div className="px-4 pb-4">
+                    <div className="border border-border/60 rounded-lg bg-background p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                          Níveis projetados (base: {fmtUsd(r.summary.current_price)})
+                        </span>
+                        <span className="text-[10px] font-mono text-muted-foreground/70">
+                          bandas estatísticas, não suporte/resistência técnico
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-sm">
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase">R2 · alvo extremo</div>
+                          <div className="text-green-400 font-bold">{fmtUsd(r.summary.r2_price)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase">R1 · alvo médio</div>
+                          <div className="text-green-400/80 font-bold">{fmtUsd(r.summary.r1_price)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase">S1 · suporte médio</div>
+                          <div className="text-red-400/80 font-bold">{fmtUsd(r.summary.s1_price)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-muted-foreground uppercase">S2 · risco extremo</div>
+                          <div className="text-red-400 font-bold">{fmtUsd(r.summary.s2_price)}</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {r.events && r.events.length > 0 && (

@@ -132,6 +132,21 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
             float(df["close_pct"].abs().mean() + (df["close_pct"].std() if len(df) > 1 else 0)), 2
         ),
     }
+
+    # Níveis de preço em $ pra visualização direta -- projeção estatística das
+    # bandas acima sobre o preço atual, NÃO suporte/resistência técnico real
+    # (não vem de estrutura de preço, só da magnitude histórica de reação a
+    # earnings). R1/S1 = movimento médio; R2/S2 = o mesmo threshold_pct
+    # sugerido pra alerta, como alvo/risco extremo.
+    current_price = float(hist["Close"].iloc[-1])
+    avg_frac = summary["close_pct_abs_mean"] / 100
+    extreme_frac = summary["suggested_threshold_pct"] / 100
+    summary["current_price"] = round(current_price, 2)
+    summary["r1_price"] = round(current_price * (1 + avg_frac), 2)
+    summary["r2_price"] = round(current_price * (1 + extreme_frac), 2)
+    summary["s1_price"] = round(current_price * (1 - avg_frac), 2)
+    summary["s2_price"] = round(current_price * (1 - extreme_frac), 2)
+
     return {"ticker": ticker, "summary": summary, "events": events}
 
 
@@ -150,6 +165,9 @@ def _print_report(results: list[dict]) -> None:
         print(f"  Range intradiário médio: {s['intraday_range_pct_mean']:.2f}%")
         print(f"  Volume vs média do período: {vol}")
         print(f"  Threshold sugerido pra alerta pós-earnings: ±{s['suggested_threshold_pct']:.2f}%")
+        print(f"  Preço atual: ${s['current_price']:.2f}")
+        print(f"  R2 (+{s['suggested_threshold_pct']:.2f}%): ${s['r2_price']:.2f}  |  R1 (+{s['close_pct_abs_mean']:.2f}%): ${s['r1_price']:.2f}")
+        print(f"  S1 (-{s['close_pct_abs_mean']:.2f}%): ${s['s1_price']:.2f}  |  S2 (-{s['suggested_threshold_pct']:.2f}%): ${s['s2_price']:.2f}")
         print("  Últimos eventos (dia do anúncio | dia seguinte):")
         for e in r["events"][:6]:
             a = e["announcement_day"]
