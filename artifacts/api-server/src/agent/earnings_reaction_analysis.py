@@ -23,6 +23,7 @@ Uso:
 """
 import argparse
 import json
+import sys
 
 import pandas as pd
 import yfinance as yf
@@ -65,7 +66,10 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
 
     earliest = past_earnings.index.min()
     start = (earliest - pd.Timedelta(days=10)).tz_localize(None).strftime("%Y-%m-%d")
-    hist = t.history(start=start, auto_adjust=False)
+    try:
+        hist = t.history(start=start, auto_adjust=False)
+    except Exception as e:
+        return {"ticker": ticker, "error": f"falha ao buscar histórico de preço: {type(e).__name__}: {e}"}
     if hist.empty:
         return {"ticker": ticker, "error": "sem histórico de preço no período"}
     if hist.index.tz is not None:
@@ -172,4 +176,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Chamado pelo Node com payload JSON no stdin (rota web,
+    # routes/earnings-reaction.ts) -- stdin não é um terminal (isatty()=False)
+    # nesse caso. Rodando manualmente sem nada de pipe, cai no CLI de
+    # argparse normal (--tickers/--json/etc.), mesmo comportamento de sempre.
+    _raw_stdin = "" if sys.stdin.isatty() else sys.stdin.read()
+    if _raw_stdin.strip():
+        _payload = json.loads(_raw_stdin)
+        _tickers = [str(tk).strip().upper() for tk in (_payload.get("tickers") or DEFAULT_TICKERS) if str(tk).strip()]
+        _lookback = int(_payload.get("lookback") or 8)
+        print(json.dumps([analyze_ticker(tk, _lookback) for tk in _tickers], ensure_ascii=False))
+    else:
+        main()

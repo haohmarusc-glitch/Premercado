@@ -434,6 +434,7 @@ _ALERTS_TOOL_NAMES = {
     "list_alerts", "create_alert", "delete_alert",
     "get_stock_data", "get_technical_indicators",
     "detect_sector_contagion", "get_earnings_calendar",
+    "get_earnings_reaction_history",
 }
 ALERTS_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _ALERTS_TOOL_NAMES]
 
