@@ -98,8 +98,8 @@ export const agentRunsTable = pgTable("agent_runs", {
   startedAt: timestamp("started_at").defaultNow().notNull(),
   finishedAt: timestamp("finished_at"),
   status: text("status").notNull().default("running"), // running | success | failed
-  trigger: text("trigger").notNull().default("manual"), // manual | scheduled | premarket | portfolio | coal | ai | news | exit_plan
-  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan
+  trigger: text("trigger").notNull().default("manual"), // manual | scheduled | premarket | portfolio | coal | ai | news | exit_plan | alerts
+  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
   // Uso de LLM da run (agregado de todos os provedores/modelos, via linha USAGE: do agente)

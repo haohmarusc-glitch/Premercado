@@ -96,6 +96,14 @@ function TriggerBadge({ trigger }: { trigger: string }) {
       </span>
     );
   }
+  if (trigger === "alerts") {
+    return (
+      <span className="flex items-center gap-1 text-muted-foreground font-mono text-xs">
+        <ShieldAlert className="h-3 w-3" />
+        alerts
+      </span>
+    );
+  }
   return (
     <span className="flex items-center gap-1 text-muted-foreground font-mono text-xs">
       <Zap className="h-3 w-3" />
@@ -109,6 +117,13 @@ function ModeBadge({ mode }: { mode?: string }) {
     return (
       <span className="px-1.5 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono text-[10px] uppercase">
         flash
+      </span>
+    );
+  }
+  if (mode === "alerts") {
+    return (
+      <span className="px-1.5 py-0.5 rounded bg-secondary border border-border text-muted-foreground font-mono text-[10px] uppercase">
+        alerts
       </span>
     );
   }

@@ -124,13 +124,13 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" = "manual", maxTurns?: number): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" = "manual", maxTurns?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : trigger === "alerts" ? "alerts" : "daily";
 
   state.running = true;
   state.currentStep =
@@ -140,6 +140,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     trigger === "ai" ? "Iniciando análise do setor de IA..." :
     trigger === "news" ? "Iniciando varredura de notícias..." :
     trigger === "exit_plan" ? "Reavaliando plano de saída..." :
+    trigger === "alerts" ? "Iniciando gestão de alertas..." :
     "Iniciando agente...";
   state.stepLog = [state.currentStep];
   state.lastRunAt = new Date().toISOString();
