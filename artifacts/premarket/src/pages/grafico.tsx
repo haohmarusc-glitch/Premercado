@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearch } from "wouter";
 import { useGetTickerQuotes, getGetTickerQuotesQueryKey } from "@workspace/api-client-react";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, CandlestickChart } from "lucide-react";
 import { TradingViewChart } from "@/components/tradingview-chart";
@@ -19,6 +20,7 @@ const INTERVALS = [
 ];
 
 export default function GraficoPage() {
+  const search = useSearch();
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [interval, setInterval] = useState("D");
 
@@ -30,11 +32,23 @@ export default function GraficoPage() {
     },
   });
 
+  // Preselect via ?ticker= -- usado pelo clique numa bolha em
+  // quotes-bubbles.tsx (mesma convenção de query param que /alerts?symbol=
+  // já usa pro prefill vindo do menu de botão direito do gráfico). Guarda o
+  // último ticker aplicado da URL num ref (não só "selectedSymbol vazio") pra
+  // clicar em bolhas diferentes em sequência -- sem sair de /grafico, o wouter
+  // não desmonta o componente, então só reagir a "selectedSymbol ainda nulo"
+  // ignoraria a segunda navegação.
+  const lastAppliedTickerRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedSymbol && quotes && quotes.length > 0) {
+    const ticker = new URLSearchParams(search).get("ticker")?.toUpperCase() || null;
+    if (ticker && ticker !== lastAppliedTickerRef.current) {
+      lastAppliedTickerRef.current = ticker;
+      setSelectedSymbol(ticker);
+    } else if (!selectedSymbol && quotes && quotes.length > 0) {
       setSelectedSymbol(quotes[0].symbol);
     }
-  }, [quotes, selectedSymbol]);
+  }, [quotes, selectedSymbol, search]);
 
   const activeSymbol = selectedSymbol ?? quotes?.[0]?.symbol ?? null;
   const active = quotes?.find((q) => q.symbol === activeSymbol);

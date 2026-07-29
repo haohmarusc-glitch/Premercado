@@ -30,6 +30,7 @@ import BacktestPage from "@/pages/backtest";
 import TechnicalsPage from "@/pages/technicals";
 import QuotesPage from "@/pages/quotes";
 import GraficoPage from "@/pages/grafico";
+import QuotesBubblesPage from "@/pages/quotes-bubbles";
 import ShortPage from "@/pages/short";
 import AnalystsPage from "@/pages/analysts";
 import OptionsPage from "@/pages/options";
@@ -76,6 +77,7 @@ function Router() {
         <Route path="/tecnicos" component={TechnicalsPage} />
         <Route path="/cotacoes" component={QuotesPage} />
         <Route path="/grafico" component={GraficoPage} />
+        <Route path="/bolhas" component={QuotesBubblesPage} />
         <Route path="/short" component={ShortPage} />
         <Route path="/analistas" component={AnalystsPage} />
         <Route path="/opcoes" component={OptionsPage} />
