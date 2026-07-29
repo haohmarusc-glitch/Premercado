@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit, Target } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -269,6 +269,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navSection("Carteira")}
             {navLink("/portfolio", <Briefcase className="h-4 w-4" />, "Carteira")}
             {navLink("/performance", <TrendingUp className="h-4 w-4" />, "Performance")}
+            {navLink("/cenarios", <Target className="h-4 w-4" />, "Cenários")}
             {navLink("/watchlist", <Eye className="h-4 w-4" />, "Watchlist")}
             {navLink("/journal", <BookOpen className="h-4 w-4" />, "Diário")}
             {navLink("/plano-saida", <Flag className="h-4 w-4" />, "Plano de Saída", exitPlanDueCount)}
