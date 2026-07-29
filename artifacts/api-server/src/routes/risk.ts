@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
+import { eq } from "drizzle-orm";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { db, portfolioPositionsTable } from "@workspace/db";
 
@@ -61,7 +62,10 @@ router.post("/risk/stop-distance", async (req, res, next): Promise<void> => {
 
 router.get("/risk/portfolio-exposure", async (req, res, next): Promise<void> => {
   try {
-    const positions = await db.select().from(portfolioPositionsTable);
+    const positions = await db
+      .select()
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.userId, req.userId!));
     const payload = positions.map((p) => ({
       ticker: p.ticker,
       investedAmount: p.investedAmount,
@@ -101,7 +105,10 @@ router.post("/risk/intraday-beta", async (req, res, next): Promise<void> => {
 
 router.get("/risk/portfolio-correlation", async (req, res, next): Promise<void> => {
   try {
-    const positions = await db.select({ ticker: portfolioPositionsTable.ticker }).from(portfolioPositionsTable);
+    const positions = await db
+      .select({ ticker: portfolioPositionsTable.ticker })
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.userId, req.userId!));
     const tickers = [...new Set(positions.map((p) => p.ticker))];
     if (tickers.length < 2) {
       res.json({ error: "Precisa de pelo menos 2 posições na carteira" });
