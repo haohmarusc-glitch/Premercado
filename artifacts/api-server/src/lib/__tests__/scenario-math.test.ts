@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeScenarioMetrics, volComSalto, probEmpateIndividual, diasAteAlvo,
+  pctConfirmacao, cicloBateu,
   type ScenarioPosition,
 } from "@workspace/scenario-math";
 
@@ -113,5 +114,41 @@ describe("diasAteAlvo", () => {
     const futuro = new Date(Date.now() + 30 * 86400000);
     expect(diasAteAlvo(futuro)).toBeGreaterThanOrEqual(29);
     expect(diasAteAlvo(futuro)).toBeLessThanOrEqual(31);
+  });
+});
+
+describe("pctConfirmacao", () => {
+  it("sem histórico, retorna null", () => {
+    expect(pctConfirmacao([], 50)).toBeNull();
+  });
+
+  it("todos os dias acima do limiar: 100%", () => {
+    const snaps = [{ pEmpate: 0.6 }, { pEmpate: 0.7 }, { pEmpate: 0.55 }];
+    expect(pctConfirmacao(snaps, 50)).toBe(100);
+  });
+
+  it("nenhum dia acima do limiar: 0%", () => {
+    const snaps = [{ pEmpate: 0.2 }, { pEmpate: 0.3 }];
+    expect(pctConfirmacao(snaps, 50)).toBe(0);
+  });
+
+  it("mistura de dias acima/abaixo do limiar calcula a fração correta", () => {
+    const snaps = [{ pEmpate: 0.6 }, { pEmpate: 0.4 }, { pEmpate: 0.6 }, { pEmpate: 0.4 }];
+    expect(pctConfirmacao(snaps, 50)).toBe(50);
+  });
+
+  it("pEmpate igual ao limiar conta como confirmado (>=)", () => {
+    expect(pctConfirmacao([{ pEmpate: 0.5 }], 50)).toBe(100);
+  });
+});
+
+describe("cicloBateu", () => {
+  it("valor final >= custo total: bateu", () => {
+    expect(cicloBateu(1000, 1000)).toBe(true);
+    expect(cicloBateu(1200, 1000)).toBe(true);
+  });
+
+  it("valor final < custo total: não bateu", () => {
+    expect(cicloBateu(800, 1000)).toBe(false);
   });
 });

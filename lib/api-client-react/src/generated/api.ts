@@ -64,6 +64,7 @@ import type {
   Report,
   ScenarioAlertSettings,
   ScenarioAlertSettingsUpdate,
+  ScenarioProgress,
   SentimentSummary,
   Settings,
   SettingsUpdate,
@@ -2136,6 +2137,83 @@ export const useUpdateScenarioAlertSettings = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getUpdateScenarioAlertSettingsMutationOptions(options));
     }
+
+export const getGetScenarioProgressUrl = () => {
+
+
+
+
+  return `/api/scenario-progress`
+}
+
+/**
+ * @summary Daily snapshot history and past cycle resolutions for the logged-in user's Painel de Cenários (feeds the confirmation thermometer)
+ */
+export const getScenarioProgress = async ( options?: RequestInit): Promise<ScenarioProgress> => {
+
+  return customFetch<ScenarioProgress>(getGetScenarioProgressUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScenarioProgressQueryKey = () => {
+    return [
+    `/api/scenario-progress`
+    ] as const;
+    }
+
+
+export const getGetScenarioProgressQueryOptions = <TData = Awaited<ReturnType<typeof getScenarioProgress>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScenarioProgress>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScenarioProgressQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScenarioProgress>>> = ({ signal }) => getScenarioProgress({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScenarioProgress>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScenarioProgressQueryResult = NonNullable<Awaited<ReturnType<typeof getScenarioProgress>>>
+export type GetScenarioProgressQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Daily snapshot history and past cycle resolutions for the logged-in user's Painel de Cenários (feeds the confirmation thermometer)
+ */
+
+export function useGetScenarioProgress<TData = Awaited<ReturnType<typeof getScenarioProgress>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScenarioProgress>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScenarioProgressQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getActivityHeartbeatUrl = () => {
 

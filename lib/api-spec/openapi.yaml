@@ -504,6 +504,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScenarioAlertSettings"
 
+  /scenario-progress:
+    get:
+      operationId: getScenarioProgress
+      tags: [scenarios]
+      summary: Daily snapshot history and past cycle resolutions for the logged-in user's Painel de Cenários (feeds the confirmation thermometer)
+      responses:
+        "200":
+          description: Snapshot history for the current cycle and resolutions of past cycles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioProgress"
+
   /activity/heartbeat:
     post:
       operationId: activityHeartbeat
@@ -1582,6 +1595,64 @@ components:
           type: boolean
         notifyEmail:
           type: ["string", "null"]
+
+    ScenarioSnapshot:
+      type: object
+      required: [snapshotDate, dataAlvo, diasRestantes, pEmpate, valorTotalHoje, custoTotal, p05, p50, p95]
+      properties:
+        snapshotDate:
+          type: string
+        dataAlvo:
+          type: string
+        diasRestantes:
+          type: integer
+        pEmpate:
+          type: number
+        valorTotalHoje:
+          type: number
+        custoTotal:
+          type: number
+        p05:
+          type: number
+        p50:
+          type: number
+        p95:
+          type: number
+
+    ScenarioResolution:
+      type: object
+      required: [dataAlvo, valorFinal, custoTotal, pEmpateFinal, bateu, resolvedAt]
+      properties:
+        dataAlvo:
+          type: string
+        valorFinal:
+          type: number
+        custoTotal:
+          type: number
+        pEmpateFinal:
+          type: number
+        bateu:
+          type: boolean
+        resolvedAt:
+          type: string
+
+    ScenarioProgress:
+      type: object
+      required: [snapshots, resolutions]
+      properties:
+        # Snapshots do ciclo vigente (data-alvo atual de scenario_alert_settings),
+        # mais antigo primeiro -- vazio se o usuário nunca configurou o alerta
+        # ou se o checker ainda não rodou desde a configuração.
+        snapshots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScenarioSnapshot"
+        # Ciclos já encerrados (data-alvo no passado, resolvidos), mais
+        # recente primeiro -- histórico de acurácia do modelo.
+        resolutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScenarioResolution"
 
     NewsItem:
       type: object
