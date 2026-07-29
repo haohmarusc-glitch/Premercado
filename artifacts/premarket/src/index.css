@@ -125,3 +125,10 @@ html.mobile-mode select,
 html.mobile-mode textarea {
   font-size: 16px; /* evita zoom automático do iOS ao focar um campo */
 }
+
+/* Flutuação das bolhas em /bolhas -- duração/atraso/amplitude vêm de inline
+   style por bolha (variam por ticker), só a curva de animação é compartilhada. */
+@keyframes float-bubble {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(var(--float-x, 0px), var(--float-y, -10px)); }
+}
