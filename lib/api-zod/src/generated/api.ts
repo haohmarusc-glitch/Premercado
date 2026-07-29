@@ -388,6 +388,41 @@ export const GetAgentSpendResponse = zod.object({
 
 
 /**
+ * @summary Itemized AI spend history (agent runs + chat messages), grouped by day, plus an all-time total
+ */
+export const GetAgentSpendHistoryQueryParams = zod.object({
+  "days": zod.coerce.number().optional().describe('How many trailing days to itemize (default 30). The all-time total is always computed over the full history, regardless of this window.')
+})
+
+export const GetAgentSpendHistoryResponse = zod.object({
+  "days": zod.array(zod.object({
+  "date": zod.string(),
+  "totalCostUsd": zod.coerce.number().nullable(),
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "source": zod.enum(['run', 'chat']),
+  "timestamp": zod.string(),
+  "costUsd": zod.coerce.number().nullish(),
+  "inputTokens": zod.coerce.number().nullish(),
+  "outputTokens": zod.coerce.number().nullish(),
+  "cacheReadTokens": zod.coerce.number().nullish(),
+  "cacheWriteTokens": zod.coerce.number().nullish(),
+  "llmProvider": zod.string().nullish(),
+  "llmModel": zod.string().nullish(),
+  "trigger": zod.string().nullish(),
+  "mode": zod.string().nullish(),
+  "status": zod.string().nullish(),
+  "durationMs": zod.coerce.number().nullish(),
+  "chatSessionTitle": zod.string().nullish()
+}))
+})),
+  "windowTotalCostUsd": zod.coerce.number().nullable(),
+  "allTimeTotalCostUsd": zod.coerce.number().nullable(),
+  "hasCostData": zod.boolean()
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;

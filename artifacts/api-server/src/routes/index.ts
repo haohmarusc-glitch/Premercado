@@ -26,6 +26,7 @@ import analysisRouter from "./analysis";
 import internalRouter from "./internal";
 import activityRouter from "./activity";
 import adminUsersRouter from "./admin-users";
+import aiSpendRouter from "./ai-spend";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(technicalsRouter);
 router.use(analysisRouter);
 router.use(activityRouter);
 router.use(adminUsersRouter);
+router.use(aiSpendRouter);
 
 export default router;

@@ -26,6 +26,7 @@ import type {
   AgentRunResult,
   AgentSpend,
   AgentStatus,
+  AiSpendHistory,
   AlertCreateInput,
   AlertFiring,
   AlertToggleInput,
@@ -42,6 +43,7 @@ import type {
   ExitPlanItemCreate,
   ExitPlanItemUpdate,
   FxRate,
+  GetAgentSpendHistoryParams,
   GetNewsParams,
   GetTickerChartParams,
   HealthStatus,
@@ -1889,6 +1891,90 @@ export function useGetAgentSpend<TData = Awaited<ReturnType<typeof getAgentSpend
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAgentSpendQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetAgentSpendHistoryUrl = (params?: GetAgentSpendHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/agent/spend-history?${stringifiedParams}` : `/api/agent/spend-history`
+}
+
+/**
+ * @summary Itemized AI spend history (agent runs + chat messages), grouped by day, plus an all-time total
+ */
+export const getAgentSpendHistory = async (params?: GetAgentSpendHistoryParams, options?: RequestInit): Promise<AiSpendHistory> => {
+
+  return customFetch<AiSpendHistory>(getGetAgentSpendHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentSpendHistoryQueryKey = (params?: GetAgentSpendHistoryParams,) => {
+    return [
+    `/api/agent/spend-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAgentSpendHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getAgentSpendHistory>>, TError = ErrorType<unknown>>(params?: GetAgentSpendHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentSpendHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentSpendHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentSpendHistory>>> = ({ signal }) => getAgentSpendHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentSpendHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentSpendHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentSpendHistory>>>
+export type GetAgentSpendHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Itemized AI spend history (agent runs + chat messages), grouped by day, plus an all-time total
+ */
+
+export function useGetAgentSpendHistory<TData = Awaited<ReturnType<typeof getAgentSpendHistory>>, TError = ErrorType<unknown>>(
+ params?: GetAgentSpendHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentSpendHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentSpendHistoryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
