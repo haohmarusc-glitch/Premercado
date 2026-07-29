@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge } from "lucide-react";
+import { Activity, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -261,6 +261,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/history", <History className="h-4 w-4" />, "History")}
             {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
             {user?.isAdmin && navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
+            {user?.isAdmin && navLink("/ai-spend", <DollarSign className="h-4 w-4" />, "Gastos com IA")}
             {user?.isAdmin && navLink("/users", <UserCog className="h-4 w-4" />, "Usuários")}
             {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
             {navLink("/chat", <MessageSquare className="h-4 w-4" />, "Chat")}

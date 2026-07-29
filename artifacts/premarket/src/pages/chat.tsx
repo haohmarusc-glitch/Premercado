@@ -17,10 +17,28 @@ interface LocalMsg {
   localId: number;
   role: "user" | "assistant";
   content: string;
+  costUsd?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  llmModel?: string | null;
 }
 
 let _lid = 0;
 function lid() { return ++_lid; }
+
+function formatCost(costUsd: number | null | undefined): string {
+  if (costUsd == null) return "";
+  if (costUsd === 0) return "$0";
+  if (costUsd < 0.01) return `$${costUsd.toFixed(4)}`;
+  return `$${costUsd.toFixed(2)}`;
+}
+
+function formatTokens(n: number | null | undefined): string {
+  if (n == null) return "0";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
 
 const SUGGESTIONS = [
   "Como está NVDA hoje?",
@@ -51,6 +69,7 @@ export default function Chat() {
   const [step, setStep] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastAssistantIdRef = useRef<number | null>(null);
 
   const { data: sessions, isLoading: loadingSessions } = useListChatSessions({
     query: { queryKey: getListChatSessionsQueryKey(), refetchInterval: 0 },
@@ -65,8 +84,28 @@ export default function Chat() {
   async function loadSession(id: number) {
     const res = await fetch(`/api/chat/sessions/${id}/messages`, { credentials: "include" });
     if (!res.ok) return;
-    const data = (await res.json()) as Array<{ id: number; role: string; content: string }>;
-    setMessages(data.map((m) => ({ localId: lid(), role: m.role as "user" | "assistant", content: m.content })));
+    const data = (await res.json()) as Array<{
+      id: number;
+      role: string;
+      content: string;
+      costUsd?: number | null;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      cacheReadTokens?: number | null;
+      cacheWriteTokens?: number | null;
+      llmModel?: string | null;
+    }>;
+    setMessages(data.map((m) => ({
+      localId: lid(),
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      costUsd: m.costUsd,
+      inputTokens: m.inputTokens,
+      outputTokens: m.outputTokens,
+      cacheReadTokens: m.cacheReadTokens,
+      cacheWriteTokens: m.cacheWriteTokens,
+      llmModel: m.llmModel,
+    })));
     setSessionId(id);
     sessionIdRef.current = id;
     setStep(null);
@@ -155,10 +194,25 @@ export default function Chat() {
           } else if (eventType === "step") {
             setStep(payload as string);
           } else if (eventType === "done") {
-            setMessages((prev) => [...prev, { localId: lid(), role: "assistant", content: payload as string }]);
+            const newId = lid();
+            lastAssistantIdRef.current = newId;
+            setMessages((prev) => [...prev, { localId: newId, role: "assistant", content: payload as string }]);
             setStep(null);
             setLoading(false);
             queryClient.invalidateQueries({ queryKey: getListChatSessionsQueryKey() });
+          } else if (eventType === "usage") {
+            const u = payload as {
+              costUsd?: number | null;
+              inputTokens?: number | null;
+              outputTokens?: number | null;
+              cacheReadTokens?: number | null;
+              cacheWriteTokens?: number | null;
+              llmModel?: string | null;
+            };
+            const targetId = lastAssistantIdRef.current;
+            if (targetId !== null) {
+              setMessages((prev) => prev.map((m) => (m.localId === targetId ? { ...m, ...u } : m)));
+            }
           } else if (eventType === "title") {
             const newTitle = payload as string;
             const sid = sessionIdRef.current;
@@ -200,6 +254,10 @@ export default function Chat() {
   }
 
   const empty = messages.length === 0 && !loading;
+  const messagesWithCost = messages.filter((m) => m.costUsd != null);
+  const sessionCostUsd = messagesWithCost.length > 0
+    ? messagesWithCost.reduce((sum, m) => sum + (m.costUsd ?? 0), 0)
+    : null;
 
   return (
     <div className="space-y-4 animate-in fade-in duration-500">
@@ -340,8 +398,21 @@ export default function Chat() {
                   </div>
                 ) : (
                   <div className="w-full border border-border rounded-lg bg-card overflow-hidden">
-                    <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border/50 bg-secondary/30">
+                    <div className="flex items-center justify-between gap-2 px-4 py-1.5 border-b border-border/50 bg-secondary/30">
                       <span className="text-[10px] font-mono text-primary uppercase tracking-widest font-bold">Agente</span>
+                      {msg.costUsd != null && (
+                        <span
+                          className="text-[10px] font-mono text-muted-foreground"
+                          title={msg.llmModel ? `modelo: ${msg.llmModel}` : undefined}
+                        >
+                          {formatCost(msg.costUsd)}
+                          {msg.inputTokens != null && (
+                            <span className="ml-1">
+                              ({formatTokens((msg.inputTokens ?? 0) + (msg.cacheReadTokens ?? 0) + (msg.cacheWriteTokens ?? 0))}↓ {formatTokens(msg.outputTokens)}↑)
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </div>
                     <div className="px-4 py-3">
                       <MarkdownContent content={msg.content} />
@@ -403,6 +474,7 @@ export default function Chat() {
             <div className="flex items-center justify-between">
               <p className="text-[10px] font-mono text-muted-foreground">
                 Ctrl+Enter para enviar · Histórico salvo automaticamente
+                {sessionCostUsd != null && ` · Custo desta conversa: ${formatCost(sessionCostUsd)}`}
               </p>
               {input.length > 0 && (
                 <span className={`text-[10px] font-mono ${input.length > 1000 ? "text-amber-500" : "text-muted-foreground"}`}>

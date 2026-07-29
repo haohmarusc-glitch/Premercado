@@ -181,4 +181,17 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (exit_plan_items table)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS input_tokens integer`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS output_tokens integer`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cache_read_tokens integer`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cache_write_tokens integer`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cost_usd numeric(12,6)`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS llm_provider text`);
+    await db.execute(sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS llm_model text`);
+    logger.info("Schema check ok (chat_messages usage/cost columns)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (chat_messages usage columns)");
+  }
 }
