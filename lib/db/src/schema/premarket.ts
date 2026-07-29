@@ -404,3 +404,70 @@ export const scenarioParamsTable = pgTable("scenario_params", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 export type ScenarioParams = typeof scenarioParamsTable.$inferSelect;
+
+// Config do alerta por e-mail do Painel de Cenários -- uma linha por usuário
+// (não uma lista de múltiplos alertas, ao contrário de `alerts`, porque o
+// painel só tem UMA data-alvo por vez). O checker em background
+// (lib/scenario-alert-checker.ts) roda o mesmo cálculo de
+// @workspace/scenario-math com o cenário neutro (sem venda manual, setor
+// parado, vol 1x) contra esta data-alvo/threshold, e dispara e-mail quando
+// a probabilidade de empatar cai abaixo do limiar -- com cooldown via
+// lastFiredAt pra não reenviar a cada ciclo enquanto a condição persiste.
+export const scenarioAlertSettingsTable = pgTable("scenario_alert_settings", {
+  userId: integer("user_id").primaryKey().references(() => usersTable.id, { onDelete: "cascade" }),
+  dataAlvo: text("data_alvo").notNull(), // YYYY-MM-DD
+  thresholdPct: money("threshold_pct").notNull().default(50), // dispara quando pEmpate*100 < thresholdPct
+  enabled: boolean("enabled").notNull().default(true),
+  notifyEmail: text("notify_email"),
+  lastFiredAt: timestamp("last_fired_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type ScenarioAlertSettings = typeof scenarioAlertSettingsTable.$inferSelect;
+
+// Snapshot diário da leitura do Painel de Cenários (uma linha por usuário por
+// dia, upsert idempotente) -- gerado pelo mesmo checker em background que já
+// roda de hora em hora (lib/scenario-alert-checker.ts), usando o cenário
+// neutro contra a data-alvo configurada em scenario_alert_settings. Alimenta
+// o termômetro de confirmação na tela /cenarios: cada snapshot registra a
+// pEmpate do dia (calculada com preço de mercado real daquele dia), o que dá
+// o histórico "quantos dias, desde que comecei a acompanhar, a chance de
+// empatar ficou acima do limiar".
+export const scenarioSnapshotsTable = pgTable("scenario_snapshots", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD, data real do snapshot
+  dataAlvo: text("data_alvo").notNull(), // data-alvo vigente no momento do snapshot
+  diasRestantes: integer("dias_restantes").notNull(),
+  pEmpate: money("p_empate").notNull(), // 0-1
+  valorTotalHoje: money("valor_total_hoje").notNull(),
+  custoTotal: money("custo_total").notNull(),
+  p05: money("p05").notNull(),
+  p50: money("p50").notNull(),
+  p95: money("p95").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_scenario_snapshots_user_id").on(t.userId),
+  unique("uq_scenario_snapshots_user_date").on(t.userId, t.snapshotDate),
+]);
+export type ScenarioSnapshot = typeof scenarioSnapshotsTable.$inferSelect;
+
+// Resultado final de um ciclo de acompanhamento (uma linha por data-alvo já
+// vencida, uma vez resolvida nunca muda -- histórico de acurácia do modelo).
+// `bateu` = valorFinal >= custoTotal, ou seja, a carteira realmente empatou
+// (ou superou) o custo total até a data-alvo, o mesmo evento que pEmpate
+// estimava a probabilidade de acontecer.
+export const scenarioResolutionsTable = pgTable("scenario_resolutions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  dataAlvo: text("data_alvo").notNull(),
+  valorFinal: money("valor_final").notNull(),
+  custoTotal: money("custo_total").notNull(),
+  pEmpateFinal: money("p_empate_final").notNull(), // última pEmpate estimada antes da resolução
+  bateu: boolean("bateu").notNull(),
+  resolvedAt: timestamp("resolved_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_scenario_resolutions_user_id").on(t.userId),
+  unique("uq_scenario_resolutions_user_alvo").on(t.userId, t.dataAlvo),
+]);
+export type ScenarioResolution = typeof scenarioResolutionsTable.$inferSelect;

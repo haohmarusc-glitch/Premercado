@@ -236,6 +236,62 @@ export async function sendRecompraEmail(opts: {
   }
 }
 
+export async function sendScenarioAlertEmail(opts: {
+  to: string | null;
+  dataAlvo: string; // YYYY-MM-DD
+  thresholdPct: number | string;
+  pEmpatePct: number; // probabilidade atual de empatar, já em %
+  caixa: number;
+  risco: number;
+  custoTotal: number;
+}): Promise<void> {
+  const to = opts.to?.trim();
+  if (!to) { logger.warn("No notify email on record — skipping scenario alert"); return; }
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
+
+  const thresholdPct = toNum(opts.thresholdPct) ?? 50;
+  const dataAlvoBr = opts.dataAlvo.split("-").reverse().join("/");
+
+  const subject = `⚠️ Painel de Cenários: ${opts.pEmpatePct.toFixed(0)}% de chance de empatar até ${dataAlvoBr}`;
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
+  .pct{font-size:32px;font-weight:bold;color:#ef4444}
+  .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
+  .footer{margin-top:32px;font-size:11px;color:#555}
+</style></head>
+<body>
+<p style="color:#555;font-size:12px;text-transform:uppercase;">Alerta de Cenário — Pré-Mercado Agente</p>
+<div class="box">
+  <div class="pct">${opts.pEmpatePct.toFixed(0)}% de chance de empatar</div>
+  <p style="margin:8px 0;color:#aaa">Data-alvo: <strong style="color:#fff">${dataAlvoBr}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Limiar configurado: <strong style="color:#fff">${thresholdPct.toFixed(0)}%</strong></p>
+  <p style="margin:4px 0;color:#aaa">Garantido em caixa: <strong style="color:#fff">$${opts.caixa.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Em risco: <strong style="color:#fff">$${opts.risco.toFixed(2)}</strong></p>
+  <p style="margin:4px 0;color:#aaa">Break-even (total investido): <strong style="color:#fff">$${opts.custoTotal.toFixed(2)}</strong></p>
+  <p style="margin:12px 0 0;color:#666;font-size:12px">
+    Cenário neutro (sem movimento de setor, volatilidade base, nenhuma posição travada em caixa
+    manualmente). Ferramenta de dimensionamento de risco — não é recomendação de compra ou venda.
+  </p>
+</div>
+<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Reenvia no máximo 1x/24h enquanto a condição persistir.</div>
+</body></html>`;
+
+  try {
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"Pré-Mercado Agente" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    logger.info({ to, subject }, "Scenario alert e-mail sent");
+  } catch (err) {
+    logger.error({ err }, "Failed to send scenario alert e-mail");
+  }
+}
+
 export async function sendReportEmail(reportContent: string, date: string, tickers?: string[]): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) {

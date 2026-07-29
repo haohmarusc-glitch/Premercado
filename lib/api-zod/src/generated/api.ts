@@ -423,6 +423,65 @@ export const GetAgentSpendHistoryResponse = zod.object({
 
 
 /**
+ * @summary Get the logged-in user's Painel de Cenários alert configuration (null fields if never configured)
+ */
+export const GetScenarioAlertSettingsResponse = zod.object({
+  "configured": zod.boolean(),
+  "dataAlvo": zod.string(),
+  "thresholdPct": zod.coerce.number(),
+  "enabled": zod.boolean(),
+  "notifyEmail": zod.string().nullable(),
+  "lastFiredAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary Create or update the logged-in user's Painel de Cenários alert configuration
+ */
+export const UpdateScenarioAlertSettingsBody = zod.object({
+  "dataAlvo": zod.string().optional(),
+  "thresholdPct": zod.number().optional(),
+  "enabled": zod.boolean().optional(),
+  "notifyEmail": zod.string().nullish()
+})
+
+export const UpdateScenarioAlertSettingsResponse = zod.object({
+  "configured": zod.boolean(),
+  "dataAlvo": zod.string(),
+  "thresholdPct": zod.coerce.number(),
+  "enabled": zod.boolean(),
+  "notifyEmail": zod.string().nullable(),
+  "lastFiredAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary Daily snapshot history and past cycle resolutions for the logged-in user's Painel de Cenários (feeds the confirmation thermometer)
+ */
+export const GetScenarioProgressResponse = zod.object({
+  "snapshots": zod.array(zod.object({
+  "snapshotDate": zod.string(),
+  "dataAlvo": zod.string(),
+  "diasRestantes": zod.coerce.number(),
+  "pEmpate": zod.coerce.number(),
+  "valorTotalHoje": zod.coerce.number(),
+  "custoTotal": zod.coerce.number(),
+  "p05": zod.coerce.number(),
+  "p50": zod.coerce.number(),
+  "p95": zod.coerce.number()
+})),
+  "resolutions": zod.array(zod.object({
+  "dataAlvo": zod.string(),
+  "valorFinal": zod.coerce.number(),
+  "custoTotal": zod.coerce.number(),
+  "pEmpateFinal": zod.coerce.number(),
+  "bateu": zod.boolean(),
+  "resolvedAt": zod.string()
+}))
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;
