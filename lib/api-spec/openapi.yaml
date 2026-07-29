@@ -474,6 +474,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/AiSpendHistory"
 
+  /scenario-alert-settings:
+    get:
+      operationId: getScenarioAlertSettings
+      tags: [scenarios]
+      summary: Get the logged-in user's Painel de Cenários alert configuration (null fields if never configured)
+      responses:
+        "200":
+          description: Current alert settings, or defaults if never saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioAlertSettings"
+    patch:
+      operationId: updateScenarioAlertSettings
+      tags: [scenarios]
+      summary: Create or update the logged-in user's Painel de Cenários alert configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScenarioAlertSettingsUpdate"
+      responses:
+        "200":
+          description: Updated alert settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioAlertSettings"
+
   /activity/heartbeat:
     post:
       operationId: activityHeartbeat
@@ -1519,6 +1549,39 @@ components:
           type: ["number", "null"]
         hasCostData:
           type: boolean
+
+    ScenarioAlertSettings:
+      type: object
+      required: [configured, dataAlvo, thresholdPct, enabled, notifyEmail, lastFiredAt]
+      properties:
+        # false quando o usuário nunca salvou uma config -- os demais campos
+        # vêm com o default de UI (dataAlvo hoje+90d, thresholdPct 50,
+        # enabled false) pra popular o formulário sem exigir um round-trip
+        # extra antes de mostrar algo.
+        configured:
+          type: boolean
+        dataAlvo:
+          type: string
+        thresholdPct:
+          type: number
+        enabled:
+          type: boolean
+        notifyEmail:
+          type: ["string", "null"]
+        lastFiredAt:
+          type: ["string", "null"]
+
+    ScenarioAlertSettingsUpdate:
+      type: object
+      properties:
+        dataAlvo:
+          type: string
+        thresholdPct:
+          type: number
+        enabled:
+          type: boolean
+        notifyEmail:
+          type: ["string", "null"]
 
     NewsItem:
       type: object

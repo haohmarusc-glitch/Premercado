@@ -423,6 +423,39 @@ export const GetAgentSpendHistoryResponse = zod.object({
 
 
 /**
+ * @summary Get the logged-in user's Painel de Cenários alert configuration (null fields if never configured)
+ */
+export const GetScenarioAlertSettingsResponse = zod.object({
+  "configured": zod.boolean(),
+  "dataAlvo": zod.string(),
+  "thresholdPct": zod.coerce.number(),
+  "enabled": zod.boolean(),
+  "notifyEmail": zod.string().nullable(),
+  "lastFiredAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary Create or update the logged-in user's Painel de Cenários alert configuration
+ */
+export const UpdateScenarioAlertSettingsBody = zod.object({
+  "dataAlvo": zod.string().optional(),
+  "thresholdPct": zod.number().optional(),
+  "enabled": zod.boolean().optional(),
+  "notifyEmail": zod.string().nullish()
+})
+
+export const UpdateScenarioAlertSettingsResponse = zod.object({
+  "configured": zod.boolean(),
+  "dataAlvo": zod.string(),
+  "thresholdPct": zod.coerce.number(),
+  "enabled": zod.boolean(),
+  "notifyEmail": zod.string().nullable(),
+  "lastFiredAt": zod.string().nullable()
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;

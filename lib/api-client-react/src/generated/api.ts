@@ -62,6 +62,8 @@ import type {
   PortfolioPurchaseUpdate,
   PriceAlert,
   Report,
+  ScenarioAlertSettings,
+  ScenarioAlertSettingsUpdate,
   SentimentSummary,
   Settings,
   SettingsUpdate,
@@ -1986,6 +1988,154 @@ export function useGetAgentSpendHistory<TData = Awaited<ReturnType<typeof getAge
 
 
 
+
+export const getGetScenarioAlertSettingsUrl = () => {
+
+
+
+
+  return `/api/scenario-alert-settings`
+}
+
+/**
+ * @summary Get the logged-in user's Painel de Cenários alert configuration (null fields if never configured)
+ */
+export const getScenarioAlertSettings = async ( options?: RequestInit): Promise<ScenarioAlertSettings> => {
+
+  return customFetch<ScenarioAlertSettings>(getGetScenarioAlertSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScenarioAlertSettingsQueryKey = () => {
+    return [
+    `/api/scenario-alert-settings`
+    ] as const;
+    }
+
+
+export const getGetScenarioAlertSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getScenarioAlertSettings>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScenarioAlertSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScenarioAlertSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScenarioAlertSettings>>> = ({ signal }) => getScenarioAlertSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScenarioAlertSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScenarioAlertSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getScenarioAlertSettings>>>
+export type GetScenarioAlertSettingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the logged-in user's Painel de Cenários alert configuration (null fields if never configured)
+ */
+
+export function useGetScenarioAlertSettings<TData = Awaited<ReturnType<typeof getScenarioAlertSettings>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScenarioAlertSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScenarioAlertSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getUpdateScenarioAlertSettingsUrl = () => {
+
+
+
+
+  return `/api/scenario-alert-settings`
+}
+
+/**
+ * @summary Create or update the logged-in user's Painel de Cenários alert configuration
+ */
+export const updateScenarioAlertSettings = async (scenarioAlertSettingsUpdate: ScenarioAlertSettingsUpdate, options?: RequestInit): Promise<ScenarioAlertSettings> => {
+
+  return customFetch<ScenarioAlertSettings>(getUpdateScenarioAlertSettingsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scenarioAlertSettingsUpdate,)
+  }
+);}
+
+
+
+
+export const getUpdateScenarioAlertSettingsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScenarioAlertSettings>>, TError,{data: BodyType<ScenarioAlertSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateScenarioAlertSettings>>, TError,{data: BodyType<ScenarioAlertSettingsUpdate>}, TContext> => {
+
+const mutationKey = ['updateScenarioAlertSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateScenarioAlertSettings>>, {data: BodyType<ScenarioAlertSettingsUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateScenarioAlertSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateScenarioAlertSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateScenarioAlertSettings>>>
+    export type UpdateScenarioAlertSettingsMutationBody = BodyType<ScenarioAlertSettingsUpdate>
+    export type UpdateScenarioAlertSettingsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create or update the logged-in user's Painel de Cenários alert configuration
+ */
+export const useUpdateScenarioAlertSettings = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateScenarioAlertSettings>>, TError,{data: BodyType<ScenarioAlertSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateScenarioAlertSettings>>,
+        TError,
+        {data: BodyType<ScenarioAlertSettingsUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateScenarioAlertSettingsMutationOptions(options));
+    }
 
 export const getActivityHeartbeatUrl = () => {
 

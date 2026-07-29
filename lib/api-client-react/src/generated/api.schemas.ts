@@ -356,6 +356,25 @@ export interface AiSpendHistory {
   hasCostData: boolean;
 }
 
+export interface ScenarioAlertSettings {
+  configured: boolean;
+  dataAlvo: string;
+  thresholdPct: number;
+  enabled: boolean;
+  /** @nullable */
+  notifyEmail: string | null;
+  /** @nullable */
+  lastFiredAt: string | null;
+}
+
+export interface ScenarioAlertSettingsUpdate {
+  dataAlvo?: string;
+  thresholdPct?: number;
+  enabled?: boolean;
+  /** @nullable */
+  notifyEmail?: string | null;
+}
+
 export interface NewsItem {
   title: string;
   published?: string | number;
