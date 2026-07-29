@@ -454,6 +454,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/AgentSpend"
 
+  /agent/spend-history:
+    get:
+      operationId: getAgentSpendHistory
+      tags: [agent]
+      summary: Itemized AI spend history (agent runs + chat messages), grouped by day, plus an all-time total
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: How many trailing days to itemize (default 30). The all-time total is always computed over the full history, regardless of this window.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Itemized spend history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiSpendHistory"
+
   /activity/heartbeat:
     post:
       operationId: activityHeartbeat
@@ -1434,6 +1454,72 @@ components:
         budgetExceeded:
           type: boolean
 
+    AiSpendItem:
+      type: object
+      required: [id, source, timestamp]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum: [run, chat]
+        timestamp:
+          type: string
+        costUsd:
+          type: ["number", "null"]
+        inputTokens:
+          type: ["integer", "null"]
+        outputTokens:
+          type: ["integer", "null"]
+        cacheReadTokens:
+          type: ["integer", "null"]
+        cacheWriteTokens:
+          type: ["integer", "null"]
+        llmProvider:
+          type: ["string", "null"]
+        llmModel:
+          type: ["string", "null"]
+        # Só preenchido pra source=run
+        trigger:
+          type: ["string", "null"]
+        mode:
+          type: ["string", "null"]
+        status:
+          type: ["string", "null"]
+        durationMs:
+          type: ["integer", "null"]
+        # Só preenchido pra source=chat
+        chatSessionTitle:
+          type: ["string", "null"]
+
+    AiSpendDay:
+      type: object
+      required: [date, totalCostUsd, items]
+      properties:
+        date:
+          type: string
+        totalCostUsd:
+          type: ["number", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiSpendItem"
+
+    AiSpendHistory:
+      type: object
+      required: [days, windowTotalCostUsd, allTimeTotalCostUsd, hasCostData]
+      properties:
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiSpendDay"
+        windowTotalCostUsd:
+          type: ["number", "null"]
+        allTimeTotalCostUsd:
+          type: ["number", "null"]
+        hasCostData:
+          type: boolean
+
     NewsItem:
       type: object
       required: [title]
@@ -1571,6 +1657,20 @@ components:
         role: { type: string }
         content: { type: string }
         createdAt: { type: string }
+        inputTokens:
+          type: ["integer", "null"]
+        outputTokens:
+          type: ["integer", "null"]
+        cacheReadTokens:
+          type: ["integer", "null"]
+        cacheWriteTokens:
+          type: ["integer", "null"]
+        costUsd:
+          type: ["number", "null"]
+        llmProvider:
+          type: ["string", "null"]
+        llmModel:
+          type: ["string", "null"]
 
     PortfolioPosition:
       type: object

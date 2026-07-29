@@ -5,13 +5,14 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { AiSpendItemSource } from './aiSpendItemSource';
 
-export interface ChatMessage {
-  id: number;
-  sessionId: number;
-  role: string;
-  content: string;
-  createdAt: string;
+export interface AiSpendItem {
+  id: string;
+  source: AiSpendItemSource;
+  timestamp: string;
+  /** @nullable */
+  costUsd?: number | null;
   /** @nullable */
   inputTokens?: number | null;
   /** @nullable */
@@ -21,9 +22,17 @@ export interface ChatMessage {
   /** @nullable */
   cacheWriteTokens?: number | null;
   /** @nullable */
-  costUsd?: number | null;
-  /** @nullable */
   llmProvider?: string | null;
   /** @nullable */
   llmModel?: string | null;
+  /** @nullable */
+  trigger?: string | null;
+  /** @nullable */
+  mode?: string | null;
+  /** @nullable */
+  status?: string | null;
+  /** @nullable */
+  durationMs?: number | null;
+  /** @nullable */
+  chatSessionTitle?: string | null;
 }

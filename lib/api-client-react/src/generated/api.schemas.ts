@@ -302,6 +302,60 @@ export interface AgentSpend {
   budgetExceeded: boolean;
 }
 
+export type AiSpendItemSource = typeof AiSpendItemSource[keyof typeof AiSpendItemSource];
+
+
+export const AiSpendItemSource = {
+  run: 'run',
+  chat: 'chat',
+} as const;
+
+export interface AiSpendItem {
+  id: string;
+  source: AiSpendItemSource;
+  timestamp: string;
+  /** @nullable */
+  costUsd?: number | null;
+  /** @nullable */
+  inputTokens?: number | null;
+  /** @nullable */
+  outputTokens?: number | null;
+  /** @nullable */
+  cacheReadTokens?: number | null;
+  /** @nullable */
+  cacheWriteTokens?: number | null;
+  /** @nullable */
+  llmProvider?: string | null;
+  /** @nullable */
+  llmModel?: string | null;
+  /** @nullable */
+  trigger?: string | null;
+  /** @nullable */
+  mode?: string | null;
+  /** @nullable */
+  status?: string | null;
+  /** @nullable */
+  durationMs?: number | null;
+  /** @nullable */
+  chatSessionTitle?: string | null;
+}
+
+export interface AiSpendDay {
+  date: string;
+  /** @nullable */
+  totalCostUsd: number | null;
+  items: AiSpendItem[];
+}
+
+export interface AiSpendHistory {
+  days: AiSpendDay[];
+  /** @nullable */
+  windowTotalCostUsd: number | null;
+  /** @nullable */
+  allTimeTotalCostUsd: number | null;
+  hasCostData: boolean;
+}
+
 export interface NewsItem {
   title: string;
   published?: string | number;
@@ -379,6 +433,20 @@ export interface ChatMessage {
   role: string;
   content: string;
   createdAt: string;
+  /** @nullable */
+  inputTokens?: number | null;
+  /** @nullable */
+  outputTokens?: number | null;
+  /** @nullable */
+  cacheReadTokens?: number | null;
+  /** @nullable */
+  cacheWriteTokens?: number | null;
+  /** @nullable */
+  costUsd?: number | null;
+  /** @nullable */
+  llmProvider?: string | null;
+  /** @nullable */
+  llmModel?: string | null;
 }
 
 export interface PortfolioPosition {
@@ -663,6 +731,13 @@ period?: string;
 
 export type ListAgentRunsParams = {
 limit?: number;
+};
+
+export type GetAgentSpendHistoryParams = {
+/**
+ * How many trailing days to itemize (default 30). The all-time total is always computed over the full history, regardless of this window.
+ */
+days?: number;
 };
 
 export type GetNewsParams = {

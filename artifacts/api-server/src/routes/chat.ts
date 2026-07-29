@@ -151,6 +151,19 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     },
   });
 
+  // Linha USAGE:{json} emitida por run_chat_stream (agent.py) com tokens/custo
+  // agregados desta mensagem (turnos do agente + geração de título, se houve)
+  // -- mesmo formato usado pelas runs diárias em runner.ts.
+  interface ChatUsage {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    total_cost_usd?: number | null;
+    providers?: Array<{ provider?: string; model?: string }>;
+  }
+  let usageFields: Partial<typeof chatMessagesTable.$inferInsert> = {};
+
   let buf = "";
   let responseText = "";
 
@@ -183,6 +196,23 @@ router.post("/chat/message", async (req, res): Promise<void> => {
             .then(() => { send("title", title); })
             .catch((err: unknown) => { logger.error({ err }, "Failed to update session title"); });
         } catch { /* ignore */ }
+      } else if (line.startsWith("USAGE:")) {
+        try {
+          const u = JSON.parse(line.slice(6)) as ChatUsage;
+          const providers = u.providers ?? [];
+          usageFields = {
+            inputTokens: u.input_tokens ?? null,
+            outputTokens: u.output_tokens ?? null,
+            cacheReadTokens: u.cache_read_tokens ?? null,
+            cacheWriteTokens: u.cache_write_tokens ?? null,
+            costUsd: u.total_cost_usd ?? null,
+            llmProvider: providers.map((p) => p.provider).filter(Boolean).join(",") || null,
+            llmModel: providers.map((p) => p.model).filter(Boolean).join(",") || null,
+          };
+          send("usage", usageFields);
+        } catch (err) {
+          logger.warn({ err }, "Failed to parse chat USAGE line");
+        }
       }
     }
   });
@@ -207,6 +237,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
           sessionId: currentSessionId,
           role: "assistant",
           content: responseText,
+          ...usageFields,
         });
         await db
           .update(chatSessionsTable)
