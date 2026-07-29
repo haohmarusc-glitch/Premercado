@@ -119,6 +119,111 @@ const today = new Date().toISOString().split("T")[0];
 const oneYearAgo = new Date(Date.now() - 365 * 86400000).toISOString().split("T")[0];
 const sixMonthsAgo = new Date(Date.now() - 182 * 86400000).toISOString().split("T")[0];
 
+// Interpretação em texto puro, calculada em cima dos mesmos campos que o
+// backtest já retorna -- sem chamada de LLM, mesmo princípio já usado na
+// análise de reação a earnings (ver earnings-reaction.tsx).
+function interpretTickerResult(result: BacktestResult): string[] {
+  const notes: string[] = [];
+  const diff = result.totalReturn - result.buyAndHoldReturn;
+
+  if (Math.abs(diff) < 1) {
+    notes.push(
+      `A estratégia ficou praticamente empatada com o buy & hold (diferença de ${diff >= 0 ? "+" : ""}${diff.toFixed(2)}pp) — nesse período, comprar e segurar teria dado o mesmo resultado sem o trabalho de operar.`,
+    );
+  } else if (diff > 0) {
+    notes.push(
+      `A estratégia superou o buy & hold em ${diff.toFixed(2)}pp (${result.totalReturn.toFixed(2)}% vs ${result.buyAndHoldReturn.toFixed(2)}%) nesse período específico.`,
+    );
+  } else {
+    notes.push(
+      `A estratégia ficou ${Math.abs(diff).toFixed(2)}pp ATRÁS do buy & hold (${result.totalReturn.toFixed(2)}% vs ${result.buyAndHoldReturn.toFixed(2)}%) — nesse período, só comprar e segurar teria performado melhor.`,
+    );
+  }
+
+  if (result.sharpe >= 1) {
+    notes.push(`Sharpe de ${result.sharpe.toFixed(2)}: retorno bom em relação à volatilidade assumida.`);
+  } else if (result.sharpe >= 0) {
+    notes.push(`Sharpe de ${result.sharpe.toFixed(2)}: retorno positivo, mas mediano frente ao risco — a volatilidade do caminho consumiu boa parte do ganho.`);
+  } else {
+    notes.push(`Sharpe negativo (${result.sharpe.toFixed(2)}): o risco assumido não foi compensado pelo retorno nesse período.`);
+  }
+
+  if (result.maxDrawdown <= -25) {
+    notes.push(`Drawdown máximo de ${result.maxDrawdown.toFixed(2)}% é severo — exige tolerância alta a perda temporária de capital pra manter a estratégia até a recuperação.`);
+  } else if (result.maxDrawdown <= -15) {
+    notes.push(`Drawdown máximo de ${result.maxDrawdown.toFixed(2)}% é moderado — vale considerar o tamanho de posição em relação a isso.`);
+  }
+
+  if (result.totalTrades > 0) {
+    if (result.winRate < 50 && result.avgWin > Math.abs(result.avgLoss) * 1.3) {
+      notes.push(
+        `Win rate de ${result.winRate}% é baixo, mas a média de ganho (+${result.avgWin.toFixed(2)}%) é bem maior que a média de perda (${result.avgLoss.toFixed(2)}%) — a estratégia pode ter expectativa positiva mesmo perdendo mais vezes do que ganha.`,
+      );
+    } else if (result.winRate >= 50 && result.avgWin < Math.abs(result.avgLoss)) {
+      notes.push(
+        `Apesar do win rate de ${result.winRate}% acima de 50%, a média de perda (${result.avgLoss.toFixed(2)}%) é maior que a média de ganho (+${result.avgWin.toFixed(2)}%) — vale revisar o stop/take profit.`,
+      );
+    }
+
+    const stopLossExits = result.trades.filter((t) => t.exitReason === "stop_loss").length;
+    if (stopLossExits > 0 && stopLossExits / result.totalTrades >= 0.4) {
+      notes.push(
+        `${stopLossExits} de ${result.totalTrades} operações (${Math.round((stopLossExits / result.totalTrades) * 100)}%) saíram via stop loss — o stop pode estar apertado demais pra volatilidade do ativo, ou a estratégia está entrando contra a tendência com frequência.`,
+      );
+    }
+
+    if (result.totalTrades < 5) {
+      notes.push(`Amostra pequena (${result.totalTrades} operação${result.totalTrades === 1 ? "" : "ões"}) — os números acima têm baixa significância estatística; considere um período mais longo.`);
+    }
+
+    const lastTrade = result.trades[result.trades.length - 1];
+    if (lastTrade?.closedOpen) {
+      notes.push(`A última operação segue aberta no fim do período — o P&L dela é uma marcação a mercado, não um resultado realizado.`);
+    }
+  } else {
+    notes.push(`Nenhuma operação foi executada nesse período com esses parâmetros — a estratégia nunca disparou um sinal de entrada.`);
+  }
+
+  return notes;
+}
+
+function interpretBasketResult(basketResult: BasketResult): string[] {
+  const notes: string[] = [];
+  const agg = basketResult.aggregate;
+  if (!agg) return notes;
+
+  const diff = agg.avgTotalReturn - agg.avgBuyAndHoldReturn;
+  if (Math.abs(diff) < 1) {
+    notes.push(`Em média, a estratégia ficou praticamente empatada com o buy & hold na cesta (diferença de ${diff >= 0 ? "+" : ""}${diff.toFixed(2)}pp).`);
+  } else if (diff > 0) {
+    notes.push(`Em média, a estratégia superou o buy & hold em ${diff.toFixed(2)}pp na cesta (${agg.avgTotalReturn.toFixed(2)}% vs ${agg.avgBuyAndHoldReturn.toFixed(2)}%).`);
+  } else {
+    notes.push(`Em média, a estratégia ficou ${Math.abs(diff).toFixed(2)}pp atrás do buy & hold na cesta — nesse período, o conjunto de ativos performou melhor sem operar.`);
+  }
+
+  const beatFraction = basketResult.tickersOk > 0 ? agg.beatBuyAndHoldCount / basketResult.tickersOk : 0;
+  notes.push(
+    `A estratégia bateu o buy & hold em ${agg.beatBuyAndHoldCount} de ${basketResult.tickersOk} tickers (${Math.round(beatFraction * 100)}%)` +
+    (beatFraction < 0.4 ? " — resultado concentrado em poucos ativos, não um padrão consistente na cesta." : beatFraction > 0.6 ? " — padrão consistente na maioria dos ativos, não só em outliers." : "."),
+  );
+
+  const sorted = [...basketResult.results].filter((r) => !r.error).sort((a, b) => b.totalReturn - a.totalReturn);
+  if (sorted.length > 1) {
+    const best = sorted[0];
+    const worst = sorted[sorted.length - 1];
+    notes.push(
+      `Melhor resultado: ${best.ticker} (${best.totalReturn >= 0 ? "+" : ""}${best.totalReturn.toFixed(2)}%). Pior resultado: ${worst.ticker} (${worst.totalReturn >= 0 ? "+" : ""}${worst.totalReturn.toFixed(2)}%) — a dispersão entre os ativos mostra o quanto o resultado agregado depende de poucos nomes.`,
+    );
+  }
+
+  if (basketResult.failed.length > 0) {
+    const n = basketResult.failed.length;
+    notes.push(`${n} ticker${n === 1 ? "" : "s"} ${n === 1 ? "ficou" : "ficaram"} de fora por falta de dados suficientes no período — o agregado reflete só os ${basketResult.tickersOk} que rodaram.`);
+  }
+
+  return notes;
+}
+
 export default function BacktestPage() {
   const [mode, setMode] = useState<"ticker" | "basket">("ticker");
   const [ticker, setTicker] = useState("NVDA");
@@ -506,6 +611,24 @@ export default function BacktestPage() {
                 Sem dados para: {basketResult.failed.map((f) => f.ticker).join(", ")}.
               </p>
             )}
+
+            {(() => {
+              const notes = interpretBasketResult(basketResult);
+              if (notes.length === 0) return null;
+              return (
+                <div className="border border-border rounded-lg bg-card p-4">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase mb-2">Interpretação</div>
+                  <ul className="space-y-1.5">
+                    {notes.map((note, idx) => (
+                      <li key={idx} className="font-mono text-xs text-muted-foreground leading-relaxed flex gap-2">
+                        <span className="text-primary shrink-0">›</span>
+                        <span>{note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </div>
         )
       )}
@@ -649,6 +772,24 @@ export default function BacktestPage() {
                 </table>
               </div>
             )}
+
+            {(() => {
+              const notes = interpretTickerResult(result);
+              if (notes.length === 0) return null;
+              return (
+                <div className="border border-border rounded-lg bg-card p-4">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase mb-2">Interpretação</div>
+                  <ul className="space-y-1.5">
+                    {notes.map((note, idx) => (
+                      <li key={idx} className="font-mono text-xs text-muted-foreground leading-relaxed flex gap-2">
+                        <span className="text-primary shrink-0">›</span>
+                        <span>{note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </div>
         )
       )}
