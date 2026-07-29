@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AGENDA } from "@/lib/eventos";
 
@@ -45,6 +46,8 @@ interface Posicao {
   vol: number; // volatilidade anualizada estimada (0–1)
   beta: number; // sensibilidade ao movimento do setor (SOX)
   evento: string; // data do próximo balanço, dd/mm ou "—"
+  eventoISO: string | null; // data do próximo balanço, YYYY-MM-DD
+  jumpStdPct: number | null; // desvio-padrão (pp) da reação histórica de earnings, ou null se indisponível
 }
 
 interface Metricas {
@@ -106,6 +109,41 @@ function pct(v: number, d = 1): string {
   return (v >= 0 ? "+" : "") + v.toFixed(d) + "%";
 }
 
+// Soma um "salto" de earnings à volatilidade de difusão quando o próximo
+// balanço da posição cai dentro da janela [hoje, data-alvo] -- em vez de
+// tratar o dia do resultado como um dia normal de difusão (que subestima a
+// cauda, ver limitações no topo do arquivo), a variância do salto
+// (jumpStdPct, medido sobre a reação histórica real do ticker) é somada
+// como um choque independente: vol_efetivo² · T = vol² · T + jumpVar.
+function volComSalto(vol: number, jumpStdPct: number | null, eventoISO: string | null, dataAlvo: Date, T: number): number {
+  if (jumpStdPct == null || !eventoISO || T <= 0) return vol;
+  const evento = new Date(eventoISO + "T00:00:00");
+  const agora = new Date();
+  if (evento < agora || evento > dataAlvo) return vol; // balanço fora da janela até a data-alvo
+  const jumpVar = (jumpStdPct / 100) ** 2;
+  return Math.sqrt(vol * vol + jumpVar / T);
+}
+
+function temSaltoNoHorizonte(p: Posicao, dataAlvo: Date): boolean {
+  if (p.jumpStdPct == null || !p.eventoISO) return false;
+  const evento = new Date(p.eventoISO + "T00:00:00");
+  return evento >= new Date() && evento <= dataAlvo;
+}
+
+// Probabilidade de UMA posição isolada (sem correlação com o resto da
+// carteira) empatar com o próprio custo até a data-alvo -- mesma lógica
+// lognormal de `m.pEmpate`, mas em escala individual.
+function probEmpateIndividual(p: Posicao, currentValue: number, dataAlvo: Date, T: number, setor: number, volMult: number): number | null {
+  if (currentValue <= 0 || T <= 0) return null;
+  if (p.cost <= 0) return 1;
+  const volEff = volComSalto(p.vol, p.jumpStdPct, p.eventoISO, dataAlvo, T);
+  const sd = volEff * Math.sqrt(T) * volMult;
+  if (sd <= 0) return null;
+  const centralMult = Math.max(0, 1 + (p.beta * setor) / 100);
+  const drift = Math.log(Math.max(centralMult, 1e-6));
+  return 1 - Phi((Math.log(p.cost / currentValue) - drift) / sd);
+}
+
 async function fetchScenarioPositions(): Promise<Posicao[]> {
   const r = await fetch("/api/scenarios/positions", { credentials: "include" });
   if (!r.ok) throw new Error("Failed to load scenario positions");
@@ -145,6 +183,16 @@ export default function PainelCenarios() {
   const dias = Math.max(1, Math.round((dataAlvo.getTime() - Date.now()) / 86400000));
 
   const lista = posicoes ?? [];
+  const tickersAtivos = useMemo(() => lista.map((p) => p.t).join(","), [lista]);
+
+  // Notícias recentes por posição -- mesmo endpoint já usado em /noticias,
+  // só filtrado aos tickers da carteira. Não participa do modelo
+  // matemático, é só contexto pra entender por que uma posição está se
+  // movendo.
+  const { data: newsFeed } = useGetNews(
+    { tickers: tickersAtivos },
+    { query: { queryKey: getGetNewsQueryKey({ tickers: tickersAtivos }), enabled: tickersAtivos.length > 0, staleTime: 5 * 60_000 } },
+  );
 
   const m: Metricas = useMemo(() => {
     const T = dias / 365;
@@ -162,7 +210,9 @@ export default function PainelCenarios() {
     );
     const drift = risco > 0 ? Math.log(Math.max(riscoCentral, 1e-6) / risco) : 0;
 
-    // sigma da carteira de risco (matriz de covariância com rho constante)
+    // sigma da carteira de risco (matriz de covariância com rho constante) --
+    // usa vol_efetivo (com salto de earnings quando aplicável) no lugar do
+    // vol de difusão puro, ver volComSalto().
     let sigma = 0;
     if (risco > 0) {
       let varSum = 0;
@@ -171,7 +221,9 @@ export default function PainelCenarios() {
           const wa = (valores[a.t] ?? a.value) / risco;
           const wb = (valores[b.t] ?? b.value) / risco;
           const r = a.t === b.t ? 1 : RHO;
-          varSum += wa * wb * a.vol * b.vol * r;
+          const volA = volComSalto(a.vol, a.jumpStdPct, a.eventoISO, dataAlvo, T);
+          const volB = volComSalto(b.vol, b.jumpStdPct, b.eventoISO, dataAlvo, T);
+          varSum += wa * wb * volA * volB * r;
         });
       });
       sigma = Math.sqrt(varSum);
@@ -199,7 +251,7 @@ export default function PainelCenarios() {
       p05: q(-1.645), p50: q(0), p95: q(1.645),
       central: caixa + riscoCentral,
     };
-  }, [lista, vendidas, setor, volMult, valores, dias]);
+  }, [lista, vendidas, setor, volMult, valores, dias, dataAlvo]);
 
   const toggle = (t: string) => setVendidas((v) => ({ ...v, [t]: !v[t] }));
   const perdaHoje = m.valorTotalHoje - m.custoTotal;
@@ -304,9 +356,15 @@ export default function PainelCenarios() {
         <p className="pc-eyebrow">Faixa de resultados na data-alvo</p>
         <Distribuicao m={m} />
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <Selo rot="Empatar ou mais" val={(m.pEmpate * 100).toFixed(0) + "%"} cor={C.starboard} />
+          <Selo rot="Empatar ou mais" val={(m.pEmpate * 100).toFixed(0) + "%"} cor={m.pEmpate < 0.5 ? C.port : C.starboard} />
           <Selo rot="Cair mais 20%" val={(m.pQueda * 100).toFixed(0) + "%"} cor={C.port} />
         </div>
+        {m.risco > 0 && m.pEmpate < 0.5 && (
+          <p style={{ fontSize: 11, color: C.port, marginTop: 8, marginBottom: 0 }}>
+            ⚠ Menos de 50% de chance de empatar até a data-alvo com a composição atual — considere travar
+            parte da carteira em caixa.
+          </p>
+        )}
         <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           {([
             ["Pessimista · 5%", m.p05, C.port],
@@ -348,8 +406,10 @@ export default function PainelCenarios() {
           const res = p.cost > 0 ? ((v - p.cost) / p.cost) * 100 : 0;
           const paraEmpatar = v > 0 ? (p.cost / v - 1) * 100 : 0;
           const on = !!vendidas[p.t];
+          const salto = temSaltoNoHorizonte(p, dataAlvo);
+          const probInd = on ? null : probEmpateIndividual(p, v, dataAlvo, m.T, setor, volMult);
           return (
-            <div className="pc-row" key={p.t}>
+            <div className="pc-row" key={p.t} style={{ flexWrap: "wrap" }}>
               <button
                 className="pc-chk" data-on={on ? 1 : 0}
                 onClick={() => toggle(p.t)}
@@ -361,12 +421,18 @@ export default function PainelCenarios() {
                   {p.t}
                   <span style={{ fontFamily: SANS, fontSize: 10, color: C.faint, marginLeft: 7, letterSpacing: ".04em" }}>
                     β{p.beta.toFixed(2)} · {p.evento}
+                    {salto && <span style={{ color: C.lamp }}> · salto de balanço</span>}
                   </span>
                 </div>
                 <div className="pc-num" style={{ fontSize: 11, color: res < 0 ? C.port : C.starboard, marginTop: 2 }}>
                   {pct(res)}
                   <span style={{ color: C.faint }}> · precisa {pct(paraEmpatar, 0)}</span>
                 </div>
+                {probInd != null && (
+                  <div style={{ fontSize: 10, color: C.faint, marginTop: 1 }}>
+                    empatar até a data-alvo: <span className="pc-num" style={{ color: probInd >= 0.5 ? C.starboard : C.port }}>{(probInd * 100).toFixed(0)}%</span>
+                  </div>
+                )}
               </div>
               <input
                 className="pc-inp" type="number" inputMode="decimal" value={v}
@@ -381,7 +447,7 @@ export default function PainelCenarios() {
       </div>
 
       {/* ---- agenda ---- */}
-      <div className="pc-card" style={{ marginBottom: 0 }}>
+      <div className="pc-card">
         <p className="pc-eyebrow">Agenda até o saque</p>
         {AGENDA.map((e) => (
           <div key={e.d} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
@@ -397,10 +463,31 @@ export default function PainelCenarios() {
         ))}
       </div>
 
+      {/* ---- notícias por posição ---- */}
+      {newsFeed && newsFeed.items.some((i) => i.news && i.news.length > 0) && (
+        <div className="pc-card" style={{ marginBottom: 0 }}>
+          <p className="pc-eyebrow">Notícias recentes das posições</p>
+          {newsFeed.items.filter((i) => i.news && i.news.length > 0).map((i) => (
+            <div key={i.ticker} style={{ padding: "6px 0", borderBottom: `1px solid ${C.ruleSoft}` }}>
+              <div className="pc-num" style={{ fontSize: 11, fontWeight: 700, color: C.channel, marginBottom: 4 }}>{i.ticker}</div>
+              {(i.news ?? []).slice(0, 2).map((n, idx) => (
+                <div key={idx} style={{ marginBottom: 5 }}>
+                  <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{n.title}</div>
+                  {n.source && (
+                    <div style={{ fontSize: 10, color: C.faint, marginTop: 1 }}>{n.source}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       <p style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.55, marginTop: 12 }}>
-        Modelo lognormal com β sobre o setor e correlação fixa. Volatilidades são estimativas, não
-        implícitas de mercado. Ferramenta de dimensionamento de risco — não é recomendação de compra
-        ou venda.
+        Modelo lognormal com β sobre o setor e correlação fixa, com salto de volatilidade (baseado na
+        reação histórica real do ticker) nas posições com balanço até a data-alvo. Volatilidades de
+        difusão são estimativas históricas, não implícitas de mercado. Ferramenta de dimensionamento
+        de risco — não é recomendação de compra ou venda.
       </p>
     </div>
   );

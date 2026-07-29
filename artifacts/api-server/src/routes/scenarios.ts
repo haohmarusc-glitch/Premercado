@@ -32,6 +32,27 @@ function runScript(scriptName: string, args: string[]): Promise<string> {
   });
 }
 
+// earnings_reaction_analysis.py recebe payload por stdin (não argv), mesmo
+// padrão de routes/earnings-reaction.ts.
+function runStdinScript(scriptName: string, payload: object, timeoutMs = 60_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(agentDir, "agent", scriptName);
+    const py = spawn(getPythonBin(), [scriptPath]);
+    py.stdin.write(JSON.stringify(payload));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error(`${scriptName} timeout`)); }, timeoutMs);
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    py.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) { reject(new Error(err || `${scriptName} failed`)); return; }
+      resolve(out);
+    });
+  });
+}
+
 // "2026-08-26" -> "26/08" (formato usado na agenda/eventos do painel)
 function toBrShortDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -48,6 +69,13 @@ interface ScenarioPosition {
   vol: number;
   beta: number;
   evento: string;
+  eventoISO: string | null;
+  // Desvio-padrão (em pontos percentuais) da reação histórica de fechamento
+  // em dias de earnings (earnings_reaction_analysis.py) -- usado no frontend
+  // pra somar um "salto" à variância de difusão quando o evento cai dentro
+  // do horizonte da data-alvo, em vez de tratar balanço como dia normal.
+  // null quando a análise falhou ou não há histórico suficiente (<2 eventos).
+  jumpStdPct: number | null;
 }
 
 router.get("/scenarios/positions", async (req, res): Promise<void> => {
@@ -67,7 +95,7 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
 
     const tickers = [...new Set(active.map((p) => p.ticker))];
 
-    const [paramsRows, perfOut, earnOut] = await Promise.all([
+    const [paramsRows, perfOut, earnOut, reactionOut] = await Promise.all([
       db.select().from(scenarioParamsTable).where(inArray(scenarioParamsTable.ticker, tickers)),
       runScript("get_performance.py", [tickers.join(",")]).catch((err: Error) => {
         logger.warn({ err }, "Scenario positions: falha ao buscar preços atuais, usando custo como fallback");
@@ -77,14 +105,26 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
         logger.warn({ err }, "Scenario positions: falha ao buscar datas de resultado");
         return "[]";
       }),
+      // Reação histórica a earnings -- usada só pro "salto" de volatilidade
+      // no dia do balanço (ver ScenarioPosition.jumpStdPct). Falha aqui
+      // degrada graciosamente pro modelo de difusão pura (sem salto), não
+      // derruba o endpoint inteiro.
+      runStdinScript("earnings_reaction_analysis.py", { tickers, lookback: 8 }, 12_000 * Math.max(1, tickers.length))
+        .catch((err: Error) => {
+          logger.warn({ err }, "Scenario positions: falha ao buscar reação histórica a earnings");
+          return "[]";
+        }),
     ]);
 
     const paramsMap = new Map(paramsRows.map((r) => [r.ticker, r]));
     let prices: Record<string, { price: number | null }> = {};
     let earnings: Array<{ ticker: string; name: string; earningsDate: string | null }> = [];
+    let reactions: Array<{ ticker: string; summary?: { close_pct_std: number | null; close_pct_abs_mean: number } }> = [];
     try { prices = JSON.parse(perfOut); } catch { /* fica no fallback abaixo */ }
     try { earnings = JSON.parse(earnOut); } catch { /* fica no fallback abaixo */ }
+    try { reactions = JSON.parse(reactionOut); } catch { /* fica no fallback abaixo */ }
     const earningsMap = new Map(earnings.map((e) => [e.ticker, e]));
+    const reactionMap = new Map(reactions.map((r) => [r.ticker, r]));
 
     const data: ScenarioPosition[] = active.map((p) => {
       // Driver pg devolve `numeric` como string -- Number() antes de entrar
@@ -96,6 +136,11 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
 
       const params = paramsMap.get(p.ticker);
       const earn = earningsMap.get(p.ticker);
+      const reaction = reactionMap.get(p.ticker)?.summary;
+      // std precisa de ≥2 eventos históricos pra existir -- com só 1 evento
+      // (ticker recém-listado, ex. SKHY) usa a magnitude média absoluta como
+      // proxy conservador em vez de descartar o salto inteiramente.
+      const jumpStdPct = reaction ? (reaction.close_pct_std ?? reaction.close_pct_abs_mean ?? null) : null;
 
       return {
         t: p.ticker,
@@ -105,6 +150,8 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
         vol: params ? Number(params.volAnnual) : DEFAULT_VOL,
         beta: params ? Number(params.betaSector) : DEFAULT_BETA,
         evento: toBrShortDate(earn?.earningsDate),
+        eventoISO: earn?.earningsDate ?? null,
+        jumpStdPct,
       };
     });
 
