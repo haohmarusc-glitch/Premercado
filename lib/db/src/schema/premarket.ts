@@ -390,3 +390,17 @@ export const exitPlanItemsTable = pgTable("exit_plan_items", {
   index("idx_exit_plan_items_ticker").on(t.ticker),
 ]);
 export type ExitPlanItem = typeof exitPlanItemsTable.$inferSelect;
+
+// Parâmetros de risco (vol/beta) usados no Painel de Cenários -- seed manual
+// por enquanto (ver migração 0022), pensado pra depois virar cálculo sobre o
+// histórico OHLCV (desvio-padrão dos log-retornos × √252 pra vol, regressão
+// contra um índice setorial pra beta). Global (não por usuário) -- vol/beta
+// de um ticker é a mesma pra todo mundo que o possui, diferente de
+// portfolio_positions.
+export const scenarioParamsTable = pgTable("scenario_params", {
+  ticker: text("ticker").primaryKey(),
+  volAnnual: money("vol_annual").notNull(),
+  betaSector: money("beta_sector").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type ScenarioParams = typeof scenarioParamsTable.$inferSelect;

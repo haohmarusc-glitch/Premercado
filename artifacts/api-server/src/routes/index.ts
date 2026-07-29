@@ -27,6 +27,7 @@ import internalRouter from "./internal";
 import activityRouter from "./activity";
 import adminUsersRouter from "./admin-users";
 import aiSpendRouter from "./ai-spend";
+import scenariosRouter from "./scenarios";
 
 const router: IRouter = Router();
 
@@ -62,5 +63,6 @@ router.use(analysisRouter);
 router.use(activityRouter);
 router.use(adminUsersRouter);
 router.use(aiSpendRouter);
+router.use(scenariosRouter);
 
 export default router;
