@@ -56,6 +56,8 @@ export * from './portfolioPurchaseCreate';
 export * from './portfolioPurchaseUpdate';
 export * from './priceAlert';
 export * from './report';
+export * from './scenarioAlertSettings';
+export * from './scenarioAlertSettingsUpdate';
 export * from './sentimentSummary';
 export * from './settings';
 export * from './settingsUpdate';
