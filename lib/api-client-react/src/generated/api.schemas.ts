@@ -375,6 +375,32 @@ export interface ScenarioAlertSettingsUpdate {
   notifyEmail?: string | null;
 }
 
+export interface ScenarioSnapshot {
+  snapshotDate: string;
+  dataAlvo: string;
+  diasRestantes: number;
+  pEmpate: number;
+  valorTotalHoje: number;
+  custoTotal: number;
+  p05: number;
+  p50: number;
+  p95: number;
+}
+
+export interface ScenarioResolution {
+  dataAlvo: string;
+  valorFinal: number;
+  custoTotal: number;
+  pEmpateFinal: number;
+  bateu: boolean;
+  resolvedAt: string;
+}
+
+export interface ScenarioProgress {
+  snapshots: ScenarioSnapshot[];
+  resolutions: ScenarioResolution[];
+}
+
 export interface NewsItem {
   title: string;
   published?: string | number;

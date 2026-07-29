@@ -8,6 +8,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AGENDA } from "@/lib/eventos";
 import { ScenarioAlertSettings } from "@/components/scenario-alert-settings";
+import { ScenarioThermometer } from "@/components/scenario-thermometer";
 
 /* ============================================================
 Painel de Cenários — Premercado
@@ -184,6 +185,8 @@ export default function PainelCenarios() {
       </div>
 
       <ScenarioAlertSettings dataAlvoAtual={dataAlvoStr} />
+
+      <ScenarioThermometer />
 
       {/* ---- leituras principais ---- */}
       <div className="pc-card" style={{ display: "flex", padding: 0 }}>

@@ -184,3 +184,20 @@ export function computeScenarioMetrics(
     central: caixa + riscoCentral,
   };
 }
+
+// Termômetro de confirmação: fração dos dias de acompanhamento em que a
+// pEmpate do snapshot diário ficou acima do limiar configurado -- "em X% dos
+// dias desde que você começou a acompanhar, o modelo dava pelo menos Y% de
+// chance de empatar". Retorna null sem histórico (nada a mostrar ainda).
+export function pctConfirmacao(snapshots: { pEmpate: number }[], thresholdPct: number): number | null {
+  if (!snapshots.length) return null;
+  const dentro = snapshots.filter((s) => s.pEmpate * 100 >= thresholdPct).length;
+  return (dentro / snapshots.length) * 100;
+}
+
+// Resolução de um ciclo: bateu = a carteira realmente empatou (ou superou) o
+// custo total até a data-alvo -- o mesmo evento que pEmpate estimava a
+// probabilidade de acontecer.
+export function cicloBateu(valorFinal: number, custoTotal: number): boolean {
+  return valorFinal >= custoTotal;
+}

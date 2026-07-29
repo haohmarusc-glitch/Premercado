@@ -456,6 +456,32 @@ export const UpdateScenarioAlertSettingsResponse = zod.object({
 
 
 /**
+ * @summary Daily snapshot history and past cycle resolutions for the logged-in user's Painel de Cenários (feeds the confirmation thermometer)
+ */
+export const GetScenarioProgressResponse = zod.object({
+  "snapshots": zod.array(zod.object({
+  "snapshotDate": zod.string(),
+  "dataAlvo": zod.string(),
+  "diasRestantes": zod.coerce.number(),
+  "pEmpate": zod.coerce.number(),
+  "valorTotalHoje": zod.coerce.number(),
+  "custoTotal": zod.coerce.number(),
+  "p05": zod.coerce.number(),
+  "p50": zod.coerce.number(),
+  "p95": zod.coerce.number()
+})),
+  "resolutions": zod.array(zod.object({
+  "dataAlvo": zod.string(),
+  "valorFinal": zod.coerce.number(),
+  "custoTotal": zod.coerce.number(),
+  "pEmpateFinal": zod.coerce.number(),
+  "bateu": zod.boolean(),
+  "resolvedAt": zod.string()
+}))
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;

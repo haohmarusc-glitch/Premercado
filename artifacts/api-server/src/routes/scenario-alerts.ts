@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
-import { db, scenarioAlertSettingsTable, usersTable } from "@workspace/db";
-import { GetScenarioAlertSettingsResponse, UpdateScenarioAlertSettingsBody, UpdateScenarioAlertSettingsResponse } from "@workspace/api-zod";
+import { eq, and, asc, desc } from "drizzle-orm";
+import { db, scenarioAlertSettingsTable, scenarioSnapshotsTable, scenarioResolutionsTable, usersTable } from "@workspace/db";
+import { GetScenarioAlertSettingsResponse, UpdateScenarioAlertSettingsBody, UpdateScenarioAlertSettingsResponse, GetScenarioProgressResponse } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
@@ -86,6 +86,53 @@ router.patch("/scenario-alert-settings", async (req, res): Promise<void> => {
     })
     .returning();
   res.json(UpdateScenarioAlertSettingsResponse.parse(serialize(created)));
+});
+
+router.get("/scenario-progress", async (req, res): Promise<void> => {
+  const [settings] = await db
+    .select({ dataAlvo: scenarioAlertSettingsTable.dataAlvo })
+    .from(scenarioAlertSettingsTable)
+    .where(eq(scenarioAlertSettingsTable.userId, req.userId!));
+
+  // Sem config salva ainda: nenhum snapshot pode existir pra esse usuário.
+  const snapshots = settings
+    ? await db
+        .select()
+        .from(scenarioSnapshotsTable)
+        .where(and(
+          eq(scenarioSnapshotsTable.userId, req.userId!),
+          eq(scenarioSnapshotsTable.dataAlvo, settings.dataAlvo),
+        ))
+        .orderBy(asc(scenarioSnapshotsTable.snapshotDate))
+    : [];
+
+  const resolutions = await db
+    .select()
+    .from(scenarioResolutionsTable)
+    .where(eq(scenarioResolutionsTable.userId, req.userId!))
+    .orderBy(desc(scenarioResolutionsTable.dataAlvo));
+
+  res.json(GetScenarioProgressResponse.parse({
+    snapshots: snapshots.map((s) => ({
+      snapshotDate: s.snapshotDate,
+      dataAlvo: s.dataAlvo,
+      diasRestantes: s.diasRestantes,
+      pEmpate: Number(s.pEmpate),
+      valorTotalHoje: Number(s.valorTotalHoje),
+      custoTotal: Number(s.custoTotal),
+      p05: Number(s.p05),
+      p50: Number(s.p50),
+      p95: Number(s.p95),
+    })),
+    resolutions: resolutions.map((r) => ({
+      dataAlvo: r.dataAlvo,
+      valorFinal: Number(r.valorFinal),
+      custoTotal: Number(r.custoTotal),
+      pEmpateFinal: Number(r.pEmpateFinal),
+      bateu: r.bateu,
+      resolvedAt: r.resolvedAt.toISOString(),
+    })),
+  }));
 });
 
 export default router;
