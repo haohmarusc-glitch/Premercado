@@ -3,12 +3,16 @@ import { spawn } from "child_process";
 import path from "path";
 import { db, portfolioPositionsTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-router.get("/performance", async (_req, res): Promise<void> => {
-  const positions = await db.select().from(portfolioPositionsTable).orderBy(asc(portfolioPositionsTable.createdAt));
+router.get("/performance", async (req, res): Promise<void> => {
+  const positions = await db
+    .select()
+    .from(portfolioPositionsTable)
+    .where(eq(portfolioPositionsTable.userId, req.userId!))
+    .orderBy(asc(portfolioPositionsTable.createdAt));
   const tickers = [...new Set(positions.map((p) => p.ticker)), "SPY"];
 
   const scriptPath = path.join(agentDir, "agent", "get_performance.py");

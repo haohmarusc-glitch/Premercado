@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
+import { eq } from "drizzle-orm";
 import { db, portfolioPositionsTable } from "@workspace/db";
 import { agentDir, getPythonBin } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
@@ -12,7 +13,12 @@ interface QuoteCache {
   data: unknown[];
   fetchedAt: number;
 }
-let cache: QuoteCache | null = null;
+// Cache por usuário -- o conjunto de tickers inclui as posições da carteira
+// de cada um (ver /tickers/quotes abaixo), então um cache único e
+// compartilhado vazaria os tickers (e, por tabela, a existência de posições)
+// de um usuário pra qualquer outro que batesse nesse endpoint dentro da
+// mesma janela de 60s.
+const cacheByUser = new Map<number, QuoteCache>();
 const CACHE_TTL_MS = 60_000;
 
 function fetchQuotes(tickers: string[]): Promise<unknown[]> {
@@ -77,24 +83,28 @@ router.get("/fx/usdbrl", async (_req, res): Promise<void> => {
 
 router.get("/tickers/quotes", async (req, res): Promise<void> => {
   const now = Date.now();
+  const userId = req.userId!;
 
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    res.json(GetTickerQuotesResponse.parse(cache.data));
+  const cached = cacheByUser.get(userId);
+  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    res.json(GetTickerQuotesResponse.parse(cached.data));
     return;
   }
 
   try {
     const settings = await getOrCreateSettings();
-    // Uniao com os tickers de TODAS as posicoes da carteira (abertas E
-    // vendidas) -- sem isso, um ativo que o usuario so tem na carteira (ex.:
-    // um ETF como SGOV, fora da watchlist monitorada em Settings) nunca
-    // recebe cotacao aqui. Inclui as vendidas (quantity = 0) porque a tabela
-    // "Ações Vendidas" mostra "Preço atual" e "Var. vs venda" pra sinalizar
-    // candidatas a recompra -- sem a cotação atual essas colunas ficam em branco.
-    const allPositions = await db
+    // Uniao com os tickers de TODAS as posicoes da carteira DO USUÁRIO
+    // LOGADO (abertas E vendidas) -- sem isso, um ativo que o usuario so tem
+    // na carteira (ex.: um ETF como SGOV, fora da watchlist monitorada em
+    // Settings) nunca recebe cotacao aqui. Inclui as vendidas (quantity = 0)
+    // porque a tabela "Ações Vendidas" mostra "Preço atual" e "Var. vs venda"
+    // pra sinalizar candidatas a recompra -- sem a cotação atual essas
+    // colunas ficam em branco.
+    const ownPositions = await db
       .select({ ticker: portfolioPositionsTable.ticker })
-      .from(portfolioPositionsTable);
-    const tickers = [...new Set([...settings.tickers, ...allPositions.map((p) => p.ticker)])];
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.userId, userId));
+    const tickers = [...new Set([...settings.tickers, ...ownPositions.map((p) => p.ticker)])];
 
     if (!tickers.length) {
       res.json([]);
@@ -102,7 +112,7 @@ router.get("/tickers/quotes", async (req, res): Promise<void> => {
     }
 
     const data = await fetchQuotes(tickers);
-    cache = { data, fetchedAt: now };
+    cacheByUser.set(userId, { data, fetchedAt: now });
     res.json(GetTickerQuotesResponse.parse(data));
   } catch (err) {
     logger.error({ err }, "Failed to fetch ticker quotes");
