@@ -111,8 +111,12 @@ export const GetReportResponse = zod.object({
 
 
 /**
- * @summary Get today's latest report
+ * @summary Get the latest report of a given mode (default daily)
  */
+export const GetLatestReportQueryParams = zod.object({
+  "mode": zod.coerce.string().optional()
+})
+
 export const GetLatestReportResponse = zod.object({
   "id": zod.coerce.number(),
   "date": zod.string(),

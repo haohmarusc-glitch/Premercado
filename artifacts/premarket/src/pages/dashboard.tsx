@@ -758,7 +758,7 @@ export default function Dashboard() {
   const [expandedFlashId, setExpandedFlashId] = useState<number | null>(null);
   const [sectorTab, setSectorTab] = useState<string>("all");
 
-  const { data: report, isLoading: loadingReport } = useGetLatestReport({
+  const { data: report, isLoading: loadingReport } = useGetLatestReport(undefined, {
     query: { queryKey: getGetLatestReportQueryKey(), retry: false },
   });
 

@@ -124,13 +124,13 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" = "manual", maxTurns?: number): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" | "veredito" = "manual", maxTurns?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : trigger === "alerts" ? "alerts" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : trigger === "alerts" ? "alerts" : trigger === "veredito" ? "veredito" : "daily";
 
   state.running = true;
   state.currentStep =
@@ -141,6 +141,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     trigger === "news" ? "Iniciando varredura de notícias..." :
     trigger === "exit_plan" ? "Reavaliando plano de saída..." :
     trigger === "alerts" ? "Iniciando gestão de alertas..." :
+    trigger === "veredito" ? "Gerando veredito do dia..." :
     "Iniciando agente...";
   state.stepLog = [state.currentStep];
   state.lastRunAt = new Date().toISOString();
@@ -150,7 +151,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
 
   void (async () => {
   try {
-  const tickers = trigger === "portfolio"
+  const tickers = trigger === "portfolio" || trigger === "veredito"
     ? await getPortfolioTickers()
     : trigger === "coal"
     ? COAL_TICKERS
@@ -206,7 +207,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
-      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
+      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
       AGENT_MODE: mode,
       AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),

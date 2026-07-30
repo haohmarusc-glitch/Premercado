@@ -13,6 +13,7 @@ import SettingsPage from "@/pages/settings";
 import RunsPage from "@/pages/runs";
 import AiSpendPage from "@/pages/ai-spend";
 import CenariosPage from "@/pages/cenarios";
+import VereditoPage from "@/pages/veredito";
 import AdminUsersPage from "@/pages/admin-users";
 import AlertsPage from "@/pages/alerts";
 import ScreenerPage from "@/pages/screener";
@@ -61,6 +62,7 @@ function Router() {
         <Route path="/runs" component={RunsPage} />
         <Route path="/ai-spend" component={AiSpendPage} />
         <Route path="/cenarios" component={CenariosPage} />
+        <Route path="/veredito" component={VereditoPage} />
         <Route path="/users" component={AdminUsersPage} />
         <Route path="/alerts" component={AlertsPage} />
         <Route path="/screener" component={ScreenerPage} />

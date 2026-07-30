@@ -24,12 +24,14 @@ router.get("/reports", async (_req, res): Promise<void> => {
   res.json(ListReportsResponse.parse(rows.map(serializeReport)));
 });
 
-// Returns the latest DAILY report (mode=daily) for the dashboard main view.
-router.get("/reports/latest", async (_req, res): Promise<void> => {
+// Returns the latest report of a given mode (default "daily", used by the
+// dashboard main view; "veredito" is used by the tela Veredito do Dia).
+router.get("/reports/latest", async (req, res): Promise<void> => {
+  const mode = typeof req.query.mode === "string" && req.query.mode ? req.query.mode : "daily";
   const [row] = await db
     .select()
     .from(reportsTable)
-    .where(eq(reportsTable.mode, "daily"))
+    .where(eq(reportsTable.mode, mode))
     .orderBy(desc(reportsTable.createdAt))
     .limit(1);
   if (!row) {
