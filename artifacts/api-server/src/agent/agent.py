@@ -16,6 +16,27 @@ from . import tools as t
 from .provider import get_client, ProviderClient
 from .sector_contagion import SECTOR_GROUPS
 
+# Brasília (America/Sao_Paulo) não observa mais horário de verão desde 2019 --
+# offset fixo UTC-3 (mesma convenção do backend TS, ver lib/timezone.ts).
+# `datetime.date.today()`/`datetime.datetime.now()` sozinhos usam o fuso do
+# processo (UTC no container), fazendo o dia virar 3h cedo demais pro usuário
+# em horário de Brasília -- e o prompt rotulava esse valor "BRT" sem de fato
+# converter. Usar estes helpers em todo lugar que informa "hoje"/"agora" ao
+# agente (senão earnings/plano de saída ficam 1 dia errados perto da meia-noite BRT).
+_BRT_OFFSET = datetime.timedelta(hours=3)
+
+
+def _now_brt(now_utc: "datetime.datetime | None" = None) -> datetime.datetime:
+    return (now_utc if now_utc is not None else datetime.datetime.utcnow()) - _BRT_OFFSET
+
+
+def _today_brt_str(now_utc: "datetime.datetime | None" = None) -> str:
+    return _now_brt(now_utc).strftime("%d/%m/%Y")
+
+
+def _now_brt_str(now_utc: "datetime.datetime | None" = None) -> str:
+    return _now_brt(now_utc).strftime("%H:%M")
+
 
 def _sector_groups_text() -> str:
     """Lista de grupos setoriais para o prompt, derivada de SECTOR_GROUPS
@@ -177,7 +198,7 @@ Princípios:
 
 def _system_volatile() -> str:
     """Parte VOLÁTIL: muda a cada execução, fica num bloco SEM cache."""
-    today = datetime.date.today().strftime("%d/%m/%Y")
+    today = _today_brt_str()
     return f"""Data de hoje: {today}.
 
 === MEMÓRIA DOS DIAS ANTERIORES ===
@@ -196,8 +217,8 @@ def build_system_prompt_blocks() -> list:
 
 
 def build_premarket_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    now = datetime.datetime.now().strftime("%H:%M")
+    today = _today_brt_str()
+    now = _now_brt_str()
     return f"""Você é um analista de ações fazendo uma VARREDURA RÁPIDA de pré-mercado intradiário às {now} de {today}.
 Ativos sob cobertura: {", ".join(config.TICKERS)}.
 
@@ -226,8 +247,8 @@ Limite: no máximo 350 palavras. Seja direto e factual."""
 
 
 def build_news_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    now = datetime.datetime.now().strftime("%H:%M")
+    today = _today_brt_str()
+    now = _now_brt_str()
     return f"""Você é um analista de ações fazendo uma VARREDURA RÁPIDA SÓ DE NOTÍCIAS às {now} de {today}.
 Ativos sob cobertura: {", ".join(config.TICKERS)}.
 
@@ -253,7 +274,7 @@ Limite: no máximo 400 palavras. Seja direto e factual."""
 
 
 def build_exit_plan_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
+    today = _today_brt_str()
     return f"""Você é um analista de ações reavaliando o PLANO DE SAÍDA da carteira em {today}.
 
 O Plano de Saída é uma lista de metas/janelas de venda por posição (data-alvo, ação,
@@ -313,7 +334,7 @@ motivo). Não repita o relatório de mercado do dia — foque só nos alertas.""
 
 
 def build_veredito_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
+    today = _today_brt_str()
     return f"""Você é um analista de ações escrevendo o VEREDITO DO DIA da carteira em {today},
 cruzando dado de VÁRIAS ferramentas diferentes num único texto (não é o relatório
 diário completo -- é uma síntese enxuta e opinativa sobre a situação atual).
@@ -349,8 +370,8 @@ Formato da resposta (Markdown):
 
 
 def build_chat_prompt() -> str:
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    now = datetime.datetime.now().strftime("%H:%M")
+    today = _today_brt_str()
+    now = _now_brt_str()
     return f"""Você é um analista de ações conversacional em {today} ({now} BRT).
 Ativos monitorados: {", ".join(config.TICKERS)}.
 
@@ -786,7 +807,7 @@ def run_portfolio(progress_callback=None) -> str:
     env_tickers = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
     tickers = [tk.strip().upper() for tk in env_tickers.split(",") if tk.strip()] or config.PORTFOLIO_TICKERS
     client = _get_client()
-    today = datetime.date.today().strftime("%d/%m/%Y")
+    today = _today_brt_str()
     system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
     # Allow more turns and tokens for larger ticker sets (coal=5, ai=8)
     n = len(tickers)
