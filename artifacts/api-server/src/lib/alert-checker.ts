@@ -11,12 +11,13 @@
 import { spawn } from "child_process";
 import path from "path";
 import { and, eq, gte } from "drizzle-orm";
-import { db, alertsTable, alertFiringsTable, intradaySpikesTable, type Alert } from "@workspace/db";
+import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFiringsTable, type Alert } from "@workspace/db";
 import { agentDir, getPythonBin, state as agentState } from "./runner";
-import { sendAlertEmail } from "./mailer";
+import { sendAlertEmail, sendBounceAlertEmail } from "./mailer";
 import { logger } from "./logger";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
+import { todayBRTDateString } from "./timezone";
 
 const CHECK_INTERVAL_MS = 5 * 60_000; // 5 min
 // Picos intraday são momentâneos (1 candle de 1min) mas a condição que os
@@ -302,6 +303,88 @@ async function checkIntradaySpikes(): Promise<void> {
   }
 }
 
+// get_bounce_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
+// pacote) -- mesmo motivo de fetchIntradaySpikes acima.
+function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
+  return new Promise((resolve, reject) => {
+    const py = spawn(getPythonBin(), ["-m", "agent.get_bounce_alerts"], {
+      cwd: agentDir,
+      env: { ...process.env, PYTHONPATH: agentDir },
+    });
+    py.stdin.write(JSON.stringify({ tickers }));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) { reject(new Error(err || "get_bounce_alerts: script failed")); return; }
+      try {
+        const parsed = JSON.parse(out) as { alerts?: IntradaySpikeAlert[] };
+        resolve(parsed.alerts ?? []);
+      } catch { reject(new Error(`Bad JSON: ${out}`)); }
+    });
+  });
+}
+
+// Notifica por e-mail quando market_alerts.py::check_dead_cat_bounce detecta
+// um "repique" (recuperação técnica dentro de queda maior, ou o espelho --
+// realização de lucro dentro de alta maior). Diferente de checkIntradaySpikes
+// (persiste pro card, sem e-mail): esse sinal é baseado em fechamento diário
+// (hoje vs. mesmo dia da semana passada), então dedup por dia BRT em vez de um
+// cooldown corrido -- evita reenviar e-mail a cada poll de 5min enquanto o
+// preço intradiário oscila em torno do limiar dentro do mesmo pregão, mas
+// permite um novo e-mail se a direção do sinal virar no mesmo dia.
+async function checkBounceAlerts(): Promise<void> {
+  if (agentState.running) {
+    logger.info("Bounce alert checker: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
+  const settings = await getOrCreateSettings();
+  if (!settings.tickers.length) return;
+
+  let alerts: IntradaySpikeAlert[] = [];
+  try {
+    alerts = await fetchBounceAlerts(settings.tickers);
+  } catch (err) {
+    logger.warn({ err }, "Bounce alert checker: failed to fetch bounce alerts");
+    return;
+  }
+  if (!alerts.length) return;
+
+  const today = todayBRTDateString();
+
+  for (const a of alerts) {
+    const direction: "up" | "down" = (a.value ?? 0) >= 0 ? "up" : "down";
+    const key = `bounce:${a.ticker}:${direction}:${today}`;
+
+    const already = await db
+      .select({ id: bounceAlertFiringsTable.id })
+      .from(bounceAlertFiringsTable)
+      .where(eq(bounceAlertFiringsTable.alertKey, key))
+      .limit(1);
+    if (already.length) continue;
+
+    try {
+      await sendBounceAlertEmail({
+        to: settings.notifyEmail,
+        ticker: a.ticker,
+        direction,
+        changeTodayPct: a.value ?? 0,
+        title: a.title,
+        detail: a.detail,
+      });
+      await db.insert(bounceAlertFiringsTable).values({ alertKey: key });
+      logger.info({ ticker: a.ticker, direction }, "Bounce alert fired");
+    } catch (err) {
+      logger.error({ err, ticker: a.ticker }, "Failed to send bounce alert email");
+    }
+  }
+}
+
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 export function startAlertChecker(): void {
@@ -310,11 +393,13 @@ export function startAlertChecker(): void {
   const firstCheck = setTimeout(() => {
     checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
     checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
+    checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
   }, 30_000);
   // Then every 5 min
   intervalHandle = setInterval(() => {
     checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
     checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
+    checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
   }, CHECK_INTERVAL_MS);
   logger.info("Price alert checker started (interval: 5 min)");
 }
