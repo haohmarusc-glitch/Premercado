@@ -65,6 +65,7 @@ import type {
   Report,
   ScenarioAlertSettings,
   ScenarioAlertSettingsUpdate,
+  ScenarioCheckNowResult,
   ScenarioProgress,
   SentimentSummary,
   Settings,
@@ -2222,6 +2223,76 @@ export function useGetScenarioProgress<TData = Awaited<ReturnType<typeof getScen
 
 
 
+
+export const getCheckScenarioNowUrl = () => {
+
+
+
+
+  return `/api/scenario-check-now`
+}
+
+/**
+ * @summary Run the Painel de Cenários snapshot/alert check for the logged-in user right now, instead of waiting for the hourly background cycle
+ */
+export const checkScenarioNow = async ( options?: RequestInit): Promise<ScenarioCheckNowResult> => {
+
+  return customFetch<ScenarioCheckNowResult>(getCheckScenarioNowUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getCheckScenarioNowMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkScenarioNow>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof checkScenarioNow>>, TError,void, TContext> => {
+
+const mutationKey = ['checkScenarioNow'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkScenarioNow>>, void> = () => {
+
+
+          return  checkScenarioNow(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckScenarioNowMutationResult = NonNullable<Awaited<ReturnType<typeof checkScenarioNow>>>
+
+    export type CheckScenarioNowMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Run the Painel de Cenários snapshot/alert check for the logged-in user right now, instead of waiting for the hourly background cycle
+ */
+export const useCheckScenarioNow = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkScenarioNow>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof checkScenarioNow>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCheckScenarioNowMutationOptions(options));
+    }
 
 export const getActivityHeartbeatUrl = () => {
 

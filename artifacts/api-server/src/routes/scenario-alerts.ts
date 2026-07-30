@@ -1,7 +1,9 @@
 import { Router, type IRouter } from "express";
 import { eq, and, asc, desc } from "drizzle-orm";
 import { db, scenarioAlertSettingsTable, scenarioSnapshotsTable, scenarioResolutionsTable, usersTable } from "@workspace/db";
-import { GetScenarioAlertSettingsResponse, UpdateScenarioAlertSettingsBody, UpdateScenarioAlertSettingsResponse, GetScenarioProgressResponse } from "@workspace/api-zod";
+import { GetScenarioAlertSettingsResponse, UpdateScenarioAlertSettingsBody, UpdateScenarioAlertSettingsResponse, GetScenarioProgressResponse, CheckScenarioNowResponse } from "@workspace/api-zod";
+import { checkScenarioAlertsForUser } from "../lib/scenario-alert-checker";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -133,6 +135,16 @@ router.get("/scenario-progress", async (req, res): Promise<void> => {
       resolvedAt: r.resolvedAt.toISOString(),
     })),
   }));
+});
+
+router.post("/scenario-check-now", async (req, res): Promise<void> => {
+  try {
+    const result = await checkScenarioAlertsForUser(req.userId!);
+    res.json(CheckScenarioNowResponse.parse(result));
+  } catch (err) {
+    logger.error({ err }, "Scenario check-now failed");
+    res.status(500).json({ error: "Failed to run scenario check" });
+  }
 });
 
 export default router;

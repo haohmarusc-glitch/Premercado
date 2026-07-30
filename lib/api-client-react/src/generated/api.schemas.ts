@@ -396,6 +396,12 @@ export interface ScenarioResolution {
   resolvedAt: string;
 }
 
+export interface ScenarioCheckNowResult {
+  ok: boolean;
+  /** @nullable */
+  skipped: string | null;
+}
+
 export interface ScenarioProgress {
   snapshots: ScenarioSnapshot[];
   resolutions: ScenarioResolution[];
