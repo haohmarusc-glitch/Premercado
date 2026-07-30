@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Calendar, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { daysUntilBRT as daysUntil } from "@/lib/format";
 
 interface EarningsItem {
   ticker: string;
@@ -13,13 +14,6 @@ interface EarningsItem {
 }
 
 const DEFAULT_TICKERS = ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"];
-
-function daysUntil(dateStr: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
-  return Math.round((target.getTime() - now.getTime()) / 86400000);
-}
 
 function groupEarnings(items: EarningsItem[]): Record<string, EarningsItem[]> {
   const today = new Date();

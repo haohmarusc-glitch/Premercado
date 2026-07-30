@@ -28,3 +28,15 @@ export function todayBRTDateString(now: Date = new Date()): string {
   const brtWallClock = new Date(now.getTime() - BRT_OFFSET_MS);
   return brtWallClock.toISOString().split("T")[0];
 }
+
+/**
+ * Dias entre hoje (BRT) e uma data "YYYY-MM-DD" -- negativo se já passou.
+ * Compara sempre em UTC (mesmo dia calendário, meia-noite) pra não depender
+ * do fuso horário/relógio local de quem está vendo a tela: usar `new Date()`
+ * local pra "hoje" e o navegador não estar em BRT já bastava pra desalinhar
+ * o contador de "vencido Xd"/"em Xd" em exatamente 1 dia.
+ */
+export function daysUntilBRT(dateStr: string, now: Date = new Date()): number {
+  const diffMs = Date.parse(`${dateStr}T00:00:00Z`) - Date.parse(`${todayBRTDateString(now)}T00:00:00Z`);
+  return Math.round(diffMs / 86_400_000);
+}
