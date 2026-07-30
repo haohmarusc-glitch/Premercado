@@ -3,7 +3,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { INDICATOR_LABELS, type IndicatorKey } from "@/lib/indicators";
 
-const ALL_KEYS: IndicatorKey[] = ["sma21", "sma50", "bollinger", "volume", "macd", "rsi"];
+const ALL_KEYS: IndicatorKey[] = ["sma21", "sma50", "bollinger", "volume", "macd", "rsi", "vwap", "rvol"];
 
 interface IndicatorTogglesProps {
   enabled: Set<IndicatorKey>;

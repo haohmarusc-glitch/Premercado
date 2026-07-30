@@ -112,7 +112,7 @@ export function bollingerBands(values: number[], period = 20, stdDevMult = 2): B
   return { upper, middle, lower };
 }
 
-export type IndicatorKey = "sma21" | "sma50" | "bollinger" | "volume" | "macd" | "rsi";
+export type IndicatorKey = "sma21" | "sma50" | "bollinger" | "volume" | "macd" | "rsi" | "vwap" | "rvol";
 
 export const INDICATOR_LABELS: Record<IndicatorKey, string> = {
   sma21: "Média Móvel 21",
@@ -121,6 +121,8 @@ export const INDICATOR_LABELS: Record<IndicatorKey, string> = {
   volume: "Volume",
   macd: "MACD",
   rsi: "IFR (RSI)",
+  vwap: "VWAP (intradiário)",
+  rvol: "RVOL (volume relativo)",
 };
 
 // Cores usadas pelas linhas de overlay -- combinam com o resto da paleta
@@ -135,7 +137,77 @@ export const INDICATOR_COLORS = {
   // senão ficava impossível diferenciar as bolinhas coloridas no tooltip.
   macdLine: "#22d3ee", // ciano
   macdSignal: "#f472b6", // rosa
+  vwap: "#eab308", // âmbar -- distinto do azul/laranja/violeta acima
 } as const;
+
+// ─── VWAP + RVOL intradiários ───────────────────────────────────────────────
+// Diferente dos indicadores acima (calculados só a partir de closes), esses
+// dois precisam do candle completo (high/low/close/volume) e só fazem
+// sentido em gráficos intradiários (period="1d") -- resetam a cada pregão,
+// então "VWAP" numa janela de várias semanas não tem uma leitura única
+// (seria uma VWAP "ancorada", feature diferente). Ambos acumulam só a partir
+// do início do pregão regular (session === "regular"): pré/pós-mercado ficam
+// de fora, mesmo critério do cálculo espelhado no backend
+// (agent/get_technicals.py::technicals, sem prepost=True no yf.Ticker.history).
+
+export interface VwapCandle {
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  session?: string;
+}
+
+export function computeVwapSeries(candles: VwapCandle[]): (number | null)[] {
+  const out: (number | null)[] = new Array(candles.length).fill(null);
+  let cumPV = 0;
+  let cumV = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.session && c.session !== "regular") continue;
+    const typicalPrice = (c.h + c.l + c.c) / 3;
+    cumPV += typicalPrice * c.v;
+    cumV += c.v;
+    out[i] = cumV > 0 ? cumPV / cumV : null;
+  }
+  return out;
+}
+
+// Volume acumulado do pregão regular até cada barra -- base do "painel de
+// RVOL" (comparado contra computeExpectedVolumePace abaixo).
+export function computeCumulativeVolume(candles: { v: number; session?: string }[]): (number | null)[] {
+  const out: (number | null)[] = new Array(candles.length).fill(null);
+  let cum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.session && c.session !== "regular") continue;
+    cum += c.v;
+    out[i] = cum;
+  }
+  return out;
+}
+
+// Volume "esperado" até cada barra, extrapolado linearmente da média diária
+// dos últimos 20 dias (avgDailyVolume) pela fração do pregão nominal já
+// decorrida -- mesma aproximação do backend (78 barras de 5min = 6.5h).
+// Comparar a linha de volume acumulado real contra essa referência é a
+// leitura visual de RVOL ao longo do dia (acima = RVOL > 1, abaixo = < 1).
+export function computeExpectedVolumePace(
+  candles: { session?: string }[],
+  avgDailyVolume: number | null | undefined,
+  nominalBars = 78,
+): (number | null)[] {
+  const out: (number | null)[] = new Array(candles.length).fill(null);
+  if (!avgDailyVolume || avgDailyVolume <= 0) return out;
+  let regularCount = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.session && c.session !== "regular") continue;
+    regularCount += 1;
+    out[i] = avgDailyVolume * Math.min(1, regularCount / nominalBars);
+  }
+  return out;
+}
 
 export interface IndicatorSeries {
   sma21: (number | null)[];
