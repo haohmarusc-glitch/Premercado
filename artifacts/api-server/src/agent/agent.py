@@ -312,6 +312,42 @@ alertas removeu (e por quê) e quais criou (symbol, condition, threshold,
 motivo). Não repita o relatório de mercado do dia — foque só nos alertas."""
 
 
+def build_veredito_prompt() -> str:
+    today = datetime.date.today().strftime("%d/%m/%Y")
+    return f"""Você é um analista de ações escrevendo o VEREDITO DO DIA da carteira em {today},
+cruzando dado de VÁRIAS ferramentas diferentes num único texto (não é o relatório
+diário completo -- é uma síntese enxuta e opinativa sobre a situação atual).
+Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
+
+**Fluxo obrigatório (execute na ordem, sem pular etapas):**
+1. get_scenario_status -- chance de empatar até a data-alvo e o histórico de
+   confirmação diária (termômetro). Se configured=false, mencione isso e siga.
+2. get_exit_plan_items -- itens pendentes e seus prazos.
+3. Para cada ticker da carteira: get_technical_indicators (RSI/MACD/SMA/ATR).
+4. get_macro_indicators -- contexto macro (CPI, juros, curva).
+5. get_earnings_calendar (todos os tickers de uma vez) -- balanços próximos.
+6. get_fear_greed_index -- termômetro de sentimento geral do mercado.
+7. Opcional: get_backtest_summary só pro ticker mais arriscado/relevante do
+   dia (o que tiver RSI mais esticado, earnings mais próximo, ou pior pEmpate
+   individual) -- não rode pra todos, é uma chamada pesada.
+8. Opcional: detect_sector_contagion e/ou get_analyst_ratings pro(s) ticker(s)
+   mais relevante(s), se agregarem contexto real à conclusão.
+
+**NÃO USE:** save_observation, alertas (list/create/delete_alert),
+update_exit_plan_item, create_exit_plan_item, EDGAR, opções.
+
+Formato da resposta (Markdown):
+- Primeira linha: **VEREDITO:** seguido de UMA frase curta e direta (favorável /
+  neutro / cauteloso / atenção redobrada), sem rodeio.
+- Depois, um texto corrido detalhado (400-600 palavras) que CITA NÚMEROS
+  concretos de CADA ferramenta usada acima -- não é um resumo genérico, é a
+  ligação entre os dados: por que a chance de empatar está no nível que está,
+  o que os técnicos dizem sobre timing, o que o plano de saída e os earnings
+  próximos exigem de atenção, e como o pano de fundo macro/sentimento
+  encaixa nisso tudo.
+- Termine com uma seção "Próximos passos" (até 3 itens curtos e acionáveis)."""
+
+
 def build_chat_prompt() -> str:
     today = datetime.date.today().strftime("%d/%m/%Y")
     now = datetime.datetime.now().strftime("%H:%M")
@@ -437,6 +473,17 @@ _ALERTS_TOOL_NAMES = {
     "get_earnings_reaction_history",
 }
 ALERTS_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _ALERTS_TOOL_NAMES]
+
+# Subconjunto pro "Veredito do Dia" -- síntese cruzando Cenários, Técnicos,
+# Plano de Saída, Earnings, Macro e (opcionalmente) Backtest. Sem
+# save_observation/alertas/EDGAR: essa run só lê e resume, não gerencia nada.
+_VEREDITO_TOOL_NAMES = {
+    "get_scenario_status", "get_backtest_summary",
+    "get_exit_plan_items", "get_technical_indicators", "get_stock_data",
+    "get_macro_indicators", "get_earnings_calendar", "get_earnings_reaction_history",
+    "get_fear_greed_index", "detect_sector_contagion", "get_analyst_ratings",
+}
+VEREDITO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _VEREDITO_TOOL_NAMES]
 
 
 def _system_stable_portfolio(tickers: list[str]) -> str:
@@ -820,6 +867,22 @@ def run_alerts_management(progress_callback=None) -> str:
         max_tokens=config.MAX_TOKENS_PREMARKET,
         progress_callback=progress_callback,
         step_prefix="[Alertas] ",
+        deadline_ts=config.SOFT_DEADLINE_TS,
+    )
+
+
+def run_veredito(progress_callback=None) -> str:
+    client = _get_client()
+    return _agent_loop(
+        client=client,
+        model=client.models["flash"],
+        system=build_veredito_prompt(),
+        tools=VEREDITO_TOOLS,
+        messages=[{"role": "user", "content": "Gere o veredito do dia agora, cruzando todas as ferramentas do fluxo obrigatório."}],
+        max_turns=max(config.MAX_AGENT_TURNS, 20),
+        max_tokens=config.MAX_TOKENS,
+        progress_callback=progress_callback,
+        step_prefix="[Veredito] ",
         deadline_ts=config.SOFT_DEADLINE_TS,
     )
 

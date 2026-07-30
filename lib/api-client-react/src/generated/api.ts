@@ -44,6 +44,7 @@ import type {
   ExitPlanItemUpdate,
   FxRate,
   GetAgentSpendHistoryParams,
+  GetLatestReportParams,
   GetNewsParams,
   GetTickerChartParams,
   HealthStatus,
@@ -678,20 +679,27 @@ export function useGetReport<TData = Awaited<ReturnType<typeof getReport>>, TErr
 
 
 
-export const getGetLatestReportUrl = () => {
+export const getGetLatestReportUrl = (params?: GetLatestReportParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/reports/latest`
+  return stringifiedParams.length > 0 ? `/api/reports/latest?${stringifiedParams}` : `/api/reports/latest`
 }
 
 /**
- * @summary Get today's latest report
+ * @summary Get the latest report of a given mode (default daily)
  */
-export const getLatestReport = async ( options?: RequestInit): Promise<Report> => {
+export const getLatestReport = async (params?: GetLatestReportParams, options?: RequestInit): Promise<Report> => {
 
-  return customFetch<Report>(getGetLatestReportUrl(),
+  return customFetch<Report>(getGetLatestReportUrl(params),
   {
     ...options,
     method: 'GET'
@@ -704,23 +712,23 @@ export const getLatestReport = async ( options?: RequestInit): Promise<Report> =
 
 
 
-export const getGetLatestReportQueryKey = () => {
+export const getGetLatestReportQueryKey = (params?: GetLatestReportParams,) => {
     return [
-    `/api/reports/latest`
+    `/api/reports/latest`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetLatestReportQueryOptions = <TData = Awaited<ReturnType<typeof getLatestReport>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLatestReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetLatestReportQueryOptions = <TData = Awaited<ReturnType<typeof getLatestReport>>, TError = ErrorType<void>>(params?: GetLatestReportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLatestReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetLatestReportQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetLatestReportQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLatestReport>>> = ({ signal }) => getLatestReport({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLatestReport>>> = ({ signal }) => getLatestReport(params, { signal, ...requestOptions });
 
 
 
@@ -734,15 +742,15 @@ export type GetLatestReportQueryError = ErrorType<void>
 
 
 /**
- * @summary Get today's latest report
+ * @summary Get the latest report of a given mode (default daily)
  */
 
 export function useGetLatestReport<TData = Awaited<ReturnType<typeof getLatestReport>>, TError = ErrorType<void>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLatestReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetLatestReportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getLatestReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetLatestReportQueryOptions(options)
+  const queryOptions = getGetLatestReportQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
