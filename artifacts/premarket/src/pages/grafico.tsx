@@ -3,6 +3,7 @@ import { useSearch } from "wouter";
 import { useGetTickerQuotes, getGetTickerQuotesQueryKey } from "@workspace/api-client-react";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, CandlestickChart } from "lucide-react";
 import { TradingViewChart } from "@/components/tradingview-chart";
+import { PriceChart, PERIODS } from "@/components/price-chart";
 import { cn } from "@/lib/utils";
 
 function fmt(n: number | null | undefined, decimals = 2) {
@@ -23,6 +24,12 @@ export default function GraficoPage() {
   const search = useSearch();
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [interval, setInterval] = useState("D");
+  // "tradingview" (padrão, widget deles) vs "premercado" (nosso candle/linha,
+  // com VWAP/RVOL intradiários -- os MESMOS números já mostrados em
+  // Técnicos/Plano de Saída/Veredito do Dia, diferente do VWAP calculado
+  // pela própria TradingView no modo widget).
+  const [source, setSource] = useState<"tradingview" | "premercado">("tradingview");
+  const [period, setPeriod] = useState("1d");
 
   const { data: quotes, isLoading, dataUpdatedAt } = useGetTickerQuotes({
     query: {
@@ -127,7 +134,7 @@ export default function GraficoPage() {
 
           {activeSymbol && (
             <div className="border border-border rounded-lg overflow-hidden bg-card">
-              {/* Header: preço em destaque + intervalos */}
+              {/* Header: preço em destaque + fonte do gráfico + intervalos */}
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-border bg-secondary/30">
                 <div className="flex items-baseline gap-3">
                   <span className="font-mono font-bold text-primary text-xl tracking-widest">{activeSymbol}</span>
@@ -148,29 +155,79 @@ export default function GraficoPage() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-1">
-                  {INTERVALS.map((iv) => (
-                    <button
-                      key={iv.key}
-                      type="button"
-                      onClick={() => setInterval(iv.key)}
-                      className={cn(
-                        "px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors",
-                        interval === iv.key
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:text-foreground hover:bg-secondary",
-                      )}
-                      data-testid={`grafico-interval-${iv.key}`}
-                    >
-                      {iv.label}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {/* Fonte: TradingView (widget deles) vs Premercado (nosso
+                      candle/linha, com VWAP/RVOL intradiários -- mesmos
+                      números de Técnicos/Plano de Saída/Veredito). */}
+                  <div className="flex items-center gap-1 border-r border-border pr-2 mr-1">
+                    {([["tradingview", "TradingView"], ["premercado", "Premercado"]] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSource(key)}
+                        className={cn(
+                          "px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors",
+                          source === key
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+                        )}
+                        data-testid={`grafico-source-${key}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {source === "tradingview" ? (
+                    <div className="flex items-center gap-1">
+                      {INTERVALS.map((iv) => (
+                        <button
+                          key={iv.key}
+                          type="button"
+                          onClick={() => setInterval(iv.key)}
+                          className={cn(
+                            "px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors",
+                            interval === iv.key
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+                          )}
+                          data-testid={`grafico-interval-${iv.key}`}
+                        >
+                          {iv.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      {PERIODS.map((p) => (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => setPeriod(p.key)}
+                          className={cn(
+                            "px-2.5 py-1 rounded text-[11px] font-mono font-bold transition-colors",
+                            period === p.key
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary",
+                          )}
+                          data-testid={`grafico-period-${p.key}`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Chart body — tela grande, toolbar completa da TradingView */}
+              {/* Chart body — tela grande, toolbar completa da TradingView (ou
+                  nosso candle/linha com VWAP/RVOL no modo Premercado) */}
               <div className="p-2">
-                <TradingViewChart symbol={activeSymbol} height={780} interval={interval} hideSideToolbar={false} />
+                {source === "tradingview" ? (
+                  <TradingViewChart symbol={activeSymbol} height={780} interval={interval} hideSideToolbar={false} />
+                ) : (
+                  <PriceChart symbol={activeSymbol} period={period} height={700} />
+                )}
               </div>
             </div>
           )}

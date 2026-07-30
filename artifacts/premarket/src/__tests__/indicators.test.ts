@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { sma, ema, macd, rsi, bollingerBands, computeIndicatorSeries, attachIndicatorFields } from "../lib/indicators";
+import {
+  sma, ema, macd, rsi, bollingerBands, computeIndicatorSeries, attachIndicatorFields,
+  computeVwapSeries, computeCumulativeVolume, computeExpectedVolumePace,
+} from "../lib/indicators";
 
 describe("sma", () => {
   it("retorna null antes de acumular o período", () => {
@@ -134,5 +137,79 @@ describe("attachIndicatorFields", () => {
     for (const row of out) {
       expect(row.macdHistPos != null && row.macdHistNeg != null).toBe(false);
     }
+  });
+});
+
+describe("computeVwapSeries", () => {
+  it("com volume uniforme, VWAP é a média simples do preço típico acumulado", () => {
+    // 3 barras, mesmo volume -- VWAP em cada ponto = média dos typical price até ali.
+    const candles = [
+      { h: 102, l: 98, c: 100, v: 1000, session: "regular" },
+      { h: 104, l: 100, c: 102, v: 1000, session: "regular" },
+      { h: 106, l: 102, c: 104, v: 1000, session: "regular" },
+    ];
+    const out = computeVwapSeries(candles);
+    expect(out[0]).toBeCloseTo(100, 6); // (102+98+100)/3
+    expect(out[1]).toBeCloseTo(101, 6); // média dos 2 primeiros typical price
+    expect(out[2]).toBeCloseTo(102, 6); // média dos 3
+  });
+
+  it("ignora barras de pré/pós-mercado -- só acumula a partir do pregão regular", () => {
+    const candles = [
+      { h: 200, l: 200, c: 200, v: 5000, session: "pre" }, // deveria distorcer se contasse
+      { h: 102, l: 98, c: 100, v: 1000, session: "regular" },
+      { h: 104, l: 100, c: 102, v: 1000, session: "regular" },
+    ];
+    const out = computeVwapSeries(candles);
+    expect(out[0]).toBeNull(); // pré-mercado não gera VWAP
+    expect(out[1]).toBeCloseTo(100, 6);
+    expect(out[2]).toBeCloseTo(101, 6);
+  });
+
+  it("pondera pelo volume -- barra com volume maior pesa mais no acumulado", () => {
+    const candles = [
+      { h: 100, l: 100, c: 100, v: 1, session: "regular" },
+      { h: 200, l: 200, c: 200, v: 999, session: "regular" },
+    ];
+    const out = computeVwapSeries(candles);
+    // cumPV = 100*1 + 200*999 = 199900; cumV = 1000 -> vwap = 199.9
+    expect(out[1]).toBeCloseTo(199.9, 6);
+  });
+});
+
+describe("computeCumulativeVolume", () => {
+  it("acumula o volume só do pregão regular", () => {
+    const candles = [
+      { v: 500, session: "pre" },
+      { v: 1000, session: "regular" },
+      { v: 2000, session: "regular" },
+      { v: 300, session: "post" },
+    ];
+    const out = computeCumulativeVolume(candles);
+    expect(out[0]).toBeNull();
+    expect(out[1]).toBe(1000);
+    expect(out[2]).toBe(3000);
+    expect(out[3]).toBeNull();
+  });
+});
+
+describe("computeExpectedVolumePace", () => {
+  it("retorna tudo null sem média de 20 dias disponível", () => {
+    const candles = [{ session: "regular" }, { session: "regular" }];
+    expect(computeExpectedVolumePace(candles, null)).toEqual([null, null]);
+    expect(computeExpectedVolumePace(candles, 0)).toEqual([null, null]);
+  });
+
+  it("extrapola linearmente pela fração do pregão nominal decorrida", () => {
+    const candles = Array.from({ length: 4 }, () => ({ session: "regular" as const }));
+    const out = computeExpectedVolumePace(candles, 780_000, 78); // 78 barras nominais
+    expect(out[0]).toBeCloseTo(780_000 * (1 / 78), 6);
+    expect(out[3]).toBeCloseTo(780_000 * (4 / 78), 6);
+  });
+
+  it("nunca passa de 100% do volume médio diário, mesmo com mais barras que o nominal", () => {
+    const candles = Array.from({ length: 100 }, () => ({ session: "regular" as const }));
+    const out = computeExpectedVolumePace(candles, 780_000, 78);
+    expect(out[99]).toBeCloseTo(780_000, 6);
   });
 });
