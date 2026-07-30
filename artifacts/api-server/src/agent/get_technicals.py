@@ -120,6 +120,7 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             "pctAboveSma50": _pct_diff(price, sma50),
             "pctAboveSma200": _pct_diff(price, sma200),
             "volumeRatio": vol_ratio,
+            "volAvg20": round(vol_avg20) if vol_avg20 > 0 else None,
             "rvol": rvol,
             "rvolSignal": rvol_signal,
             "vwap": vwap,
