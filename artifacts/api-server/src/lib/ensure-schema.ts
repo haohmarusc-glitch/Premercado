@@ -288,4 +288,18 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (scenario_resolutions table)");
   }
+
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS bounce_alert_firings (
+        id serial PRIMARY KEY,
+        alert_key text NOT NULL UNIQUE,
+        fired_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bounce_alert_firings_key ON bounce_alert_firings(alert_key)`);
+    logger.info("Schema check ok (bounce_alert_firings table)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (bounce_alert_firings table)");
+  }
 }
