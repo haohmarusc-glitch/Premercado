@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db, reportsTable } from "@workspace/db";
 import {
   GetReportParams,
@@ -16,10 +16,21 @@ function serializeReport(row: ReportRow) {
   return { ...row, createdAt: row.createdAt.toISOString() };
 }
 
-router.get("/reports", async (_req, res): Promise<void> => {
+// Visível pra um usuário: relatório "de casa" (userId null -- daily/premarket/
+// coal/ai/news/alerts/manual/scheduled, compartilhados desde sempre) OU
+// relatório gerado a partir da PRÓPRIA carteira dele (portfolio/veredito, ver
+// reportsTable.userId e runner.ts). Sem isso, /reports devolvia a tabela
+// inteira pra qualquer usuário logado -- incluindo o veredito/análise de
+// carteira gerado por OUTRO usuário.
+function visibleToUser(userId: number) {
+  return or(isNull(reportsTable.userId), eq(reportsTable.userId, userId));
+}
+
+router.get("/reports", async (req, res): Promise<void> => {
   const rows = await db
     .select()
     .from(reportsTable)
+    .where(visibleToUser(req.userId!))
     .orderBy(desc(reportsTable.createdAt));
   res.json(ListReportsResponse.parse(rows.map(serializeReport)));
 });
@@ -31,7 +42,7 @@ router.get("/reports/latest", async (req, res): Promise<void> => {
   const [row] = await db
     .select()
     .from(reportsTable)
-    .where(eq(reportsTable.mode, mode))
+    .where(and(eq(reportsTable.mode, mode), visibleToUser(req.userId!)))
     .orderBy(desc(reportsTable.createdAt))
     .limit(1);
   if (!row) {
@@ -50,7 +61,7 @@ router.get("/reports/:id", async (req, res): Promise<void> => {
   const [row] = await db
     .select()
     .from(reportsTable)
-    .where(eq(reportsTable.id, params.data.id));
+    .where(and(eq(reportsTable.id, params.data.id), visibleToUser(req.userId!)));
   if (!row) {
     res.status(404).json({ error: "Report not found" });
     return;

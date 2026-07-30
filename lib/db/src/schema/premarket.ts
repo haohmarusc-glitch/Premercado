@@ -52,12 +52,20 @@ export const reportsTable = pgTable("reports", {
   date: text("date").notNull(),
   content: text("content").notNull(),
   tickers: text("tickers").array().notNull().default([]),
-  mode: text("mode").notNull().default("daily"), // daily | premarket
+  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts | veredito
+  // Dono do relatório -- null pros modos "de casa" (daily/premarket/coal/ai/
+  // news/alerts/scheduled/manual), que seguem compartilhados por todo mundo
+  // igual sempre foram. Preenchido só pros modos derivados da carteira de
+  // QUEM disparou a run (portfolio/veredito), pra essas rotas não vazarem
+  // holdings de um usuário pro relatório que outro usuário vê (ver runner.ts
+  // getPortfolioTickers -- antes buscava a carteira de todo mundo junta).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_reports_date").on(t.date),
   index("idx_reports_mode").on(t.mode),
+  index("idx_reports_user_id").on(t.userId),
 ]);
 
 export const insertReportSchema = createInsertSchema(reportsTable).omit({

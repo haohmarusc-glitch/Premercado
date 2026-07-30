@@ -262,6 +262,14 @@ export async function ensureSchema(): Promise<void> {
   }
 
   try {
+    await db.execute(sql`ALTER TABLE reports ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users(id) ON DELETE CASCADE`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id)`);
+    logger.info("Schema check ok (reports.user_id ownership column)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (reports.user_id column)");
+  }
+
+  try {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS scenario_resolutions (
         id serial PRIMARY KEY,
