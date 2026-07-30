@@ -103,3 +103,69 @@ class TestCorrelation:
         monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: pd.DataFrame())
         result = rm.correlation(["AAA", "BBB"])
         assert "error" in result
+
+
+class TestPortfolioRiskMetrics:
+    def test_rejects_empty_or_zero_value_portfolio(self):
+        assert "error" in rm.portfolio_risk_metrics([])
+        assert "error" in rm.portfolio_risk_metrics([{"ticker": "AAA", "investedAmount": 0}])
+
+    def test_computes_sharpe_max_drawdown_and_var_matching_closed_form(self, monkeypatch):
+        rng = np.random.default_rng(42)
+        n = 120
+        ret_a = rng.normal(0.001, 0.02, n)
+        ret_b = rng.normal(-0.0005, 0.03, n)
+        frame = _make_close_frame({"AAA": ret_a, "BBB": ret_b})
+        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+
+        positions = [
+            {"ticker": "AAA", "investedAmount": 700.0},
+            {"ticker": "BBB", "investedAmount": 300.0},
+        ]
+        result = rm.portfolio_risk_metrics(positions, period="120d", risk_free_rate=0.045)
+
+        # Recalcula com numpy puro (mesmos pesos por valor investido: 70/30)
+        # a partir da mesma série sintética, pra validar a fórmula fechada
+        # sem repetir a lógica interna da função.
+        prices = frame["Close"]
+        returns_a = prices["AAA"].pct_change().dropna()
+        returns_b = prices["BBB"].pct_change().dropna()
+        portfolio_ret = 0.7 * returns_a + 0.3 * returns_b
+        mean_d, std_d = portfolio_ret.mean(), portfolio_ret.std()
+        expected_sharpe = round(float((mean_d * 252 - 0.045) / (std_d * np.sqrt(252))), 3)
+        equity = (1 + portfolio_ret).cumprod()
+        expected_max_dd = round(float(((equity - equity.cummax()) / equity.cummax()).min()) * 100, 2)
+        expected_var95 = round(float(np.percentile(portfolio_ret, 5)) * 100, 2)
+
+        assert result["sharpeRatio"] == pytest.approx(expected_sharpe)
+        assert result["maxDrawdownPct"] == pytest.approx(expected_max_dd)
+        assert result["var95Pct"] == pytest.approx(expected_var95)
+        assert result["totalInvested"] == pytest.approx(1000.0)
+        assert result["tickers"] == ["AAA", "BBB"]
+        # numpy.float64 vazando na resposta quebra json.dumps (não serializável)
+        assert isinstance(result["sharpeRatio"], float)
+        assert isinstance(result["maxDrawdownPct"], float)
+        assert isinstance(result["var95Pct"], float)
+        assert isinstance(result["annualizedVolatilityPct"], float)
+
+    def test_skips_tickers_with_insufficient_history(self, monkeypatch):
+        rng = np.random.default_rng(1)
+        a = rng.normal(0, 0.02, 60)
+        frame = _make_close_frame({"AAA": a})
+        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+
+        positions = [
+            {"ticker": "AAA", "investedAmount": 500.0},
+            {"ticker": "ZZZ", "investedAmount": 500.0},  # sem dado no mock -> skipped
+        ]
+        result = rm.portfolio_risk_metrics(positions, period="60d")
+        assert result["tickers"] == ["AAA"]
+        assert "ZZZ" in result["skipped"]
+
+    def test_ignores_invalid_ticker_and_non_positive_invested_amount(self):
+        positions = [
+            {"ticker": "", "investedAmount": 500.0},
+            {"ticker": "AAA", "investedAmount": -100.0},
+        ]
+        result = rm.portfolio_risk_metrics(positions)
+        assert "error" in result

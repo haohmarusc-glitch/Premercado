@@ -103,6 +103,25 @@ router.post("/risk/intraday-beta", async (req, res, next): Promise<void> => {
   }
 });
 
+// GET /risk/portfolio-metrics — Sharpe ratio, max drawdown e VaR histórico
+// (95%, 1 dia) da carteira, ponderada pelo valor investido de cada posição.
+router.get("/risk/portfolio-metrics", async (req, res, next): Promise<void> => {
+  try {
+    const positions = await db
+      .select()
+      .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.userId, req.userId!));
+    const payload = positions.map((p) => ({
+      ticker: p.ticker,
+      investedAmount: p.investedAmount,
+    }));
+    const period = typeof req.query.period === "string" ? req.query.period : "1y";
+    res.json(await runPython({ action: "portfolio_risk_metrics", positions: payload, period }));
+  } catch (e: unknown) {
+    next(e);
+  }
+});
+
 router.get("/risk/portfolio-correlation", async (req, res, next): Promise<void> => {
   try {
     const positions = await db

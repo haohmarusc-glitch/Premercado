@@ -101,10 +101,10 @@ def _translate_batch(texts: list[str]) -> list[str]:
     Retorna os originais se algo falhar (timeout, rede bloqueada, etc.)."""
     if not texts:
         return texts
-    import requests
+    from agent.http_retry import SESSION
     joined = "\n".join(texts)
     try:
-        r = requests.get(
+        r = SESSION.get(
             "https://translate.googleapis.com/translate_a/single",
             params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
             headers={"User-Agent": "Mozilla/5.0"},

@@ -12,10 +12,10 @@ Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
 import sys, json, os, time
-import requests
 import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker, friendly_error
+from http_retry import SESSION
 
 # ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
 #    então não pode importar agent/cache.py que usa import relativo).
@@ -62,7 +62,7 @@ def _translate_join(texts: list[str]) -> list[str]:
         return texts
     joined = "\n".join(texts)
     try:
-        r = requests.get(
+        r = SESSION.get(
             "https://translate.googleapis.com/translate_a/single",
             params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
             headers={"User-Agent": "Mozilla/5.0"},

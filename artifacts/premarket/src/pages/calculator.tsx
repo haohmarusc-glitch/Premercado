@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle, Activity, PieChart, Grid3x3 } from "lucide-react";
+import { Calculator, TrendingDown, TrendingUp, DollarSign, AlertTriangle, Activity, PieChart, Grid3x3, Gauge } from "lucide-react";
 
 interface StopAtrResult {
   ticker: string;
@@ -26,6 +26,21 @@ interface CorrelationResult {
   matrix: (number | null)[][];
   pairs: { a: string; b: string; correlation: number }[];
   highCorrelationPairs: { a: string; b: string; correlation: number }[];
+  skipped: string[];
+  error?: string;
+}
+
+interface PortfolioMetricsResult {
+  tickers: string[];
+  period: string;
+  daysUsed: number;
+  totalInvested: number;
+  riskFreeRate: number;
+  sharpeRatio: number | null;
+  maxDrawdownPct: number;
+  var95Pct: number;
+  var95Usd: number;
+  annualizedVolatilityPct: number;
   skipped: string[];
   error?: string;
 }
@@ -159,6 +174,16 @@ export default function CalculatorPage() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
       return data as CorrelationResult;
+    },
+  });
+
+  // Sharpe / max drawdown / VaR histórico da carteira (backend / yfinance)
+  const riskMetrics = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/risk/portfolio-metrics", { credentials: "include" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as PortfolioMetricsResult;
     },
   });
 
@@ -448,6 +473,66 @@ export default function CalculatorPage() {
                   Sem dados suficientes para: {correlation.data.skipped.join(", ")}.
                 </p>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Sharpe / max drawdown / VaR da carteira */}
+        <div className="border border-border rounded-lg bg-card p-5 space-y-4 md:col-span-2">
+          <div className="flex items-center gap-2">
+            <Gauge className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-mono font-bold text-foreground uppercase tracking-widest">Métricas de Risco</h2>
+          </div>
+          <p className="text-xs font-mono text-muted-foreground leading-relaxed">
+            Sharpe ratio (retorno ajustado ao risco vs. T-bills), maior queda do pico ao vale no último ano
+            e Valor em Risco histórico (VaR 95%, 1 dia) — ponderados pelo valor investido de cada posição.
+          </p>
+          <button
+            onClick={() => riskMetrics.mutate()}
+            disabled={riskMetrics.isPending}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded font-mono text-xs font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {riskMetrics.isPending ? "Calculando..." : "Calcular Métricas de Risco"}
+          </button>
+          {riskMetrics.isError && <p className="text-xs text-red-400 font-mono">{String(riskMetrics.error)}</p>}
+          {riskMetrics.data?.error && <p className="text-xs text-red-400 font-mono">{riskMetrics.data.error}</p>}
+          {riskMetrics.data && !riskMetrics.data.error && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="border border-border rounded-lg bg-secondary/20 p-3">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">Sharpe ratio</div>
+                  <div className={`text-lg font-mono font-bold ${
+                    riskMetrics.data.sharpeRatio == null ? "text-muted-foreground"
+                    : riskMetrics.data.sharpeRatio >= 1 ? "text-green-400"
+                    : riskMetrics.data.sharpeRatio >= 0 ? "text-yellow-400" : "text-red-400"
+                  }`}>
+                    {riskMetrics.data.sharpeRatio != null ? fmt(riskMetrics.data.sharpeRatio) : "—"}
+                  </div>
+                </div>
+                <div className="border border-border rounded-lg bg-secondary/20 p-3">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">Max drawdown</div>
+                  <div className="text-lg font-mono font-bold text-red-400">
+                    {fmt(riskMetrics.data.maxDrawdownPct)}%
+                  </div>
+                </div>
+                <div className="border border-border rounded-lg bg-secondary/20 p-3">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">VaR 95% (1d)</div>
+                  <div className="text-lg font-mono font-bold text-yellow-400">
+                    {fmt(riskMetrics.data.var95Pct)}%
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">-${fmt(riskMetrics.data.var95Usd)}</div>
+                </div>
+                <div className="border border-border rounded-lg bg-secondary/20 p-3">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase">Vol. anualizada</div>
+                  <div className="text-lg font-mono font-bold text-foreground">
+                    {fmt(riskMetrics.data.annualizedVolatilityPct)}%
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] font-mono text-muted-foreground">
+                {riskMetrics.data.daysUsed} dias de histórico comum · taxa livre de risco {fmt(riskMetrics.data.riskFreeRate * 100, 1)}%/ano
+                {riskMetrics.data.skipped.length > 0 && <> · sem dados para: {riskMetrics.data.skipped.join(", ")}</>}
+              </p>
             </div>
           )}
         </div>
