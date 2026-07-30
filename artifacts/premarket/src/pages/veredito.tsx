@@ -68,9 +68,13 @@ export default function VereditoPage() {
   const qc = useQueryClient();
 
   // ── Carteira (base pra técnicos/earnings) ──────────────────────────────────
+  // Só posições ainda possuídas de fato -- GET /portfolio devolve também as
+  // zeradas (quantity = 0) pra alimentar a seção "Ações Vendidas" da Carteira
+  // (ver isActivePosition em api-server/src/lib/portfolio-math.ts), então sem
+  // esse filtro um ticker já vendido reaparecia aqui em Técnicos/Earnings.
   const { data: positions } = useListPortfolioPositions();
   const tickers = useMemo(
-    () => Array.from(new Set((positions ?? []).map((p) => p.ticker))).sort(),
+    () => Array.from(new Set((positions ?? []).filter((p) => Number(p.quantity) > 0.00001).map((p) => p.ticker))).sort(),
     [positions],
   );
 
