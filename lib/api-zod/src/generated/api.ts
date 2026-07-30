@@ -486,6 +486,15 @@ export const GetScenarioProgressResponse = zod.object({
 
 
 /**
+ * @summary Run the Painel de Cenários snapshot/alert check for the logged-in user right now, instead of waiting for the hourly background cycle
+ */
+export const CheckScenarioNowResponse = zod.object({
+  "ok": zod.boolean(),
+  "skipped": zod.string().nullable()
+})
+
+
+/**
  * @summary Report the current user's active page (heartbeat for online/last-seen tracking)
  */
 export const activityHeartbeatBodyPathMax = 200;

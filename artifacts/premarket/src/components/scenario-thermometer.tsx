@@ -1,6 +1,9 @@
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetScenarioAlertSettings, getGetScenarioAlertSettingsQueryKey,
   useGetScenarioProgress, getGetScenarioProgressQueryKey,
+  useCheckScenarioNow,
 } from "@workspace/api-client-react";
 import { pctConfirmacao } from "@workspace/scenario-math";
 
@@ -32,12 +35,28 @@ function corPct(pct: number): string {
 // manteve acima do limiar configurado no alerta -- e fecha com um selo
 // final ✓/✗ quando a data-alvo do ciclo vigente já foi resolvida.
 export function ScenarioThermometer() {
+  const queryClient = useQueryClient();
   const { data: settings } = useGetScenarioAlertSettings({
     query: { queryKey: getGetScenarioAlertSettingsQueryKey() },
   });
   const { data: progress } = useGetScenarioProgress({
     query: { queryKey: getGetScenarioProgressQueryKey(), enabled: !!settings?.configured },
   });
+  const checkNow = useCheckScenarioNow();
+  const [skippedReason, setSkippedReason] = useState<string | null>(null);
+
+  function gerarAgora() {
+    setSkippedReason(null);
+    checkNow.mutate(undefined, {
+      onSuccess: (result) => {
+        if (result.ok) {
+          queryClient.invalidateQueries({ queryKey: getGetScenarioProgressQueryKey() });
+        } else {
+          setSkippedReason(result.skipped);
+        }
+      },
+    });
+  }
 
   if (!settings?.configured) {
     return (
@@ -82,6 +101,27 @@ export function ScenarioThermometer() {
         <p style={{ fontSize: 11, color: COLOR_FAINT, margin: 0 }}>
           Sem histórico ainda — o primeiro snapshot é gerado no próximo ciclo do checker (a cada hora).
         </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+          <button
+            type="button"
+            onClick={gerarAgora}
+            disabled={checkNow.isPending}
+            style={{
+              background: COLOR_STARBOARD, color: "#0E191D", border: "none", borderRadius: 2,
+              padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              opacity: checkNow.isPending ? 0.6 : 1,
+            }}
+          >
+            {checkNow.isPending ? "Gerando..." : "Gerar agora"}
+          </button>
+          {checkNow.isSuccess && !skippedReason && <span style={{ fontSize: 11, color: COLOR_STARBOARD }}>✓ Snapshot gerado</span>}
+        </div>
+        {skippedReason && (
+          <p style={{ fontSize: 10, color: COLOR_FAINT, margin: "8px 0 0" }}>{skippedReason}</p>
+        )}
+        {checkNow.isError && (
+          <p style={{ fontSize: 10, color: COLOR_PORT, margin: "8px 0 0" }}>Falha ao gerar o snapshot.</p>
+        )}
       </div>
     );
   }

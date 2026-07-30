@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useGetNews, getGetNewsQueryKey,
+  useGetScenarioAlertSettings, getGetScenarioAlertSettingsQueryKey, useUpdateScenarioAlertSettings,
+} from "@workspace/api-client-react";
 import {
   RHO, diasAteAlvo, temSaltoNoHorizonte, probEmpateIndividual, computeScenarioMetrics,
   type ScenarioPosition, type ScenarioMetrics,
@@ -75,6 +78,21 @@ export default function PainelCenarios() {
   const [setor, setSetor] = useState(0); // movimento do setor até a data-alvo, %
   const [volMult, setVolMult] = useState(1); // multiplicador da volatilidade
   const [valores, setValores] = useState<Record<string, number>>({});
+
+  // Data-alvo só existe de fato pro resto do app (termômetro em /cenarios,
+  // painel "Cenários" em /veredito, checker de e-mail em background) depois
+  // de salva -- o campo de data acima é só estado local até o usuário clicar
+  // em "Salvar". Antes essa persistência só acontecia escondida dentro do
+  // painel "Alertar por e-mail", então quem nunca abria aquele painel via
+  // "Data-alvo não configurada" sem entender por quê.
+  const queryClient = useQueryClient();
+  const { data: alertSettings } = useGetScenarioAlertSettings({
+    query: { queryKey: getGetScenarioAlertSettingsQueryKey() },
+  });
+  const saveDataAlvo = useUpdateScenarioAlertSettings();
+  const [dataAlvoSavedJustNow, setDataAlvoSavedJustNow] = useState(false);
+  const dataAlvoSalva = alertSettings?.configured ? alertSettings.dataAlvo : null;
+  const dataAlvoPendente = dataAlvoSalva !== dataAlvoStr;
 
   // Inicializa o override manual de cada posição com o valor de mercado
   // vindo do servidor -- só preenche tickers AINDA NÃO presentes em
@@ -175,13 +193,51 @@ export default function PainelCenarios() {
 
       <div className="pc-card">
         <p className="pc-eyebrow">Data-alvo (saque)</p>
-        <input
-          className="pc-date"
-          type="date"
-          value={dataAlvoStr}
-          onChange={(e) => setDataAlvoStr(e.target.value)}
-          aria-label="Data-alvo do saque"
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <input
+            className="pc-date"
+            type="date"
+            value={dataAlvoStr}
+            onChange={(e) => setDataAlvoStr(e.target.value)}
+            aria-label="Data-alvo do saque"
+          />
+          <button
+            type="button"
+            onClick={() =>
+              saveDataAlvo.mutate(
+                { data: { dataAlvo: dataAlvoStr } },
+                {
+                  onSuccess: () => {
+                    queryClient.invalidateQueries({ queryKey: getGetScenarioAlertSettingsQueryKey() });
+                    setDataAlvoSavedJustNow(true);
+                    setTimeout(() => setDataAlvoSavedJustNow(false), 2500);
+                  },
+                },
+              )
+            }
+            disabled={saveDataAlvo.isPending || !dataAlvoPendente}
+            style={{
+              background: C.channel, color: C.ink, border: "none", borderRadius: 2,
+              padding: "6px 14px", fontSize: 12, fontWeight: 700,
+              cursor: dataAlvoPendente ? "pointer" : "default",
+              opacity: saveDataAlvo.isPending ? 0.6 : dataAlvoPendente ? 1 : 0.5,
+            }}
+          >
+            {saveDataAlvo.isPending ? "Salvando..." : "Salvar data-alvo"}
+          </button>
+          {dataAlvoSavedJustNow && <span style={{ fontSize: 11, color: C.starboard }}>✓ Salvo</span>}
+          {saveDataAlvo.isError && <span style={{ fontSize: 11, color: C.port }}>Falha ao salvar</span>}
+        </div>
+        {!alertSettings?.configured && (
+          <p style={{ fontSize: 10, color: C.faint, margin: "8px 0 0" }}>
+            Salve a data-alvo pra habilitar o termômetro de confirmação aqui embaixo e o painel "Cenários" na tela Veredito.
+          </p>
+        )}
+        {alertSettings?.configured && dataAlvoPendente && (
+          <p style={{ fontSize: 10, color: C.faint, margin: "8px 0 0" }}>
+            Data salva atualmente: {alertSettings.dataAlvo.split("-").reverse().join("/")} — clique em Salvar pra atualizar.
+          </p>
+        )}
       </div>
 
       <ScenarioAlertSettings dataAlvoAtual={dataAlvoStr} />

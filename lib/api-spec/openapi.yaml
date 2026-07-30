@@ -523,6 +523,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScenarioProgress"
 
+  /scenario-check-now:
+    post:
+      operationId: checkScenarioNow
+      tags: [scenarios]
+      summary: Run the Painel de Cenários snapshot/alert check for the logged-in user right now, instead of waiting for the hourly background cycle
+      responses:
+        "200":
+          description: Check ran, or was skipped (with a reason)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioCheckNowResult"
+
   /activity/heartbeat:
     post:
       operationId: activityHeartbeat
@@ -1641,6 +1654,17 @@ components:
           type: boolean
         resolvedAt:
           type: string
+
+    ScenarioCheckNowResult:
+      type: object
+      required: [ok, skipped]
+      properties:
+        ok:
+          type: boolean
+        # Motivo de não ter rodado de fato (ex.: agente diário em execução,
+        # alerta ainda não configurado, ciclo já resolvido) -- null quando ok=true.
+        skipped:
+          type: ["string", "null"]
 
     ScenarioProgress:
       type: object

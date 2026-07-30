@@ -36,6 +36,101 @@ function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+type ScenarioAlertRow = typeof scenarioAlertSettingsTable.$inferSelect;
+
+// Corpo do ciclo pra UMA linha de scenario_alert_settings -- extraído pra ser
+// reaproveitado tanto pelo loop de todos os usuários (checkScenarioAlerts)
+// quanto pelo disparo manual de um usuário só (checkScenarioAlertsForUser,
+// usado pelo botão "Gerar agora" do Termômetro de confirmação).
+async function checkScenarioAlertForRow(row: ScenarioAlertRow): Promise<void> {
+  const hoje = hojeISO();
+
+  const [resolucaoExistente] = await db
+    .select({ id: scenarioResolutionsTable.id })
+    .from(scenarioResolutionsTable)
+    .where(and(
+      eq(scenarioResolutionsTable.userId, row.userId),
+      eq(scenarioResolutionsTable.dataAlvo, row.dataAlvo),
+    ));
+  if (resolucaoExistente) return; // ciclo já fechado -- espera o usuário definir nova data-alvo
+
+  const positions = await buildScenarioPositions(row.userId);
+  if (!positions.length) return; // sem posições ativas, nada a acompanhar
+
+  const dataAlvo = new Date(row.dataAlvo + "T00:00:00");
+  const m = computeScenarioMetrics(positions, {}, {}, 0, 1, dataAlvo);
+  if (m.risco <= 0) return; // tudo em caixa -- sem risco, sem sentido acompanhar
+
+  await db
+    .insert(scenarioSnapshotsTable)
+    .values({
+      userId: row.userId,
+      snapshotDate: hoje,
+      dataAlvo: row.dataAlvo,
+      diasRestantes: Math.round(m.T * 365),
+      pEmpate: m.pEmpate,
+      valorTotalHoje: m.valorTotalHoje,
+      custoTotal: m.custoTotal,
+      p05: m.p05,
+      p50: m.p50,
+      p95: m.p95,
+    })
+    .onConflictDoUpdate({
+      target: [scenarioSnapshotsTable.userId, scenarioSnapshotsTable.snapshotDate],
+      set: {
+        dataAlvo: row.dataAlvo,
+        diasRestantes: Math.round(m.T * 365),
+        pEmpate: m.pEmpate,
+        valorTotalHoje: m.valorTotalHoje,
+        custoTotal: m.custoTotal,
+        p05: m.p05,
+        p50: m.p50,
+        p95: m.p95,
+      },
+    });
+
+  if (hoje > row.dataAlvo) {
+    // data-alvo já passou -- fecha o ciclo com o resultado final
+    await db
+      .insert(scenarioResolutionsTable)
+      .values({
+        userId: row.userId,
+        dataAlvo: row.dataAlvo,
+        valorFinal: m.valorTotalHoje,
+        custoTotal: m.custoTotal,
+        pEmpateFinal: m.pEmpate,
+        bateu: cicloBateu(m.valorTotalHoje, m.custoTotal),
+      })
+      .onConflictDoNothing();
+    logger.info({ userId: row.userId, bateu: cicloBateu(m.valorTotalHoje, m.custoTotal) }, "Scenario cycle resolved");
+    return; // ciclo encerrado -- não faz sentido mandar alerta de limiar
+  }
+
+  if (!row.enabled) return;
+  if (row.lastFiredAt && row.lastFiredAt.getTime() > Date.now() - COOLDOWN_MS) return;
+
+  const thresholdPct = Number(row.thresholdPct);
+  const pEmpatePct = m.pEmpate * 100;
+  if (pEmpatePct >= thresholdPct) return; // acima do limiar, nada a fazer
+
+  await sendScenarioAlertEmail({
+    to: row.notifyEmail,
+    dataAlvo: row.dataAlvo,
+    thresholdPct,
+    pEmpatePct,
+    caixa: m.caixa,
+    risco: m.risco,
+    custoTotal: m.custoTotal,
+  });
+
+  await db
+    .update(scenarioAlertSettingsTable)
+    .set({ lastFiredAt: new Date() })
+    .where(eq(scenarioAlertSettingsTable.userId, row.userId));
+
+  logger.info({ userId: row.userId, pEmpatePct, thresholdPct }, "Scenario alert fired");
+}
+
 // Exportado (diferente do padrão privado dos outros checkers) pra permitir
 // invocação direta em teste manual, sem precisar esperar o intervalo de 1h.
 export async function checkScenarioAlerts(): Promise<void> {
@@ -53,98 +148,34 @@ export async function checkScenarioAlerts(): Promise<void> {
   const rows = await db.select().from(scenarioAlertSettingsTable);
   if (!rows.length) return;
 
-  const hoje = hojeISO();
-
   for (const row of rows) {
     try {
-      const [resolucaoExistente] = await db
-        .select({ id: scenarioResolutionsTable.id })
-        .from(scenarioResolutionsTable)
-        .where(and(
-          eq(scenarioResolutionsTable.userId, row.userId),
-          eq(scenarioResolutionsTable.dataAlvo, row.dataAlvo),
-        ));
-      if (resolucaoExistente) continue; // ciclo já fechado -- espera o usuário definir nova data-alvo
-
-      const positions = await buildScenarioPositions(row.userId);
-      if (!positions.length) continue; // sem posições ativas, nada a acompanhar
-
-      const dataAlvo = new Date(row.dataAlvo + "T00:00:00");
-      const m = computeScenarioMetrics(positions, {}, {}, 0, 1, dataAlvo);
-      if (m.risco <= 0) continue; // tudo em caixa -- sem risco, sem sentido acompanhar
-
-      await db
-        .insert(scenarioSnapshotsTable)
-        .values({
-          userId: row.userId,
-          snapshotDate: hoje,
-          dataAlvo: row.dataAlvo,
-          diasRestantes: Math.round(m.T * 365),
-          pEmpate: m.pEmpate,
-          valorTotalHoje: m.valorTotalHoje,
-          custoTotal: m.custoTotal,
-          p05: m.p05,
-          p50: m.p50,
-          p95: m.p95,
-        })
-        .onConflictDoUpdate({
-          target: [scenarioSnapshotsTable.userId, scenarioSnapshotsTable.snapshotDate],
-          set: {
-            dataAlvo: row.dataAlvo,
-            diasRestantes: Math.round(m.T * 365),
-            pEmpate: m.pEmpate,
-            valorTotalHoje: m.valorTotalHoje,
-            custoTotal: m.custoTotal,
-            p05: m.p05,
-            p50: m.p50,
-            p95: m.p95,
-          },
-        });
-
-      if (hoje > row.dataAlvo) {
-        // data-alvo já passou -- fecha o ciclo com o resultado final
-        await db
-          .insert(scenarioResolutionsTable)
-          .values({
-            userId: row.userId,
-            dataAlvo: row.dataAlvo,
-            valorFinal: m.valorTotalHoje,
-            custoTotal: m.custoTotal,
-            pEmpateFinal: m.pEmpate,
-            bateu: cicloBateu(m.valorTotalHoje, m.custoTotal),
-          })
-          .onConflictDoNothing();
-        logger.info({ userId: row.userId, bateu: cicloBateu(m.valorTotalHoje, m.custoTotal) }, "Scenario cycle resolved");
-        continue; // ciclo encerrado -- não faz sentido mandar alerta de limiar
-      }
-
-      if (!row.enabled) continue;
-      if (row.lastFiredAt && row.lastFiredAt.getTime() > Date.now() - COOLDOWN_MS) continue;
-
-      const thresholdPct = Number(row.thresholdPct);
-      const pEmpatePct = m.pEmpate * 100;
-      if (pEmpatePct >= thresholdPct) continue; // acima do limiar, nada a fazer
-
-      await sendScenarioAlertEmail({
-        to: row.notifyEmail,
-        dataAlvo: row.dataAlvo,
-        thresholdPct,
-        pEmpatePct,
-        caixa: m.caixa,
-        risco: m.risco,
-        custoTotal: m.custoTotal,
-      });
-
-      await db
-        .update(scenarioAlertSettingsTable)
-        .set({ lastFiredAt: new Date() })
-        .where(eq(scenarioAlertSettingsTable.userId, row.userId));
-
-      logger.info({ userId: row.userId, pEmpatePct, thresholdPct }, "Scenario alert fired");
+      await checkScenarioAlertForRow(row);
     } catch (err) {
       logger.error({ err, userId: row.userId }, "Scenario alert check failed for user");
     }
   }
+}
+
+// Disparo manual pra UM usuário só -- usado pelo botão "Gerar agora" do
+// Termômetro de confirmação (/cenarios), pra não obrigar o usuário a esperar
+// o próximo ciclo horário do checker só pra ver o primeiro snapshot depois
+// de configurar o alerta.
+export async function checkScenarioAlertsForUser(userId: number): Promise<{ ok: boolean; skipped: string | null }> {
+  if (agentState.running) {
+    return { ok: false, skipped: "Agente diário em execução -- tente de novo em instantes." };
+  }
+
+  const [row] = await db
+    .select()
+    .from(scenarioAlertSettingsTable)
+    .where(eq(scenarioAlertSettingsTable.userId, userId));
+  if (!row) {
+    return { ok: false, skipped: "Data-alvo ainda não configurada." };
+  }
+
+  await checkScenarioAlertForRow(row);
+  return { ok: true, skipped: null };
 }
 
 let checkerStarted = false;
