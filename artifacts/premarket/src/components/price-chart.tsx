@@ -14,7 +14,7 @@ import {
 import { useGetTickerChart, getGetTickerChartQueryKey } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import { CandleChart } from "@/components/candle-chart";
-import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "@/components/session-gradient";
+import { sessionGradientStops, hasExtendedSession, filterCandlesBySession, SESSION_COLORS } from "@/components/session-gradient";
 import { useDraggableOffset } from "@/hooks/use-draggable-offset";
 import { IndicatorToggles } from "@/components/indicator-toggles";
 import {
@@ -81,6 +81,11 @@ interface HoverRow {
 export function PriceChart({ symbol, period, height = 200 }: { symbol: string; period: string; height?: number }) {
   const [, navigate] = useLocation();
   const [mode, setMode] = useState<"line" | "candle" | "tradingview">("line");
+  // Mostra/esconde as barras de pré e pós-mercado no gráfico (preço,
+  // indicadores, VWAP/RVOL) -- ligados por padrão. É preferência de exibição,
+  // não reseta ao trocar de ticker/período (mesmo critério de `mode`/`indicators` abaixo).
+  const [showPre, setShowPre] = useState(true);
+  const [showPost, setShowPost] = useState(true);
   // Indicadores técnicos -- todos desligados por padrão. No modo candle (SVG
   // puro, sem recharts) só os painéis auxiliares (Volume/RSI/MACD/RVOL)
   // valem; overlay (SMA/Bollinger/VWAP) precisaria desenhar dentro do
@@ -199,7 +204,15 @@ export function PriceChart({ symbol, period, height = 200 }: { symbol: string; p
     },
   );
 
-  const candles = data?.candles ?? [];
+  // Barras de pré/pós-mercado ligadas por padrão -- o toggle abaixo deixa
+  // tirar uma ou as duas do gráfico (preço, indicadores e VWAP/RVOL, que já
+  // ignoram pré/pós por conta própria) sem precisar de outro fetch: filtra
+  // localmente sobre o candle já baixado. hasExtendedSession roda sobre o
+  // conjunto ORIGINAL (rawCandles), não o filtrado -- senão desligar "pré"
+  // faria o próprio checkbox de "pré" sumir (nada mais pra detectar a sessão).
+  const rawCandles = data?.candles ?? [];
+  const showSessionColors = hasExtendedSession(rawCandles);
+  const candles = filterCandlesBySession(rawCandles, showPre, showPost);
   const closes = candles.map((c) => c.c);
   const chartData = candles.map((c) => ({ t: c.t, price: c.c, vol: c.v, label: fmtLabel(c.t, period), session: c.session }));
 
@@ -212,7 +225,6 @@ export function PriceChart({ symbol, period, height = 200 }: { symbol: string; p
   const last = prices[prices.length - 1];
   const up = last != null && first != null && last >= first;
   const color = up ? "#22c55e" : "#ef4444";
-  const showSessionColors = hasExtendedSession(candles);
   const sessionGradientId = `session-grad-${symbol}`;
 
   // VWAP + RVOL são intradiários (resetam a cada pregão) -- só fazem sentido
@@ -530,10 +542,38 @@ export function PriceChart({ symbol, period, height = 200 }: { symbol: string; p
     );
   }
 
+  // Checkbox de pré/pós-mercado -- marca/desmarca pra tirar/colocar essas
+  // barras do gráfico (preço, indicadores, VWAP/RVOL). Só aparece quando o
+  // período baixado realmente tem candle de fora do pregão regular
+  // (hasExtendedSession sobre rawCandles, não sobre o já filtrado).
+  const sessionToggleEl = showSessionColors && (
+    <div className="flex items-center justify-end gap-3 mb-1 text-[9px] font-mono text-muted-foreground">
+      <label className="flex items-center gap-1 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={showPre}
+          onChange={(e) => setShowPre(e.target.checked)}
+          className="h-2.5 w-2.5"
+        />
+        <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.pre }} /> pré
+      </label>
+      <label className="flex items-center gap-1 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={showPost}
+          onChange={(e) => setShowPost(e.target.checked)}
+          className="h-2.5 w-2.5"
+        />
+        <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.post }} /> pós
+      </label>
+    </div>
+  );
+
   if (mode === "candle") {
     return (
       <div>
         {toggle}
+        {sessionToggleEl}
         <CandleChart
           candles={candles}
           height={height}
@@ -551,16 +591,7 @@ export function PriceChart({ symbol, period, height = 200 }: { symbol: string; p
     <div>
     {toggle}
     {chartMenuEl}
-    {showSessionColors && (
-      <div className="flex items-center justify-end gap-2 mb-1 text-[9px] font-mono text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.pre }} /> pré
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: SESSION_COLORS.post }} /> pós
-        </span>
-      </div>
-    )}
+    {sessionToggleEl}
     <div className="relative" ref={chartContainerRef}>
       {hoverRow && (
         <div
