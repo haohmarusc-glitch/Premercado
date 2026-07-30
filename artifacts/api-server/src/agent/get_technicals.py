@@ -78,6 +78,33 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         vol_5d_avg = float(volume.iloc[-5:].mean())
         vol_ratio = round(vol_5d_avg / vol_avg20, 2) if vol_avg20 > 0 else None
 
+        # RVOL + VWAP intradiários -- mesma lógica de agent/tools.py::get_technical_indicators
+        # (não extraído pra função compartilhada porque esse arquivo roda em
+        # subprocesso isolado com stdout redirecionado, ver comentário no topo).
+        # Falha (mercado fechado, sem rede) não derruba os indicadores diários
+        # acima, só deixa rvol/vwap como None.
+        rvol = rvol_signal = vwap = price_vs_vwap_pct = vwap_signal = None
+        try:
+            intraday = yf.Ticker(ticker).history(period="1d", interval="5m")
+            if not intraday.empty:
+                intraday_volume = intraday["Volume"]
+                vol_today_so_far = float(intraday_volume.sum())
+                fraction_elapsed = min(1.0, len(intraday) / 78)  # 78 barras de 5min = pregão nominal de 6.5h
+                if vol_avg20 > 0 and fraction_elapsed > 0:
+                    expected_vol_so_far = vol_avg20 * fraction_elapsed
+                    rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
+                    if rvol is not None:
+                        rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+
+                typical_price = (intraday["High"] + intraday["Low"] + intraday["Close"]) / 3
+                vol_sum = float(intraday_volume.sum())
+                if vol_sum > 0:
+                    vwap = round(float((typical_price * intraday_volume).sum() / vol_sum), 2)
+                    price_vs_vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
+                    vwap_signal = "acima" if price > vwap else "abaixo" if price < vwap else "no vwap"
+        except Exception:
+            pass  # mercado fechado / sem dado intradiário -- rvol/vwap ficam None
+
         hist_val = float(histogram.iloc[-1])
         return {
             "ticker": ticker,
@@ -93,6 +120,11 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             "pctAboveSma50": _pct_diff(price, sma50),
             "pctAboveSma200": _pct_diff(price, sma200),
             "volumeRatio": vol_ratio,
+            "rvol": rvol,
+            "rvolSignal": rvol_signal,
+            "vwap": vwap,
+            "priceVsVwapPct": price_vs_vwap_pct,
+            "vwapSignal": vwap_signal,
         }
     except Exception as e:
         print(f"[get_technicals] {ticker}: {e}", file=sys.stderr)
