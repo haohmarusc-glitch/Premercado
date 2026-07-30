@@ -20,6 +20,11 @@ export interface TechnicalSnapshot {
   pctAboveSma50?: number | null;
   pctAboveSma200?: number | null;
   volumeRatio?: number | null;
+  rvol?: number | null;
+  rvolSignal?: "alto" | "baixo" | "normal" | null;
+  vwap?: number | null;
+  priceVsVwapPct?: number | null;
+  vwapSignal?: "acima" | "abaixo" | "no vwap" | null;
   error?: string;
 }
 
@@ -121,8 +126,13 @@ export function tacticalSignal(ticker: string, ctx: TacticalContext): TacticalSi
 
   const tech = ctx.technicalsByTicker.get(ticker);
   if (tech?.rsi != null) {
-    if (tech.rsi >= 70) return { label: `RSI ${tech.rsi.toFixed(0)} — esticado pra cima, bom momento de venda`, tone: "bom" };
-    if (tech.rsi <= 30) return { label: `RSI ${tech.rsi.toFixed(0)} — sobrevendido, ainda sem força de repique`, tone: "atencao" };
+    // RVOL confirma (ou não) se o RSI esticado tem força real por trás --
+    // RSI extremo com volume normal/baixo é bem mais fraco que o mesmo RSI
+    // com volume 1.5x+ acima do esperado pra essa hora do pregão.
+    const rvolSuffix = tech.rvolSignal === "alto" ? ` · RVOL ${tech.rvol?.toFixed(1)}x (convicção forte)`
+      : tech.rvolSignal === "baixo" ? ` · RVOL ${tech.rvol?.toFixed(1)}x (sinal fraco)` : "";
+    if (tech.rsi >= 70) return { label: `RSI ${tech.rsi.toFixed(0)} — esticado pra cima, bom momento de venda${rvolSuffix}`, tone: "bom" };
+    if (tech.rsi <= 30) return { label: `RSI ${tech.rsi.toFixed(0)} — sobrevendido, ainda sem força de repique${rvolSuffix}`, tone: "atencao" };
   }
 
   const atencao = alerts.find((a) => a.severity === "atencao");

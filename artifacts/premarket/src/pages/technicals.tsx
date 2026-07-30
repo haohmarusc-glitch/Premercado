@@ -17,6 +17,11 @@ interface TechItem {
   pctAboveSma50?: number | null;
   pctAboveSma200?: number | null;
   volumeRatio?: number | null;
+  rvol?: number | null;
+  rvolSignal?: "alto" | "baixo" | "normal" | null;
+  vwap?: number | null;
+  priceVsVwapPct?: number | null;
+  vwapSignal?: "acima" | "abaixo" | "no vwap" | null;
   error?: string;
 }
 
@@ -109,6 +114,8 @@ export default function TechnicalsPage() {
                 <th className="text-right px-3 py-2.5">vs MM50</th>
                 <th className="text-right px-3 py-2.5">vs MM200</th>
                 <th className="text-right px-3 py-2.5">Vol 5d/20d</th>
+                <th className="text-right px-3 py-2.5">RVOL</th>
+                <th className="text-right px-3 py-2.5">vs VWAP</th>
               </tr>
             </thead>
             <tbody>
@@ -145,6 +152,15 @@ export default function TechnicalsPage() {
                         {it.pctAboveSma200 != null ? `${it.pctAboveSma200 >= 0 ? "+" : ""}${fmt(it.pctAboveSma200)}%` : "—"}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{fmt(it.volumeRatio)}x</td>
+                      <td className={cn(
+                        "px-3 py-2.5 text-right tabular-nums font-bold",
+                        it.rvolSignal === "alto" ? "text-primary" : it.rvolSignal === "baixo" ? "text-muted-foreground" : "text-foreground",
+                      )}>
+                        {it.rvol != null ? `${fmt(it.rvol)}x` : "—"}
+                      </td>
+                      <td className={cn("px-3 py-2.5 text-right tabular-nums", pctColor(it.priceVsVwapPct))}>
+                        {it.priceVsVwapPct != null ? `${it.priceVsVwapPct >= 0 ? "+" : ""}${fmt(it.priceVsVwapPct)}%` : "—"}
+                      </td>
                     </>
                   )}
                 </tr>
@@ -160,6 +176,7 @@ export default function TechnicalsPage() {
         <p><span className="text-green-400">MACD bullish</span> = histograma positivo (momentum de alta) · <span className="text-red-400">bearish</span> = negativo</p>
         <p><span className="text-green-400">vs MM50/MM200 positivo</span> = preço acima da média (tendência de alta)</p>
         <p>Vol 5d/20d &gt; 1 = volume recente acima da média (interesse crescente)</p>
+        <p><span className="text-primary">RVOL</span> = volume de hoje vs. esperado pra essa hora do pregão — confirma se um movimento tem força real (RSI esticado com RVOL baixo é sinal fraco). <span className="text-green-400">vs VWAP positivo</span> = preço acima do preço médio ponderado por volume de hoje (referência institucional de caro/barato intradiário). Ambos vazios fora do horário de pregão.</p>
       </div>
     </div>
   );

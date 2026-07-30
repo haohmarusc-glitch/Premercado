@@ -677,7 +677,9 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
 @cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
-    """Calcula RSI-14, MACD, Bollinger Bands, EMA 8/21, SMA 50/200 e ATR-14.
+    """Calcula RSI-14, MACD, Bollinger Bands, EMA 8/21, SMA 50/200, ATR-14,
+    RVOL (volume relativo intradiário) e VWAP (preço médio ponderado por
+    volume do pregão de hoje).
 
     atr_14/atr_pct = volatilidade real do ativo (Average True Range, em $ e
     % do preço). Use isso para calibrar o threshold_pct de create_alert em
@@ -694,6 +696,16 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     ema8/ema21/ema_trend = leitura de curtíssimo prazo (timing de entrada,
     swing/day trade). sma50/sma200/macro_trend_filter servem só de filtro de
     tendência maior (ex.: só considerar long se macro_trend_filter="alta").
+
+    rvol = volume de hoje até agora / volume médio esperado pra essa mesma
+    fração do pregão (baseado na média diária dos últimos 20 dias) --
+    confirma se um movimento de preço tem força real por trás (RSI esticado
+    com rvol baixo é sinal fraco, ignorável; RSI esticado com rvol alto é
+    convicção de mercado). Aproximação (78 barras de 5min = pregão nominal de
+    6.5h), não ajustada por feriado/pregão encurtado. vwap = preço médio
+    ponderado por volume SÓ do pregão de hoje (reseta todo dia) -- referência
+    que mesas institucionais usam pra "caro ou barato" intradiário; ambos
+    None fora do horário de pregão ou sem dado intradiário disponível.
     """
     try:
         ticker = sanitize_ticker(ticker)
@@ -788,6 +800,33 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         vol_5d_avg = float(volume.iloc[-5:].mean())
         vol_ratio = round(vol_5d_avg / vol_avg20, 2) if vol_avg20 > 0 else None
 
+        # RVOL + VWAP intradiários -- precisam de barras de HOJE (interval=5m),
+        # separado do histórico diário acima. Numa falha (mercado fechado, sem
+        # rede, feriado) não deve derrubar o resto dos indicadores (diários),
+        # só deixar rvol/vwap como None.
+        rvol = rvol_signal = vwap = price_vs_vwap_pct = vwap_signal = None
+        try:
+            intraday = t.history(period="1d", interval="5m")
+            if not intraday.empty:
+                intraday_volume = intraday["Volume"]
+                vol_today_so_far = float(intraday_volume.sum())
+                # Pregão nominal de 6.5h (9h30-16h ET) em barras de 5min = 78.
+                fraction_elapsed = min(1.0, len(intraday) / 78)
+                if vol_avg20 > 0 and fraction_elapsed > 0:
+                    expected_vol_so_far = vol_avg20 * fraction_elapsed
+                    rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
+                    if rvol is not None:
+                        rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+
+                typical_price = (intraday["High"] + intraday["Low"] + intraday["Close"]) / 3
+                vol_sum = float(intraday_volume.sum())
+                if vol_sum > 0:
+                    vwap = round(float((typical_price * intraday_volume).sum() / vol_sum), 2)
+                    price_vs_vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
+                    vwap_signal = "acima" if price > vwap else "abaixo" if price < vwap else "no vwap"
+        except Exception:
+            pass  # mercado fechado / sem dado intradiário -- rvol/vwap ficam None
+
         return {
             "ticker": ticker,
             "price": round(price, 2),
@@ -824,6 +863,11 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             "volume_ratio_5d_vs_20d": vol_ratio,
             "atr_14": atr_14,
             "atr_pct": atr_pct,
+            "rvol": rvol,
+            "rvol_signal": rvol_signal,
+            "vwap": vwap,
+            "price_vs_vwap_pct": price_vs_vwap_pct,
+            "vwap_signal": vwap_signal,
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
@@ -2172,14 +2216,18 @@ TOOLS = [
         "name": "get_technical_indicators",
         "description": (
             "Calcula indicadores técnicos para o ticker: RSI-14, MACD (12/26/9), "
-            "Bollinger Bands (20/2), EMA 8/21, SMA 50/200, ATR-14 e ratio de "
-            "volume (5d vs 20d). Use para avaliar condição técnica antes de "
-            "criar alertas de preço. rsi_signal já vem calibrado pela "
-            "volatilidade do ativo (bandas mais largas em ativos de ATR alto "
-            "como ARM/SMCI, mais estreitas em big techs estáveis) — não "
-            "reaplique 30/70 fixo por cima. ema8/ema21 são para timing de "
-            "curto prazo; sma50/sma200/macro_trend_filter servem só de "
-            "filtro de tendência maior."
+            "Bollinger Bands (20/2), EMA 8/21, SMA 50/200, ATR-14, ratio de "
+            "volume (5d vs 20d), RVOL e VWAP intradiários. Use para avaliar "
+            "condição técnica antes de criar alertas de preço. rsi_signal já "
+            "vem calibrado pela volatilidade do ativo (bandas mais largas em "
+            "ativos de ATR alto como ARM/SMCI, mais estreitas em big techs "
+            "estáveis) — não reaplique 30/70 fixo por cima. ema8/ema21 são "
+            "para timing de curto prazo; sma50/sma200/macro_trend_filter "
+            "servem só de filtro de tendência maior. rvol (volume relativo de "
+            "hoje vs. esperado) confirma se um movimento tem força real por "
+            "trás -- RSI esticado com rvol baixo é sinal fraco. vwap é a "
+            "referência institucional de caro/barato no pregão de hoje "
+            "(price_vs_vwap_pct). Ambos None fora do horário de pregão."
         ),
         "input_schema": {
             "type": "object",
