@@ -372,6 +372,24 @@ export const intradaySpikesTable = pgTable("intraday_spikes", {
 ]);
 export type IntradaySpike = typeof intradaySpikesTable.$inferSelect;
 
+// Dedup de e-mails do alerta de "repique" (dead-cat bounce / possível
+// realização de lucro, ver market_alerts.py::check_dead_cat_bounce),
+// disparado em background por alert-checker.ts via agent/get_bounce_alerts.py.
+// Diferente de intraday_spikes (candle de 1min, sem e-mail, cooldown de 15min
+// só pro card): esse sinal é baseado em fechamento diário (hoje vs. mesmo dia
+// da semana passada), então uma chave por (ticker, direção, dia BRT) evita
+// reenviar e-mail a cada poll de 5min enquanto o preço intradiário oscila em
+// torno do limiar dentro do mesmo pregão. Mesmo padrão de dedup por chave
+// única de portfolio_alert_firings -- sem propósito de exibição, só idempotência.
+export const bounceAlertFiringsTable = pgTable("bounce_alert_firings", {
+  id: serial("id").primaryKey(),
+  alertKey: text("alert_key").notNull().unique(),
+  firedAt: timestamp("fired_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_bounce_alert_firings_key").on(t.alertKey),
+]);
+export type BounceAlertFiring = typeof bounceAlertFiringsTable.$inferSelect;
+
 // Itens de um plano de saída de carteira: cada linha é "vender TICKER até
 // targetDate, motivo X", opcionalmente amarrado a um evento (earnings) que
 // justifica o prazo. Gerado manualmente (por análise no chat) ou por uma

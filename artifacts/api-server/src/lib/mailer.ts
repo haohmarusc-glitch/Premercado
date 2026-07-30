@@ -136,6 +136,57 @@ export async function sendAlertEmail(opts: {
   }
 }
 
+export async function sendBounceAlertEmail(opts: {
+  to: string | null;
+  ticker: string;
+  direction: "up" | "down"; // "up" = repique dentro de queda maior | "down" = realização de lucro dentro de alta maior
+  changeTodayPct: number | string;
+  title: string;   // já vem pronto de market_alerts.py::check_dead_cat_bounce -- não reimplementa o rótulo aqui
+  detail: string;  // idem: explicação completa (inclui a comparação vs. semana passada) já formatada pelo Python
+}): Promise<void> {
+  const to = opts.to?.trim();
+  if (!to) { logger.warn({ ticker: opts.ticker }, "No notify email on record — skipping bounce alert"); return; }
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
+
+  const changeTodayPct = toNum(opts.changeTodayPct) ?? 0;
+  const isUp = opts.direction === "up";
+  const changeStr = `${changeTodayPct >= 0 ? "+" : ""}${changeTodayPct.toFixed(2)}%`;
+  const subject = `↩️ ${opts.ticker}: ${opts.title} (${changeStr} hoje)`;
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
+  .ticker{font-size:32px;font-weight:bold;color:#ff8c00}
+  .change{font-size:24px;font-weight:bold;color:${isUp ? "#22c55e" : "#ef4444"}}
+  .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
+  .footer{margin-top:32px;font-size:11px;color:#555}
+</style></head>
+<body>
+<p style="color:#555;font-size:12px;text-transform:uppercase;">Alerta de Repique — Pré-Mercado Agente</p>
+<div class="box">
+  <div class="ticker">${opts.ticker}</div>
+  <div class="change">${changeStr} hoje</div>
+  <p style="margin:8px 0;color:#aaa">${opts.title}</p>
+  <p style="margin:12px 0 0;color:#666;font-size:12px">${opts.detail}</p>
+</div>
+<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Sinal técnico preliminar -- não é recomendação de investimento.</div>
+</body></html>`;
+
+  try {
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"Pré-Mercado Agente" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    logger.info({ to, subject }, "Bounce alert e-mail sent");
+  } catch (err) {
+    logger.error({ err }, "Failed to send bounce alert e-mail");
+  }
+}
+
 export async function sendPortfolioHoldingEmail(opts: {
   to: string | null;
   ticker: string;
