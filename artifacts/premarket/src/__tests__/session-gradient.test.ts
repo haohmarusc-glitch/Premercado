@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sessionGradientStops, hasExtendedSession, SESSION_COLORS } from "../components/session-gradient";
+import { sessionGradientStops, hasExtendedSession, filterCandlesBySession, SESSION_COLORS } from "../components/session-gradient";
 
 describe("hasExtendedSession", () => {
   it("retorna false quando todos os candles são do pregão regular", () => {
@@ -54,5 +54,38 @@ describe("sessionGradientStops", () => {
       { offset: "0%", color: "#f87171" },
       { offset: "100%", color: "#f87171" },
     ]);
+  });
+});
+
+describe("filterCandlesBySession", () => {
+  const candles = [
+    { t: 1, session: "pre" },
+    { t: 2, session: "regular" },
+    { t: 3, session: "regular" },
+    { t: 4, session: "post" },
+  ];
+
+  it("mantém tudo quando pré e pós estão ligados", () => {
+    expect(filterCandlesBySession(candles, true, true)).toEqual(candles);
+  });
+
+  it("remove só as barras de pré-mercado quando showPre=false", () => {
+    const out = filterCandlesBySession(candles, false, true);
+    expect(out.map((c) => c.t)).toEqual([2, 3, 4]);
+  });
+
+  it("remove só as barras de pós-mercado quando showPost=false", () => {
+    const out = filterCandlesBySession(candles, true, false);
+    expect(out.map((c) => c.t)).toEqual([1, 2, 3]);
+  });
+
+  it("remove as duas quando ambos estão desligados, mantendo só o pregão regular", () => {
+    const out = filterCandlesBySession(candles, false, false);
+    expect(out.map((c) => c.t)).toEqual([2, 3]);
+  });
+
+  it("nunca filtra candles sem session (períodos não-intradiários)", () => {
+    const noSession = [{ t: 1 }, { t: 2, session: undefined }];
+    expect(filterCandlesBySession(noSession, false, false)).toEqual(noSession);
   });
 });

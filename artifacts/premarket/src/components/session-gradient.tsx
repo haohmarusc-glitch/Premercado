@@ -51,3 +51,18 @@ export function sessionGradientStops(candles: SessionCandle[], regularColor: str
 export function hasExtendedSession(candles: SessionCandle[]): boolean {
   return candles.some((c) => c.session === "pre" || c.session === "post");
 }
+
+// Filtra as barras de pré/pós-mercado do gráfico (checkbox "pré"/"pós" no
+// PriceChart) -- candles sem `session` (períodos não-intradiários, onde o
+// backend não popula esse campo) nunca são filtrados, só "pre"/"post" explícitos.
+export function filterCandlesBySession<T extends SessionCandle>(
+  candles: T[],
+  showPre: boolean,
+  showPost: boolean,
+): T[] {
+  return candles.filter((c) => {
+    if (c.session === "pre" && !showPre) return false;
+    if (c.session === "post" && !showPost) return false;
+    return true;
+  });
+}
