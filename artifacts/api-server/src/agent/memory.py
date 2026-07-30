@@ -4,7 +4,7 @@ Acesso à memória dos dias anteriores (observações do DB).
 import datetime
 import os
 
-import requests
+from .http_retry import SESSION
 
 
 def _internal_headers() -> dict:
@@ -20,7 +20,7 @@ def recent_context(days: int = 7) -> str:
     """
     try:
         api_url = os.environ.get("INTERNAL_API_URL", "http://localhost:5000")
-        r = requests.get(
+        r = SESSION.get(
             f"{api_url}/api/observations/internal",
             params={"limit": 30},
             headers=_internal_headers(),

@@ -16,6 +16,7 @@ from . import market_alerts as _ma
 from . import sector_contagion as _sc
 from .backtest import run_backtest as _run_backtest
 from .cache import cached
+from .http_retry import SESSION
 from .security import sanitize_for_llm, sanitize_ticker, sanitize_url
 
 _PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
@@ -232,7 +233,7 @@ def search_edgar_filings(
         return [{"error": f"CIK desconhecido para {ticker}"}]
     try:
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        r = requests.get(url, headers=EDGAR_HEADERS, timeout=10)
+        r = SESSION.get(url, headers=EDGAR_HEADERS, timeout=10)
         r.raise_for_status()
         data = r.json()
         filings = data.get("filings", {}).get("recent", {})
@@ -276,7 +277,7 @@ def read_filing(url: str, max_chars: int = 4000) -> str:
     except ValueError as e:
         return f"[erro ao ler filing: {e}]"
     try:
-        r = requests.get(url, headers=EDGAR_HEADERS, timeout=15)
+        r = SESSION.get(url, headers=EDGAR_HEADERS, timeout=15)
         r.raise_for_status()
         text = r.text
         import re
@@ -346,7 +347,7 @@ def list_alerts(symbol: str | None = None) -> list[dict]:
     Filtra por símbolo se informado.
     """
     try:
-        r = requests.get(
+        r = SESSION.get(
             f"{_api_url()}/api/alerts",
             headers=_internal_headers(),
             timeout=10,
@@ -434,7 +435,7 @@ def get_exit_plan_items() -> list[dict]:
     agente). Use isso primeiro em toda reavaliação, antes de decidir o que
     manter/ajustar por ticker."""
     try:
-        r = requests.get(
+        r = SESSION.get(
             f"{_api_url()}/api/exit-plan",
             headers=_internal_headers(),
             timeout=10,
@@ -536,7 +537,7 @@ def get_scenario_status() -> dict:
     caminho certo pra bater o objetivo do usuário -- não recalcula nada, lê
     o mesmo dado mostrado na tela /cenarios."""
     try:
-        settings_r = requests.get(
+        settings_r = SESSION.get(
             f"{_api_url()}/api/scenario-alert-settings",
             headers=_internal_headers(),
             timeout=10,
@@ -546,7 +547,7 @@ def get_scenario_status() -> dict:
         if not settings.get("configured"):
             return {"configured": False, "note": "Usuário ainda não configurou uma data-alvo no Painel de Cenários."}
 
-        progress_r = requests.get(
+        progress_r = SESSION.get(
             f"{_api_url()}/api/scenario-progress",
             headers=_internal_headers(),
             timeout=10,
@@ -1080,7 +1081,7 @@ def _fetch_borrow_fee(ticker: str) -> tuple[float | None, str]:
     qualquer falha de rede/parsing devolve (None, nota explicando o motivo)
     sem derrubar o resto do detector."""
     try:
-        r = requests.get(
+        r = SESSION.get(
             f"https://iborrowdesk.com/api/ticker/{ticker}",
             headers=_IBORROWDESK_HEADERS,
             timeout=10,
@@ -1138,7 +1139,7 @@ def _fetch_short_volume_ratio(ticker: str) -> tuple[float | None, str]:
             continue
         url = f"https://cdn.finra.org/equity/regsho/daily/CNMSshvol{day.strftime('%Y%m%d')}.txt"
         try:
-            r = requests.get(url, timeout=10)
+            r = SESSION.get(url, timeout=10)
             if r.status_code == 404:
                 continue
             r.raise_for_status()
@@ -1432,7 +1433,7 @@ def get_macro_indicators() -> dict:
     result: dict = {"configured": True}
     for field, series_id in _FRED_SERIES.items():
         try:
-            r = requests.get(
+            r = SESSION.get(
                 "https://api.stlouisfed.org/fred/series/observations",
                 params={
                     "series_id": series_id,
@@ -1471,7 +1472,7 @@ def get_retail_sentiment(ticker: str) -> dict:
         return {"ticker": ticker, "error": str(e)}
     try:
         for page in range(1, 6):
-            r = requests.get(
+            r = SESSION.get(
                 f"https://apewisdom.io/api/v1.0/filter/all-stocks/page/{page}",
                 timeout=15,
             )
@@ -1515,7 +1516,7 @@ def get_gamma_exposure(ticker: str) -> dict:
             "message": "FLASHALPHA_API_KEY não configurada — cadastre-se em flashalpha.com (tier grátis, 5 requisições/dia) para ativar.",
         }
     try:
-        r = requests.get(
+        r = SESSION.get(
             f"https://lab.flashalpha.com/v1/exposure/gex/{ticker}",
             headers={"X-Api-Key": api_key},
             timeout=15,
@@ -1552,7 +1553,7 @@ def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
             "message": "ROIC_API_KEY não configurada — cadastre-se em roic.ai (tier grátis) para ativar.",
         }
     try:
-        r = requests.get(
+        r = SESSION.get(
             f"https://api.roic.ai/v2/company/earnings-calls/latest/{ticker}",
             params={"apikey": api_key},
             timeout=20,
@@ -1604,7 +1605,7 @@ def get_fundamentals_valuation(ticker: str) -> dict:
             "message": "FMP_API_KEY não configurada — cadastre-se em financialmodelingprep.com (tier grátis, 250 req/dia) para ativar.",
         }
     try:
-        dcf_resp = requests.get(
+        dcf_resp = SESSION.get(
             "https://financialmodelingprep.com/stable/discounted-cash-flow",
             params={"symbol": ticker, "apikey": api_key},
             timeout=15,
@@ -1613,7 +1614,7 @@ def get_fundamentals_valuation(ticker: str) -> dict:
         dcf_body = dcf_resp.json() or []
         dcf = (dcf_body[0] if dcf_body else {}) if isinstance(dcf_body, list) else dcf_body
 
-        metrics_resp = requests.get(
+        metrics_resp = SESSION.get(
             "https://financialmodelingprep.com/stable/key-metrics-ttm",
             params={"symbol": ticker, "apikey": api_key},
             timeout=15,
@@ -1747,7 +1748,7 @@ def get_fear_greed_index() -> dict:
             "User-Agent": "Mozilla/5.0 (compatible; PremarketAgent/1.0)",
             "Referer": "https://edition.cnn.com/",
         }
-        r = requests.get(url, headers=headers, timeout=10)
+        r = SESSION.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
 

@@ -4,9 +4,9 @@ Input (stdin JSON):  {}  (no params needed)
 Output (stdout JSON): {"fearGreed": {...}, "sectors": [{name, ticker, changePct}, ...]}
 """
 import sys, json
-import requests
 import yfinance as yf
 from security import friendly_error
+from http_retry import SESSION
 
 SECTOR_ETFS = [
     ("Tecnologia", "XLK"), ("Energia", "XLE"), ("Financeiro", "XLF"),
@@ -22,7 +22,7 @@ def fear_greed() -> dict:
             "User-Agent": "Mozilla/5.0 (compatible; PremarketAgent/1.0)",
             "Referer": "https://edition.cnn.com/",
         }
-        r = requests.get(url, headers=headers, timeout=10)
+        r = SESSION.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
         current = data.get("fear_and_greed", {})

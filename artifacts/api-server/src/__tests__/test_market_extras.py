@@ -50,7 +50,7 @@ class TestMacroIndicators:
     def test_parses_latest_observation_per_series(self, monkeypatch):
         monkeypatch.setenv("FRED_API_KEY", "test-key")
         payload = {"observations": [{"date": "2026-07-01", "value": "3.1"}]}
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(payload)
             result = tools.get_macro_indicators()
         assert result["configured"] is True
@@ -65,7 +65,7 @@ class TestMacroIndicators:
                 raise OSError("timeout")
             return _FakeResponse({"observations": [{"date": "2026-07-01", "value": "4.0"}]})
 
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.side_effect = fake_get
             result = tools.get_macro_indicators()
         assert result["configured"] is True
@@ -77,7 +77,7 @@ class TestMacroIndicators:
 class TestRetailSentiment:
     def test_finds_ticker_on_first_page(self, monkeypatch):
         payload = {"pages": 3, "results": [{"ticker": "SMCI", "rank": 2, "mentions": 500, "mentions_24h_ago": 300, "upvotes": 1200, "rank_24h_ago": 5}]}
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(payload)
             result = tools.get_retail_sentiment("SMCI")
         assert result["found"] is True
@@ -86,7 +86,7 @@ class TestRetailSentiment:
 
     def test_not_found_after_exhausting_pages(self, monkeypatch):
         payload = {"pages": 1, "results": [{"ticker": "AAPL", "mentions": 100}]}
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(payload)
             result = tools.get_retail_sentiment("SMCI")
         assert result["found"] is False
@@ -104,7 +104,7 @@ class TestGammaExposure:
 
     def test_handles_daily_rate_limit_gracefully(self, monkeypatch):
         monkeypatch.setenv("FLASHALPHA_API_KEY", "test-key")
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(status=429)
             result = tools.get_gamma_exposure("SPY")
         assert result["configured"] is True
@@ -114,7 +114,7 @@ class TestGammaExposure:
     def test_passes_through_raw_payload_on_success(self, monkeypatch):
         monkeypatch.setenv("FLASHALPHA_API_KEY", "test-key")
         payload = {"symbol": "SPY", "net_gex": 123456.0, "call_wall": 550}
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(payload)
             result = tools.get_gamma_exposure("SPY")
         assert result["configured"] is True
@@ -130,7 +130,7 @@ class TestEarningsTranscript:
 
     def test_handles_rate_limit_gracefully(self, monkeypatch):
         monkeypatch.setenv("ROIC_API_KEY", "test-key")
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(status=429)
             result = tools.get_earnings_transcript("TSLA")
         assert result["configured"] is True
@@ -139,7 +139,7 @@ class TestEarningsTranscript:
     def test_truncates_long_content(self, monkeypatch):
         monkeypatch.setenv("ROIC_API_KEY", "test-key")
         payload = {"symbol": "TSLA", "year": 2026, "quarter": 2, "date": "2026-07-20", "content": "x" * 7000}
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(payload)
             result = tools.get_earnings_transcript("TSLA", max_chars=6000)
         assert result["content"].endswith("[TRUNCADO]")
@@ -162,7 +162,7 @@ class TestFundamentalsValuation:
                 return _FakeResponse(dcf_payload)
             return _FakeResponse(metrics_payload)
 
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.side_effect = fake_get
             result = tools.get_fundamentals_valuation("NVDA")
         assert result["configured"] is True
@@ -186,7 +186,7 @@ class TestFundamentalsValuation:
 
         fake_fast_info = type("FastInfo", (), {"last_price": 200.0})()
         fake_ticker = type("Ticker", (), {"fast_info": fake_fast_info})()
-        with mock.patch.object(tools, "requests") as mreq, \
+        with mock.patch.object(tools, "SESSION") as mreq, \
              mock.patch.object(tools.yf, "Ticker", return_value=fake_ticker):
             mreq.get.side_effect = fake_get
             result = tools.get_fundamentals_valuation("NVDA")
@@ -213,7 +213,7 @@ class TestInsiderTrades:
 
 class TestFinraShortVolume:
     def test_returns_none_when_no_file_found_in_window(self, monkeypatch):
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(status=404)
             ratio, note = tools._fetch_short_volume_ratio("MU")
         assert ratio is None
@@ -221,7 +221,7 @@ class TestFinraShortVolume:
 
     def test_parses_matching_ticker_row(self, monkeypatch):
         text = "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n2026-07-21|MU|4000|0|10000|Q\n2026-07-21|AAPL|100|0|500|Q\n"
-        with mock.patch.object(tools, "requests") as mreq:
+        with mock.patch.object(tools, "SESSION") as mreq:
             mreq.get.return_value = _FakeResponse(text=text)
             ratio, note = tools._fetch_short_volume_ratio("MU")
         assert ratio == 40.0
