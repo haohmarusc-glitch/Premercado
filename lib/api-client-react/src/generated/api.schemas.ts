@@ -763,6 +763,10 @@ export interface ExitPlanItemUpdate {
   eventDate?: string | null;
 }
 
+export type GetLatestReportParams = {
+mode?: string;
+};
+
 export type ListObservationsParams = {
 ticker?: string;
 tickers?: string;

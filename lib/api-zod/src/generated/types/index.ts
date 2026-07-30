@@ -37,6 +37,7 @@ export * from './exitPlanItemCreate';
 export * from './exitPlanItemUpdate';
 export * from './fxRate';
 export * from './getAgentSpendHistoryParams';
+export * from './getLatestReportParams';
 export * from './getNewsParams';
 export * from './getTickerChartParams';
 export * from './healthStatus';

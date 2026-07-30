@@ -14,6 +14,7 @@ import yfinance as yf
 from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
 from . import sector_contagion as _sc
+from .backtest import run_backtest as _run_backtest
 from .cache import cached
 from .security import sanitize_for_llm, sanitize_ticker, sanitize_url
 
@@ -522,6 +523,91 @@ def create_exit_plan_item(
         return {"created": True, "item": r.json()}
     except Exception as e:
         return {"created": False, "error": str(e)}
+
+
+# ── Painel de Cenários ──────────────────────────────────────────────────────────
+
+
+def get_scenario_status() -> dict:
+    """Status do Painel de Cenários da carteira: probabilidade de empatar
+    (recuperar o custo total) até a data-alvo configurada pelo usuário, e o
+    termômetro de confirmação (histórico diário de quantos dias essa chance
+    ficou acima do limiar configurado). Use pra saber se a carteira está no
+    caminho certo pra bater o objetivo do usuário -- não recalcula nada, lê
+    o mesmo dado mostrado na tela /cenarios."""
+    try:
+        settings_r = requests.get(
+            f"{_api_url()}/api/scenario-alert-settings",
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        settings_r.raise_for_status()
+        settings = settings_r.json()
+        if not settings.get("configured"):
+            return {"configured": False, "note": "Usuário ainda não configurou uma data-alvo no Painel de Cenários."}
+
+        progress_r = requests.get(
+            f"{_api_url()}/api/scenario-progress",
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        progress_r.raise_for_status()
+        progress = progress_r.json()
+        snapshots = progress.get("snapshots", [])
+        threshold = settings["thresholdPct"]
+        dentro = sum(1 for s in snapshots if s["pEmpate"] * 100 >= threshold)
+        pct_confirmacao = round(dentro / len(snapshots) * 100, 1) if snapshots else None
+        ultimo = snapshots[-1] if snapshots else None
+        resolucao_atual = next(
+            (r for r in progress.get("resolutions", []) if r["dataAlvo"] == settings["dataAlvo"]), None
+        )
+
+        return {
+            "configured": True,
+            "dataAlvo": settings["dataAlvo"],
+            "thresholdPct": threshold,
+            "diasRestantes": ultimo["diasRestantes"] if ultimo else None,
+            "pEmpateAtualPct": round(ultimo["pEmpate"] * 100, 1) if ultimo else None,
+            "valorTotalHoje": ultimo["valorTotalHoje"] if ultimo else None,
+            "custoTotal": ultimo["custoTotal"] if ultimo else None,
+            "pctDiasConfirmados": pct_confirmacao,
+            "diasAcompanhados": len(snapshots),
+            "cicloResolvido": resolucao_atual is not None,
+            "cicloBateu": resolucao_atual["bateu"] if resolucao_atual else None,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Backtest ──────────────────────────────────────────────────────────────────
+
+
+def get_backtest_summary(ticker: str, months: int = 6, strategy: str = "rsi") -> dict:
+    """Roda um backtest rápido (padrões RSI/confluência, sem parâmetros
+    customizados) dos últimos `months` meses pra um ticker -- retorno
+    total vs. buy-and-hold, win rate, número de trades, sharpe e max
+    drawdown. Use pra dar contexto histórico de "essa estratégia teria
+    funcionado nesse ativo" no ticker mais relevante do dia, não para
+    todos -- é uma chamada pesada (baixa dados históricos)."""
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"error": str(e)}
+    try:
+        end = datetime.date.today()
+        start = end - datetime.timedelta(days=max(1, months) * 30)
+        result = _run_backtest(ticker, start.isoformat(), end.isoformat(), strategy)
+        if "error" in result:
+            return result
+        return {
+            "ticker": result["ticker"], "strategy": result["strategy"],
+            "start": result["start"], "end": result["end"],
+            "totalReturnPct": result["totalReturn"], "buyAndHoldReturnPct": result["buyAndHoldReturn"],
+            "cagrPct": result["cagr"], "sharpe": result["sharpe"], "maxDrawdownPct": result["maxDrawdown"],
+            "totalTrades": result["totalTrades"], "winRatePct": result["winRate"],
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ── Opções ────────────────────────────────────────────────────────────────────
@@ -2495,6 +2581,34 @@ TOOLS = [
             "required": ["ticker"],
         },
     },
+    {
+        "name": "get_scenario_status",
+        "description": (
+            "Status do Painel de Cenários: probabilidade de empatar (recuperar o custo total) "
+            "até a data-alvo configurada pelo usuário, e o termômetro de confirmação (% de dias, "
+            "desde que o acompanhamento começou, em que essa chance ficou acima do limiar). "
+            "configured=false se o usuário nunca configurou uma data-alvo."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_backtest_summary",
+        "description": (
+            "Backtest rápido (RSI ou confluência, parâmetros padrão) dos últimos N meses pra um "
+            "ticker -- retorno total vs. buy-and-hold, win rate, sharpe, max drawdown. Chamada "
+            "pesada (baixa histórico); use só pro ticker mais relevante/arriscado do dia, não "
+            "pra todos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Símbolo do ativo, ex: SMCI."},
+                "months": {"type": "integer", "description": "Janela em meses (padrão 6)."},
+                "strategy": {"type": "string", "description": "'rsi' (padrão) ou 'confluencia'."},
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 # Ferramentas com tier grátis apertado demais pra varredura automática de
@@ -2565,4 +2679,6 @@ DISPATCH = {
     "get_insider_trades": get_insider_trades,
     "get_gamma_exposure": get_gamma_exposure,
     "get_earnings_transcript": get_earnings_transcript,
+    "get_scenario_status": get_scenario_status,
+    "get_backtest_summary": get_backtest_summary,
 }

@@ -167,7 +167,13 @@ paths:
     get:
       operationId: getLatestReport
       tags: [reports]
-      summary: Get today's latest report
+      summary: Get the latest report of a given mode (default daily)
+      parameters:
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Latest report
