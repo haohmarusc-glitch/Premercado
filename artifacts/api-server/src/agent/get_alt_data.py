@@ -26,15 +26,16 @@ import csv
 import datetime
 import io
 import sys, json, os
-import requests
 try:
     # Rodando como script standalone (spawn direto do .py, sem -m agent.xxx)
     # -- Python coloca o diretório do próprio script no sys.path.
     from security import sanitize_ticker, friendly_error
+    from http_retry import SESSION
 except ImportError:
     # Importado como agent.get_alt_data de dentro do processo principal
     # (ex.: tools.py) -- aqui `agent` já é um pacote, precisa de import relativo.
     from .security import sanitize_ticker, friendly_error
+    from .http_retry import SESSION
 
 def congress_trades(tickers: set[str]) -> dict:
     api_key = os.environ.get("QUIVER_API_KEY", "").strip()
@@ -44,7 +45,7 @@ def congress_trades(tickers: set[str]) -> dict:
             "message": "QUIVER_API_KEY não configurada — cadastre-se em quiverquant.com para ativar.",
         }
     try:
-        r = requests.get(
+        r = SESSION.get(
             "https://api.quiverquant.com/beta/live/congresstrading",
             headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
             timeout=15,
@@ -77,7 +78,7 @@ def dark_pool_flow(tickers: set[str]) -> dict:
             "message": "UNUSUAL_WHALES_API_KEY não configurada — cadastre-se em unusualwhales.com para ativar.",
         }
     try:
-        r = requests.get(
+        r = SESSION.get(
             "https://api.unusualwhales.com/api/darkpool/recent",
             headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
             timeout=15,
@@ -118,7 +119,7 @@ def insider_trades(tickers: set[str], lookback_days: int = 90) -> dict:
     errors = []
     for ticker in tickers:
         try:
-            r = requests.get(
+            r = SESSION.get(
                 "https://api.form4api.com/v1/transactions/export",
                 headers={"X-Api-Key": api_key},
                 params={"ticker": ticker, "from": since},

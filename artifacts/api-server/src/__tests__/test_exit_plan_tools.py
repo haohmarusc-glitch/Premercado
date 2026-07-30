@@ -27,14 +27,14 @@ class _FakeResponse:
 class TestGetExitPlanItems:
     def test_returns_items_from_internal_api(self, monkeypatch):
         payload = [{"id": 1, "ticker": "SMCI", "status": "pending", "targetDate": "2026-08-03"}]
-        with mock.patch.object(tools.requests, "get", return_value=_FakeResponse(payload)) as m:
+        with mock.patch.object(tools.SESSION, "get", return_value=_FakeResponse(payload)) as m:
             result = tools.get_exit_plan_items()
         assert result == payload
         args, kwargs = m.call_args
         assert args[0].endswith("/api/exit-plan")
 
     def test_fails_open_on_request_error(self, monkeypatch):
-        with mock.patch.object(tools.requests, "get", side_effect=OSError("timeout")):
+        with mock.patch.object(tools.SESSION, "get", side_effect=OSError("timeout")):
             result = tools.get_exit_plan_items()
         assert result[0]["error"]
 

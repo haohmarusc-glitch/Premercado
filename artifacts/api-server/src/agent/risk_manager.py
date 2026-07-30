@@ -1,5 +1,6 @@
 """Risk management calculator — standalone subprocess (imports only sibling security.py)."""
 import sys, json
+import numpy as np
 import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker
@@ -149,6 +150,108 @@ def correlation(tickers: list, period: str = "6mo") -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+def portfolio_risk_metrics(positions: list, period: str = "1y", risk_free_rate: float = 0.045) -> dict:
+    """Sharpe ratio, max drawdown e VaR histórico (95%) da carteira, ponderada
+    pelo valor investido de cada posição -- não pelo peso igual entre ativos.
+
+    Sharpe = retorno excedente anualizado / volatilidade anualizada (retorno
+    médio diário × 252 − risk_free_rate, sobre desvio-padrão diário × √252).
+    Compara o retorno da carteira ajustado ao risco contra simplesmente
+    segurar T-bills (risk_free_rate, default 4.5% -- ajuste se a Selic/Fed
+    funds mudar bastante desde então).
+
+    Max drawdown = maior queda percentual do pico ao vale na série de valor
+    da carteira no período -- "quanto você já teria perdido do topo, no pior
+    momento", diferente da perda atual vs. custo (métrica de Cenários).
+
+    VaR 95% histórico (1 dia) = 5º percentil da distribuição de retornos
+    diários da carteira, em % e em dólar sobre o total investido -- "em 95%
+    dos dias, a perda de 1 dia não deveria passar disso" (método histórico,
+    sem assumir distribuição normal -- mais robusto a caudas gordas que o
+    VaR paramétrico)."""
+    try:
+        total_invested = sum(float(p.get("investedAmount", 0)) for p in positions)
+        if total_invested <= 0:
+            return {"error": "Carteira sem valor investido"}
+
+        clean: list[tuple[str, float]] = []
+        seen = set()
+        for p in positions:
+            try:
+                t = sanitize_ticker(p.get("ticker", ""))
+            except ValueError:
+                continue
+            if t in seen:
+                continue
+            invested = float(p.get("investedAmount", 0))
+            if invested <= 0:
+                continue
+            seen.add(t)
+            clean.append((t, invested))
+        if len(clean) < 1:
+            return {"error": "Nenhuma posição válida"}
+
+        tickers = [t for t, _ in clean]
+        data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False)
+        closes = data["Close"] if "Close" in data else data
+        # yf.download com 1 único ticker devolve Series em vez de DataFrame
+        # de 1 coluna -- normaliza pra sempre poder indexar por nome.
+        if not hasattr(closes, "columns"):
+            closes = closes.to_frame(name=tickers[0])
+
+        returns = closes.pct_change().dropna(how="all")
+        available = [(t, w) for t, w in clean if t in returns.columns and returns[t].notna().sum() >= 20]
+        if not available:
+            return {"error": "Dados insuficientes para calcular métricas de risco"}
+
+        avail_tickers = [t for t, _ in available]
+        weight_sum = sum(w for _, w in available)
+        weights = pd.Series({t: w / weight_sum for t, w in available})
+
+        # Só os dias em que TODOS os ativos disponíveis têm retorno (dropna
+        # "any") -- um dia com dado faltando pra 1 ativo distorceria o
+        # retorno agregado daquele dia se contasse só os demais.
+        aligned = returns[avail_tickers].dropna(how="any")
+        if len(aligned) < 20:
+            return {"error": "Histórico comum insuficiente entre os ativos (menos de 20 dias)"}
+
+        portfolio_returns = aligned @ weights
+
+        mean_daily = float(portfolio_returns.mean())
+        std_daily = float(portfolio_returns.std())
+        sharpe = None
+        if std_daily > 0:
+            excess_annual = mean_daily * 252 - risk_free_rate
+            # float() explícito -- numpy.sqrt/round devolvem np.float64, que
+            # json.dumps não sabe serializar (TypeError silencioso na resposta).
+            sharpe = round(float(excess_annual / (std_daily * float(np.sqrt(252)))), 3)
+
+        equity_curve = (1 + portfolio_returns).cumprod()
+        running_peak = equity_curve.cummax()
+        drawdown_series = (equity_curve - running_peak) / running_peak
+        max_drawdown_pct = round(float(drawdown_series.min()) * 100, 2)
+
+        var_95_pct = round(float(np.percentile(portfolio_returns, 5)) * 100, 2)
+        var_95_usd = round(abs(var_95_pct) / 100 * total_invested, 2)
+
+        skipped = [t for t in tickers if t not in avail_tickers]
+        return {
+            "tickers": avail_tickers,
+            "period": period,
+            "daysUsed": len(aligned),
+            "totalInvested": round(total_invested, 2),
+            "riskFreeRate": risk_free_rate,
+            "sharpeRatio": sharpe,
+            "maxDrawdownPct": max_drawdown_pct,
+            "var95Pct": var_95_pct,
+            "var95Usd": var_95_usd,
+            "annualizedVolatilityPct": round(std_daily * float(np.sqrt(252)) * 100, 2),
+            "skipped": skipped,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def intraday_beta(
     base_ticker: str,
     hedge_ticker: str,
@@ -252,6 +355,12 @@ if __name__ == "__main__":
         result = portfolio_exposure(args.get("positions", []))
     elif action == "correlation":
         result = correlation(args.get("tickers", []), args.get("period", "6mo"))
+    elif action == "portfolio_risk_metrics":
+        result = portfolio_risk_metrics(
+            args.get("positions", []),
+            args.get("period", "1y"),
+            float(args.get("riskFreeRate", 0.045)),
+        )
     elif action == "intraday_beta":
         result = intraday_beta(
             args["baseTicker"], args["hedgeTicker"], float(args["targetCapital"]),

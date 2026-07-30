@@ -38,7 +38,7 @@ class TestCongressTrades:
             {"Ticker": "AAPL", "Representative": "Someone Else", "Transaction": "Sale", "Range": "$15,001 - $50,000", "TransactionDate": "2026-06-02"},
             {"Ticker": "MU", "Senator": "John Smith", "Transaction": "Purchase", "Amount": "$50,001 - $100,000", "TransactionDate": "2026-06-03"},
         ]
-        with mock.patch.object(gad.requests, "get", return_value=_FakeResponse(payload)) as m:
+        with mock.patch.object(gad.SESSION, "get", return_value=_FakeResponse(payload)) as m:
             result = gad.congress_trades({"NVDA", "MU"})
 
         assert result["configured"] is True
@@ -54,7 +54,7 @@ class TestCongressTrades:
 
     def test_reports_error_but_stays_configured_on_request_failure(self, monkeypatch):
         monkeypatch.setenv("QUIVER_API_KEY", "test-key")
-        with mock.patch.object(gad.requests, "get", side_effect=OSError("timeout")):
+        with mock.patch.object(gad.SESSION, "get", side_effect=OSError("timeout")):
             result = gad.congress_trades({"NVDA"})
         assert result["configured"] is True
         assert "error" in result
@@ -72,7 +72,7 @@ class TestDarkPoolFlow:
             {"ticker": "NVDA", "price": "150.0", "size": 10000, "premium": "1500000", "executed_at": "2026-06-01T14:00:00Z"},
             {"ticker": "AAPL", "price": "200.0", "size": 5000, "premium": "1000000", "executed_at": "2026-06-01T14:05:00Z"},
         ]}
-        with mock.patch.object(gad.requests, "get", return_value=_FakeResponse(payload)):
+        with mock.patch.object(gad.SESSION, "get", return_value=_FakeResponse(payload)):
             result = gad.dark_pool_flow({"NVDA"})
 
         assert result["configured"] is True
@@ -82,14 +82,14 @@ class TestDarkPoolFlow:
     def test_handles_bare_list_response_not_wrapped_in_data(self, monkeypatch):
         monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
         payload = [{"ticker": "NVDA", "price": "150.0", "size": 10000, "premium": "1500000", "executedAt": "2026-06-01T14:00:00Z"}]
-        with mock.patch.object(gad.requests, "get", return_value=_FakeResponse(payload)):
+        with mock.patch.object(gad.SESSION, "get", return_value=_FakeResponse(payload)):
             result = gad.dark_pool_flow({"NVDA"})
         assert result["configured"] is True
         assert len(result["trades"]) == 1
 
     def test_reports_error_but_stays_configured_on_request_failure(self, monkeypatch):
         monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
-        with mock.patch.object(gad.requests, "get", side_effect=OSError("timeout")):
+        with mock.patch.object(gad.SESSION, "get", side_effect=OSError("timeout")):
             result = gad.dark_pool_flow({"NVDA"})
         assert result["configured"] is True
         assert "error" in result

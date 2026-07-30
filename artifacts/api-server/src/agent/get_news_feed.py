@@ -4,9 +4,9 @@ Input (stdin JSON):  {"tickers": ["NVDA"], "maxItems": 5, "translate": true}
 Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, source}]}, ... ]}
 """
 import sys, json, re
-import requests
 import yfinance as yf
 from security import sanitize_ticker, friendly_error
+from http_retry import SESSION
 
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
@@ -19,7 +19,7 @@ def _translate_join(texts: list[str]) -> list[str]:
         return texts
     joined = "\n".join(texts)
     try:
-        r = requests.get(
+        r = SESSION.get(
             "https://translate.googleapis.com/translate_a/single",
             params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
             headers={"User-Agent": "Mozilla/5.0"},
