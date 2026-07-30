@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { daysUntilBRT as daysUntil } from "@/lib/format";
 import { Flag, Plus, Trash2, CheckCircle2, SkipForward, RotateCcw, Newspaper, BellPlus, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { useTacticalContext, tacticalSignal, type TacticalContext, type Tone } from "@/hooks/use-tactical-context";
 
@@ -84,13 +85,6 @@ const SEED_ITEMS = [
 ];
 
 type Urgency = "critico" | "atencao" | "info" | "done";
-
-function daysUntil(dateStr: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + "T00:00:00");
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
-}
 
 function urgencyOf(item: ExitPlanItem): Urgency {
   if (item.status !== "pending") return "done";

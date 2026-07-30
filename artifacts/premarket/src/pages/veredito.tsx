@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MarkdownContent } from "@/components/markdown";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, daysUntilBRT } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Sparkles, RefreshCw, Target, Activity, Flag, Calendar, Globe, AlertTriangle } from "lucide-react";
 import { useTacticalContext, tacticalSignal } from "@/hooks/use-tactical-context";
@@ -37,13 +37,6 @@ interface EarningsItem {
 interface MacroData {
   fearGreed?: { score?: number | null; ratingPt?: string; ratingEn?: string; error?: string };
   sectors?: { name: string; ticker: string; changePct?: number | null }[];
-}
-
-function daysUntil(dateStr: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + "T00:00:00");
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
 }
 
 function SectionCard({ icon, title, badge, children }: { icon: React.ReactNode; title: string; badge?: React.ReactNode; children: React.ReactNode }) {
@@ -99,7 +92,7 @@ export default function VereditoPage() {
   // ── Plano de saída ──────────────────────────────────────────────────────────
   const { data: exitPlan } = useListExitPlan({ query: { queryKey: getListExitPlanQueryKey() } });
   const pendentes = (exitPlan ?? []).filter((i) => i.status === "pending");
-  const urgentes = pendentes.filter((i) => daysUntil(i.targetDate) <= 3).sort((a, b) => daysUntil(a.targetDate) - daysUntil(b.targetDate));
+  const urgentes = pendentes.filter((i) => daysUntilBRT(i.targetDate) <= 3).sort((a, b) => daysUntilBRT(a.targetDate) - daysUntilBRT(b.targetDate));
 
   // ── Earnings próximos ────────────────────────────────────────────────────────
   const tickersKey = tickers.join(",");
@@ -114,8 +107,8 @@ export default function VereditoPage() {
     staleTime: 5 * 60_000,
   });
   const proximosEarnings = (earningsData ?? [])
-    .filter((e) => e.earningsDate && daysUntil(e.earningsDate) >= -1)
-    .sort((a, b) => daysUntil(a.earningsDate!) - daysUntil(b.earningsDate!))
+    .filter((e) => e.earningsDate && daysUntilBRT(e.earningsDate) >= -1)
+    .sort((a, b) => daysUntilBRT(a.earningsDate!) - daysUntilBRT(b.earningsDate!))
     .slice(0, 6);
 
   // ── Macro ────────────────────────────────────────────────────────────────────
@@ -268,7 +261,7 @@ export default function VereditoPage() {
           ) : (
             <div className="space-y-1.5">
               {(urgentes.length > 0 ? urgentes : pendentes).slice(0, 5).map((item) => {
-                const d = daysUntil(item.targetDate);
+                const d = daysUntilBRT(item.targetDate);
                 return (
                   <div key={item.id} className="flex items-center justify-between gap-2 text-xs font-mono">
                     <span className="font-bold">{item.ticker}</span>
@@ -289,7 +282,7 @@ export default function VereditoPage() {
           ) : (
             <div className="space-y-1.5">
               {proximosEarnings.map((e) => {
-                const d = e.earningsDate ? daysUntil(e.earningsDate) : null;
+                const d = e.earningsDate ? daysUntilBRT(e.earningsDate) : null;
                 return (
                   <div key={e.ticker} className="flex items-center justify-between gap-2 text-xs font-mono">
                     <span className="font-bold">{e.ticker}</span>
