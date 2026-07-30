@@ -16,7 +16,7 @@ const router: IRouter = Router();
 const DEFAULT_VOL = 0.5;
 const DEFAULT_BETA = 1.0;
 
-function runScript(scriptName: string, args: string[]): Promise<string> {
+export function runScript(scriptName: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
     const py = spawn(getPythonBin(), [scriptPath, ...args]);
