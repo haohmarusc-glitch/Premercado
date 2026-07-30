@@ -4,6 +4,7 @@ import { startScheduler } from "./lib/scheduler";
 import { startAlertChecker } from "./lib/alert-checker";
 import { startPortfolioAlertChecker } from "./lib/portfolio-alerts";
 import { startScenarioAlertChecker } from "./lib/scenario-alert-checker";
+import { startScenarioParamsChecker } from "./lib/scenario-params-checker";
 import { ensureSchema } from "./lib/ensure-schema";
 import { claimSeedAccountBootstrap } from "./lib/claim-seed-account";
 
@@ -30,4 +31,5 @@ app.listen(port, async (err) => {
   startAlertChecker();
   startPortfolioAlertChecker();
   startScenarioAlertChecker();
+  startScenarioParamsChecker();
 });
