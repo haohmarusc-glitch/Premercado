@@ -18,7 +18,10 @@ router.post("/agent/run", async (req, res): Promise<void> => {
   // em vez de aparecer como "manual".
   const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "news" ? "news" : rawMode === "exit_plan" ? "exit_plan" : rawMode === "alerts" ? "alerts" : rawMode === "veredito" ? "veredito" : rawMode === "scheduled" ? "scheduled" : "manual";
   const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
-  runAgent(mode, maxTurns);
+  // req.userId sempre setado por requireAuth -- só é de fato usado pelos
+  // modos "portfolio"/"veredito" dentro de runAgent (carteira de quem clicou),
+  // ignorado pelos demais modos (compartilhados).
+  runAgent(mode, maxTurns, req.userId);
   const message =
     mode === "portfolio" ? "Análise rápida da carteira iniciada. Aguarde a conclusão." :
     mode === "premarket" ? "Varredura pré-mercado iniciada. Aguarde a conclusão." :

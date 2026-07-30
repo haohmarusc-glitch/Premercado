@@ -64,11 +64,16 @@ async function getEffectiveAgentProvider(): Promise<string | undefined> {
   }
 }
 
-async function getPortfolioTickers(): Promise<string[]> {
+// Escopado por usuário -- ANTES buscava portfolio_positions sem filtro
+// nenhum, ou seja, misturava as posições de TODOS os usuários numa run só
+// (e o relatório resultante, salvo numa tabela global, aparecia igual pra
+// todo mundo). Ver reportsTable.userId e routes/reports.ts.
+async function getPortfolioTickers(userId: number): Promise<string[]> {
   try {
     const rows = await db
       .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
       .from(portfolioPositionsTable)
+      .where(eq(portfolioPositionsTable.userId, userId))
       .orderBy(asc(portfolioPositionsTable.createdAt));
     // ETFs (ex.: SGOV) ficam de fora da análise de carteira -- são
     // instrumentos de caixa, sem notícia/sentimento pra analisar como uma
@@ -78,14 +83,15 @@ async function getPortfolioTickers(): Promise<string[]> {
     // linha continua no banco só pra preservar o histórico de compra/venda
     // exibido na Carteira, não representa mais um ativo realmente possuído.
     const stocks = rows.filter((r) => !r.isEtf && isActivePosition(r.quantity));
-    if (stocks.length > 0) return stocks.map((r) => r.ticker);
+    return stocks.map((r) => r.ticker);
   } catch (err) {
-    logger.error({ err }, "Failed to read portfolio tickers; using defaults");
+    logger.error({ err, userId }, "Failed to read portfolio tickers for user");
+    // Vazio, NUNCA um fallback fixo -- um fallback compartilhado aqui
+    // devolveria a carteira de outra pessoa pra quem não tem posições ou deu
+    // erro na query, o mesmo tipo de vazamento que este código existe pra
+    // evitar.
+    return [];
   }
-  // Carteira real (Nomad) conferida posição a posição em 17/07 -- MU e INTC
-  // foram vendidos, AVGO/MRVL/SKHY são posições novas (ver config.py,
-  // PORTFOLIO_TICKERS, mesma lista mantida em sincronia).
-  return ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"];
 }
 
 const workspaceRoot = process.cwd().endsWith(
@@ -124,7 +130,11 @@ export const state: AgentState = {
   scheduleEnabled: true,
 };
 
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" | "veredito" = "manual", maxTurns?: number): void {
+// userId: obrigatório na prática pros modos "portfolio"/"veredito" (rodam em
+// cima da carteira de QUEM disparou a run, ver getPortfolioTickers acima) --
+// vem de req.userId na rota HTTP (routes/agent.ts). Pros demais modos
+// (compartilhados por todo o app) é ignorado.
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" | "veredito" = "manual", maxTurns?: number, userId?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
@@ -152,7 +162,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   void (async () => {
   try {
   const tickers = trigger === "portfolio" || trigger === "veredito"
-    ? await getPortfolioTickers()
+    ? (userId != null ? await getPortfolioTickers(userId) : [])
     : trigger === "coal"
     ? COAL_TICKERS
     : trigger === "ai"
@@ -318,13 +328,16 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
 
     const today = todayBRTDateString();
 
-    // Save report to DB
+    // Save report to DB -- userId só pros modos derivados da carteira de
+    // quem disparou a run (ver comentário em reportsTable.userId); os demais
+    // ficam null, mantendo o comportamento de sempre (relatório compartilhado).
     try {
       await db.insert(reportsTable).values({
         date: today,
         content,
         tickers,
         mode,
+        userId: (trigger === "portfolio" || trigger === "veredito") ? userId ?? null : null,
       });
       logger.info("Report saved to database");
     } catch (err) {
