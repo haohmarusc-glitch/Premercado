@@ -68,13 +68,18 @@ export default function VereditoPage() {
   const qc = useQueryClient();
 
   // ── Carteira (base pra técnicos/earnings) ──────────────────────────────────
-  // Só posições ainda possuídas de fato -- GET /portfolio devolve também as
-  // zeradas (quantity = 0) pra alimentar a seção "Ações Vendidas" da Carteira
-  // (ver isActivePosition em api-server/src/lib/portfolio-math.ts), então sem
-  // esse filtro um ticker já vendido reaparecia aqui em Técnicos/Earnings.
+  // Só posições ativas e que não sejam ETF -- GET /portfolio devolve também as
+  // zeradas (quantity = 0, pra alimentar a seção "Ações Vendidas" da Carteira)
+  // e os ETFs (caixa/renda fixa, sem técnico/notícia relevante pra analisar
+  // como uma ação); mesmo filtro usado no backend pra Cenários/Painel de Risco
+  // (ver isActivePosition + !isEtf em api-server/src/lib/portfolio-math.ts,
+  // routes/scenarios.ts e lib/runner.ts).
   const { data: positions } = useListPortfolioPositions();
   const tickers = useMemo(
-    () => Array.from(new Set((positions ?? []).filter((p) => Number(p.quantity) > 0.00001).map((p) => p.ticker))).sort(),
+    () =>
+      Array.from(
+        new Set((positions ?? []).filter((p) => !p.isEtf && Number(p.quantity) > 0.00001).map((p) => p.ticker)),
+      ).sort(),
     [positions],
   );
 
