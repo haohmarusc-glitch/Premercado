@@ -44,3 +44,33 @@ export function computeOpenLotTotals(open: OpenLot[]): PositionTotals {
 export function isActivePosition(quantity: number | string): boolean {
   return Number(quantity) > 0.00001;
 }
+
+export interface LotSaleInfo {
+  saleDate: string | null;
+  salePrice: number | string | null;
+}
+
+// isActivePosition(quantity) sozinho não é confiável pra decidir se uma
+// posição ainda está de fato ativa: PUT /portfolio/:id permite editar
+// quantity/avgCost/investedAmount DIRETO, sem recalcular a partir dos lotes
+// reais (esses três campos existem pra correção manual de posições antigas,
+// ver PositionDialog no frontend). Se uma posição com todos os lotes já
+// vendidos tiver esse campo editado por qualquer motivo depois da última
+// venda, `quantity` fica travado num valor desatualizado pra sempre -- não
+// existe mais nenhuma mutação de lote que dispare recomputePosition() e
+// corrija (visto em produção: MU aparecendo no Painel de Cenários e podendo
+// entrar na análise de carteira do agente com os 2 lotes já vendidos).
+//
+// Checa os lotes (portfolio_purchases) direto, mesma fonte de verdade já
+// usada pela seção "Ações Vendidas" da Carteira (baseada em
+// saleDate/salePrice de cada lote, não em quantity). Se a posição não tiver
+// NENHUM lote registrado ainda -- caso raro: falha ao criar o primeiro lote
+// junto com a posição no formulário "Nova posição" -- cai de volta pro
+// `quantity` armazenado, única fonte disponível nesse caso.
+export function isPositionActiveFromLots<T extends LotSaleInfo>(
+  storedQuantity: number | string,
+  lots: T[],
+): boolean {
+  if (lots.length === 0) return isActivePosition(storedQuantity);
+  return lots.some((l) => !(l.saleDate && l.salePrice));
+}

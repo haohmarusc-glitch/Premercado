@@ -2,10 +2,10 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { eq, inArray } from "drizzle-orm";
-import { db, portfolioPositionsTable, scenarioParamsTable } from "@workspace/db";
+import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable } from "@workspace/db";
 import type { ScenarioPosition } from "@workspace/scenario-math";
 import { getPythonBin, agentDir } from "../lib/runner";
-import { isActivePosition } from "../lib/portfolio-math";
+import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -73,12 +73,54 @@ export async function buildScenarioPositions(userId: number): Promise<ScenarioPo
     .from(portfolioPositionsTable)
     .where(eq(portfolioPositionsTable.userId, userId));
 
+  const nonEtf = rows.filter((p) => !p.isEtf);
+  if (!nonEtf.length) return [];
+
+  // Ativo/vendido é decidido pelos lotes reais (portfolio_purchases), não
+  // pelo campo `quantity` armazenado -- ver isPositionActiveFromLots. Sem
+  // isso, uma posição com todos os lotes vendidos mas `quantity`
+  // desatualizado (PUT /portfolio/:id edita esse campo direto, sem
+  // recalcular a partir dos lotes) ficava presa no Painel de Cenários pra
+  // sempre (visto em produção com MU).
+  const lots = await db
+    .select({
+      positionId: portfolioPurchasesTable.positionId,
+      amount: portfolioPurchasesTable.amount,
+      purchasePrice: portfolioPurchasesTable.purchasePrice,
+      saleDate: portfolioPurchasesTable.saleDate,
+      salePrice: portfolioPurchasesTable.salePrice,
+    })
+    .from(portfolioPurchasesTable)
+    .where(inArray(portfolioPurchasesTable.positionId, nonEtf.map((p) => p.id)));
+  const lotsByPosition = new Map<number, typeof lots>();
+  for (const lot of lots) {
+    const list = lotsByPosition.get(lot.positionId) ?? [];
+    list.push(lot);
+    lotsByPosition.set(lot.positionId, list);
+  }
+
   // Só posições ativas (ainda possuídas) e não-ETF -- ETFs de caixa (ex.:
   // SGOV) não têm volatilidade/beta setorial que faça sentido no modelo.
-  const active = rows.filter((p) => !p.isEtf && isActivePosition(p.quantity));
+  // `derived` traz quantity/investedAmount recalculados dos lotes ABERTOS
+  // (mesma lógica de recomputePosition em routes/portfolio.ts) -- só cai de
+  // volta pro campo armazenado quando a posição não tem NENHUM lote
+  // registrado ainda (ver isPositionActiveFromLots).
+  const active = nonEtf
+    .map((p) => {
+      const positionLots = lotsByPosition.get(p.id) ?? [];
+      const open = positionLots.filter((l) => !(l.saleDate && l.salePrice));
+      const derived = positionLots.length > 0
+        ? computeOpenLotTotals(open.map((l) => ({
+            amount: Number(l.amount),
+            purchasePrice: l.purchasePrice != null ? Number(l.purchasePrice) : null,
+          })))
+        : { quantity: Number(p.quantity), avgCost: 0, investedAmount: Number(p.investedAmount) };
+      return { p, derived };
+    })
+    .filter(({ p, derived }) => isPositionActiveFromLots(derived.quantity, lotsByPosition.get(p.id) ?? []));
   if (!active.length) return [];
 
-  const tickers = [...new Set(active.map((p) => p.ticker))];
+  const tickers = [...new Set(active.map(({ p }) => p.ticker))];
 
   const [paramsRows, perfOut, earnOut, reactionOut] = await Promise.all([
     db.select().from(scenarioParamsTable).where(inArray(scenarioParamsTable.ticker, tickers)),
@@ -111,11 +153,11 @@ export async function buildScenarioPositions(userId: number): Promise<ScenarioPo
   const earningsMap = new Map(earnings.map((e) => [e.ticker, e]));
   const reactionMap = new Map(reactions.map((r) => [r.ticker, r]));
 
-  return active.map((p) => {
-    // Driver pg devolve `numeric` como string -- Number() antes de entrar
-    // no modelo, senão a matriz de covariância vira NaN silenciosamente.
-    const qty = Number(p.quantity);
-    const cost = Number(p.investedAmount);
+  return active.map(({ p, derived }) => {
+    // qty/cost já vêm recalculados dos lotes abertos (ver `derived` acima) --
+    // Number() só continua necessário pro que ainda lê direto de p.
+    const qty = derived.quantity;
+    const cost = derived.investedAmount;
     const price = prices[p.ticker]?.price;
     const value = price != null ? Math.round(qty * price * 100) / 100 : cost;
 
