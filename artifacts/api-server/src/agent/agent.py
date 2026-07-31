@@ -507,9 +507,23 @@ _VEREDITO_TOOL_NAMES = {
 VEREDITO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _VEREDITO_TOOL_NAMES]
 
 
-def _system_stable_portfolio(tickers: list[str]) -> str:
-    return f"""Você é um analista de ações fazendo uma análise RÁPIDA focada na carteira.
-Ativos da carteira: {", ".join(tickers)}.
+# run_portfolio() e' compartilhada pelos modos "portfolio" (carteira real do
+# usuario), "coal" (cesta fixa HCC/AMR/ARCH/CEIX/BTU) e "ai" (cesta fixa
+# NVDA/ARM/GOOGL/META/MSFT/AMD/PLTR/SMCI) -- sem essa tabela, o prompt e o
+# titulo do relatorio final diziam "Carteira" mesmo pras cestas setoriais
+# fixas, que nao sao os ativos que o usuario de fato tem (e o e-mail sai com
+# esse mesmo titulo errado, ver runner.ts::sendReportEmail).
+_PORTFOLIO_MODE_TEXT = {
+    "portfolio": {"focus": "carteira", "assets": "Ativos da carteira", "title": "Carteira"},
+    "coal":      {"focus": "cesta do setor de carvão", "assets": "Ativos da cesta de carvão", "title": "Setor Carvão"},
+    "ai":        {"focus": "cesta do setor de IA", "assets": "Ativos da cesta de IA", "title": "Setor IA"},
+}
+
+
+def _system_stable_portfolio(tickers: list[str], mode: str = "portfolio") -> str:
+    cfg = _PORTFOLIO_MODE_TEXT.get(mode, _PORTFOLIO_MODE_TEXT["portfolio"])
+    return f"""Você é um analista de ações fazendo uma análise RÁPIDA focada na {cfg['focus']}.
+{cfg['assets']}: {", ".join(tickers)}.
 
 **Fluxo obrigatório — siga EXATAMENTE esta sequência sem pular etapas:**
 1. get_fear_greed_index — sentimento macro
@@ -538,7 +552,7 @@ Se você pular o passo 9, a análise é considerada incompleta e inválida.
   get_options_data, get_earnings_calendar, list_alerts, create_alert, delete_alert.
 
 **Formato do relatório final (escreva APÓS salvar todas as observações):**
-## ⚡ Carteira — Análise Rápida {{data}}
+## ⚡ {cfg['title']} — Análise Rápida {{data}}
 Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análise."""
 
 
@@ -803,12 +817,13 @@ def run(progress_callback=None) -> str:
     )
 
 
-def run_portfolio(progress_callback=None) -> str:
+def run_portfolio(progress_callback=None, mode: str = "portfolio") -> str:
     env_tickers = os.environ.get("AGENT_PORTFOLIO_TICKERS", "")
     tickers = [tk.strip().upper() for tk in env_tickers.split(",") if tk.strip()] or config.PORTFOLIO_TICKERS
     client = _get_client()
     today = _today_brt_str()
-    system = _system_stable_portfolio(tickers).replace("{data}", today) + "\n\n" + _system_volatile()
+    cfg = _PORTFOLIO_MODE_TEXT.get(mode, _PORTFOLIO_MODE_TEXT["portfolio"])
+    system = _system_stable_portfolio(tickers, mode).replace("{data}", today) + "\n\n" + _system_volatile()
     # Allow more turns and tokens for larger ticker sets (coal=5, ai=8)
     n = len(tickers)
     max_turns = max(20, n * 4)
@@ -818,11 +833,11 @@ def run_portfolio(progress_callback=None) -> str:
         model=client.models["flash"],
         system=system,
         tools=PORTFOLIO_TOOLS,
-        messages=[{"role": "user", "content": "Faça a análise rápida da carteira agora."}],
+        messages=[{"role": "user", "content": f"Faça a análise rápida da {cfg['focus']} agora."}],
         max_turns=max_turns,
         max_tokens=max_tokens,
         progress_callback=progress_callback,
-        step_prefix="[Carteira] ",
+        step_prefix=f"[{cfg['title']}] ",
         require_observations=True,
         min_observations=n,
         deadline_ts=config.SOFT_DEADLINE_TS,
