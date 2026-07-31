@@ -11,9 +11,9 @@
 import { spawn } from "child_process";
 import path from "path";
 import { and, eq, gte } from "drizzle-orm";
-import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFiringsTable, type Alert } from "@workspace/db";
+import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFiringsTable, squeezeAlertFiringsTable, type Alert } from "@workspace/db";
 import { agentDir, getPythonBin, state as agentState } from "./runner";
-import { sendAlertEmail, sendBounceAlertEmail } from "./mailer";
+import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
@@ -385,6 +385,111 @@ async function checkBounceAlerts(): Promise<void> {
   }
 }
 
+interface SqueezeAlert {
+  ticker: string;
+  price: number;
+  tier: "near" | "confirmed";
+  riskLevel: string;
+  nDangerous: number;
+  riskMissing: number;
+  presentRiskSignals: string[];
+  missingRiskSignals: string[];
+  confirmCount: number;
+  confirmMissing: number;
+  presentConfirmSignals: string[];
+  missingConfirmSignals: string[];
+  totalMissing: number;
+}
+
+// get_squeeze_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
+// pacote) -- mesmo motivo de fetchIntradaySpikes/fetchBounceAlerts acima.
+function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
+  return new Promise((resolve, reject) => {
+    const py = spawn(getPythonBin(), ["-m", "agent.get_squeeze_alerts"], {
+      cwd: agentDir,
+      env: { ...process.env, PYTHONPATH: agentDir },
+    });
+    py.stdin.write(JSON.stringify({ tickers }));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    // check_squeeze_setup faz várias chamadas de rede por ticker (yfinance,
+    // iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por
+    // 30min, o primeiro poll depois de um restart pode ser lento com a
+    // watchlist inteira. Timeout mais generoso que os demais checkers.
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 120_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) { reject(new Error(err || "get_squeeze_alerts: script failed")); return; }
+      try {
+        const parsed = JSON.parse(out) as { alerts?: SqueezeAlert[] };
+        resolve(parsed.alerts ?? []);
+      } catch { reject(new Error(`Bad JSON: ${out}`)); }
+    });
+  });
+}
+
+// Notifica por e-mail o progresso de um setup de squeeze (tools.py::
+// check_squeeze_setup) em dois níveis: "near" (falta só 1-2 dos 4
+// requisitos -- risco de squeeze alto exige 2+ sinais perigosos, reversão
+// técnica exige 2+ confirmações -- lista o que ainda falta) e "confirmed"
+// (os 4 batidos). Dedup por (ticker, tier, dia BRT): evita reenviar e-mail
+// a cada poll de 5min enquanto o nível não muda, mas dispara de novo assim
+// que "near" vira "confirmed" (chave diferente) mesmo no mesmo dia.
+async function checkSqueezeAlerts(): Promise<void> {
+  if (agentState.running) {
+    logger.info("Squeeze alert checker: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
+  const settings = await getOrCreateSettings();
+  if (!settings.tickers.length) return;
+
+  let alerts: SqueezeAlert[] = [];
+  try {
+    alerts = await fetchSqueezeAlerts(settings.tickers);
+  } catch (err) {
+    logger.warn({ err }, "Squeeze alert checker: failed to fetch squeeze alerts");
+    return;
+  }
+  if (!alerts.length) return;
+
+  const today = todayBRTDateString();
+
+  for (const a of alerts) {
+    const key = `squeeze:${a.ticker}:${a.tier}:${today}`;
+
+    const already = await db
+      .select({ id: squeezeAlertFiringsTable.id })
+      .from(squeezeAlertFiringsTable)
+      .where(eq(squeezeAlertFiringsTable.alertKey, key))
+      .limit(1);
+    if (already.length) continue;
+
+    try {
+      await sendSqueezeAlertEmail({
+        to: settings.notifyEmail,
+        ticker: a.ticker,
+        tier: a.tier,
+        price: a.price,
+        totalMissing: a.totalMissing,
+        nDangerous: a.nDangerous,
+        presentRiskSignals: a.presentRiskSignals,
+        missingRiskSignals: a.missingRiskSignals,
+        confirmCount: a.confirmCount,
+        presentConfirmSignals: a.presentConfirmSignals,
+        missingConfirmSignals: a.missingConfirmSignals,
+      });
+      await db.insert(squeezeAlertFiringsTable).values({ alertKey: key });
+      logger.info({ ticker: a.ticker, tier: a.tier }, "Squeeze alert fired");
+    } catch (err) {
+      logger.error({ err, ticker: a.ticker }, "Failed to send squeeze alert email");
+    }
+  }
+}
+
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 export function startAlertChecker(): void {
@@ -394,12 +499,14 @@ export function startAlertChecker(): void {
     checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
     checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
     checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
+    checkSqueezeAlerts().catch((e) => logger.error({ e }, "Squeeze alert check error"));
   }, 30_000);
   // Then every 5 min
   intervalHandle = setInterval(() => {
     checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
     checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
     checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
+    checkSqueezeAlerts().catch((e) => logger.error({ e }, "Squeeze alert check error"));
   }, CHECK_INTERVAL_MS);
   logger.info("Price alert checker started (interval: 5 min)");
 }

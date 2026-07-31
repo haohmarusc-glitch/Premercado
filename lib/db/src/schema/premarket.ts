@@ -390,6 +390,24 @@ export const bounceAlertFiringsTable = pgTable("bounce_alert_firings", {
 ]);
 export type BounceAlertFiring = typeof bounceAlertFiringsTable.$inferSelect;
 
+// Dedup de e-mails do alerta de "setup de squeeze" (risco de short squeeze +
+// reversão técnica, ver tools.py::check_squeeze_setup), disparado em
+// background por alert-checker.ts via agent/get_squeeze_alerts.py -- dois
+// níveis: "near" (falta só 1-2 dos 4 requisitos, avisa o que falta) e
+// "confirmed" (squeeze_setup_detected=true). Chave por (ticker, tier, dia
+// BRT): evita reenviar e-mail a cada poll de 5min enquanto o nível não
+// muda, mas dispara de novo assim que "near" vira "confirmed" (chave
+// diferente) mesmo no mesmo dia. Mesmo padrão de bounce_alert_firings --
+// sem propósito de exibição, só idempotência.
+export const squeezeAlertFiringsTable = pgTable("squeeze_alert_firings", {
+  id: serial("id").primaryKey(),
+  alertKey: text("alert_key").notNull().unique(),
+  firedAt: timestamp("fired_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_squeeze_alert_firings_key").on(t.alertKey),
+]);
+export type SqueezeAlertFiring = typeof squeezeAlertFiringsTable.$inferSelect;
+
 // Itens de um plano de saída de carteira: cada linha é "vender TICKER até
 // targetDate, motivo X", opcionalmente amarrado a um evento (earnings) que
 // justifica o prazo. Gerado manualmente (por análise no chat) ou por uma

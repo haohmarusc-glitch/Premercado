@@ -187,6 +187,89 @@ export async function sendBounceAlertEmail(opts: {
   }
 }
 
+// Uma linha de requisito da seção de squeeze/reversão -- ✓ (batido) ou
+// — (faltando), mesmo estilo visual dos dois grupos.
+function _reqList(items: string[], hit: boolean): string {
+  if (!items.length) return "";
+  const mark = hit ? `<span style="color:#22c55e">✓</span>` : `<span style="color:#5A7679">—</span>`;
+  return items.map((label) => `<div style="margin:3px 0;padding-left:4px">${mark} ${label}</div>`).join("");
+}
+
+export async function sendSqueezeAlertEmail(opts: {
+  to: string | null;
+  ticker: string;
+  tier: "near" | "confirmed"; // "near" = falta 1-2 dos 4 requisitos | "confirmed" = squeeze_setup_detected
+  price: number | string;
+  totalMissing: number; // 0 quando confirmed
+  nDangerous: number; // sinais de risco perigosos batidos (de 4, precisa 2+)
+  presentRiskSignals: string[];
+  missingRiskSignals: string[];
+  confirmCount: number; // confirmações de reversão batidas (de 4, precisa 2+)
+  presentConfirmSignals: string[]; // já vêm com descrição pronta de check_squeeze_setup (ex.: "candle Martelo (2026-07-20)")
+  missingConfirmSignals: string[];
+}): Promise<void> {
+  const to = opts.to?.trim();
+  if (!to) { logger.warn({ ticker: opts.ticker }, "No notify email on record — skipping squeeze alert"); return; }
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) { logger.warn("SMTP not configured"); return; }
+
+  const price = toNum(opts.price);
+  const isConfirmed = opts.tier === "confirmed";
+  const priceStr = price != null ? `$${price.toFixed(2)}` : "N/A";
+
+  const subject = isConfirmed
+    ? `🎯 ${opts.ticker}: setup de squeeze confirmado`
+    : `👀 ${opts.ticker}: quase lá -- falta ${opts.totalMissing} requisito${opts.totalMissing === 1 ? "" : "s"} pro squeeze`;
+
+  const headline = isConfirmed
+    ? "Squeeze confirmado"
+    : `Faltam ${opts.totalMissing} requisito${opts.totalMissing === 1 ? "" : "s"}`;
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
+  .ticker{font-size:32px;font-weight:bold;color:#ff8c00}
+  .headline{font-size:20px;font-weight:bold;color:${isConfirmed ? "#22c55e" : "#E3A63C"}}
+  .box{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:16px;margin:16px 0}
+  .section-title{font-size:11px;color:#84A0A0;text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px}
+  .footer{margin-top:32px;font-size:11px;color:#555}
+</style></head>
+<body>
+<p style="color:#555;font-size:12px;text-transform:uppercase;">Alerta de Squeeze — Pré-Mercado Agente</p>
+<div class="box">
+  <div class="ticker">${opts.ticker}</div>
+  <div class="headline">${headline}</div>
+  <p style="margin:8px 0;color:#aaa">Preço atual: <strong style="color:#fff">${priceStr}</strong></p>
+
+  <div style="margin-top:16px">
+    <p class="section-title">Risco de squeeze (${opts.nDangerous}/4 sinais, precisa 2+)</p>
+    ${_reqList(opts.presentRiskSignals, true)}
+    ${_reqList(opts.missingRiskSignals, false)}
+  </div>
+
+  <div style="margin-top:16px">
+    <p class="section-title">Reversão técnica (${opts.confirmCount}/4 confirmações, precisa 2+)</p>
+    ${_reqList(opts.presentConfirmSignals, true)}
+    ${_reqList(opts.missingConfirmSignals, false)}
+  </div>
+</div>
+<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Sinal técnico preliminar -- cruzar com notícias antes de tratar como confirmação. Não é recomendação de investimento.</div>
+</body></html>`;
+
+  try {
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: `"Pré-Mercado Agente" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    logger.info({ to, subject, tier: opts.tier }, "Squeeze alert e-mail sent");
+  } catch (err) {
+    logger.error({ err }, "Failed to send squeeze alert e-mail");
+  }
+}
+
 export async function sendPortfolioHoldingEmail(opts: {
   to: string | null;
   ticker: string;
