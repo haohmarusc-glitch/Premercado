@@ -5,12 +5,12 @@
 import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
-import { asc, eq, gte } from "drizzle-orm";
-import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable } from "@workspace/db";
+import { asc, eq, inArray, gte } from "drizzle-orm";
+import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
-import { isActivePosition } from "./portfolio-math";
+import { isPositionActiveFromLots } from "./portfolio-math";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -71,18 +71,31 @@ async function getEffectiveAgentProvider(): Promise<string | undefined> {
 async function getPortfolioTickers(userId: number): Promise<string[]> {
   try {
     const rows = await db
-      .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
+      .select({ id: portfolioPositionsTable.id, ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
       .from(portfolioPositionsTable)
       .where(eq(portfolioPositionsTable.userId, userId))
       .orderBy(asc(portfolioPositionsTable.createdAt));
-    // ETFs (ex.: SGOV) ficam de fora da análise de carteira -- são
-    // instrumentos de caixa, sem notícia/sentimento pra analisar como uma
-    // ação real, e o fluxo (news, technicals, candle patterns, etc.) não faz
-    // sentido pra eles. Posições totalmente vendidas (quantity = 0 -- ver
-    // recomputePosition em routes/portfolio.ts) também ficam de fora: a
-    // linha continua no banco só pra preservar o histórico de compra/venda
-    // exibido na Carteira, não representa mais um ativo realmente possuído.
-    const stocks = rows.filter((r) => !r.isEtf && isActivePosition(r.quantity));
+
+    const nonEtf = rows.filter((r) => !r.isEtf);
+    if (!nonEtf.length) return [];
+
+    // Ativo/vendido é decidido pelos lotes reais (portfolio_purchases), não
+    // pelo campo `quantity` armazenado -- ver isPositionActiveFromLots.
+    // Sem isso, uma posição com todos os lotes vendidos mas `quantity`
+    // desatualizado (PUT /portfolio/:id edita esse campo direto) entrava na
+    // análise de carteira do agente pra sempre (visto em produção com MU).
+    const lots = await db
+      .select({ positionId: portfolioPurchasesTable.positionId, saleDate: portfolioPurchasesTable.saleDate, salePrice: portfolioPurchasesTable.salePrice })
+      .from(portfolioPurchasesTable)
+      .where(inArray(portfolioPurchasesTable.positionId, nonEtf.map((r) => r.id)));
+    const lotsByPosition = new Map<number, typeof lots>();
+    for (const lot of lots) {
+      const list = lotsByPosition.get(lot.positionId) ?? [];
+      list.push(lot);
+      lotsByPosition.set(lot.positionId, list);
+    }
+
+    const stocks = nonEtf.filter((r) => isPositionActiveFromLots(r.quantity, lotsByPosition.get(r.id) ?? []));
     return stocks.map((r) => r.ticker);
   } catch (err) {
     logger.error({ err, userId }, "Failed to read portfolio tickers for user");

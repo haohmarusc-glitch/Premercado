@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeOpenLotTotals, isActivePosition } from "../portfolio-math";
+import { computeOpenLotTotals, isActivePosition, isPositionActiveFromLots } from "../portfolio-math";
 
 describe("computeOpenLotTotals", () => {
   it("returns zeroed totals for no open lots", () => {
@@ -69,5 +69,42 @@ describe("isActivePosition", () => {
 
   it("accepts string quantities from the pg numeric column", () => {
     expect(isActivePosition("2.5")).toBe(true);
+  });
+});
+
+describe("isPositionActiveFromLots", () => {
+  it("treats a position as inactive when every lot is sold, regardless of stale stored quantity", () => {
+    // Regression test: MU apareceu no Painel de Cenários com os 2 lotes já
+    // vendidos porque a posição tinha um `quantity` armazenado desatualizado
+    // (PUT /portfolio/:id permite editar esse campo direto). Os lotes reais
+    // são a fonte de verdade -- devem vencer o campo travado.
+    const lots = [
+      { saleDate: "2026-06-18", salePrice: 1133.99 },
+      { saleDate: "2026-06-18", salePrice: 1133.99 },
+    ];
+    expect(isPositionActiveFromLots(5, lots)).toBe(false);
+  });
+
+  it("treats a position as active when at least one lot is still open", () => {
+    const lots = [
+      { saleDate: "2026-06-18", salePrice: 1133.99 }, // vendido
+      { saleDate: null, salePrice: null },            // ainda em aberto
+    ];
+    expect(isPositionActiveFromLots(0, lots)).toBe(true);
+  });
+
+  it("treats a lot with only saleDate or only salePrice set as still open", () => {
+    // recomputePosition/routes/portfolio.ts só considera um lote fechado
+    // quando os dois campos estão preenchidos -- mesma regra aqui.
+    const lots = [{ saleDate: "2026-06-18", salePrice: null }];
+    expect(isPositionActiveFromLots(0, lots)).toBe(true);
+  });
+
+  it("falls back to the stored quantity when the position has no purchase lots at all", () => {
+    // Caso raro: falha ao criar o primeiro lote junto com a posição (ver
+    // PositionDialog no frontend) -- sem nenhum lote pra consultar, a única
+    // fonte de verdade disponível é o campo armazenado.
+    expect(isPositionActiveFromLots(3, [])).toBe(true);
+    expect(isPositionActiveFromLots(0, [])).toBe(false);
   });
 });
