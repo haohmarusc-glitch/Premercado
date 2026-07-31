@@ -317,17 +317,4 @@ export async function ensureSchema(): Promise<void> {
     logger.error({ err }, "Failed to ensure schema (squeeze_alert_firings table)");
   }
 
-  // Backfill one-time: atribui user_id = 1 aos relatórios veredito gerados em
-  // 30/07/2026 que ficaram sem dono por terem sido criados antes do campo existir.
-  try {
-    await db.execute(sql`
-      UPDATE reports
-      SET user_id = 1
-      WHERE id IN (177, 178, 179, 180, 181, 183)
-        AND user_id IS NULL
-    `);
-    logger.info("Schema check ok (reports backfill user_id for ids 177-183)");
-  } catch (err) {
-    logger.error({ err }, "Failed to backfill reports user_id");
-  }
 }
