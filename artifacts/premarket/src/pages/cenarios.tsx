@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useGetNews, getGetNewsQueryKey,
@@ -66,11 +66,35 @@ async function fetchScenarioPositions(): Promise<Posicao[]> {
   return r.json();
 }
 
+interface SectorMomentum {
+  benchmark: string;
+  momentumAnnualPct: number;
+  lookbackDays: number;
+  updatedAt: string;
+}
+
+async function fetchSectorMomentum(): Promise<SectorMomentum | null> {
+  const r = await fetch("/api/scenarios/sector-momentum", { credentials: "include" });
+  if (!r.ok) throw new Error("Failed to load sector momentum");
+  return r.json();
+}
+
 export default function PainelCenarios() {
   const { data: posicoes, isLoading, isError } = useQuery({
     queryKey: ["scenario-positions"],
     queryFn: fetchScenarioPositions,
     staleTime: 5 * 60_000, // ferramenta de cenário, não precisa ser tão ao vivo quanto cotação
+  });
+
+  // Sugestão pro slider "Movimento do setor" -- momentum do benchmark (SMH)
+  // recalculado 1x/dia no backend, escalado aqui pelos dias restantes até a
+  // data-alvo (recalculado a cada render, via diasAteAlvo). Como os dias
+  // restantes encolhem sozinhos conforme o tempo passa, a sugestão também
+  // encolhe sozinha dia após dia, sem precisar de nenhum cron adicional.
+  const { data: sectorMomentum } = useQuery({
+    queryKey: ["sector-momentum"],
+    queryFn: fetchSectorMomentum,
+    staleTime: 60 * 60_000, // atualiza só 1x/dia no backend, não vale ficar refazendo fetch
   });
 
   const [dataAlvoStr, setDataAlvoStr] = useState(DEFAULT_DATA_ALVO);
@@ -112,6 +136,11 @@ export default function PainelCenarios() {
 
   const dataAlvo = useMemo(() => new Date(dataAlvoStr + "T00:00:00"), [dataAlvoStr]);
   const dias = diasAteAlvo(dataAlvo);
+
+  // Extrapolação simples (momentum × fração do ano até a data-alvo) -- é uma
+  // sugestão, não previsão. O usuário sempre pode ignorar e arrastar o
+  // slider pra outro valor.
+  const sugestaoSetor = sectorMomentum ? Math.round(sectorMomentum.momentumAnnualPct * (dias / 365)) : null;
 
   const lista = posicoes ?? [];
   const tickersAtivos = useMemo(() => lista.map((p) => p.t).join(","), [lista]);
@@ -306,7 +335,27 @@ export default function PainelCenarios() {
           val={pct(setor, 0)}
           min={-40} max={40} step={1} value={setor}
           onChange={setSetor}
-          nota="Cada posição move β × este valor"
+          nota={
+            <span>
+              Cada posição move β × este valor
+              {sugestaoSetor !== null && sectorMomentum && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    onClick={() => setSetor(Math.max(-40, Math.min(40, sugestaoSetor)))}
+                    style={{
+                      background: "none", border: "none", padding: 0, cursor: "pointer",
+                      color: C.channel, font: "inherit", textDecoration: "underline",
+                    }}
+                    title={`Momentum do ${sectorMomentum.benchmark} nos últimos ${sectorMomentum.lookbackDays} pregões, anualizado e escalado pros ${dias} dias até a data-alvo. Extrapolação, não previsão.`}
+                  >
+                    sugestão: {pct(sugestaoSetor, 0)} ({sectorMomentum.benchmark}, {sectorMomentum.lookbackDays}d)
+                  </button>
+                </>
+              )}
+            </span>
+          }
         />
         <Slider
           rot="Volatilidade"
@@ -505,7 +554,7 @@ function Selo({ rot, val, cor }: { rot: string; val: string; cor: string }) {
 
 function Slider({ rot, val, min, max, step, value, onChange, nota }: {
   rot: string; val: string; min: number; max: number; step: number;
-  value: number; onChange: (v: number) => void; nota: string;
+  value: number; onChange: (v: number) => void; nota: ReactNode;
 }) {
   return (
     <div style={{ marginBottom: 14 }}>
