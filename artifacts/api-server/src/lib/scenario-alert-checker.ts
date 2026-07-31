@@ -27,14 +27,11 @@ import { computeScenarioMetrics, cicloBateu } from "@workspace/scenario-math";
 import { buildScenarioPositions } from "../routes/scenarios";
 import { sendScenarioAlertEmail } from "./mailer";
 import { state as agentState } from "./runner";
+import { todayBRTDateString } from "./timezone";
 import { logger } from "./logger";
 
 const CHECK_INTERVAL_MS = 60 * 60_000; // 1h
 const COOLDOWN_MS = 24 * 60 * 60_000; // 24h
-
-function hojeISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 type ScenarioAlertRow = typeof scenarioAlertSettingsTable.$inferSelect;
 
@@ -43,7 +40,11 @@ type ScenarioAlertRow = typeof scenarioAlertSettingsTable.$inferSelect;
 // quanto pelo disparo manual de um usuário só (checkScenarioAlertsForUser,
 // usado pelo botão "Gerar agora" do Termômetro de confirmação).
 async function checkScenarioAlertForRow(row: ScenarioAlertRow): Promise<void> {
-  const hoje = hojeISO();
+  // Data de "hoje" em BRT, nao no fuso do processo (UTC nos containers) --
+  // sem isso, um snapshot/resolucao gerado na janela BRT 21h-23h59 (=UTC
+  // 00h-02h59 do dia seguinte) ficava marcado com o dia de amanha, o mesmo
+  // bug ja corrigido no agente Python (ver timezone.ts).
+  const hoje = todayBRTDateString();
 
   const [resolucaoExistente] = await db
     .select({ id: scenarioResolutionsTable.id })
