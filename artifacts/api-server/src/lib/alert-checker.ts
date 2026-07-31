@@ -398,6 +398,9 @@ interface SqueezeAlert {
   confirmMissing: number;
   presentConfirmSignals: string[];
   missingConfirmSignals: string[];
+  excludedEarningsReactionSignals: string[];
+  earningsImminent: boolean;
+  missingEventSignals: string[];
   totalMissing: number;
 }
 
@@ -481,6 +484,9 @@ async function checkSqueezeAlerts(): Promise<void> {
         confirmCount: a.confirmCount,
         presentConfirmSignals: a.presentConfirmSignals,
         missingConfirmSignals: a.missingConfirmSignals,
+        excludedEarningsReactionSignals: a.excludedEarningsReactionSignals,
+        earningsImminent: a.earningsImminent,
+        missingEventSignals: a.missingEventSignals,
       });
       await db.insert(squeezeAlertFiringsTable).values({ alertKey: key });
       logger.info({ ticker: a.ticker, tier: a.tier }, "Squeeze alert fired");

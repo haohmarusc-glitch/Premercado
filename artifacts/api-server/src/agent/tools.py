@@ -1083,6 +1083,7 @@ _BUYING_PRESSURE_CLOSE_POS = 0.5  # candle de "volume no fundo" só conta se fec
 _BREAKOUT_LOOKBACK_DAYS = 20
 _BREAKOUT_VOLUME_MULT = 3.0
 _DIVERGENCE_LOOKBACK_DAYS = 40
+_SQUEEZE_EARNINGS_IMMINENT_DAYS = 14  # mesmo threshold de "imminent" de get_earnings_calendar
 _IBORROWDESK_HEADERS = {"User-Agent": "Mozilla/5.0"}  # sem UA de navegador, o site devolve 403
 
 
@@ -1171,6 +1172,55 @@ def _fetch_short_volume_ratio(ticker: str) -> tuple[float | None, str]:
                 return ratio, f"Fonte: FINRA Reg SHO, pregão de {day.isoformat()} (grátis, sem API key)."
         return None, f"FINRA Reg SHO: ticker não encontrado no arquivo de {day.isoformat()}."
     return None, "FINRA Reg SHO: nenhum arquivo publicado nos últimos 7 dias corridos."
+
+
+def _fetch_earnings_window(t) -> tuple[dict, str]:
+    """Data do último earnings passado e do próximo earnings futuro, via
+    yfinance (t.get_earnings_dates) -- reaproveita o objeto yf.Ticker já
+    criado em check_squeeze_setup, sem chamada de rede extra separada.
+    Fail-open: qualquer falha devolve os campos como None/False com nota
+    explicando o motivo, sem derrubar o resto do detector (mesmo padrão dos
+    outros _fetch_* acima).
+
+    'last_earnings_date' alimenta o filtro de reação a earnings: uma
+    confirmação técnica cujo candle caiu no dia do anúncio ou no pregão
+    seguinte (reação AMC) não deveria contar como sinal orgânico de
+    squeeze/reversão -- é reação ao resultado, não short-covering.
+    'earnings_imminent' (0-14 dias, mesmo threshold de "imminent" de
+    get_earnings_calendar) alimenta o gate de squeeze_setup_detected: um
+    resultado iminente pode gapear o papel pra qualquer lado antes do
+    squeeze técnico se confirmar."""
+    empty = {
+        "next_earnings_date": None,
+        "days_until_earnings": None,
+        "earnings_imminent": False,
+        "last_earnings_date": None,
+    }
+    try:
+        dates = t.get_earnings_dates(limit=8)
+    except Exception as e:
+        return empty, f"yfinance sem earnings dates pra este ticker ({e})."
+    if dates is None or dates.empty:
+        return empty, "yfinance sem histórico de earnings dates disponível (ticker muito novo?)."
+
+    today = datetime.date.today()
+    all_dates = sorted(ts.date() for ts in dates.index)
+    future = [d for d in all_dates if d >= today]
+    past = [d for d in all_dates if d < today]
+    next_date = future[0] if future else None
+    last_date = past[-1] if past else None
+    days_until = (next_date - today).days if next_date else None
+    return (
+        {
+            "next_earnings_date": next_date.isoformat() if next_date else None,
+            "days_until_earnings": days_until,
+            "earnings_imminent": bool(
+                days_until is not None and 0 <= days_until <= _SQUEEZE_EARNINGS_IMMINENT_DAYS
+            ),
+            "last_earnings_date": last_date.isoformat() if last_date else None,
+        },
+        "Fonte: yfinance (get_earnings_dates).",
+    )
 
 
 def _local_minima_idx(values, order: int = 3) -> list[int]:
@@ -1274,6 +1324,17 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
       UNUSUAL_WHALES_API_KEY configurada; sem a chave, 'dark_pool_activity'
       vem None e 'dark_pool_note' explica o motivo (fail-open, não derruba
       o resto do detector).
+
+    Earnings (via yfinance get_earnings_dates -- ver 'earnings'):
+    - filtro de reação a earnings: um candle bullish/Doji ou "volume no
+      fundo" cuja data cai no dia do anúncio ou no pregão seguinte (reação
+      AMC) não conta como confirmação de reversão -- é reação ao resultado,
+      não short-covering orgânico (ver 'reversal_confirmations_excluded_
+      earnings' pras confirmações descartadas por esse motivo).
+    - pré-anúncio: 'earnings_imminent'=true (earnings em 0-14 dias) nunca
+      deixa 'squeeze_setup_detected' chegar a true, mesmo com risco "alto" e
+      2+ confirmações -- um resultado iminente pode gapear o papel pra
+      qualquer lado antes do squeeze técnico se confirmar de verdade.
     """
     try:
         ticker = sanitize_ticker(ticker)
@@ -1298,6 +1359,23 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         vol_today = float(volume.iloc[-1])
         volume_mult_20d = round(vol_today / vol_avg20, 2) if vol_avg20 else None
         is_illiquid = bool(vol_avg20 is not None and vol_avg20 < _SQUEEZE_ILLIQUID_ADV)
+
+        # ── Earnings (próximo + último passado) ──
+        earnings_window, earnings_note = _fetch_earnings_window(t)
+        # Janela de "reação a earnings" = o pregão do próprio anúncio + o
+        # pregão seguinte (cobre AMC, que só reage no dia seguinte) -- uma
+        # confirmação técnica datada dentro dessa janela é explicada pelo
+        # resultado, não é sinal orgânico de squeeze/reversão (ver uso mais
+        # abaixo, na montagem de 'confirmations').
+        earnings_reaction_dates: set[str] = set()
+        if earnings_window["last_earnings_date"]:
+            idx_dates = [ts.date() for ts in hist.index]
+            last_earn_date = datetime.date.fromisoformat(earnings_window["last_earnings_date"])
+            pos = next((i for i, d in enumerate(idx_dates) if d >= last_earn_date), None)
+            if pos is not None:
+                earnings_reaction_dates.add(idx_dates[pos].isoformat())
+                if pos + 1 < len(idx_dates):
+                    earnings_reaction_dates.add(idx_dates[pos + 1].isoformat())
 
         # ── Risco de squeeze ──
         short_pct = info.get("shortPercentOfFloat")
@@ -1374,15 +1452,37 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         )
 
         # ── Confirmações de reversão técnica (conta quantas bateram) ──
+        # Candle/volume datados dentro de earnings_reaction_dates são reação
+        # ao resultado, não confirmação orgânica -- excluídos daqui e
+        # listados à parte em 'reversal_confirmations_excluded_earnings'.
         confirmations = []
-        if bullish_candle:
+        earnings_reaction_excluded = []
+
+        candle_confirm = bullish_candle or doji_candle
+        if candle_confirm and candle_confirm["date"] in earnings_reaction_dates:
+            label = f"candle {bullish_candle['pattern']}" if bullish_candle else "Doji"
+            earnings_reaction_excluded.append(
+                f"{label} ({candle_confirm['date']}) coincide com reação a earnings "
+                f"({earnings_window['last_earnings_date']}) — não conta como confirmação orgânica"
+            )
+        elif bullish_candle:
             confirmations.append(f"candle {bullish_candle['pattern']} ({bullish_candle['date']})")
         elif doji_candle:
             confirmations.append(f"Doji ({doji_candle['date']}) — indecisão, confirmar próximo candle")
+
         if divergence:
             confirmations.append("divergência bullish RSI")
-        if volume_at_bottom:
+
+        today_str = hist.index[-1].date().isoformat()
+        if volume_at_bottom and today_str in earnings_reaction_dates:
+            earnings_reaction_excluded.append(
+                f"volume {volume_mult_20d:.1f}x a média de 20d perto de um fundo ({today_str}) "
+                f"coincide com reação a earnings ({earnings_window['last_earnings_date']}) — "
+                f"provável reação ao resultado, não short-covering"
+            )
+        elif volume_at_bottom:
             confirmations.append(f"volume {volume_mult_20d:.1f}x a média de 20d perto de um fundo")
+
         if support_touch:
             w = 50 if (support.get("dist_from_low_50d_pct") or 999) <= _SUPPORT_TOUCH_PCT else 200
             confirmations.append(f"toque no suporte de {w} pregões")
@@ -1439,6 +1539,7 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
             },
             "rsi_14": rsi_now,
             "reversal_confirmations": confirmations,
+            "reversal_confirmations_excluded_earnings": earnings_reaction_excluded,
             "reversal_confirmed": len(confirmations) >= 2,
             "divergence": divergence,
             "support": support,
@@ -1450,7 +1551,12 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
                 "dark_pool_activity": dark_pool_activity,
                 "dark_pool_note": dark_pool_note,
             },
-            "squeeze_setup_detected": squeeze_risk_level == "alto" and len(confirmations) >= 2,
+            "earnings": {**earnings_window, "note": earnings_note},
+            "squeeze_setup_detected": (
+                squeeze_risk_level == "alto"
+                and len(confirmations) >= 2
+                and not earnings_window["earnings_imminent"]
+            ),
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}

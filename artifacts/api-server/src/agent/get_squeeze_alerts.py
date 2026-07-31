@@ -5,7 +5,11 @@ em alert-checker.ts, que envia e-mail em dois níveis:
 - "near": falta só 1 ou 2 dos 4 requisitos pro setup completo (2+ sinais de
   risco de squeeze perigosos E 2+ confirmações de reversão técnica) --
   avisa o usuário do que ainda falta, pra ele saber o que acompanhar.
-- "confirmed": squeeze_setup_detected=true (os 4 requisitos batidos).
+- "confirmed": squeeze_setup_detected=true (os 4 requisitos batidos E
+  earnings não iminente -- mesmo gate extra que borrow_fee_cheap: earnings
+  em 0-14 dias nunca deixa o total_missing chegar a 0, mesmo com os 4
+  requisitos técnicos batidos, porque o resultado pode gapear o papel pra
+  qualquer lado antes do squeeze se confirmar de verdade).
 
 Mesmo motivo/padrão de import de get_bounce_alerts.py: roda como
 `python -m agent.get_squeeze_alerts` (import absoluto via pacote) porque
@@ -110,7 +114,22 @@ def _progress_for(ticker: str) -> dict | None:
     confirm_count = len(confirmations)
     confirm_missing = max(0, 2 - confirm_count)
 
-    total_missing = risk_missing + confirm_missing
+    # Earnings iminente (0-14 dias) nunca deixa o setup contar como
+    # "confirmado" (mesmo gate de check_squeeze_setup -- ver
+    # earnings_imminent): um resultado por vir pode gapear o papel pra
+    # qualquer lado antes do squeeze técnico se confirmar de verdade.
+    earnings = result.get("earnings") or {}
+    event_missing = 0
+    missing_event_labels = []
+    if earnings.get("earnings_imminent"):
+        event_missing = 1
+        missing_event_labels.append(
+            f"earnings em {earnings['days_until_earnings']} dia(s) "
+            f"({earnings['next_earnings_date']}) — resultado pode gapear o papel pra "
+            f"qualquer lado antes do squeeze se confirmar"
+        )
+
+    total_missing = risk_missing + confirm_missing + event_missing
     if total_missing == 0:
         tier = "confirmed"
     elif total_missing <= 2:
@@ -131,6 +150,9 @@ def _progress_for(ticker: str) -> dict | None:
         "confirmMissing": confirm_missing,
         "presentConfirmSignals": confirmations,
         "missingConfirmSignals": missing_confirm_labels,
+        "excludedEarningsReactionSignals": result.get("reversal_confirmations_excluded_earnings") or [],
+        "earningsImminent": bool(earnings.get("earnings_imminent")),
+        "missingEventSignals": missing_event_labels,
         "totalMissing": total_missing,
     }
 

@@ -207,6 +207,9 @@ export async function sendSqueezeAlertEmail(opts: {
   confirmCount: number; // confirmações de reversão batidas (de 4, precisa 2+)
   presentConfirmSignals: string[]; // já vêm com descrição pronta de check_squeeze_setup (ex.: "candle Martelo (2026-07-20)")
   missingConfirmSignals: string[];
+  excludedEarningsReactionSignals: string[]; // confirmações descartadas por coincidir com reação a earnings
+  earningsImminent: boolean; // earnings em 0-14 dias -- nunca deixa o tier chegar a "confirmed"
+  missingEventSignals: string[]; // nota sobre o earnings iminente, mesmo formato dos outros "missing"
 }): Promise<void> {
   const to = opts.to?.trim();
   if (!to) { logger.warn({ ticker: opts.ticker }, "No notify email on record — skipping squeeze alert"); return; }
@@ -252,6 +255,16 @@ export async function sendSqueezeAlertEmail(opts: {
     ${_reqList(opts.presentConfirmSignals, true)}
     ${_reqList(opts.missingConfirmSignals, false)}
   </div>
+
+  ${opts.earningsImminent || opts.excludedEarningsReactionSignals.length
+    ? `<div style="margin-top:16px">
+    <p class="section-title">Earnings</p>
+    ${_reqList(opts.missingEventSignals, false)}
+    ${opts.excludedEarningsReactionSignals
+      .map((label) => `<div style="margin:3px 0;padding-left:4px;color:#5A7679">⚠ ${label}</div>`)
+      .join("")}
+  </div>`
+    : ""}
 </div>
 <div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Sinal técnico preliminar -- cruzar com notícias antes de tratar como confirmação. Não é recomendação de investimento.</div>
 </body></html>`;
