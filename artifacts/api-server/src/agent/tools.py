@@ -1064,10 +1064,22 @@ def get_short_interest(ticker: str) -> dict:
 
 _SQUEEZE_SHORT_PCT_DANGER = 20.0  # % do float — mesmo limiar de get_short_interest "alto"
 _SQUEEZE_DTC_DANGER = 5.0  # dias pra cobrir
+_SQUEEZE_DTC_DANGER_ILLIQUID = 8.0  # bar mais alto pra papéis finos -- ver _SQUEEZE_ILLIQUID_ADV
 _SQUEEZE_BORROW_FEE_DANGER = 30.0  # % ao ano
+_SQUEEZE_BORROW_FEE_CHEAP = 5.0  # % ao ano -- abaixo disso, aluguel barato/disponível derruba a
+# tese de squeeze mesmo com short interest alto: sem taxa cara/escassa, nenhum short tem pressa
+# de cobrir (caso real: SMCI em 30/jul/2026 com aluguel a 0,41%/ano e 10M de ações disponíveis
+# pra short, apesar de short_pct_of_float e short_volume_ratio ambos "perigosos" isoladamente).
 _SQUEEZE_SHORT_VOLUME_DANGER = 50.0  # % do volume do pregão vendido a descoberto (FINRA Reg SHO)
+_SQUEEZE_ILLIQUID_ADV = 2_000_000  # ações/dia -- abaixo disso: (a) DTC alto tende a ser estrutural
+# (ADV baixo infla o denominador do days-to-cover, não é sinal de squeeze) e (b) short_volume_ratio
+# vira ruído de internalização/hedge de market maker em papel fino, não convicção direcional real.
 _SUPPORT_TOUCH_PCT = 5.0  # "tocou o suporte" = dentro de 5% da mínima rolante
 _BOTTOM_VOLUME_MULT = 1.5  # 150% da média de 20 dias, pedido explícito do usuário
+_BUYING_PRESSURE_CLOSE_POS = 0.5  # candle de "volume no fundo" só conta se fechou na metade de
+# cima do range do dia -- volume alto perto de uma mínima com fechamento colado na mínima é
+# capitulação/distribuição, não acumulação (o preço nesse caso continua fazendo mínima mais
+# baixa, então é sell-the-news, não fundo -- essa checagem falta hoje e gera falso positivo).
 _BREAKOUT_LOOKBACK_DAYS = 20
 _BREAKOUT_VOLUME_MULT = 3.0
 _DIVERGENCE_LOOKBACK_DAYS = 40
@@ -1214,15 +1226,27 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
     iBorrowDesk, short_volume_ratio via FINRA Reg SHO — todos grátis, sem
     API key; ver 'squeeze_risk_level'):
     - short_pct_of_float >= 20% = perigoso
-    - days_to_cover >= 5 dias = perigoso
+    - days_to_cover >= 5 dias (8 dias se o papel for ilíquido — ver abaixo)
+      = perigoso
     - borrow_fee >= 30% ao ano = perigoso (None se o ticker não é
-      negociado via IBKR ou a fonte estiver fora do ar no momento)
+      negociado via IBKR ou a fonte estiver fora do ar no momento); se
+      borrow_fee < 5% ao ano ("barato/disponível"), o resultado nunca sobe
+      pra "alto" mesmo com 2+ outros sinais perigosos — sem aluguel caro/
+      escasso não existe mecânica de squeeze (shorts sem pressa de cobrir)
     - short_volume_ratio >= 50% do volume do pregão de ontem = perigoso
-      (None se a FINRA ainda não publicou o arquivo do dia) -- diferente do
+      (None se a FINRA ainda não publicou o arquivo do dia; também não
+      conta em papel ilíquido — ver abaixo) -- diferente do
       short_pct_of_float (publicado só de 15 em 15 dias), esse é diário,
       mostra se a pressão vendedora está subindo ou caindo agora
-    - "alto" = 2 ou mais dos sinais disponíveis perigosos; "moderado" = 1;
-      "baixo" = nenhum
+    - "ilíquido" = volume médio de 20 dias < 2M ações/dia -- nesse regime
+      days_to_cover alto tende a ser estrutural (ADV baixo infla o
+      denominador), não sinal de squeeze, e short_volume_ratio vira ruído
+      de internalização/hedge de market maker em vez de convicção
+      direcional -- por isso o threshold de DTC sobe e short_volume_ratio
+      para de contar como perigoso nesse regime
+    - "alto" = 2 ou mais dos sinais disponíveis perigosos E borrow_fee não
+      claramente barato; "moderado" = 1 ou mais sem bater o critério de
+      "alto"; "baixo" = nenhum
 
     Confirmações de reversão técnica (soma em 'reversal_confirmations',
     precisa de pelo menos 2 pra 'reversal_confirmed'=true — 1 sinal
@@ -1231,7 +1255,9 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
       Estrela da Manhã — via detect_candle_patterns) ou Doji (indecisão)
     - divergência bullish RSI (preço faz mínima mais baixa, RSI mais alto)
     - volume >= 150% da média de 20 dias E preço perto (≤5%) de um fundo
-      de 50 dias ("volume de pânico no fundo")
+      de 50 dias E fechamento na metade de cima do range do dia ("volume
+      de pânico no fundo" -- fechar colado na mínima com volume alto é
+      capitulação/distribuição, não acumulação, mesmo perto de um fundo)
     - toque no suporte: preço dentro de 5% da mínima de 50 OU 200 pregões
 
     Catalisador (opcional, só enriquece — não é obrigatório pro alerta):
@@ -1265,6 +1291,14 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         close, volume = hist["Close"], hist["Volume"]
         price = float(close.iloc[-1])
 
+        # ADV (average daily volume) calculado aqui em cima -- usado tanto pro
+        # gate de iliquidez do risco de squeeze abaixo quanto pra confirmação
+        # de "volume no fundo" mais adiante (mesmo cálculo, sem duplicar).
+        vol_avg20 = float(volume.iloc[-21:-1].mean()) if len(volume) >= 21 else None
+        vol_today = float(volume.iloc[-1])
+        volume_mult_20d = round(vol_today / vol_avg20, 2) if vol_avg20 else None
+        is_illiquid = bool(vol_avg20 is not None and vol_avg20 < _SQUEEZE_ILLIQUID_ADV)
+
         # ── Risco de squeeze ──
         short_pct = info.get("shortPercentOfFloat")
         days_to_cover = info.get("shortRatio")
@@ -1272,16 +1306,24 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
         short_volume_ratio, short_volume_note = _fetch_short_volume_ratio(ticker)
         short_pct_num = round(short_pct * 100, 2) if short_pct else None
         short_dangerous = bool(short_pct_num is not None and short_pct_num >= _SQUEEZE_SHORT_PCT_DANGER)
-        dtc_dangerous = bool(days_to_cover is not None and days_to_cover >= _SQUEEZE_DTC_DANGER)
+        dtc_danger_threshold = _SQUEEZE_DTC_DANGER_ILLIQUID if is_illiquid else _SQUEEZE_DTC_DANGER
+        dtc_dangerous = bool(days_to_cover is not None and days_to_cover >= dtc_danger_threshold)
         borrow_fee_dangerous = bool(borrow_fee is not None and borrow_fee >= _SQUEEZE_BORROW_FEE_DANGER)
-        short_volume_dangerous = bool(short_volume_ratio is not None and short_volume_ratio >= _SQUEEZE_SHORT_VOLUME_DANGER)
-        # "alto" exige 2+ sinais perigosos entre os disponíveis -- com só
-        # short_pct/days_to_cover (os demais indisponíveis) isso equivale a
-        # "os dois juntos", igual ao critério original antes do iBorrowDesk.
+        borrow_fee_cheap = bool(borrow_fee is not None and borrow_fee < _SQUEEZE_BORROW_FEE_CHEAP)
+        # Papel fino: short_volume_ratio alto costuma ser internalização/hedge
+        # de market maker, não pressão vendedora direcional -- zera o peso.
+        short_volume_dangerous = bool(
+            short_volume_ratio is not None
+            and short_volume_ratio >= _SQUEEZE_SHORT_VOLUME_DANGER
+            and not is_illiquid
+        )
         n_dangerous = sum((short_dangerous, dtc_dangerous, borrow_fee_dangerous, short_volume_dangerous))
+        # "alto" exige 2+ sinais perigosos E aluguel não claramente barato/
+        # disponível -- sem aluguel caro/escasso não há mecânica de squeeze
+        # real (shorts não têm pressa de cobrir), mesmo com short interest alto.
         squeeze_risk_level = (
-            "alto" if n_dangerous >= 2
-            else "moderado" if n_dangerous == 1
+            "alto" if n_dangerous >= 2 and not borrow_fee_cheap
+            else "moderado" if n_dangerous >= 1
             else "baixo"
         )
 
@@ -1315,14 +1357,20 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
             for w in (50, 200)
         )
 
-        # ── Volume no fundo ──
-        vol_avg20 = float(volume.iloc[-21:-1].mean()) if len(volume) >= 21 else None
-        vol_today = float(volume.iloc[-1])
-        volume_mult_20d = round(vol_today / vol_avg20, 2) if vol_avg20 else None
+        # ── Volume no fundo ── (vol_avg20/volume_mult_20d já calculados lá em
+        # cima, reaproveitados pro gate de iliquidez do risco de squeeze)
         dist_low_50 = support.get("dist_from_low_50d_pct")
+        today_high, today_low = float(hist["High"].iloc[-1]), float(hist["Low"].iloc[-1])
+        close_position = (price - today_low) / (today_high - today_low) if today_high > today_low else None
+        # Volume alto perto de uma mínima só é "acumulação" se o candle fechou
+        # na metade de cima do range do dia (comprador absorvendo a venda) --
+        # fechar colado na mínima com volume alto é capitulação/distribuição
+        # (sell-the-news), o oposto do que essa confirmação deveria significar.
+        buying_pressure = bool(close_position is not None and close_position >= _BUYING_PRESSURE_CLOSE_POS)
         volume_at_bottom = bool(
             volume_mult_20d is not None and volume_mult_20d >= _BOTTOM_VOLUME_MULT
             and dist_low_50 is not None and dist_low_50 <= _SUPPORT_TOUCH_PCT * 2
+            and buying_pressure
         )
 
         # ── Confirmações de reversão técnica (conta quantas bateram) ──
@@ -1370,15 +1418,23 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
             "price": round(price, 2),
             "squeeze_risk": {
                 "level": squeeze_risk_level,
+                "n_dangerous": n_dangerous,
+                "is_illiquid": is_illiquid,
                 "short_pct_of_float": short_pct_num,
                 "short_pct_danger_threshold": _SQUEEZE_SHORT_PCT_DANGER,
+                "short_dangerous": short_dangerous,
                 "days_to_cover": round(days_to_cover, 2) if days_to_cover else None,
-                "days_to_cover_danger_threshold": _SQUEEZE_DTC_DANGER,
+                "days_to_cover_danger_threshold": dtc_danger_threshold,
+                "dtc_dangerous": dtc_dangerous,
                 "borrow_fee": borrow_fee,
                 "borrow_fee_danger_threshold": _SQUEEZE_BORROW_FEE_DANGER,
+                "borrow_fee_dangerous": borrow_fee_dangerous,
+                "borrow_fee_cheap_threshold": _SQUEEZE_BORROW_FEE_CHEAP,
+                "borrow_fee_cheap": borrow_fee_cheap,
                 "borrow_fee_note": borrow_fee_note,
                 "short_volume_ratio": short_volume_ratio,
                 "short_volume_danger_threshold": _SQUEEZE_SHORT_VOLUME_DANGER,
+                "short_volume_dangerous": short_volume_dangerous,
                 "short_volume_note": short_volume_note,
             },
             "rsi_14": rsi_now,
@@ -2549,15 +2605,20 @@ TOOLS = [
             "só faz sentido combinar risco de short squeeze com reversão técnica de fundo — "
             "squeeze sozinho pode continuar caindo, reversão sozinha pode ser só um repique comum. "
             "Risco de squeeze: short_pct_of_float >= 20% (yfinance), days_to_cover >= 5 dias "
-            "(yfinance), borrow_fee >= 30% ao ano (iBorrowDesk, espelha dado público do IBKR, "
-            "grátis — None se o ticker não é negociado via IBKR) e short_volume_ratio >= 50% do "
-            "volume do pregão de ontem (FINRA Reg SHO, grátis, diário — mostra pressão vendedora "
-            "atual, diferente do short_pct_of_float que só atualiza de 15 em 15 dias). "
-            "'alto' = 2+ desses 4 sinais perigosos juntos; 'moderado' = só 1; 'baixo' = nenhum. "
+            "(8 se o papel for ilíquido, ADV<2M) (yfinance), borrow_fee >= 30% ao ano (iBorrowDesk, "
+            "espelha dado público do IBKR, grátis — None se o ticker não é negociado via IBKR) e "
+            "short_volume_ratio >= 50% do volume do pregão de ontem, exceto em papel ilíquido onde "
+            "não conta (FINRA Reg SHO, grátis, diário — mostra pressão vendedora atual, diferente "
+            "do short_pct_of_float que só atualiza de 15 em 15 dias). "
+            "'alto' = 2+ desses 4 sinais perigosos juntos E borrow_fee não claramente barato "
+            "(<5%/ano invalida a tese de squeeze mesmo com outros sinais perigosos, sem aluguel "
+            "caro/escasso não há shorts com pressa de cobrir); 'moderado' = 1+ sem bater 'alto'; "
+            "'baixo' = nenhum. "
             "Confirmações de reversão técnica (precisa de 2+ pra reversal_confirmed=true): candle "
             "bullish (Martelo/Engolfo de Alta/Estrela da Manhã) ou Doji, divergência bullish RSI "
             "(preço faz mínima mais baixa com RSI mais alto), volume >=150% da média de 20d perto "
-            "de um fundo, toque na mínima de 50 ou 200 pregões (suporte real, não média móvel). "
+            "de um fundo E fechando na metade de cima do range do dia (senão é capitulação, não "
+            "acumulação), toque na mínima de 50 ou 200 pregões (suporte real, não média móvel). "
             "Catalisador opcional (não obrigatório pro alerta): rompimento técnico de resistência "
             "com volume 3x, manchete positiva (passe headlines com a lista do ticker dentro do "
             "resultado de get_news), janela de evento "

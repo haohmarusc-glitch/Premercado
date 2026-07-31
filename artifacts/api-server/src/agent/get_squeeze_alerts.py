@@ -29,17 +29,20 @@ from agent import config
 from agent.tools import check_squeeze_setup
 
 # Rótulos legíveis pros 4 sinais de risco de squeeze (mesma ordem/definição
-# de check_squeeze_setup: "alto" exige 2+ perigosos entre esses 4). Cada
-# tupla é (campo do valor, campo do threshold, template do rótulo) -- os
-# nomes dos campos de threshold em squeeze_risk NÃO seguem um padrão único
-# (short_pct_danger_threshold, não short_pct_of_float_danger_threshold;
-# short_volume_danger_threshold, não short_volume_ratio_danger_threshold),
-# por isso o mapeamento é explícito em vez de `f"{campo}_danger_threshold"`.
+# de check_squeeze_setup: "alto" exige 2+ perigosos entre esses 4, com o
+# gate extra de borrow_fee_cheap tratado à parte abaixo). Cada tupla é
+# (campo do "perigoso" já calculado por check_squeeze_setup, campo do
+# threshold, template do rótulo) -- lê o booleano pronto em vez de
+# recalcular `valor >= threshold` aqui (os nomes de campo de threshold em
+# squeeze_risk não seguem um padrão único -- short_pct_danger_threshold,
+# não short_pct_of_float_danger_threshold -- então recalcular local já foi
+# fonte de bug; ler o campo "*_dangerous" que a própria check_squeeze_setup
+# expõe evita duplicar a lógica de gate, incluindo o de iliquidez).
 _RISK_SIGNALS = [
-    ("short_pct_of_float", "short_pct_danger_threshold", "short > {threshold:.0f}% do float"),
-    ("days_to_cover", "days_to_cover_danger_threshold", "days-to-cover >= {threshold:.0f} dias"),
-    ("borrow_fee", "borrow_fee_danger_threshold", "taxa de aluguel >= {threshold:.0f}%/ano"),
-    ("short_volume_ratio", "short_volume_danger_threshold", "volume vendido a descoberto >= {threshold:.0f}% (FINRA)"),
+    ("short_dangerous", "short_pct_danger_threshold", "short > {threshold:.0f}% do float"),
+    ("dtc_dangerous", "days_to_cover_danger_threshold", "days-to-cover >= {threshold:.0f} dias"),
+    ("borrow_fee_dangerous", "borrow_fee_danger_threshold", "taxa de aluguel >= {threshold:.0f}%/ano"),
+    ("short_volume_dangerous", "short_volume_danger_threshold", "volume vendido a descoberto >= {threshold:.0f}% (FINRA)"),
 ]
 
 # Rótulos legíveis pras 4 confirmações de reversão técnica -- classificadas
@@ -77,20 +80,29 @@ def _progress_for(ticker: str) -> dict | None:
         return None
 
     risk = result["squeeze_risk"]
-    n_dangerous = 0
     missing_risk_labels = []
     present_risk_labels = []
-    for value_key, threshold_key, label_tpl in _RISK_SIGNALS:
-        value = risk.get(value_key)
+    for dangerous_key, threshold_key, label_tpl in _RISK_SIGNALS:
         threshold = risk.get(threshold_key)
-        is_dangerous = value is not None and threshold is not None and value >= threshold
-        label = label_tpl.format(threshold=threshold) if threshold is not None else value_key
-        if is_dangerous:
-            n_dangerous += 1
+        label = label_tpl.format(threshold=threshold) if threshold is not None else dangerous_key
+        if risk.get(dangerous_key):
             present_risk_labels.append(label)
         else:
             missing_risk_labels.append(label)
+    n_dangerous = risk["n_dangerous"]
     risk_missing = max(0, 2 - n_dangerous)
+    # Aluguel barato/disponível invalida a mecânica de squeeze mesmo com 2+
+    # sinais perigosos (mesmo gate de check_squeeze_setup -- ver
+    # borrow_fee_cheap) -- nunca deixa risk_missing chegar a 0 nesse caso,
+    # senão o setup seria contado como "confirmado" sem pressão de cobertura
+    # real por trás (caso real: SMCI com short interest alto mas aluguel a
+    # 0,41%/ano).
+    if risk.get("borrow_fee_cheap"):
+        risk_missing = max(risk_missing, 1)
+        missing_risk_labels.append(
+            f"aluguel a {risk['borrow_fee']:.2f}%/ano é barato/disponível — "
+            f"invalida a mecânica de squeeze mesmo com outros sinais perigosos"
+        )
 
     confirmations = result["reversal_confirmations"]
     present_kinds = {k for c in confirmations if (k := _classify_confirm_kind(c))}
