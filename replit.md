@@ -116,10 +116,15 @@ alertas de preço e chat conversacional.
   `carteira.py`, que chamam `/api/alerts` e `/api/portfolio` direto e não têm
   sessão de usuário própria; nesse caso `req.userId` resolve pra conta "dona"
   (seed), a mesma que recebeu o backfill dos dados existentes
-- Só `portfolio_positions`/`portfolio_purchases` e `alerts`/`alert_firings`
-  são separados por usuário (`user_id`); todo o resto (relatórios,
-  observações, watchlist, journal, settings, chat, agent_runs) continua um
-  dataset único compartilhado por qualquer conta logada
+- `portfolio_positions`/`portfolio_purchases`, `alerts`/`alert_firings`,
+  `chat_sessions`, `watchlist` e `trade_journal` são separados por usuário
+  (`user_id`); `reports.user_id` também existe (migration 0025,
+  30/07/2026), mas só é preenchido pros modos `portfolio`/`veredito` (ver
+  comentário em `reportsTable` no schema) -- os demais modos (daily,
+  premarket, coal, ai, news, exit_plan, alerts, scheduled, manual) ficam
+  com `user_id=NULL` de propósito (compartilhados). `observations`,
+  `settings` e `agent_runs` continuam um dataset único compartilhado por
+  qualquer conta logada
 - Jobs de background (`alert-checker.ts`, `portfolio-alerts.ts`) continuam
   rodando sobre TODOS os usuários e mandando e-mail pro único `notifyEmail`
   global de `settings` — não foram escopados por usuário de propósito
@@ -173,3 +178,24 @@ _Populate as you build — explicit user instructions worth remembering across s
 - Erros de provider em `provider.py` passam por `mask_sensitive_data` antes
   de log/persistência — não remover essa máscara ao tocar nesse código,
   porque `runner.ts` grava `errorMessage` direto em `agent_runs` no Postgres
+
+- **Publishing do Replit pode gerar migração destrutiva por schema desatualizado.**
+  Em 31/07/2026 um deploy pelo painel "Publishing" aplicou uma migração que
+  derrubou a tabela `squeeze_alert_firings` e a coluna `reports.user_id` —
+  ambas definidas normalmente no `schema.ts` do branch em produção na hora.
+  O diff automático de migração foi calculado contra uma versão desatualizada
+  do schema (provavelmente commit/branch antigo), não contra o código real
+  publicado. Sinal de alerta: se o aviso de "esta migração pode remover dados
+  permanentemente" cita uma tabela/coluna que claramente existe no
+  `schema.ts` atual, **não aplicar sem investigar antes** — comparar contra
+  `git log` pra confirmar desde quando aquele objeto existe no schema.
+  `ensure-schema.ts` recria estrutura ausente automaticamente no boot
+  (idempotente, por design), mas isso só resolve a ESTRUTURA — não recupera
+  VALORES apagados por um `DROP COLUMN`. O Replit não expõe point-in-time
+  recovery self-service na aba Database da UI (só Overview/My Data/Settings,
+  sem opção de backup/restore visível) — nesse caso a única saída é abrir
+  chamado com o suporte do Replit, ou (como neste incidente) reconstruir
+  manualmente cruzando `created_at` das linhas afetadas com outra fonte
+  ainda intacta (aqui: `chat_messages`/`chat_sessions`, já que `agent_runs`
+  não guarda `user_id`). 6 relatórios `veredito` de 30/07/2026 perderam
+  `user_id` e foram recuperados assim, sem backup disponível.
