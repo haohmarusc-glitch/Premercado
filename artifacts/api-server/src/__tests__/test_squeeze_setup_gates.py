@@ -17,11 +17,19 @@ análise externa apontar 2 falsos positivos reais:
   mínima -- capitulação/distribuição, não acumulação. Corrigido exigindo
   fechamento na metade de cima do range do dia pra essa confirmação contar.
 
+Depois, mais 2 furos confirmados com dados sintéticos (check_squeeze_setup
+não consultava earnings de jeito nenhum): um squeeze "confirmado" ignorava
+earnings amanhã (sem aviso de que o papel pode gapear antes do squeeze se
+confirmar -- gate earnings_imminent), e "volume no fundo" contava normal
+mesmo quando o pico de volume era a reação do dia seguinte a um earnings
+AMC, não short-covering (filtro earnings_reaction_dates).
+
 Tudo mockado (yf.Ticker, _fetch_borrow_fee, _fetch_short_volume_ratio) --
 sem rede real, sem depender do cache em disco entre execuções.
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_squeeze_setup_gates.py -v
 """
+import datetime
 import numpy as np
 import pandas as pd
 import pytest
@@ -40,13 +48,25 @@ def _dates(n, start="2025-01-02"):
     return pd.date_range(start, periods=n, freq="B")
 
 
-def _fake_ticker_cls(info: dict, hist: pd.DataFrame):
+def _earnings_df(dates: list[str]) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(pd.to_datetime(dates))
+    return pd.DataFrame({"Reported EPS": [None] * len(dates)}, index=idx)
+
+
+def _fake_ticker_cls(info: dict, hist: pd.DataFrame, earnings_dates: pd.DataFrame | None = None):
     class FakeTicker:
         def __init__(self, ticker):
             self.info = info
 
         def history(self, period, auto_adjust):
             return hist
+
+        def get_earnings_dates(self, limit=8):
+            # Sem mock explícito: simula o ticker sem esse dado no yfinance --
+            # _fetch_earnings_window é fail-open, cai no ramo de exceção.
+            if earnings_dates is None:
+                raise AttributeError("get_earnings_dates não mockado neste teste")
+            return earnings_dates
 
     return FakeTicker
 
@@ -197,3 +217,118 @@ class TestVolumeAtBottomBuyingPressure:
         result = tools.check_squeeze_setup("BOUNCE")
 
         assert any("volume" in c for c in result["reversal_confirmations"])
+
+
+def _liquid_squeeze_hist(final_volume=4_800_000.0, base_volume=3_000_000.0):
+    """Downtrend líquido (ADV alto, não entra no gate de iliquidez) que fecha
+    o último candle perto do topo do range com volume alto -- gera risco
+    'alto' (com short_pct/DTC/borrow_fee/short_volume perigosos) e 2+
+    confirmações técnicas (Doji + volume no fundo + suporte), usado como
+    base pros testes dos gates de earnings abaixo."""
+    hist = _downtrend_with_final_day(final_volume=final_volume, base_volume=base_volume)
+    final_close = float(hist["Close"].iloc[-1])
+    hist.loc[hist.index[-1], "Low"] = final_close * 0.95
+    hist.loc[hist.index[-1], "High"] = final_close * 1.005
+    return hist
+
+
+class TestEarningsImminentGate:
+    def test_imminent_earnings_blocks_squeeze_setup_detected(self, monkeypatch):
+        """Squeeze com risco 'alto' e 2+ confirmações técnicas, mas earnings
+        daqui a 3 dias -- squeeze_setup_detected nunca deveria chegar a true
+        nesse caso (resultado pode gapear o papel pra qualquer lado antes do
+        squeeze técnico se confirmar de verdade)."""
+        hist = _liquid_squeeze_hist()
+        info = {"shortPercentOfFloat": 0.25, "shortRatio": 6.0}
+        today = datetime.date.today()
+        earnings_dates = _earnings_df([
+            (today - datetime.timedelta(days=400)).isoformat(),  # bem antes do hist sintético, sem overlap
+            (today + datetime.timedelta(days=3)).isoformat(),
+        ])
+        monkeypatch.setattr(tools.yf, "Ticker", _fake_ticker_cls(info, hist, earnings_dates))
+        monkeypatch.setattr(tools, "_fetch_borrow_fee", lambda t: (40.0, "mock"))
+        monkeypatch.setattr(tools, "_fetch_short_volume_ratio", lambda t: (60.0, "mock"))
+
+        result = tools.check_squeeze_setup("IMMINENT")
+
+        assert result["squeeze_risk"]["level"] == "alto"
+        assert len(result["reversal_confirmations"]) >= 2
+        assert result["earnings"]["earnings_imminent"] is True
+        assert result["earnings"]["days_until_earnings"] == 3
+        assert result["squeeze_setup_detected"] is False
+
+    def test_non_imminent_earnings_still_detects(self, monkeypatch):
+        """Regressão: o mesmo squeeze 'alto' + 2 confirmações continua
+        detectado normalmente quando não há earnings iminente."""
+        hist = _liquid_squeeze_hist()
+        info = {"shortPercentOfFloat": 0.25, "shortRatio": 6.0}
+        today = datetime.date.today()
+        earnings_dates = _earnings_df([
+            (today - datetime.timedelta(days=400)).isoformat(),
+            (today + datetime.timedelta(days=60)).isoformat(),  # fora da janela de 14 dias
+        ])
+        monkeypatch.setattr(tools.yf, "Ticker", _fake_ticker_cls(info, hist, earnings_dates))
+        monkeypatch.setattr(tools, "_fetch_borrow_fee", lambda t: (40.0, "mock"))
+        monkeypatch.setattr(tools, "_fetch_short_volume_ratio", lambda t: (60.0, "mock"))
+
+        result = tools.check_squeeze_setup("NOTIMM")
+
+        assert result["earnings"]["earnings_imminent"] is False
+        assert result["squeeze_setup_detected"] is True
+
+    def test_no_earnings_data_does_not_block(self, monkeypatch):
+        """Regressão: ticker sem earnings dates disponíveis no yfinance (fail-
+        open) continua se comportando como antes desse PR -- não bloqueia."""
+        hist = _liquid_squeeze_hist()
+        info = {"shortPercentOfFloat": 0.25, "shortRatio": 6.0}
+        monkeypatch.setattr(tools.yf, "Ticker", _fake_ticker_cls(info, hist))  # sem earnings_dates
+        monkeypatch.setattr(tools, "_fetch_borrow_fee", lambda t: (40.0, "mock"))
+        monkeypatch.setattr(tools, "_fetch_short_volume_ratio", lambda t: (60.0, "mock"))
+
+        result = tools.check_squeeze_setup("NODATA")
+
+        assert result["earnings"]["earnings_imminent"] is False
+        assert result["squeeze_setup_detected"] is True
+
+
+class TestEarningsReactionFilter:
+    def test_volume_confirmation_excluded_when_it_coincides_with_earnings_reaction(self, monkeypatch):
+        """ARM-like da suíte acima (volume 2.13x perto de um fundo, fechando
+        na metade de cima do range), mas o earnings foi divulgado após o
+        fechamento do PENÚLTIMO pregão (AMC) -- reage exatamente no último
+        candle da série, o mesmo que dispararia 'volume no fundo'. Não deve
+        contar como confirmação orgânica."""
+        hist = _downtrend_with_final_day(final_volume=2_130_000.0)
+        final_close = float(hist["Close"].iloc[-1])
+        hist.loc[hist.index[-1], "Low"] = final_close * 0.95
+        hist.loc[hist.index[-1], "High"] = final_close * 1.005
+        info = {"shortPercentOfFloat": None, "shortRatio": None}
+        last_earnings = hist.index[-2].date().isoformat()
+        earnings_dates = _earnings_df([last_earnings])
+        monkeypatch.setattr(tools.yf, "Ticker", _fake_ticker_cls(info, hist, earnings_dates))
+        monkeypatch.setattr(tools, "_fetch_borrow_fee", lambda t: (None, "sem dado"))
+        monkeypatch.setattr(tools, "_fetch_short_volume_ratio", lambda t: (None, "sem dado"))
+
+        result = tools.check_squeeze_setup("EARNGAP")
+
+        assert not any("volume" in c for c in result["reversal_confirmations"])
+        assert any("volume" in c for c in result["reversal_confirmations_excluded_earnings"])
+
+    def test_volume_confirmation_counts_when_unrelated_to_earnings(self, monkeypatch):
+        """Regressão: mesmo cenário de volume/candle, mas earnings bem longe
+        no passado (sem overlap com a data do candle) -- continua contando
+        normalmente, igual ao comportamento de antes desse PR."""
+        hist = _downtrend_with_final_day(final_volume=2_130_000.0)
+        final_close = float(hist["Close"].iloc[-1])
+        hist.loc[hist.index[-1], "Low"] = final_close * 0.95
+        hist.loc[hist.index[-1], "High"] = final_close * 1.005
+        info = {"shortPercentOfFloat": None, "shortRatio": None}
+        earnings_dates = _earnings_df(["2020-01-02"])
+        monkeypatch.setattr(tools.yf, "Ticker", _fake_ticker_cls(info, hist, earnings_dates))
+        monkeypatch.setattr(tools, "_fetch_borrow_fee", lambda t: (None, "sem dado"))
+        monkeypatch.setattr(tools, "_fetch_short_volume_ratio", lambda t: (None, "sem dado"))
+
+        result = tools.check_squeeze_setup("BOUNCE2")
+
+        assert any("volume" in c for c in result["reversal_confirmations"])
+        assert result["reversal_confirmations_excluded_earnings"] == []
