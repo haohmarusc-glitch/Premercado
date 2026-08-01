@@ -199,3 +199,13 @@ _Populate as you build — explicit user instructions worth remembering across s
   ainda intacta (aqui: `chat_messages`/`chat_sessions`, já que `agent_runs`
   não guarda `user_id`). 6 relatórios `veredito` de 30/07/2026 perderam
   `user_id` e foram recuperados assim, sem backup disponível.
+
+  **2ª ocorrência (01/08/2026, pega a tempo):** mesmo painel propôs `DROP
+  COLUMN sector_move_pct`/`sector_move_updated_at` em `scenario_alert_settings`
+  — colunas adicionadas horas antes na PR #189 (já mergeada no `main`), com
+  o job diário já gravando dado real nelas. Não foi um caso isolado: é um
+  padrão recorrente desse painel neste projeto, aparentemente cada vez que
+  uma coluna/tabela nova chega ao `main` pouco antes de um deploy pelo
+  Publishing. Não aprovado desta vez, seguindo a regra acima. Tratar
+  qualquer novo aviso de "DROP" no Publishing como suspeito por padrão,
+  não só quando o alvo "parecer" recente.
