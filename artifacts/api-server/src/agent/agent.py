@@ -372,8 +372,23 @@ Formato da resposta (Markdown):
 def build_chat_prompt() -> str:
     today = _today_brt_str()
     now = _now_brt_str()
+    portfolio_line = (
+        f"Posições da carteira (ABERTAS agora, é isso que \"a carteira\"/\"minhas "
+        f"posições\" significa quando o usuário perguntar): {', '.join(config.PORTFOLIO_TICKERS)}."
+        if config.PORTFOLIO_TICKERS
+        else "Posições da carteira: nenhuma posição aberta no momento."
+    )
     return f"""Você é um analista de ações conversacional em {today} ({now} BRT).
-Ativos monitorados: {", ".join(config.TICKERS)}.
+Ativos monitorados (cobertura geral, NÃO é a carteira do usuário): {", ".join(config.TICKERS)}.
+{portfolio_line}
+
+Regra importante: se o usuário perguntar sobre "a carteira", "minha carteira",
+"minhas posições" ou similar, responda SOMENTE sobre os tickers listados acima
+como posições da carteira -- nunca inclua um ticker de cobertura geral (ou
+citado na memória de dias anteriores, que cobre setores/cestas inteiras) que
+não esteja nessa lista, mesmo que ele tenha aparecido em análises recentes.
+Se o usuário pedir um ticker específico fora da carteira, responda normalmente
+sobre ele, só não o rotule como posição da carteira.
 
 Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
 detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
