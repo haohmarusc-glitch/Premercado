@@ -52,11 +52,27 @@ def get_stock_data(ticker: str) -> dict:
         fi = t.fast_info
 
         price = getattr(fi, "last_price", None)
-        prev_close = getattr(fi, "previous_close", None)
         volume = getattr(fi, "last_volume", None)
         year_high = getattr(fi, "year_high", None)
         year_low = getattr(fi, "year_low", None)
         currency = getattr(fi, "currency", "USD")
+
+        # previous_close vem do candle diario oficial (.history()), NAO de
+        # fast_info.previous_close -- as duas fontes podem divergir (às
+        # vezes até com sinal trocado na variação resultante), visto em
+        # produção em vários tickers do Veredito do Dia ao mesmo tempo
+        # (change_pct errado sistemático, não pontual de um ticker só).
+        # Mesmo padrão já usado e comprovado em market_alerts.py::_gap_pct
+        # (iloc[-1] = pregão mais recente, iloc[-2] = fechamento anterior).
+        prev_close = None
+        try:
+            hist = t.history(period="5d")
+            if hist is not None and len(hist) >= 2:
+                prev_close = float(hist["Close"].iloc[-2])
+        except Exception:
+            pass
+        if prev_close is None:
+            prev_close = getattr(fi, "previous_close", None)  # fallback se o history falhar
 
         change_pct = None
         if price is not None and prev_close and prev_close != 0:
@@ -535,7 +551,13 @@ def get_scenario_status() -> dict:
     termômetro de confirmação (histórico diário de quantos dias essa chance
     ficou acima do limiar configurado). Use pra saber se a carteira está no
     caminho certo pra bater o objetivo do usuário -- não recalcula nada, lê
-    o mesmo dado mostrado na tela /cenarios."""
+    o mesmo dado mostrado na tela /cenarios.
+
+    IMPORTANTE sobre o termômetro: pct_confirmacao ALTO (ex.: 100% dos dias
+    acima do limiar) significa CONFIRMAÇÃO SUSTENTADA da meta -- é sinal de
+    ESTABILIDADE, não de instabilidade. Visto em produção: o Veredito do Dia
+    já inverteu essa leitura ("100% acima do limiar = instabilidade"), o
+    oposto do que o número representa."""
     try:
         settings_r = SESSION.get(
             f"{_api_url()}/api/scenario-alert-settings",

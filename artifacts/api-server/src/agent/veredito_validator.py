@@ -53,6 +53,7 @@ STALE_TECHNICAL_DAYS = 0  # RSI deve ser do MESMO dia do quote (0 dias de gap)
 FADE_FROM_HIGH_PCT = 5.0  # fechou X% ou mais abaixo do high do dia -> alerta
 GAP_UP_PCT = 2.0  # abertura X% acima do fech. anterior conta como gap
 MENTION_PCT_TOLERANCE_PP = 0.30  # tolerância p/ percentuais citados no texto
+FLAT_CLAIM_TOLERANCE_PP = 1.5  # |variação real| acima disso invalida um claim de "flat"
 
 WEEKDAYS_PT = [
     "segunda-feira", "terca-feira", "quarta-feira",
@@ -205,6 +206,15 @@ _DATE_WEEKDAY = re.compile(
     r"([\s(]*(segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)[^)])",
     re.IGNORECASE)
 _TICKER_PCT = re.compile(r"\b([A-Z]{2,5})\b[^.\n]{0,80}?([+-]?\d{1,2}[.,]\d{1,2})\s*%")
+# "flat"/"estável"/"lateral"/"sem variação" perto de um ticker -- claim
+# qualitativo de variação ~0%, sem número pra _TICKER_PCT comparar.
+# (?i:...) escopa case-insensitive só pro grupo da palavra-chave -- sem
+# isso, re.IGNORECASE no regex inteiro faria [A-Z]{2,5} casar ticker em
+# minúsculo também, e group(1) devolveria algo que nunca bate com as
+# chaves (sempre maiúsculas) de `quotes`.
+_TICKER_FLAT = re.compile(
+    r"\b([A-Z]{2,5})\b[^.\n]{0,40}?\b((?i:flat|estavel|estável|lateral|sem variacao|sem variação))\b"
+)
 
 
 def lint_veredito(texto: str, snapshot: dict[str, Any],
@@ -298,6 +308,27 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                 rep.add("WARN", "TEXT_PCT_MISMATCH",
                         f"Texto cita {cited:+.2f}%, snapshot verificado "
                         f"{real:+.2f}% (diff {diff:.2f}pp).", ticker=tk)
+
+    # 5) "flat"/"estável" citado por ticker bate com o snapshot? (a checagem
+    # acima só pega percentual NUMÉRICO citado errado -- "SMCI está flat"
+    # quando o dia real foi +2,4% passava batido por não ter número nenhum
+    # pra comparar. Visto em produção: mesmo ticker descrito como "flat" no
+    # parágrafo técnico e "+2,4%" no setorial no mesmo texto.)
+    for m in _TICKER_FLAT.finditer(texto):
+        tk = m.group(1)
+        if tk not in quotes:
+            continue
+        real = quotes[tk].get("change_percent_verified")
+        if real is None:
+            p, pc = quotes[tk].get("price"), quotes[tk].get("previous_close")
+            real = _pct_change(p, pc) if p and pc else None
+        if real is None:
+            continue
+        if abs(real) > FLAT_CLAIM_TOLERANCE_PP:
+            rep.add("WARN", "TEXT_FLAT_MISMATCH",
+                    f"Texto descreve {tk} como \"{m.group(2)}\", mas o dia "
+                    f"real foi {real:+.2f}% (fora da faixa considerada "
+                    f"flat, ±{FLAT_CLAIM_TOLERANCE_PP:.1f}pp).", ticker=tk)
 
     return rep
 
