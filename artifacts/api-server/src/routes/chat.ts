@@ -8,7 +8,7 @@ import {
   GetChatMessagesResponse,
   DeleteChatSessionParams,
 } from "@workspace/api-zod";
-import { agentDir, getPythonBin } from "../lib/runner";
+import { agentDir, getPythonBin, getPortfolioTickers } from "../lib/runner";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -147,6 +147,15 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     ? history.filter((m) => m.role && typeof m.content === "string").slice(-20)
     : [];
 
+  // Mesma fonte usada pelo modo "portfolio" do agente diário (runner.ts) --
+  // posições REALMENTE abertas (decidido pelos lotes, não pelo campo
+  // `quantity` armazenado, ver isPositionActiveFromLots). Sem isso, o chat
+  // não tinha nenhuma lista de "carteira" própria e respondia perguntas
+  // sobre "a carteira" misturando os tickers ativos com toda a cesta de
+  // cobertura (config.TICKERS) e com o que sobrava na memória de dias
+  // anteriores (setores/cestas fixas) — bug reportado pelo usuário 01/08.
+  const portfolioTickers = await getPortfolioTickers(req.userId!);
+
   const py = spawn(getPythonBin(), ["-m", "agent.run_chat"], {
     cwd: agentDir,
     env: {
@@ -155,6 +164,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
       PYTHONPATH: agentDir,
       CHAT_MESSAGE: message.trim(),
       CHAT_HISTORY_JSON: JSON.stringify(safeHistory),
+      AGENT_PORTFOLIO_TICKERS: portfolioTickers.join(","),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });
