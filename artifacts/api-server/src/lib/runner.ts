@@ -68,7 +68,7 @@ async function getEffectiveAgentProvider(): Promise<string | undefined> {
 // nenhum, ou seja, misturava as posições de TODOS os usuários numa run só
 // (e o relatório resultante, salvo numa tabela global, aparecia igual pra
 // todo mundo). Ver reportsTable.userId e routes/reports.ts.
-async function getPortfolioTickers(userId: number): Promise<string[]> {
+export async function getPortfolioTickers(userId: number): Promise<string[]> {
   try {
     const rows = await db
       .select({ id: portfolioPositionsTable.id, ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
