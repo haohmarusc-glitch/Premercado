@@ -10,11 +10,14 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import yfinance as yf
+
 from . import config
 from . import memory
 from . import tools as t
 from .provider import get_client, ProviderClient
 from .sector_contagion import SECTOR_GROUPS
+from .veredito_validator import lint_veredito, validate_snapshot
 
 # Brasília (America/Sao_Paulo) não observa mais horário de verão desde 2019 --
 # offset fixo UTC-3 (mesma convenção do backend TS, ver lib/timezone.ts).
@@ -353,6 +356,11 @@ Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
    individual) -- não rode pra todos, é uma chamada pesada.
 8. Opcional: detect_sector_contagion e/ou get_analyst_ratings pro(s) ticker(s)
    mais relevante(s), se agregarem contexto real à conclusão.
+9. Opcional: get_fundamentals_valuation (P/E, PEG, DCF) pro(s) ticker(s) cuja
+   técnica pareça fraca mas o preço já possa ter descontado demais o risco
+   (ou vice-versa: técnica forte com valuation esticado) -- decisão de
+   vender/manter/aumentar sem olhar valuation é incompleta quando o múltiplo
+   está claramente fora do normal histórico do ativo/setor.
 
 **NÃO USE:** save_observation, alertas (list/create/delete_alert),
 update_exit_plan_item, create_exit_plan_item, EDGAR, opções.
@@ -518,6 +526,11 @@ _VEREDITO_TOOL_NAMES = {
     "get_exit_plan_items", "get_technical_indicators", "get_stock_data",
     "get_macro_indicators", "get_earnings_calendar", "get_earnings_reaction_history",
     "get_fear_greed_index", "detect_sector_contagion", "get_analyst_ratings",
+    # get_fundamentals_valuation faltava aqui -- sem ela o Veredito não tinha
+    # como pesar valuation (P/E, PEG, DCF) contra a técnica/sentimento na
+    # recomendação de uma posição, mesmo quando o preço já descontou boa
+    # parte do risco (ex.: múltiplo historicamente baixo pro setor).
+    "get_fundamentals_valuation",
 }
 VEREDITO_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _VEREDITO_TOOL_NAMES]
 
@@ -922,20 +935,146 @@ def run_alerts_management(progress_callback=None) -> str:
     )
 
 
+# ── Validação factual do Veredito do Dia ──────────────────────────────────────
+#
+# Visto em produção (31/07): o Veredito citou preço/RSI defasados (RSI do ARM
+# 2 dias atrás do quote), sinal de percentual trocado (AVGO informado -0.36%
+# quando o recálculo dava +0.37%), fade intradiário ignorado (SKHY/ARM
+# fecharam bem abaixo do high do dia — padrão de distribuição, não citado) e
+# alucinações no texto gerado (dia da semana errado, earnings atribuído a uma
+# data em que ainda não tinha ocorrido). veredito_validator.py cobre os dois
+# lados: valida os DADOS antes do prompt (Fase 1) e faz lint do TEXTO gerado
+# depois (Fase 2), com um retry único de correção quando o lint acha erro.
+
+
+def _fetch_veredito_quote(ticker: str) -> dict | None:
+    """OHLC do último pregão fechado, direto do yfinance -- separado de
+    tools.get_stock_data (ferramenta do LLM, baseada em fast_info "agora",
+    que muda durante o pregão) porque o validador precisa do open/high do
+    MESMO candle usado no change_percent pra detectar fade intradiário."""
+    try:
+        hist = yf.Ticker(ticker).history(period="5d")
+        if hist.empty or len(hist) < 2:
+            return None
+        last = hist.iloc[-1]
+        price = float(last["Close"])
+        prev_close = float(hist["Close"].iloc[-2])
+        volume = last["Volume"]
+        return {
+            "price": round(price, 4),
+            "previous_close": round(prev_close, 4),
+            "open": round(float(last["Open"]), 4),
+            "high": round(float(last["High"]), 4),
+            "low": round(float(last["Low"]), 4),
+            "change_percent": round((price - prev_close) / prev_close * 100, 4) if prev_close else None,
+            "volume": int(volume) if volume == volume else None,  # NaN != NaN
+            "as_of": hist.index[-1].strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        print(f"[veredito_validator] falha ao buscar quote de {ticker}: {e}", file=sys.stderr, flush=True)
+        return None
+
+
+def _build_veredito_snapshot(tickers: list[str]) -> dict:
+    """Monta o snapshot no formato esperado por validate_snapshot()/
+    lint_veredito(). as_of é derivado do dado REAL baixado (a data mais
+    recente entre os quotes buscados), nunca de "hoje" cru -- num fim de
+    semana isso derrubaria RSI_STALE pra TODO ticker, já que a tolerância de
+    frescor é zero (ver comentário no topo de veredito_validator.py)."""
+    quotes: dict = {}
+    for tk in tickers:
+        q = _fetch_veredito_quote(tk)
+        if q:
+            quotes[tk] = q
+
+    technicals: dict = {}
+    for tk in tickers:
+        ti = t.get_technical_indicators(tk)
+        if "rsi_14" in ti and ti.get("rsi_date"):
+            technicals[tk] = {"rsi": ti["rsi_14"], "rsi_date": ti["rsi_date"]}
+
+    earnings: dict = {}
+    for row in t.get_earnings_calendar(tickers):
+        if row.get("next_earnings_date"):
+            earnings[row["ticker"]] = row["next_earnings_date"]
+
+    if quotes:
+        as_of = max(q["as_of"] for q in quotes.values())
+    else:
+        # Sem nenhum quote disponível (falha de rede geral) -- último dia
+        # útil como piso seguro, só pra não travar a validação inteira.
+        d = _now_brt().date()
+        while d.weekday() >= 5:
+            d -= datetime.timedelta(days=1)
+        as_of = d.isoformat()
+
+    return {"as_of": as_of, "quotes": quotes, "technicals": technicals, "earnings": earnings}
+
+
 def run_veredito(progress_callback=None) -> str:
     client = _get_client()
-    return _agent_loop(
+    tickers = config.PORTFOLIO_TICKERS
+    model = client.models["flash"]
+    system = build_veredito_prompt()
+
+    if progress_callback:
+        progress_callback("[Veredito] Validando dados antes da análise...")
+    snapshot = _build_veredito_snapshot(tickers)
+    vrep = validate_snapshot(snapshot)
+    if vrep.issues:
+        print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)
+
+    user_msg = "Gere o veredito do dia agora, cruzando todas as ferramentas do fluxo obrigatório."
+    prompt_block = vrep.prompt_block()
+    if prompt_block:
+        user_msg += "\n\n" + prompt_block
+
+    final_text = _agent_loop(
         client=client,
-        model=client.models["flash"],
-        system=build_veredito_prompt(),
+        model=model,
+        system=system,
         tools=VEREDITO_TOOLS,
-        messages=[{"role": "user", "content": "Gere o veredito do dia agora, cruzando todas as ferramentas do fluxo obrigatório."}],
+        messages=[{"role": "user", "content": user_msg}],
         max_turns=max(config.MAX_AGENT_TURNS, 20),
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
         step_prefix="[Veredito] ",
         deadline_ts=config.SOFT_DEADLINE_TS,
     )
+
+    lrep = lint_veredito(final_text, snapshot)
+    if lrep.has_errors:
+        print(f"[veredito_validator] lint errors, tentando 1 retry:\n{lrep.summary()}", file=sys.stderr, flush=True)
+        if progress_callback:
+            progress_callback("[Veredito] Corrigindo erros factuais detectados...")
+        try:
+            fix_resp = client.create(
+                model=model,
+                max_tokens=config.MAX_TOKENS,
+                system=system,
+                tools=[],
+                messages=[
+                    {"role": "user", "content": user_msg},
+                    {"role": "assistant", "content": final_text},
+                    {"role": "user", "content": (
+                        "CORRIJA os seguintes erros factuais e reescreva o "
+                        "veredito completo já corrigido (mesmo formato de "
+                        "antes, não apenas as partes erradas):\n" + lrep.summary()
+                    )},
+                ],
+            )
+            from .provider import TextBlock
+            for block in fix_resp.content:
+                if isinstance(block, TextBlock) and block.text.strip():
+                    final_text = block.text
+                    break
+        except Exception as e:
+            # Falha no retry não pode derrubar o veredito inteiro -- fica
+            # com o texto original (com os erros já logados acima pro
+            # operador investigar) em vez de propagar a exceção.
+            print(f"[veredito_validator] retry de correção falhou: {e}", file=sys.stderr, flush=True)
+
+    return final_text
 
 
 def run_chat_stream(message: str, history: list) -> None:
