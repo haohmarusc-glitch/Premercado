@@ -132,6 +132,14 @@ router.post("/chat/message", async (req, res): Promise<void> => {
   const send = (event: string, data: unknown) =>
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
+  // Ping periódico (comentário SSE, ignorado pelo parser do frontend porque
+  // não tem prefixo "event:"/"data:") -- sem isso, o NAT de operadora móvel
+  // derruba a conexão em silêncio depois de ~30-60s sem tráfego durante os
+  // gaps entre eventos "step" (esperando o LLM responder ou tool calls
+  // lentas), e o fetch() do navegador quebra com "TypeError: network error"
+  // ao ler o corpo do stream. Bug reportado pelo usuário no celular 01/08.
+  const heartbeat = setInterval(() => { res.write(": ping\n\n"); }, 15000);
+
   // Notify frontend of the session ID immediately
   send("session", { sessionId: currentSessionId });
 
@@ -223,11 +231,13 @@ router.post("/chat/message", async (req, res): Promise<void> => {
 
   py.on("error", (err) => {
     logger.error({ err }, "Failed to spawn chat subprocess");
+    clearInterval(heartbeat);
     send("error", "Falha ao iniciar o agente.");
     res.end();
   });
 
   py.on("close", async (code) => {
+    clearInterval(heartbeat);
     if (code !== 0 && !responseText) {
       send("error", "Agente encerrou com erro.");
     }
@@ -250,7 +260,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
     res.end();
   });
 
-  req.on("close", () => { py.kill(); });
+  req.on("close", () => { clearInterval(heartbeat); py.kill(); });
 });
 
 export default router;
