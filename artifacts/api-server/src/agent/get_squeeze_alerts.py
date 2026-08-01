@@ -27,10 +27,17 @@ vale a pena notificar algo tão longe do setup completo).
 """
 import sys
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent import config
+from agent.bounded_parallel import bounded_parallel_map, exit_now
 from agent.tools import check_squeeze_setup
+
+# Timeout do lado Node (alert-checker.ts::fetchSqueezeAlerts) é 120s -- mais
+# generoso que os demais checkers (check_squeeze_setup faz várias chamadas
+# de rede por ticker: yfinance, iBorrowDesk, FINRA, Unusual Whales
+# opcional). Ver bounded_parallel.py pro motivo do orçamento ficar abaixo
+# do timeout externo.
+BUDGET_S = 100
 
 # Rótulos legíveis pros 4 sinais de risco de squeeze (mesma ordem/definição
 # de check_squeeze_setup: "alto" exige 2+ perigosos entre esses 4, com o
@@ -165,19 +172,10 @@ if __name__ == "__main__":
 
     tickers = args.get("tickers") or config.TICKERS
 
-    alerts = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(_progress_for, t): t for t in tickers}
-        for future in as_completed(futures):
-            t = futures[future]
-            try:
-                progress = future.result()
-                if progress is not None:
-                    alerts.append(progress)
-            except Exception as e:
-                print(f"[get_squeeze_alerts] {t}: {e}", file=sys.stderr)
+    results = bounded_parallel_map(_progress_for, tickers, budget_s=BUDGET_S, label="get_squeeze_alerts")
+    alerts = [a for a in results if a is not None]
 
     order = {"confirmed": 0, "near": 1}
     alerts.sort(key=lambda a: order[a["tier"]])
 
-    print(json.dumps({"alerts": alerts}, ensure_ascii=False))
+    exit_now(json.dumps({"alerts": alerts}, ensure_ascii=False) + "\n")

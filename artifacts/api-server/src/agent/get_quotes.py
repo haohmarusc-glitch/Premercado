@@ -19,9 +19,16 @@ quem consome (portfolio-alerts.ts) monta um Map por `symbol`, não por índice.
 """
 import sys
 import json
-from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
+from agent.bounded_parallel import bounded_parallel_map, exit_now
 from agent.security import friendly_error
+
+# Timeout do lado Node (portfolio-alerts.ts::fetchPrices) é 30s -- ver
+# bounded_parallel.py pro motivo do orçamento ficar abaixo do timeout
+# externo. Quem consome o array de saída (priceMap em portfolio-alerts.ts)
+# já é tolerante a um símbolo faltando (fica sem preço aquele ciclo, tenta
+# de novo no próximo), então um resultado parcial aqui não é um problema.
+BUDGET_S = 20
 
 
 def _round(v, d=4):
@@ -121,6 +128,5 @@ if __name__ == "__main__":
         print("[]")
         sys.exit(0)
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(fetch_quote, symbols))
-    print(json.dumps(results))
+    results = bounded_parallel_map(fetch_quote, symbols, budget_s=BUDGET_S, label="get_quotes")
+    exit_now(json.dumps(results) + "\n")
