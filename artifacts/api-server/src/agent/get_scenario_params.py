@@ -17,11 +17,31 @@ import yfinance as yf
 MIN_DAYS = 30
 PERIOD = "1y"
 
+# Momentum do benchmark (não por ticker) -- retorno dos últimos MOMENTUM_
+# LOOKBACK_DAYS pregões, anualizado por (252/lookback), reaproveitando o
+# mesmo histórico já baixado pra vol/beta (sem chamada de rede extra).
+# Alimenta só uma SUGESTÃO no slider "Movimento do setor" de /cenarios
+# (scenario-params-checker.ts grava em sector_momentum) -- é extrapolação de
+# momentum passado, não previsão; o usuário sempre pode sobrescrever.
+MOMENTUM_LOOKBACK_DAYS = 90
+
+
+def _sector_momentum(closes, benchmark: str) -> dict | None:
+    if benchmark not in closes.columns:
+        return None
+    bench_close = closes[benchmark].dropna()
+    if len(bench_close) <= MOMENTUM_LOOKBACK_DAYS:
+        return None
+    window = bench_close.iloc[-MOMENTUM_LOOKBACK_DAYS:]
+    total_return = float(window.iloc[-1] / window.iloc[0] - 1)
+    annual_pct = total_return * (252 / MOMENTUM_LOOKBACK_DAYS) * 100
+    return {"benchmark": benchmark, "momentumAnnualPct": round(annual_pct, 2), "lookbackDays": MOMENTUM_LOOKBACK_DAYS}
+
 
 def compute(tickers: list[str], benchmark: str) -> dict:
     result: dict = {}
     if not tickers:
-        return result
+        return {"params": result, "sectorMomentum": None}
 
     all_symbols = list(dict.fromkeys(tickers + [benchmark]))
     try:
@@ -35,10 +55,13 @@ def compute(tickers: list[str], benchmark: str) -> dict:
         returns = closes.pct_change().dropna(how="all")
     except Exception as e:
         err = str(e)
-        return {t: {"error": err} for t in tickers}
+        return {"params": {t: {"error": err} for t in tickers}, "sectorMomentum": None}
 
     if benchmark not in returns.columns or returns[benchmark].notna().sum() < MIN_DAYS:
-        return {t: {"error": f"Sem histórico suficiente do benchmark {benchmark}"} for t in tickers}
+        return {
+            "params": {t: {"error": f"Sem histórico suficiente do benchmark {benchmark}"} for t in tickers},
+            "sectorMomentum": None,
+        }
 
     for t in tickers:
         if t not in returns.columns:
@@ -72,7 +95,7 @@ def compute(tickers: list[str], benchmark: str) -> dict:
         except Exception as e:
             result[t] = {"error": str(e)}
 
-    return result
+    return {"params": result, "sectorMomentum": _sector_momentum(closes, benchmark)}
 
 
 if __name__ == "__main__":

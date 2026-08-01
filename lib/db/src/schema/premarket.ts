@@ -450,6 +450,23 @@ export const scenarioParamsTable = pgTable("scenario_params", {
 });
 export type ScenarioParams = typeof scenarioParamsTable.$inferSelect;
 
+// Momentum recente do benchmark setorial (SMH), recalculado 1x por dia junto
+// com scenario_params (mesmo histórico já baixado por get_scenario_params.py,
+// sem chamada de rede extra) -- retorno anualizado dos últimos `lookback_days`
+// pregões. Alimenta a SUGESTÃO (não trava, o usuário sempre pode sobrescrever)
+// do slider "Movimento do setor até a data-alvo" em /cenarios: sugestão =
+// momentum_annual_pct × (dias até a data-alvo / 365) -- como os dias restantes
+// são recalculados a cada render, a sugestão encolhe sozinha conforme a
+// data-alvo se aproxima, sem precisar recalcular nada aqui além de 1x/dia.
+// Global (não por usuário) -- 1 linha só, chave é o benchmark.
+export const sectorMomentumTable = pgTable("sector_momentum", {
+  benchmark: text("benchmark").primaryKey(), // ex.: "SMH"
+  momentumAnnualPct: money("momentum_annual_pct").notNull(),
+  lookbackDays: integer("lookback_days").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type SectorMomentum = typeof sectorMomentumTable.$inferSelect;
+
 // Config do alerta por e-mail do Painel de Cenários -- uma linha por usuário
 // (não uma lista de múltiplos alertas, ao contrário de `alerts`, porque o
 // painel só tem UMA data-alvo por vez). O checker em background
