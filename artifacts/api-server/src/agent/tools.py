@@ -725,6 +725,12 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         low = hist["Low"]
         volume = hist["Volume"]
         price = float(close.iloc[-1])
+        # Data real da ultima barra usada no calculo -- sem isso nao da pra
+        # confirmar que o RSI e' do MESMO pregao do quote usado no Veredito
+        # do Dia (ver agent/veredito_validator.py::RSI_STALE; visto em
+        # producao: RSI de 2 dias atras do quote, gerando leitura tecnica
+        # defasada sem nenhum aviso).
+        rsi_date = hist.index[-1].strftime("%Y-%m-%d")
 
         # ATR 14 (Average True Range) — volatilidade real em $ e % do ativo,
         # pra calibrar limiares de alerta por ticker em vez de usar o mesmo
@@ -832,6 +838,7 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
             "ticker": ticker,
             "price": round(price, 2),
             "rsi_14": rsi,
+            "rsi_date": rsi_date,
             "rsi_signal": "sobrecomprado"
             if rsi > rsi_overbought
             else "sobrevendido"
