@@ -6,8 +6,19 @@
  * (chave só o ticker, sem user_id, ver ensure-schema.ts), então varre as
  * posições ativas de TODOS os usuários numa run só, mesmo padrão de
  * portfolio-alerts.ts.
+ *
+ * Também recalcula sectorMovePct (a premissa "movimento do setor até a
+ * data-alvo" do slider do Painel de Cenários) 1x/dia pra CADA usuário com
+ * data-alvo configurada, a partir do momentum real do benchmark (SMH)
+ * escalado pelos dias restantes até a data-alvo de cada um -- persistido em
+ * scenario_alert_settings.sector_move_pct, em vez de existir só como estado
+ * local do slider na sessão do navegador (que exigia clique manual em
+ * "aplicar sugestão" e nunca era usado pelo checker em background,
+ * ver scenario-alert-checker.ts).
  */
-import { db, portfolioPositionsTable, scenarioParamsTable, sectorMomentumTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { db, portfolioPositionsTable, scenarioParamsTable, scenarioAlertSettingsTable, sectorMomentumTable } from "@workspace/db";
+import { diasAteAlvo } from "@workspace/scenario-math";
 import { isActivePosition } from "./portfolio-math";
 import { runScript } from "../routes/scenarios";
 import { state as agentState } from "./runner";
@@ -77,6 +88,8 @@ export async function refreshScenarioParams(): Promise<void> {
         target: sectorMomentumTable.benchmark,
         set: { momentumAnnualPct: mo.momentumAnnualPct, lookbackDays: mo.lookbackDays, updatedAt: new Date() },
       });
+
+    await refreshSectorMovePctForUsers(mo.momentumAnnualPct);
   }
 
   let updated = 0;
@@ -105,6 +118,31 @@ export async function refreshScenarioParams(): Promise<void> {
     logger.warn({ skipped }, "Scenario params checker: tickers sem histórico suficiente, mantido valor anterior");
   }
   logger.info({ updated, total: tickers.length }, "Scenario params refreshed");
+}
+
+// Mesma extrapolação que o botão "aplicar sugestão" do slider já fazia no
+// frontend (momentum anualizado × fração do ano até a data-alvo), mas
+// aplicada automaticamente pra CADA usuário aqui -- a data-alvo é por
+// usuário (scenario_alert_settings), então mesmo com um `momentumAnnualPct`
+// global (1 benchmark, SMH), o valor final escalado difere por usuário.
+// Clamp em ±40 pra bater com os limites do slider (min/max do componente em
+// cenarios.tsx) -- o valor persistido tem que caber no range que o usuário
+// enxerga e pode ajustar manualmente por cima.
+async function refreshSectorMovePctForUsers(momentumAnnualPct: number): Promise<void> {
+  const rows = await db
+    .select({ userId: scenarioAlertSettingsTable.userId, dataAlvo: scenarioAlertSettingsTable.dataAlvo })
+    .from(scenarioAlertSettingsTable);
+  if (!rows.length) return;
+
+  for (const row of rows) {
+    const dataAlvo = new Date(row.dataAlvo + "T00:00:00");
+    const dias = diasAteAlvo(dataAlvo);
+    const sectorMovePct = Math.max(-40, Math.min(40, Math.round(momentumAnnualPct * (dias / 365))));
+    await db
+      .update(scenarioAlertSettingsTable)
+      .set({ sectorMovePct, sectorMoveUpdatedAt: new Date() })
+      .where(eq(scenarioAlertSettingsTable.userId, row.userId));
+  }
 }
 
 let checkerStarted = false;

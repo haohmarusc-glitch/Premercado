@@ -471,10 +471,11 @@ export type SectorMomentum = typeof sectorMomentumTable.$inferSelect;
 // (não uma lista de múltiplos alertas, ao contrário de `alerts`, porque o
 // painel só tem UMA data-alvo por vez). O checker em background
 // (lib/scenario-alert-checker.ts) roda o mesmo cálculo de
-// @workspace/scenario-math com o cenário neutro (sem venda manual, setor
-// parado, vol 1x) contra esta data-alvo/threshold, e dispara e-mail quando
-// a probabilidade de empatar cai abaixo do limiar -- com cooldown via
-// lastFiredAt pra não reenviar a cada ciclo enquanto a condição persiste.
+// @workspace/scenario-math contra esta data-alvo/threshold (usando
+// sectorMovePct abaixo como premissa de movimento do setor), e dispara
+// e-mail quando a probabilidade de empatar cai abaixo do limiar -- com
+// cooldown via lastFiredAt pra não reenviar a cada ciclo enquanto a
+// condição persiste.
 export const scenarioAlertSettingsTable = pgTable("scenario_alert_settings", {
   userId: integer("user_id").primaryKey().references(() => usersTable.id, { onDelete: "cascade" }),
   dataAlvo: text("data_alvo").notNull(), // YYYY-MM-DD
@@ -482,6 +483,15 @@ export const scenarioAlertSettingsTable = pgTable("scenario_alert_settings", {
   enabled: boolean("enabled").notNull().default(true),
   notifyEmail: text("notify_email"),
   lastFiredAt: timestamp("last_fired_at"),
+  // Premissa "movimento do setor até a data-alvo" (mesmo campo do slider do
+  // Painel de Cenários) recalculada 1x/dia pelo scenario-params-checker.ts a
+  // partir do momentum real do benchmark (SMH), extrapolado pros dias
+  // restantes até dataAlvo -- substitui o "setor parado" fixo que o checker
+  // em background usava antes por não ter acesso ao slider (que só existia
+  // como estado da sessão do navegador, nunca persistido). null até a
+  // primeira execução do job para este usuário (settings recém-criada).
+  sectorMovePct: money("sector_move_pct"),
+  sectorMoveUpdatedAt: timestamp("sector_move_updated_at"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

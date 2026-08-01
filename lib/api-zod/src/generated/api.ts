@@ -435,7 +435,8 @@ export const GetScenarioAlertSettingsResponse = zod.object({
   "thresholdPct": zod.coerce.number(),
   "enabled": zod.boolean(),
   "notifyEmail": zod.string().nullable(),
-  "lastFiredAt": zod.string().nullable()
+  "lastFiredAt": zod.string().nullable(),
+  "sectorMovePct": zod.coerce.number().nullable()
 })
 
 
@@ -455,7 +456,8 @@ export const UpdateScenarioAlertSettingsResponse = zod.object({
   "thresholdPct": zod.coerce.number(),
   "enabled": zod.boolean(),
   "notifyEmail": zod.string().nullable(),
-  "lastFiredAt": zod.string().nullable()
+  "lastFiredAt": zod.string().nullable(),
+  "sectorMovePct": zod.coerce.number().nullable()
 })
 
 
