@@ -22,6 +22,7 @@ function serialize(row: typeof scenarioAlertSettingsTable.$inferSelect) {
     enabled: row.enabled,
     notifyEmail: row.notifyEmail,
     lastFiredAt: row.lastFiredAt?.toISOString() ?? null,
+    sectorMovePct: row.sectorMovePct != null ? Number(row.sectorMovePct) : null,
   };
 }
 
@@ -39,6 +40,7 @@ router.get("/scenario-alert-settings", async (req, res): Promise<void> => {
       enabled: false,
       notifyEmail: null,
       lastFiredAt: null,
+      sectorMovePct: null,
     }));
     return;
   }

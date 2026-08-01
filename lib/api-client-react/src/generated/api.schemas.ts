@@ -365,6 +365,8 @@ export interface ScenarioAlertSettings {
   notifyEmail: string | null;
   /** @nullable */
   lastFiredAt: string | null;
+  /** @nullable */
+  sectorMovePct: number | null;
 }
 
 export interface ScenarioAlertSettingsUpdate {

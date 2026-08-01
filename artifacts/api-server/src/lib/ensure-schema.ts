@@ -238,6 +238,14 @@ export async function ensureSchema(): Promise<void> {
   }
 
   try {
+    await db.execute(sql`ALTER TABLE scenario_alert_settings ADD COLUMN IF NOT EXISTS sector_move_pct numeric(15, 4)`);
+    await db.execute(sql`ALTER TABLE scenario_alert_settings ADD COLUMN IF NOT EXISTS sector_move_updated_at timestamp`);
+    logger.info("Schema check ok (scenario_alert_settings.sector_move_pct column)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (scenario_alert_settings.sector_move_pct column)");
+  }
+
+  try {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS scenario_snapshots (
         id serial PRIMARY KEY,

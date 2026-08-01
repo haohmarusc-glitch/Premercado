@@ -16,10 +16,13 @@
  *    enabled=true e o ciclo ainda não foi resolvido).
  *
  * Usa o MESMO núcleo matemático do frontend (@workspace/scenario-math), pra
- * nunca divergir do que a tela /cenarios mostra ao usuário. Roda o cenário
- * NEUTRO (nenhuma posição travada em caixa manualmente, setor parado,
- * volatilidade base 1x) -- é a leitura mais honesta possível sem acesso ao
- * estado dos sliders da UI, que só existe na sessão do navegador.
+ * nunca divergir do que a tela /cenarios mostra ao usuário. Roda com
+ * nenhuma posição travada em caixa manualmente e volatilidade base 1x (isso
+ * sim só existe como estado de sessão do navegador), mas o "movimento do
+ * setor até a data-alvo" usa row.sectorMovePct -- recalculado 1x/dia pelo
+ * scenario-params-checker.ts a partir do momentum real do benchmark (SMH),
+ * não mais um "setor parado" fixo (0%) como antes, que ignorava por
+ * completo a mesma premissa mostrada na tela.
  */
 import { eq, and } from "drizzle-orm";
 import { db, scenarioAlertSettingsTable, scenarioSnapshotsTable, scenarioResolutionsTable } from "@workspace/db";
@@ -59,7 +62,8 @@ async function checkScenarioAlertForRow(row: ScenarioAlertRow): Promise<void> {
   if (!positions.length) return; // sem posições ativas, nada a acompanhar
 
   const dataAlvo = new Date(row.dataAlvo + "T00:00:00");
-  const m = computeScenarioMetrics(positions, {}, {}, 0, 1, dataAlvo);
+  const setor = row.sectorMovePct != null ? Number(row.sectorMovePct) : 0;
+  const m = computeScenarioMetrics(positions, {}, {}, setor, 1, dataAlvo);
   if (m.risco <= 0) return; // tudo em caixa -- sem risco, sem sentido acompanhar
 
   await db
