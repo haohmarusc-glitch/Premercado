@@ -365,6 +365,16 @@ Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
 **NÃO USE:** save_observation, alertas (list/create/delete_alert),
 update_exit_plan_item, create_exit_plan_item, EDGAR, opções.
 
+Cuidado ao usar os termos "distribuição"/"acumulação": distribuição
+institucional é padrão de TOPO (mãos fortes vendendo pra mãos fracas perto
+de uma máxima/exaustão de alta) e acumulação é padrão de FUNDO (mãos fortes
+comprando de mãos fracas perto de uma mínima/exaustão de baixa) -- nunca
+inverta isso. Um ticker com RSI baixo (perto de sobrevenda) e bem abaixo da
+SMA50 rejeitando um gap de alta intradiário é mais consistente com
+capitulação/teste de suporte perto de um fundo do que com "distribuição"
+(que pressupõe estar perto de um topo). Visto em produção: o Veredito já
+descreveu esse exato cenário como "distribuição" -- rótulo trocado.
+
 Formato da resposta (Markdown):
 - Primeira linha: **VEREDITO:** seguido de UMA frase curta e direta (favorável /
   neutro / cauteloso / atenção redobrada), sem rodeio.

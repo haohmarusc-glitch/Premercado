@@ -64,7 +64,22 @@ def fetch_quote(symbol: str) -> dict:
         e = fetch_extended(ticker)
 
         price = getattr(fi, "last_price", None)
-        prev_close = getattr(fi, "previous_close", None)
+        # previous_close vem do candle diario oficial (.history()), NAO de
+        # fast_info.previous_close -- as duas fontes podem divergir (mesmo
+        # motivo/mesmo padrão de tools.py::get_stock_data, já corrigido
+        # por causa do mesmo bug no Veredito do Dia: change_pct errado,
+        # às vezes com sinal trocado. changePct daqui aparece direto pro
+        # usuário em quase toda a UI -- dashboard, quotes, portfolio,
+        # gráfico -- então vale a chamada de rede extra.
+        prev_close = None
+        try:
+            hist = ticker.history(period="5d")
+            if hist is not None and len(hist) >= 2:
+                prev_close = float(hist["Close"].iloc[-2])
+        except Exception:
+            pass
+        if prev_close is None:
+            prev_close = getattr(fi, "previous_close", None)
         currency = getattr(fi, "currency", None)
         open_ = getattr(fi, "open", None)
         day_high = getattr(fi, "day_high", None)

@@ -87,6 +87,28 @@ def test_lint_veredito_weekday_correct_no_false_positive():
     assert "WEEKDAY_WRONG" not in _codes(rep.issues)
 
 
+def test_lint_veredito_flat_claim_wrong():
+    # SMCI subiu 2.4162% no snapshot -- "flat" e' um claim qualitativo sem
+    # numero, que _TICKER_PCT sozinho nao pega (nenhum "%": no texto).
+    texto = "SMCI está flat hoje, sem catalisador claro no radar."
+    rep = lint_veredito(texto, SNAPSHOT)
+    flat = [i for i in rep.issues if i.code == "TEXT_FLAT_MISMATCH"]
+    assert len(flat) == 1
+    assert flat[0].ticker == "SMCI"
+    assert flat[0].severity == "WARN"
+
+
+def test_lint_veredito_flat_claim_correct_no_false_positive():
+    snap = {
+        "as_of": "2026-07-31",
+        "quotes": {"NVDA": {"price": 200.0, "previous_close": 199.8, "change_percent_verified": 0.1}},
+        "technicals": {}, "earnings": {},
+    }
+    texto = "NVDA segue estável hoje, sem novidade relevante."
+    rep = lint_veredito(texto, snap)
+    assert "TEXT_FLAT_MISMATCH" not in _codes(rep.issues)
+
+
 def test_lint_veredito_phantom_earnings():
     texto = "SMCI caiu 9,95% em 29/jul apos divulgacao de earnings."
     rep = lint_veredito(texto, SNAPSHOT)
