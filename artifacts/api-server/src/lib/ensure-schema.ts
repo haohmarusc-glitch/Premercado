@@ -291,6 +291,20 @@ export async function ensureSchema(): Promise<void> {
 
   try {
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sector_momentum (
+        benchmark text PRIMARY KEY,
+        momentum_annual_pct numeric(15, 4) NOT NULL,
+        lookback_days integer NOT NULL,
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    logger.info("Schema check ok (sector_momentum table)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (sector_momentum table)");
+  }
+
+  try {
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS bounce_alert_firings (
         id serial PRIMARY KEY,
         alert_key text NOT NULL UNIQUE,

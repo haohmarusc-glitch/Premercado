@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
 import path from "path";
 import { eq, inArray } from "drizzle-orm";
-import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable } from "@workspace/db";
+import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable, sectorMomentumTable } from "@workspace/db";
 import type { ScenarioPosition } from "@workspace/scenario-math";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
@@ -190,6 +190,26 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "Failed to build scenario positions");
     res.status(500).json({ error: "Failed to load scenario positions" });
+  }
+});
+
+// Momentum recente do benchmark setorial (SMH) -- alimenta só uma SUGESTÃO
+// no slider "Movimento do setor" de /cenarios (ver sector-momentum-checker
+// em scenario-params-checker.ts, 1x/dia); global, não por usuário. null
+// antes do primeiro ciclo do checker rodar (~2.5min depois do boot).
+router.get("/scenarios/sector-momentum", async (_req, res): Promise<void> => {
+  try {
+    const [row] = await db.select().from(sectorMomentumTable).limit(1);
+    if (!row) { res.json(null); return; }
+    res.json({
+      benchmark: row.benchmark,
+      momentumAnnualPct: Number(row.momentumAnnualPct),
+      lookbackDays: row.lookbackDays,
+      updatedAt: row.updatedAt.toISOString(),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to load sector momentum");
+    res.status(500).json({ error: "Failed to load sector momentum" });
   }
 });
 

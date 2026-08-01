@@ -7,7 +7,7 @@
  * posições ativas de TODOS os usuários numa run só, mesmo padrão de
  * portfolio-alerts.ts.
  */
-import { db, portfolioPositionsTable, scenarioParamsTable } from "@workspace/db";
+import { db, portfolioPositionsTable, scenarioParamsTable, sectorMomentumTable } from "@workspace/db";
 import { isActivePosition } from "./portfolio-math";
 import { runScript } from "../routes/scenarios";
 import { state as agentState } from "./runner";
@@ -25,6 +25,17 @@ interface ScenarioParamResult {
   betaSector?: number;
   daysUsed?: number;
   error?: string;
+}
+
+interface SectorMomentumResult {
+  benchmark: string;
+  momentumAnnualPct: number;
+  lookbackDays: number;
+}
+
+interface ScenarioParamsScriptOutput {
+  params: Record<string, ScenarioParamResult>;
+  sectorMomentum: SectorMomentumResult | null;
 }
 
 export async function refreshScenarioParams(): Promise<void> {
@@ -49,7 +60,7 @@ export async function refreshScenarioParams(): Promise<void> {
     return;
   }
 
-  let parsed: Record<string, ScenarioParamResult>;
+  let parsed: ScenarioParamsScriptOutput;
   try {
     parsed = JSON.parse(out);
   } catch (err) {
@@ -57,10 +68,21 @@ export async function refreshScenarioParams(): Promise<void> {
     return;
   }
 
+  if (parsed.sectorMomentum) {
+    const mo = parsed.sectorMomentum;
+    await db
+      .insert(sectorMomentumTable)
+      .values({ benchmark: mo.benchmark, momentumAnnualPct: mo.momentumAnnualPct, lookbackDays: mo.lookbackDays })
+      .onConflictDoUpdate({
+        target: sectorMomentumTable.benchmark,
+        set: { momentumAnnualPct: mo.momentumAnnualPct, lookbackDays: mo.lookbackDays, updatedAt: new Date() },
+      });
+  }
+
   let updated = 0;
   const skipped: string[] = [];
   for (const ticker of tickers) {
-    const r = parsed[ticker];
+    const r = parsed.params[ticker];
     // Ticker sem número válido (histórico insuficiente, erro de rede etc.)
     // fica de fora do upsert -- mantém o valor anterior (ou o fallback
     // DEFAULT_VOL/DEFAULT_BETA de buildScenarioPositions) em vez de gravar
