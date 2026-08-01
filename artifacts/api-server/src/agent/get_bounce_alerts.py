@@ -23,10 +23,14 @@ alert-checker.ts decidir a direção sem precisar reparsear o título.
 """
 import sys
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent import config
+from agent.bounded_parallel import bounded_parallel_map, exit_now
 from agent.market_alerts import check_dead_cat_bounce
+
+# Timeout do lado Node (alert-checker.ts::fetchBounceAlerts) é 60s -- ver
+# bounded_parallel.py pro motivo do orçamento ficar abaixo disso.
+BUDGET_S = 45
 
 
 def _bounce_for(ticker: str) -> list:
@@ -45,14 +49,7 @@ if __name__ == "__main__":
 
     tickers = args.get("tickers") or config.TICKERS
 
-    alerts = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(_bounce_for, t): t for t in tickers}
-        for future in as_completed(futures):
-            t = futures[future]
-            try:
-                alerts += future.result()
-            except Exception as e:
-                print(f"[get_bounce_alerts] {t}: {e}", file=sys.stderr)
+    results = bounded_parallel_map(_bounce_for, tickers, budget_s=BUDGET_S, label="get_bounce_alerts")
+    alerts = [a for sub in results for a in sub]
 
-    print(json.dumps({"alerts": [a.to_dict() for a in alerts]}, ensure_ascii=False))
+    exit_now(json.dumps({"alerts": [a.to_dict() for a in alerts]}, ensure_ascii=False) + "\n")
