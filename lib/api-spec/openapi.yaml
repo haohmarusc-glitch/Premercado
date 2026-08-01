@@ -1584,7 +1584,7 @@ components:
 
     ScenarioAlertSettings:
       type: object
-      required: [configured, dataAlvo, thresholdPct, enabled, notifyEmail, lastFiredAt]
+      required: [configured, dataAlvo, thresholdPct, enabled, notifyEmail, lastFiredAt, sectorMovePct]
       properties:
         # false quando o usuário nunca salvou uma config -- os demais campos
         # vêm com o default de UI (dataAlvo hoje+90d, thresholdPct 50,
@@ -1602,6 +1602,11 @@ components:
           type: ["string", "null"]
         lastFiredAt:
           type: ["string", "null"]
+        # Premissa "movimento do setor até a data-alvo" (%), recalculada
+        # 1x/dia no backend a partir do momentum real do benchmark (SMH) --
+        # null até a primeira execução do job pra este usuário.
+        sectorMovePct:
+          type: ["number", "null"]
 
     ScenarioAlertSettingsUpdate:
       type: object

@@ -99,7 +99,9 @@ export default function PainelCenarios() {
 
   const [dataAlvoStr, setDataAlvoStr] = useState(DEFAULT_DATA_ALVO);
   const [vendidas, setVendidas] = useState<Record<string, boolean>>({});
-  const [setor, setSetor] = useState(0); // movimento do setor até a data-alvo, %
+  const [setor, setSetorRaw] = useState(0); // movimento do setor até a data-alvo, %
+  const [setorTouched, setSetorTouched] = useState(false);
+  const setSetor = (v: number) => { setSetorTouched(true); setSetorRaw(v); };
   const [volMult, setVolMult] = useState(1); // multiplicador da volatilidade
   const [valores, setValores] = useState<Record<string, number>>({});
 
@@ -133,6 +135,18 @@ export default function PainelCenarios() {
       return changed ? next : prev;
     });
   }, [posicoes]);
+
+  // Aplica sectorMovePct salvo (recalculado 1x/dia no backend a partir do
+  // momentum real do benchmark, ver scenario-params-checker.ts) como valor
+  // inicial do slider -- só enquanto o usuário não tiver mexido nele nesta
+  // sessão (setorTouched), pra nunca sobrescrever um ajuste manual quando
+  // alertSettings refizer o fetch (refetch em foco, invalidation etc.).
+  useEffect(() => {
+    if (setorTouched) return;
+    if (alertSettings?.configured && alertSettings.sectorMovePct != null) {
+      setSetorRaw(alertSettings.sectorMovePct);
+    }
+  }, [alertSettings, setorTouched]);
 
   const dataAlvo = useMemo(() => new Date(dataAlvoStr + "T00:00:00"), [dataAlvoStr]);
   const dias = diasAteAlvo(dataAlvo);
