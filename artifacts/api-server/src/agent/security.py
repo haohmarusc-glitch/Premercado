@@ -143,4 +143,17 @@ def mask_sensitive_data(text):
     text = re.sub(r"sk-[a-zA-Z0-9]{20,}", "sk-***MASKED***", text)
     text = re.sub(r"Bearer\s+[a-zA-Z0-9\-_]{20,}", "Bearer ***MASKED***", text)
     text = re.sub(r"://[^:]+:[^@]+@", "://***:***@", text)
+    # Segredo em QUERY STRING. Vazou de verdade em produção (02/08): a FMP
+    # respondeu 403, o requests põe a URL inteira na mensagem da exceção, e o
+    # print do erro em news_sources.py mandou a chave crua pro log do servidor:
+    #   [news_sources] fmp/GOOGL: 403 Client Error: Forbidden for url:
+    #   https://financialmodelingprep.com/api/v3/stock_news?...&apikey=<chave>
+    # Os provedores que este repo usa passam credencial assim: FMP (apikey),
+    # Finnhub (token), FRED (api_key), ROIC. As regras acima não pegavam nenhum
+    # deles -- só cobriam chave da Anthropic/OpenAI, Bearer e credencial de URL.
+    text = re.sub(
+        r"(?i)([?&](?:apikey|api_key|token|access_token|auth|key)=)[^&\s\"']+",
+        r"\1***MASKED***",
+        text,
+    )
     return text

@@ -20,7 +20,7 @@ from . import sector_contagion as _sc
 from .backtest import run_backtest as _run_backtest
 from .cache import cached
 from .http_retry import SESSION
-from .security import sanitize_for_llm, sanitize_ticker, sanitize_url
+from .security import mask_sensitive_data, sanitize_for_llm, sanitize_ticker, sanitize_url
 
 _PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
 
@@ -1696,7 +1696,7 @@ def get_macro_indicators() -> dict:
             else:
                 result[field] = None
         except Exception as e:
-            print(f"[tools] get_macro_indicators({series_id}): {e}", file=sys.stderr)
+            print(f"[tools] get_macro_indicators({series_id}): {mask_sensitive_data(str(e))}", file=sys.stderr)
             result[field] = None
             result.setdefault("errors", []).append(f"{series_id}: {e}")
     return result
@@ -1737,7 +1737,7 @@ def get_retail_sentiment(ticker: str) -> dict:
                 break
         return {"ticker": ticker, "found": False, "note": "Não está entre os tickers mais mencionados no momento (ApeWisdom)."}
     except Exception as e:
-        print(f"[tools] get_retail_sentiment({ticker}): {e}", file=sys.stderr)
+        print(f"[tools] get_retail_sentiment({ticker}): {mask_sensitive_data(str(e))}", file=sys.stderr)
         return {"ticker": ticker, "error": str(e)}
 
 

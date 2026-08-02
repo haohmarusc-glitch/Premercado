@@ -194,3 +194,44 @@ def test_validate_api_key_accepts_well_formed():
 ])
 def test_validate_api_key_rejects_bad(bad):
     assert validate_api_key(bad) is False
+
+
+# ---------------------------------------------- segredo em query string ---
+#
+# Vazou de verdade em produção (02/08): a FMP respondeu 403, o requests põe a
+# URL inteira na mensagem da exceção, e o print do erro em news_sources.py
+# mandou a chave crua pro log do servidor. As regras que já existiam cobriam
+# chave da Anthropic/OpenAI, Bearer e credencial embutida em URL -- nenhuma
+# pegava `?apikey=`, que é justamente como FMP/Finnhub/FRED autenticam.
+
+
+def test_mascara_apikey_de_query_string_o_caso_real():
+    texto = (
+        "403 Client Error: Forbidden for url: "
+        "https://financialmodelingprep.com/api/v3/stock_news"
+        "?tickers=GOOGL&limit=6&apikey=aaIKPZy3lwwVgKyfLeovcRcWwDoqGEiY"
+    )
+    saida = mask_sensitive_data(texto)
+    assert "aaIKPZy3lwwVgKyfLeovcRcWwDoqGEiY" not in saida
+    assert "apikey=***MASKED***" in saida
+    # o resto da mensagem precisa sobreviver -- é o que torna o log útil
+    assert "403 Client Error" in saida
+    assert "tickers=GOOGL" in saida
+
+
+@pytest.mark.parametrize("param", ["apikey", "api_key", "token", "access_token", "auth", "key"])
+def test_mascara_todos_os_nomes_de_parametro_usados(param):
+    saida = mask_sensitive_data(f"https://exemplo.com/v1/x?a=1&{param}=SEGREDO123456&b=2")
+    assert "SEGREDO123456" not in saida
+    assert f"{param}=***MASKED***" in saida
+    assert "b=2" in saida, "parâmetro seguinte não pode ser engolido"
+
+
+def test_mascara_e_case_insensitive():
+    saida = mask_sensitive_data("https://exemplo.com/x?APIKEY=SEGREDO123456")
+    assert "SEGREDO123456" not in saida
+
+
+def test_nao_mexe_em_url_sem_segredo():
+    texto = "https://exemplo.com/v1/quote?symbol=NVDA&limit=6"
+    assert mask_sensitive_data(texto) == texto
