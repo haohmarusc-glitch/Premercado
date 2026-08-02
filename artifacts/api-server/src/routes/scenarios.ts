@@ -16,13 +16,27 @@ const router: IRouter = Router();
 const DEFAULT_VOL = 0.5;
 const DEFAULT_BETA = 1.0;
 
+const SCRIPT_TIMEOUT_MS = 60_000;
+
+/**
+ * Env com o deadline ABSOLUTO em que este lado desiste, para o script parar
+ * sozinho e ainda imprimir o resultado parcial em vez de ser morto com tudo
+ * que já buscou (ver bounded_parallel.py::deadline_exceeded).
+ *
+ * Estes scripts não têm laço paralelo, então não usam bounded_parallel_map --
+ * eles só consultam o deadline entre um ticker e o outro.
+ */
+function scriptEnv(timeoutMs: number): NodeJS.ProcessEnv {
+  return { ...process.env, AGENT_DEADLINE_TS: String(Date.now() + timeoutMs) };
+}
+
 export function runScript(scriptName: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
-    const py = spawn(getPythonBin(), [scriptPath, ...args]);
+    const py = spawn(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
     let out = "";
     let err = "";
-    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error(`${scriptName} timeout`)); }, 60_000);
+    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error(`${scriptName} timeout`)); }, SCRIPT_TIMEOUT_MS);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
@@ -35,10 +49,10 @@ export function runScript(scriptName: string, args: string[]): Promise<string> {
 
 // earnings_reaction_analysis.py recebe payload por stdin (não argv), mesmo
 // padrão de routes/earnings-reaction.ts.
-function runStdinScript(scriptName: string, payload: object, timeoutMs = 60_000): Promise<string> {
+function runStdinScript(scriptName: string, payload: object, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawn(getPythonBin(), [scriptPath], { env: scriptEnv(timeoutMs) });
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

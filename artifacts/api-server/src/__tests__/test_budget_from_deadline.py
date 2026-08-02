@@ -94,3 +94,43 @@ def test_orcamento_menor_que_o_timeout_externo(monkeypatch):
     for timeout_s in (30, 60, 120):
         monkeypatch.setenv(bp.DEADLINE_ENV, _deadline_daqui_a(timeout_s))
         assert bp.budget_from_deadline(1000) < timeout_s
+
+
+# ------------------------------------------------- deadline_exceeded ---
+#
+# Usado pelos scripts que percorrem tickers em SÉRIE (get_performance.py,
+# get_earnings.py, earnings_reaction_analysis.py, via routes/scenarios.ts) e
+# por isso não têm onde encaixar o bounded_parallel_map. Sem o guard eles
+# rodavam até o Node matar o processo, e o trabalho já feito ia junto.
+
+
+def test_sem_env_nunca_estoura():
+    """Execução manual do script segue sem limite nenhum."""
+    assert bp.deadline_exceeded() is False
+
+
+def test_env_invalido_nao_estoura():
+    import os
+    os.environ[bp.DEADLINE_ENV] = "abacaxi"
+    try:
+        assert bp.deadline_exceeded() is False
+    finally:
+        del os.environ[bp.DEADLINE_ENV]
+
+
+def test_deadline_distante_nao_estoura(monkeypatch):
+    monkeypatch.setenv(bp.DEADLINE_ENV, _deadline_daqui_a(60))
+    assert bp.deadline_exceeded() is False
+
+
+def test_deadline_vencido_estoura(monkeypatch):
+    monkeypatch.setenv(bp.DEADLINE_ENV, _deadline_daqui_a(-1))
+    assert bp.deadline_exceeded() is True
+
+
+def test_estoura_antes_do_deadline_pela_reserva(monkeypatch):
+    """Precisa sobrar tempo pra serializar e escrever a saída -- parar
+    exatamente no deadline não adiantaria, o Node já teria matado."""
+    monkeypatch.setenv(bp.DEADLINE_ENV, _deadline_daqui_a(1))
+    assert bp.deadline_exceeded() is True
+    assert bp.deadline_exceeded(reserve_s=0) is False
