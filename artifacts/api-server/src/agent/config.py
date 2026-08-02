@@ -19,6 +19,34 @@ PORTFOLIO_TICKERS = (
     or ["NVDA", "SMCI", "GOOGL", "ARM", "AVGO", "MRVL", "SKHY", "TSLA"]
 )
 
+# ── Notícias (fontes múltiplas) ───────────────────────────────────────────────
+# get_news/get_geopolitical_news agregam várias fontes por baixo do pano e
+# devolvem UMA lista já mesclada por ticker/tema -- o LLM continua vendo uma
+# ferramenta só (nada de uma tool por provedor, que gastaria turnos à toa).
+# A ordem desta lista também é a PRIORIDADE de desempate no dedupe: quando a
+# mesma manchete chega por duas fontes, fica a versão da que aparece antes.
+# Yahoo vem primeiro por já ser a fonte validada em produção e a única que
+# traz resumo junto; as demais entram pra cobrir ticker que o Yahoo não cobre
+# e pra não zerar a ferramenta quando o Yahoo cai.
+# 'fmp' e 'finnhub' se auto-desativam sem a respectiva chave (ver
+# news_sources.py) -- deixá-las no default não custa nada em quem não tem chave.
+_env_news_sources = os.environ.get("NEWS_SOURCES", "")
+NEWS_SOURCES = [
+    s.strip().lower() for s in _env_news_sources.split(",") if s.strip()
+] or ["yahoo", "google_rss", "fmp", "finnhub"]
+
+NEWS_MAX_ITEMS = int(os.environ.get("NEWS_MAX_ITEMS", "6"))
+# Resumo por manchete: com 3+ fontes por ticker o payload de input cresce
+# rápido, e o modelo só precisa do gist pra decidir se a notícia é catalisador.
+NEWS_SUMMARY_CHARS = int(os.environ.get("NEWS_SUMMARY_CHARS", "200"))
+# Janela das buscas de RSS ("when:2d"): 1d perde a sexta-feira quando a run
+# roda numa segunda de manhã, que é justamente quando o pré-mercado importa.
+NEWS_RSS_WINDOW = os.environ.get("NEWS_RSS_WINDOW", "2d")
+# Orçamento total das buscas paralelas de UMA chamada de get_news. Tem que
+# ficar abaixo de TOOL_TIMEOUT_SECONDS (15s) -- fonte lenta é abandonada, as
+# que responderam continuam valendo (fail-open).
+NEWS_FETCH_BUDGET_S = float(os.environ.get("NEWS_FETCH_BUDGET_S", "10"))
+
 MODEL_FULL = os.environ.get("ANTHROPIC_MODEL_FULL", "claude-sonnet-5")
 MODEL_FLASH = os.environ.get("ANTHROPIC_MODEL_FLASH", "claude-haiku-4-5")
 MODEL_CHAT = os.environ.get("ANTHROPIC_MODEL_CHAT", "claude-haiku-4-5")
