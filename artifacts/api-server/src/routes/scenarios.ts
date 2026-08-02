@@ -7,6 +7,7 @@ import type { ScenarioPosition } from "@workspace/scenario-math";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
 import { logger } from "../lib/logger";
+import { runExclusive } from "../lib/python-queue";
 
 const router: IRouter = Router();
 
@@ -31,7 +32,7 @@ function scriptEnv(timeoutMs: number): NodeJS.ProcessEnv {
 }
 
 export function runScript(scriptName: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return runExclusive(scriptName, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
     const py = spawn(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
     let out = "";
@@ -50,13 +51,13 @@ export function runScript(scriptName: string, args: string[]): Promise<string> {
       if (code !== 0) { reject(new Error(err || `${scriptName} failed`)); return; }
       resolve(out);
     });
-  });
+  }));
 }
 
 // earnings_reaction_analysis.py recebe payload por stdin (não argv), mesmo
 // padrão de routes/earnings-reaction.ts.
 function runStdinScript(scriptName: string, payload: object, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return runExclusive(scriptName, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
     const py = spawn(getPythonBin(), [scriptPath], { env: scriptEnv(timeoutMs) });
     py.stdin.write(JSON.stringify(payload));
@@ -77,7 +78,7 @@ function runStdinScript(scriptName: string, payload: object, timeoutMs = SCRIPT_
       if (code !== 0) { reject(new Error(err || `${scriptName} failed`)); return; }
       resolve(out);
     });
-  });
+  }));
 }
 
 // "2026-08-26" -> "26/08" (formato usado na agenda/eventos do painel)
