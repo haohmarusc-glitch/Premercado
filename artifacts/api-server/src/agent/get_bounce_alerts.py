@@ -25,11 +25,15 @@ import sys
 import json
 
 from agent import config
-from agent.bounded_parallel import bounded_parallel_map, exit_now
+from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.market_alerts import check_dead_cat_bounce
 
-# Timeout do lado Node (alert-checker.ts::fetchBounceAlerts) é 60s -- ver
-# bounded_parallel.py pro motivo do orçamento ficar abaixo disso.
+# Timeout do lado Node (alert-checker.ts::fetchBounceAlerts) é 60s.
+# Fallback quando o processo roda sem AGENT_DEADLINE_TS no env (execução
+# manual do script). Com a variável definida, o orçamento real vem do
+# deadline do chamador via budget_from_deadline() -- constante fixa aqui
+# não conseguia cobrir o custo de import (~8s de pandas/numpy/yfinance),
+# que sai da mesma folga. Ver bounded_parallel.py.
 BUDGET_S = 45
 
 
@@ -49,7 +53,12 @@ if __name__ == "__main__":
 
     tickers = args.get("tickers") or config.TICKERS
 
-    results = bounded_parallel_map(_bounce_for, tickers, budget_s=BUDGET_S, label="get_bounce_alerts")
+    results = bounded_parallel_map(
+        _bounce_for,
+        tickers,
+        budget_s=budget_from_deadline(BUDGET_S, label="get_bounce_alerts"),
+        label="get_bounce_alerts",
+    )
     alerts = [a for sub in results for a in sub]
 
     exit_now(json.dumps({"alerts": [a.to_dict() for a in alerts]}, ensure_ascii=False) + "\n")

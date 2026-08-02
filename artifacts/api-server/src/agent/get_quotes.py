@@ -20,14 +20,18 @@ quem consome (portfolio-alerts.ts) monta um Map por `symbol`, não por índice.
 import sys
 import json
 import yfinance as yf
-from agent.bounded_parallel import bounded_parallel_map, exit_now
+from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.security import friendly_error
 
-# Timeout do lado Node (portfolio-alerts.ts::fetchPrices) é 30s -- ver
-# bounded_parallel.py pro motivo do orçamento ficar abaixo do timeout
-# externo. Quem consome o array de saída (priceMap em portfolio-alerts.ts)
-# já é tolerante a um símbolo faltando (fica sem preço aquele ciclo, tenta
-# de novo no próximo), então um resultado parcial aqui não é um problema.
+# Timeout do lado Node (portfolio-alerts.ts::fetchPrices) é 30s. Quem consome
+# o array de saída (priceMap em portfolio-alerts.ts) já é tolerante a um
+# símbolo faltando (fica sem preço aquele ciclo, tenta de novo no próximo),
+# então um resultado parcial aqui não é um problema.
+# Fallback quando o processo roda sem AGENT_DEADLINE_TS no env (execução
+# manual do script). Com a variável definida, o orçamento real vem do
+# deadline do chamador via budget_from_deadline() -- constante fixa aqui
+# não conseguia cobrir o custo de import (~8s de pandas/numpy/yfinance),
+# que sai da mesma folga. Ver bounded_parallel.py.
 BUDGET_S = 20
 
 
@@ -143,5 +147,10 @@ if __name__ == "__main__":
         print("[]")
         sys.exit(0)
 
-    results = bounded_parallel_map(fetch_quote, symbols, budget_s=BUDGET_S, label="get_quotes")
+    results = bounded_parallel_map(
+        fetch_quote,
+        symbols,
+        budget_s=budget_from_deadline(BUDGET_S, label="get_quotes"),
+        label="get_quotes",
+    )
     exit_now(json.dumps(results) + "\n")
