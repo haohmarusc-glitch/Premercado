@@ -44,7 +44,15 @@ function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
     });
     let out = "";
     let err = "";
-    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("get_quotes timeout")); }, FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      py.kill("SIGTERM");
+      // stderr preservado: sem ele o timeout chega ao log sem nenhuma
+      // pista do que o processo estava fazendo (ver startup_probe.py).
+      const cauda = err.trim().slice(-2000);
+      reject(new Error(cauda
+        ? `get_quotes timeout (${FETCH_TIMEOUT_MS}ms). stderr: ${cauda}`
+        : `get_quotes timeout (${FETCH_TIMEOUT_MS}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`));
+    }, FETCH_TIMEOUT_MS);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {

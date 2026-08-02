@@ -17,9 +17,17 @@ import os
 import signal
 import sys
 
+# Mede quanto do tempo do processo é interpretador+import, antes de
+# qualquer trabalho útil. Ver startup_probe.py.
+from .startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+
+_probe_boot()
+
 from . import agent as a
 from . import config
 from .provider import get_run_usage
+
+_probe_imports()
 
 
 def progress(step: str) -> None:

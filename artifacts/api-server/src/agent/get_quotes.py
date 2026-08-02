@@ -19,9 +19,17 @@ quem consome (portfolio-alerts.ts) monta um Map por `symbol`, não por índice.
 """
 import sys
 import json
+
+# Mede quanto do tempo do processo é interpretador+import, antes de
+# qualquer trabalho útil. Ver startup_probe.py.
+from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+
+_probe_boot()
 import yfinance as yf
 from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.security import friendly_error
+
+_probe_imports()
 
 # Timeout do lado Node (portfolio-alerts.ts::fetchPrices) é 30s. Quem consome
 # o array de saída (priceMap em portfolio-alerts.ts) já é tolerante a um

@@ -1,4 +1,15 @@
 import sys, json
+
+# Mede quanto do tempo do processo é interpretador+import (ver
+# startup_probe.py). Importado dos dois jeitos pelo mesmo motivo do
+# bounded_parallel abaixo: este script roda como arquivo solto.
+try:
+    from startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+except ImportError:
+    from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+
+_probe_boot()
+
 import yfinance as yf
 
 # bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
@@ -9,6 +20,8 @@ try:
     from bounded_parallel import deadline_exceeded
 except ImportError:
     from agent.bounded_parallel import deadline_exceeded
+
+_probe_imports()
 
 tickers = sys.argv[1].split(",") if len(sys.argv) > 1 else []
 result = {}
