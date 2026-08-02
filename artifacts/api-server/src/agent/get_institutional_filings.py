@@ -18,7 +18,9 @@ Output (stdout JSON): {"filers": [{cik, label, name, latestFiling, previousFilin
 import sys, json, os, urllib.request
 from security import friendly_error
 
-SEC_USER_AGENT = "Jefferson Investor jefferson@example.com"
+# A SEC exige contato REAL no UA e bloqueia placeholders (mesma env de
+# tools.py::EDGAR_HEADERS).
+SEC_USER_AGENT = f"PremarketAgent {os.environ.get('SEC_CONTACT_EMAIL', 'haohmarusc@gmail.com')}"
 
 # CIKs bem conhecidos e estáveis de gestores "smart money" acompanhados por
 # padrão. Confirme/adicione outros via INSTITUTIONAL_CIKS -- busque o CIK de

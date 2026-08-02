@@ -206,8 +206,12 @@ def get_geopolitical_news(max_items: int = 6) -> dict[str, list[dict]]:
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────
 
+# A SEC exige um User-Agent com contato REAL (empresa/nome + e-mail) e
+# bloqueia UAs genéricos/placeholder -- "contact@example.com" arriscava
+# bloqueio silencioso do EDGAR. Sobrescrevível via env pra trocar sem deploy.
+SEC_CONTACT = os.environ.get("SEC_CONTACT_EMAIL", "haohmarusc@gmail.com")
 EDGAR_HEADERS = {
-    "User-Agent": "PremarketAgent contact@example.com",
+    "User-Agent": f"PremarketAgent {SEC_CONTACT}",
     "Accept": "application/json",
 }
 
@@ -239,12 +243,51 @@ TICKER_TO_CIK = {
 }
 
 
+@cached("edgar_cik_map", ttl=86400)
+def _sec_ticker_cik_map() -> dict:
+    """Mapa oficial ticker -> CIK da própria SEC (~10k empresas), cacheado
+    por 24h. TICKER_TO_CIK acima é mantido à mão e vive desatualizado: todo
+    ticker novo da cesta/carteira (SNDK, ALAB, CRDO, VRT, HCC, AMR, AVGO,
+    MRVL...) caía em "CIK desconhecido" até alguém lembrar de adicionar na
+    mão. Aqui a lista se mantém sozinha.
+
+    Não substitui o dict fixo, complementa: o dict é consultado primeiro
+    (rápido, sem rede, e já revisado/comentado caso a caso -- ex.: a nota
+    sobre SKHY ser foreign private issuer). Esta busca só entra quando o
+    ticker não está lá."""
+    try:
+        r = SESSION.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers=EDGAR_HEADERS,
+            timeout=15,
+        )
+        r.raise_for_status()
+        # Formato da SEC: {"0": {"cik_str": 320193, "ticker": "AAPL", ...}, ...}
+        return {
+            row["ticker"].upper(): str(row["cik_str"]).zfill(10)
+            for row in r.json().values()
+            if row.get("ticker") and row.get("cik_str") is not None
+        }
+    except Exception as e:
+        print(f"[edgar] falha ao buscar mapa de CIK da SEC: {e}", file=sys.stderr, flush=True)
+        return {}
+
+
+def _resolve_cik(ticker: str) -> str | None:
+    """CIK do ticker: dict fixo primeiro, mapa oficial da SEC como fallback."""
+    t = ticker.upper()
+    cik = TICKER_TO_CIK.get(t)
+    if cik:
+        return cik
+    return _sec_ticker_cik_map().get(t)
+
+
 @cached("edgar:{0}:{1}:{2}", ttl=1800)
 def search_edgar_filings(
     ticker: str, form_type: str = "8-K", count: int = 5
 ) -> list[dict]:
     """Busca filings recentes na SEC EDGAR para o ticker."""
-    cik = TICKER_TO_CIK.get(ticker.upper())
+    cik = _resolve_cik(ticker)
     if not cik:
         return [{"error": f"CIK desconhecido para {ticker}"}]
     try:
