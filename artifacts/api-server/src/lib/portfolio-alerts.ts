@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendPortfolioHoldingEmail, sendRecompraEmail } from "./mailer";
 import { logger } from "./logger";
+import { runExclusive } from "./python-queue";
 
 const CHECK_INTERVAL_MS = 15 * 60_000; // 15 min
 
@@ -28,7 +29,7 @@ interface PriceQuote {
 const FETCH_TIMEOUT_MS = 30_000; // 30 s — se o Python travar, rejeita
 
 function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_quotes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
       // AGENT_DEADLINE_TS: o Python deriva o orçamento do bounded_parallel_map
@@ -60,7 +61,7 @@ function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
       if (code !== 0) { reject(new Error(`get_quotes exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out) as PriceQuote[]); } catch { reject(new Error(`Bad JSON from get_quotes: ${out}`)); }
     });
-  });
+  }));
 }
 
 async function loadFiredKeys(): Promise<Set<string>> {

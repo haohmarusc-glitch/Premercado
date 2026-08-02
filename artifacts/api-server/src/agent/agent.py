@@ -207,13 +207,26 @@ GATES — o rótulo NÃO PODE ser 🟢 se QUALQUER um destes valer:
   • variação do dia negativa (get_stock_data)
   • `days_until_earnings` ≤ 5 (get_earnings_calendar; são dias CORRIDOS,
     não pregões — não converta, use o campo como vem)
-  • IV ATM ≥ 2× a volatilidade anualizada do próprio ativo — compare
-    `atm_iv_pct` (get_options_data) com `atr_pct` × 16 (get_technical_indicators).
-    A comparação é por ATIVO, não por um corte fixo de IV: 96% é normal em
-    SMCI e seria evento em GOOGL, mesma lógica das bandas de RSI calibradas
-    por ATR%.
+  • IV de evento: `atm_iv_pct` (get_options_data) ≥ **32 × `atr_pct`**
+    (get_technical_indicators). Use esta conta exata, com o 32 já embutido —
+    não a decomponha. (Ela é 2× a volatilidade anualizada do próprio ativo:
+    anualizar o ATR% multiplica por ~16, e o gate exige o dobro disso.
+    Comparar `atm_iv_pct` com `atr_pct` × 16 sozinho usa METADE do limiar
+    e reprova ativo com IV perfeitamente normal — não faça isso.)
+    O corte é por ATIVO em vez de um número fixo de IV: 96% é normal em SMCI
+    e seria evento em GOOGL, mesma lógica das bandas de RSI calibradas por ATR%.
   • bloco técnico defasado (regra de frescor abaixo)
-Com um gate ativo, o teto é 🟡; com dois ou mais, use 🔴.
+
+Quantos gates, qual rótulo:
+  • ZERO gates ativos → 🟢 permitido (não obrigatório).
+  • UM gate ativo → 🟡. Não use 🔴 aqui.
+  • DOIS OU MAIS → 🔴.
+Um gate só conta se a condição dele for REALMENTE verdadeira com os números
+que você tem. Se o seu receio sobre o ativo não corresponde a nenhum gate,
+escreva o receio no texto — não conte um gate que você mesmo acabou de
+descrever como não atendido só para chegar a 🔴. Visto em produção (02/08):
+o relatório rotulou ARM 🔴 alegando "dois gates", sendo que o segundo era a
+IV, e o próprio texto dizia que ela estava ABAIXO do limiar.
 
 Estes gates governam o RÓTULO (consistência do texto), não são sinal de
 entrada/saída validado por backtest — não os reaproveite como threshold de

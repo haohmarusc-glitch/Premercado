@@ -87,10 +87,7 @@ def test_verde_com_variacao_negativa_e_erro():
 
 
 def test_verde_com_iv_de_evento_e_erro():
-    """ARM 02/08: 🟢 com IV extrema pro próprio ativo.
-
-    atr_pct 2.0% -> vol anualizada ~31,7%; o gate exige IV >= 2x isso (~63,5%).
-    """
+    """🟢 com IV extrema pro próprio ativo. atr_pct 2.0% -> limiar 64%."""
     snap = new_snapshot()
     snap["quotes"]["ARM"] = {"change_pct": 1.0, "as_of": "2026-08-01"}
     snap["technicals"]["ARM"] = {"rsi_date": "2026-08-01", "atr_pct": 2.0}
@@ -102,8 +99,7 @@ def test_verde_com_iv_de_evento_e_erro():
 
 def test_iv_alta_mas_normal_pro_ativo_nao_e_gate():
     """96% é IV alta em termos absolutos, mas não é evento num ativo de ATR% 4
-    (vol anualizada ~63%; o gate só dispara a partir de ~127%). É a razão de o
-    corte ser por ativo em vez de número fixo."""
+    (limiar 128%). É a razão de o corte ser por ativo em vez de número fixo."""
     snap = new_snapshot()
     snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
     snap["technicals"]["SMCI"] = {"rsi_date": "2026-08-01", "atr_pct": 4.0}
@@ -148,13 +144,81 @@ def test_um_gate_pede_amarelo():
 
 
 @pytest.mark.parametrize("rotulo", ["🟡", "🔴"])
-def test_amarelo_e_vermelho_nunca_violam(rotulo):
-    """Os gates só proíbem 🟢 -- rótulo mais conservador é sempre aceitável."""
+def test_com_dois_gates_amarelo_e_vermelho_passam(rotulo):
+    """Com 2 gates, 🔴 é o rótulo da rubrica e 🟡 é conservador demais mas
+    aceitável -- o que os gates proíbem ali é 🟢."""
     snap = new_snapshot()
     snap["quotes"]["ARM"] = {"change_pct": -0.8, "as_of": "2026-08-01"}
     snap["earnings"]["ARM"] = 1
     rep = lint_report(_relatorio("ARM", rotulo), snap)
     assert not rep.has_errors
+
+
+# ------------------------------------------------- rótulo inflado (🔴) ---
+#
+# O inverso do bug original: em vez de otimismo indevido, receio indevido.
+# Visto em produção (02/08): ARM levou 🔴 alegando "dois gates ativos", sendo
+# que o segundo era a IV -- e o próprio texto dizia que ela estava ABAIXO do
+# limiar. O validador antigo só olhava 🟢, então isso passava calado.
+
+
+def test_vermelho_com_um_gate_so_e_erro():
+    """O caso ARM: um gate real (queda), 🔴 alegando dois."""
+    snap = new_snapshot()
+    snap["quotes"]["ARM"] = {"change_pct": -0.77, "as_of": "2026-08-01"}
+    snap["technicals"]["ARM"] = {"rsi_date": "2026-08-01", "atr_pct": 9.75}
+    snap["options"]["ARM"] = {"atm_iv_pct": 103.6}  # bem abaixo de 32 x 9,75 = 312%
+    rep = lint_report(_relatorio("ARM", "🔴"), snap)
+    assert rep.has_errors
+    assert "ROTULO_INFLADO" in rep.summary()
+    assert "apenas 1 gate" in rep.summary()
+
+
+def test_vermelho_sem_gate_nenhum_e_erro():
+    snap = new_snapshot()
+    snap["quotes"]["GOOGL"] = {"change_pct": 6.7, "as_of": "2026-08-01"}
+    snap["earnings"]["GOOGL"] = 40
+    rep = lint_report(_relatorio("GOOGL", "🔴"), snap)
+    assert rep.has_errors
+    assert "nenhum" in rep.summary()
+
+
+def test_vermelho_com_dois_gates_passa():
+    """HCC 02/08: earnings em 3 dias + queda no dia = 🔴 legítimo."""
+    snap = new_snapshot()
+    snap["quotes"]["HCC"] = {"change_pct": -1.23, "as_of": "2026-08-01"}
+    snap["earnings"]["HCC"] = 3
+    rep = lint_report(_relatorio("HCC", "🔴"), snap)
+    assert not rep.has_errors
+
+
+def test_amarelo_com_um_gate_passa():
+    """🟡 é o meio livre: um gate ativo é exatamente o caso dele."""
+    snap = new_snapshot()
+    snap["quotes"]["NVDA"] = {"change_pct": -0.5, "as_of": "2026-08-01"}
+    rep = lint_report(_relatorio("NVDA", "🟡"), snap)
+    assert not rep.has_errors
+
+
+def test_amarelo_sem_gate_nenhum_passa():
+    """Julgamento que nenhum gate cobre (volume fraco, manchete ambígua) é uso
+    legítimo de 🟡 -- engessar isso tiraria a saída honesta para o receio."""
+    snap = new_snapshot()
+    snap["quotes"]["NVDA"] = {"change_pct": 2.9, "as_of": "2026-08-01"}
+    snap["earnings"]["NVDA"] = 24
+    rep = lint_report(_relatorio("NVDA", "🟡"), snap)
+    assert not rep.has_errors
+
+
+def test_limiar_de_iv_e_32x_atr_nao_16x():
+    """A confusão real de 02/08: o modelo comparou IV contra atr_pct x 16 em
+    NVDA, AVGO e ARM -- metade do limiar. IV entre 16x e 32x NÃO é gate."""
+    snap = new_snapshot()
+    snap["quotes"]["X"] = {"change_pct": 1.0, "as_of": "2026-08-01"}
+    snap["technicals"]["X"] = {"rsi_date": "2026-08-01", "atr_pct": 4.0}
+    snap["options"]["X"] = {"atm_iv_pct": 100.0}  # 16x=64, 32x=128 -> no meio
+    rep = lint_report(_relatorio("X", "🟢"), snap)
+    assert not rep.has_errors, "IV entre 16x e 32x virou gate indevidamente"
 
 
 def test_verde_sem_gate_passa():
