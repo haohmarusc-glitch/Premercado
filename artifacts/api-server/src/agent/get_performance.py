@@ -1,9 +1,24 @@
 import sys, json
 import yfinance as yf
 
+# bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
+# jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
+# aí sys.path[0] é o próprio diretório agent/) e, em outros pontos, como módulo
+# do pacote. Só stdlib dentro dele, então o import flat é seguro.
+try:
+    from bounded_parallel import deadline_exceeded
+except ImportError:
+    from agent.bounded_parallel import deadline_exceeded
+
 tickers = sys.argv[1].split(",") if len(sys.argv) > 1 else []
 result = {}
 for t in tickers:
+    # Para antes de o Node matar o processo: assim o que já foi buscado ainda
+    # é impresso, em vez de morrer junto com o timeout (scenarios.ts cai pro
+    # custo como fallback quando não recebe nada). Ver bounded_parallel.py.
+    if deadline_exceeded():
+        result[t] = {"price": None, "previousClose": None, "skipped": "sem tempo"}
+        continue
     try:
         ticker_obj = yf.Ticker(t)
         fi = ticker_obj.fast_info

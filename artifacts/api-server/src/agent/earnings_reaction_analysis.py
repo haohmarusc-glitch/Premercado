@@ -23,6 +23,16 @@ Uso:
 """
 import argparse
 import json
+
+# bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
+# jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
+# aí sys.path[0] é o próprio diretório agent/) e, em outros pontos, como módulo
+# do pacote. Só stdlib dentro dele, então o import flat é seguro.
+try:
+    from bounded_parallel import deadline_exceeded
+except ImportError:
+    from agent.bounded_parallel import deadline_exceeded
+
 import sys
 
 import pandas as pd
@@ -203,6 +213,14 @@ if __name__ == "__main__":
         _payload = json.loads(_raw_stdin)
         _tickers = [str(tk).strip().upper() for tk in (_payload.get("tickers") or DEFAULT_TICKERS) if str(tk).strip()]
         _lookback = int(_payload.get("lookback") or 8)
-        print(json.dumps([analyze_ticker(tk, _lookback) for tk in _tickers], ensure_ascii=False))
+        _saida = []
+        for tk in _tickers:
+            # Resultado parcial vale mais que timeout: sem isto o laço roda até
+            # o Node matar o processo e tudo que já foi analisado se perde.
+            if deadline_exceeded():
+                _saida.append({"ticker": tk, "error": "orçamento de tempo esgotado"})
+                continue
+            _saida.append(analyze_ticker(tk, _lookback))
+        print(json.dumps(_saida, ensure_ascii=False))
     else:
         main()

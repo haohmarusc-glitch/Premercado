@@ -7,6 +7,7 @@ import { startScenarioAlertChecker } from "./lib/scenario-alert-checker";
 import { startScenarioParamsChecker } from "./lib/scenario-params-checker";
 import { ensureSchema } from "./lib/ensure-schema";
 import { claimSeedAccountBootstrap } from "./lib/claim-seed-account";
+import { shouldRunBackgroundCheckers } from "./lib/background-checkers";
 
 const rawPort = process.env["PORT"];
 
@@ -28,8 +29,15 @@ app.listen(port, async (err) => {
   await ensureSchema();
   await claimSeedAccountBootstrap();
   await startScheduler();
-  startAlertChecker();
-  startPortfolioAlertChecker();
-  startScenarioAlertChecker();
-  startScenarioParamsChecker();
+  if (shouldRunBackgroundCheckers()) {
+    startAlertChecker();
+    startPortfolioAlertChecker();
+    startScenarioAlertChecker();
+    startScenarioParamsChecker();
+  } else {
+    logger.info(
+      { nodeEnv: process.env["NODE_ENV"] },
+      "Checkers de fundo desligados (RUN_BACKGROUND_CHECKERS=1 para ligar)",
+    );
+  }
 });

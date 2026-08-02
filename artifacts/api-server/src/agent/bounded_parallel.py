@@ -95,6 +95,32 @@ def budget_from_deadline(
     return restante
 
 
+def deadline_exceeded(*, reserve_s: float = DEFAULT_RESERVE_S) -> bool:
+    """True quando não sobra tempo útil até o deadline do chamador.
+
+    Serve os scripts que percorrem tickers em série (get_performance.py,
+    get_earnings.py, get_scenario_params.py) e por isso não têm onde encaixar
+    o bounded_parallel_map. Sem isso eles rodam até o Node matar o processo,
+    e o resultado do trabalho JÁ FEITO é jogado fora junto -- o chamador
+    recebe só um timeout.
+
+    Com o guard, o laço para sozinho e o script ainda imprime o que conseguiu:
+    resultado parcial é bem melhor que nenhum, e todos os consumidores destes
+    scripts já toleram ticker faltando/com erro.
+
+    Sem AGENT_DEADLINE_TS no env devolve sempre False -- execução manual do
+    script continua sem limite.
+    """
+    raw = os.environ.get(DEADLINE_ENV)
+    if not raw:
+        return False
+    try:
+        deadline_s = float(raw) / 1000.0
+    except ValueError:
+        return False
+    return time.time() >= deadline_s - reserve_s
+
+
 def bounded_parallel_map(
     fn: Callable[[T], R],
     items: list[T],
