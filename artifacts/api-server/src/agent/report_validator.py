@@ -34,16 +34,32 @@ from typing import Any
 
 from .veredito_validator import ValidationReport, _parse_date
 
-# Fator de anualização da volatilidade diária: sqrt(252 pregões) ≈ 15.87.
-# atr_pct é uma média de range diário, não desvio-padrão de retorno, então isto
-# é aproximação de ordem de grandeza -- suficiente pra separar "IV de evento"
-# de "IV normal do ativo", que é a única pergunta que o gate faz.
-ANNUALIZE = 15.87
-IV_EVENT_MULTIPLE = 2.0
+# Limiar do gate de IV, como multiplicador direto de atr_pct.
+#
+# A conta por trás: anualizar volatilidade diária multiplica por sqrt(252) ≈
+# 15.87, e o gate exige o DOBRO disso -- 2 × 15.87 = 31.74. Arredondado para 32
+# de propósito: este mesmo número está no prompt, e o modelo precisa conseguir
+# aplicá-lo de cabeça sem decompor a conta. A primeira versão pedia "compare
+# atm_iv_pct com atr_pct × 16" e explicava o 2× em prosa; o relatório de 02/08
+# mostrou o modelo comparando contra 16× em três ativos (NVDA, AVGO, ARM), ou
+# seja, METADE do limiar. Um número fechado elimina a decomposição.
+#
+# O arredondamento custa 0,8% no limiar e compra uma instrução sem ambiguidade.
+# atr_pct é média de range diário, não desvio-padrão de retorno, então tudo isso
+# já é aproximação de ordem de grandeza -- suficiente para a única pergunta que o
+# gate faz: esta IV é de evento ou é a IV normal deste ativo?
+IV_EVENT_MULTIPLE_ATR = 32.0
 EARNINGS_GATE_DAYS = 5
 
 VERDE = "🟢"
-LABELS = ("🟢", "🟡", "🔴")
+AMARELO = "🟡"
+VERMELHO = "🔴"
+LABELS = (VERDE, AMARELO, VERMELHO)
+
+# Quantos gates cada rótulo exige. 🟡 é o meio livre de propósito: ali cabe
+# julgamento que nenhum gate cobre (volume fraco, manchete ambígua), e engessar
+# isso tiraria do modelo a saída legítima para expressar receio.
+GATES_MIN_VERMELHO = 2
 
 
 # ------------------------------------------------ fase 1: coleta no loop ---
@@ -157,11 +173,11 @@ def _gates_violados(ticker: str, snap: dict[str, Any]) -> list[str]:
     iv = opts.get("atm_iv_pct")
     atr = tech.get("atr_pct")
     if isinstance(iv, (int, float)) and isinstance(atr, (int, float)) and atr > 0:
-        limite = IV_EVENT_MULTIPLE * atr * ANNUALIZE
+        limite = IV_EVENT_MULTIPLE_ATR * atr
         if iv >= limite:
             violados.append(
                 f"IV ATM {iv:.1f}% ≥ {limite:.1f}% "
-                f"(2x a vol anualizada do próprio ativo, atr_pct {atr:.2f}%)"
+                f"(32 × atr_pct de {atr:.2f}%)"
             )
 
     rsi_date = tech.get("rsi_date")
@@ -193,17 +209,35 @@ def lint_report(texto: str, snap: dict[str, Any]) -> ValidationReport:
         if not secao:
             continue
         rotulo = _rotulo_da_secao(secao)
-        if rotulo != VERDE:
+        if rotulo is None:
             continue
 
         violados = _gates_violados(ticker, snap)
-        if violados:
-            esperado = "🔴" if len(violados) > 1 else "🟡"
+
+        if rotulo == VERDE and violados:
+            esperado = VERMELHO if len(violados) >= GATES_MIN_VERMELHO else AMARELO
             rep.add(
                 "ERROR",
                 "GATE_ROTULO",
                 f"rotulado {VERDE} com {len(violados)} gate(s) ativo(s): "
                 f"{'; '.join(violados)}. Pela rubrica o rótulo deveria ser {esperado}.",
+                ticker=ticker,
+            )
+
+        elif rotulo == VERMELHO and len(violados) < GATES_MIN_VERMELHO:
+            # O inverso do bug original: em vez de otimismo indevido, receio
+            # indevido. Visto em produção (02/08) com ARM, que levou 🔴 alegando
+            # dois gates enquanto o próprio texto dizia que a IV estava ABAIXO
+            # do limiar. Erra para o lado seguro, mas se "gate ativo" puder
+            # significar "achei que sim", o rótulo perde significado de novo --
+            # só que puxando para o vermelho.
+            detalhe = "; ".join(violados) if violados else "nenhum"
+            rep.add(
+                "ERROR",
+                "ROTULO_INFLADO",
+                f"rotulado {VERMELHO} com apenas {len(violados)} gate(s) ativo(s) "
+                f"({detalhe}); a rubrica exige {GATES_MIN_VERMELHO}. Use {AMARELO} e "
+                f"escreva o receio no texto, em vez de contar um gate não atendido.",
                 ticker=ticker,
             )
 

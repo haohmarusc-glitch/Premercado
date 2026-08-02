@@ -93,8 +93,29 @@ def test_campo_do_gate_existe_na_ferramenta(prompt, fontes_das_tools, campo):
 def test_gates_bloqueiam_verde(prompt):
     """Os quatro gates precisam estar enunciados como bloqueio de 🟢."""
     assert "NÃO PODE ser 🟢" in prompt
-    for gate in ("variação do dia negativa", "days_until_earnings", "IV ATM", "defasado"):
+    for gate in ("variação do dia negativa", "days_until_earnings", "IV de evento", "defasado"):
         assert gate in prompt, f"gate ausente: {gate}"
+
+
+def test_limiar_de_iv_vem_fechado_em_32x(prompt):
+    """O prompt precisa dar o multiplicador JÁ CALCULADO.
+
+    A primeira versão pedia "compare atm_iv_pct com atr_pct × 16" e explicava
+    o 2× em prosa; o relatório de 02/08 mostrou o modelo comparando contra 16×
+    em NVDA, AVGO e ARM -- metade do limiar. Em ARM isso virou um gate alegado
+    que não existia.
+    """
+    assert "32 × `atr_pct`" in prompt
+    # e precisa avisar explicitamente contra a decomposição que deu errado
+    assert "METADE do limiar" in prompt
+
+
+def test_prompt_dita_quantos_gates_para_cada_rotulo(prompt):
+    """Sem isso 🔴 vira julgamento livre, e o modelo inventa gate para chegar
+    lá (visto em produção com ARM)."""
+    assert "UM gate ativo → 🟡" in prompt
+    assert "DOIS OU MAIS → 🔴" in prompt
+    assert "não conte um gate" in prompt
 
 
 def test_gates_nao_se_apresentam_como_sinal_validado(prompt):
