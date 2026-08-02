@@ -140,7 +140,10 @@ TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 
 1. Cotação e pré-mercado — get_stock_data
 2. Manchetes — get_news (UMA chamada só, passando a lista com TODOS os
-   tickers do Grupo A juntos — get_news já aceita a lista inteira de uma vez)
+   tickers do Grupo A juntos — get_news já aceita a lista inteira de uma vez).
+   As manchetes chegam de várias origens já mescladas: priorize FATO
+   verificável (guidance, contrato, tarifa, filing) sobre opinião de manchete,
+   e ignore o campo `origin` na análise — ele só existe para depuração.
 3. Indicadores técnicos — get_technical_indicators
 4. Padrões de candlestick — detect_candle_patterns
 5. Exposição short — get_short_interest

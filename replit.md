@@ -28,6 +28,13 @@ alertas de preço e chat conversacional.
   (transcrição de earnings call, tier grátis 5 req/min — só no Chat).
   `get_retail_sentiment` (menções no Reddit/WSB via ApeWisdom) e o short volume
   diário via FINRA Reg SHO não precisam de chave nenhuma.
+- Opcional (notícias): `NEWS_SOURCES` (default `yahoo,google_rss,fmp,finnhub` — a
+  ordem também é a prioridade de desempate quando a mesma manchete chega por duas
+  fontes), `FINNHUB_API_KEY` (company news, tier grátis), `NEWS_MAX_ITEMS`,
+  `NEWS_SUMMARY_CHARS`, `NEWS_RSS_WINDOW`, `NEWS_FETCH_BUDGET_S`. `get_news` e
+  `get_geopolitical_news` agregam as fontes por baixo do pano e continuam sendo
+  UMA ferramenta cada pro LLM; Google News RSS não precisa de chave, e FMP/Finnhub
+  se auto-desativam sem a respectiva chave (fail-open por fonte).
 
 ## Stack
 
@@ -78,6 +85,9 @@ alertas de preço e chat conversacional.
     "vazadas" como texto por modelos menores
   - `tools.py` — todas as ferramentas do agente (cotação, notícias, técnicos,
     opções, short interest, analyst ratings, EDGAR, alertas, contágio setorial)
+  - `news_sources.py` — coleta de manchetes por trás de `get_news`/
+    `get_geopolitical_news`: Yahoo + Google News RSS + FMP + Finnhub, com dedupe
+    entre fontes, fail-open por fonte e orçamento de tempo único por chamada
   - `cache.py` — cache em disco (JSON, `/tmp`) com TTL por chamada, falha aberta
   - `security.py` — `sanitize_ticker`, `sanitize_url` (bloqueia SSRF: localhost,
     RFC1918, link-local/metadata de cloud), `sanitize_for_llm` (mitiga prompt
