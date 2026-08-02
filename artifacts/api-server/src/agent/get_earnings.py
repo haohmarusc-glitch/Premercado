@@ -1,6 +1,15 @@
 import sys, json
 import yfinance as yf
 
+# bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
+# jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
+# aí sys.path[0] é o próprio diretório agent/) e, em outros pontos, como módulo
+# do pacote. Só stdlib dentro dele, então o import flat é seguro.
+try:
+    from bounded_parallel import deadline_exceeded
+except ImportError:
+    from agent.bounded_parallel import deadline_exceeded
+
 # ETFs/fundos e índices nunca têm data de resultados no Yahoo Finance — pular
 # de cara evita um round-trip de rede que sempre falha (404). Mantido em sync
 # manualmente com config.NO_EARNINGS_TICKERS: este script roda como arquivo
@@ -20,6 +29,13 @@ def _has_no_earnings_data(ticker):
 def get_earnings(tickers):
     result = []
     for t in tickers:
+        # Para antes de o Node matar o processo, preservando o que já foi
+        # buscado (o consumidor já trata earningsDate=None). Ver
+        # bounded_parallel.py::deadline_exceeded.
+        if deadline_exceeded():
+            result.append({"ticker": t, "name": t, "earningsDate": None,
+                           "epsEstimate": None, "skipped": "sem tempo"})
+            continue
         if _has_no_earnings_data(t):
             result.append({"ticker": t, "name": t, "earningsDate": None, "epsEstimate": None})
             continue
