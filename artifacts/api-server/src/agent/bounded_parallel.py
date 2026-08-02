@@ -29,11 +29,70 @@ Duas peças:
 """
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from typing import Callable, TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+# Epoch em MILISSEGUNDOS do momento em que o chamador (Node) vai desistir.
+# Quem spawna o processo escreve isto no env; ver alert-checker.ts.
+DEADLINE_ENV = "AGENT_DEADLINE_TS"
+
+# Folga entre o fim do map e o timeout do Node: serializar o JSON, escrever em
+# stdout e sair. Sobra pro Node ler o pipe antes de matar o processo.
+DEFAULT_RESERVE_S = 3.0
+
+# Piso do orçamento. Se o startup comeu tudo, ainda tentamos uma janela curta em
+# vez de devolver lista vazia na hora -- alguns tickers costumam responder nela.
+MIN_BUDGET_S = 5.0
+
+
+def budget_from_deadline(
+    default_budget_s: float,
+    *,
+    reserve_s: float = DEFAULT_RESERVE_S,
+    label: str = "bounded_parallel",
+) -> float:
+    """Orçamento em segundos calculado a partir do deadline REAL do chamador.
+
+    Por que não basta uma constante no script: um `BUDGET_S` fixo é contado a
+    partir do início do map, então a diferença entre ele e o timeout do Node
+    precisa cobrir TODO o resto do processo -- e o resto do processo é
+    dominado pelo import (pandas + numpy + yfinance = ~8s numa máquina
+    ociosa). Com 45s de budget contra 60s de timeout, metade da folga já ia
+    embora antes da primeira chamada de rede, e sob contenção de CPU (vários
+    checkers subindo juntos) o processo estourava o timeout externo mesmo com
+    o map respeitando o budget dele.
+
+    Visto em produção (02/08/2026): intraday spike e bounce estourando 60s com
+    1ms de diferença entre eles -- spawnados juntos, nenhum dos dois entregou.
+
+    Como esta função roda DEPOIS dos imports, `time.time()` aqui já embute o
+    custo de startup, e o orçamento passa a ser o tempo que de fato resta.
+    Sem a variável de ambiente (rodada manual do script, ou chamador que não
+    define deadline) cai no `default_budget_s` de antes.
+    """
+    raw = os.environ.get(DEADLINE_ENV)
+    if not raw:
+        return default_budget_s
+    try:
+        deadline_s = float(raw) / 1000.0
+    except ValueError:
+        print(f"[{label}] {DEADLINE_ENV} inválido ({raw!r}), usando budget fixo de "
+              f"{default_budget_s}s", file=sys.stderr)
+        return default_budget_s
+
+    restante = deadline_s - time.time() - reserve_s
+    if restante < MIN_BUDGET_S:
+        # Sinal explícito de que o startup consumiu o orçamento -- era
+        # justamente isso que não aparecia em lugar nenhum antes.
+        print(f"[{label}] só restam {restante:.1f}s do deadline do chamador "
+              f"(startup consumiu a folga); usando o piso de {MIN_BUDGET_S}s",
+              file=sys.stderr)
+        return MIN_BUDGET_S
+    return restante
 
 
 def bounded_parallel_map(

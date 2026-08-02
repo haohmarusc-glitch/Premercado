@@ -27,6 +27,37 @@ const CHECK_INTERVAL_MS = 5 * 60_000; // 5 min
 const INTRADAY_SPIKE_COOLDOWN_MS = 15 * 60_000; // 15 min
 const COOLDOWN_MS = 4 * 60 * 60_000; // 4 hours
 
+// Timeouts dos subprocessos Python. Cada um é usado em DOIS lugares (o
+// setTimeout que mata o processo e o deadline passado ao Python via env), por
+// isso vira constante nomeada em vez de literal repetido.
+const SPIKE_TIMEOUT_MS = 60_000;
+const BOUNCE_TIMEOUT_MS = 60_000;
+// check_squeeze_setup faz várias chamadas de rede por ticker (yfinance,
+// iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por 30min, o
+// primeiro poll depois de um restart pode ser lento com a watchlist inteira.
+const SQUEEZE_TIMEOUT_MS = 120_000;
+
+/**
+ * Env do subprocesso Python com o deadline ABSOLUTO em que este lado desiste.
+ *
+ * O Python calcula o orçamento do bounded_parallel_map a partir do tempo que
+ * REALMENTE resta (ver bounded_parallel.py::budget_from_deadline), em vez de
+ * uma constante própria que precisava adivinhar quanto do tempo o startup ia
+ * consumir. Import de pandas+numpy+yfinance custa ~8s numa máquina ociosa e
+ * saía da mesma folga: em 02/08 spike e bounce estouraram os 60s com 1ms de
+ * diferença, spawnados juntos, mesmo com budget interno de 45s.
+ *
+ * Passar o deadline em vez de repetir o número dos dois lados elimina a chance
+ * de eles divergirem de novo.
+ */
+function pythonEnv(timeoutMs: number): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONPATH: agentDir,
+    AGENT_DEADLINE_TS: String(Date.now() + timeoutMs),
+  };
+}
+
 interface Quote {
   symbol: string;
   changePct: number | null;
@@ -230,7 +261,7 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_intraday_spikes"], {
       cwd: agentDir,
-      env: { ...process.env, PYTHONPATH: agentDir },
+      env: pythonEnv(SPIKE_TIMEOUT_MS),
     });
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
@@ -238,7 +269,7 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, SPIKE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_intraday_spikes: script failed")); return; }
@@ -309,7 +340,7 @@ function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_bounce_alerts"], {
       cwd: agentDir,
-      env: { ...process.env, PYTHONPATH: agentDir },
+      env: pythonEnv(BOUNCE_TIMEOUT_MS),
     });
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
@@ -317,7 +348,7 @@ function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, BOUNCE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_bounce_alerts: script failed")); return; }
@@ -410,7 +441,7 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_squeeze_alerts"], {
       cwd: agentDir,
-      env: { ...process.env, PYTHONPATH: agentDir },
+      env: pythonEnv(SQUEEZE_TIMEOUT_MS),
     });
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
@@ -422,7 +453,7 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
     // iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por
     // 30min, o primeiro poll depois de um restart pode ser lento com a
     // watchlist inteira. Timeout mais generoso que os demais checkers.
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 120_000);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, SQUEEZE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_squeeze_alerts: script failed")); return; }

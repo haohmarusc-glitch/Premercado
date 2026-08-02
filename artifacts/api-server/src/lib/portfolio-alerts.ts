@@ -31,7 +31,16 @@ function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
   return new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
-      env: { ...process.env, PYTHONPATH: agentDir },
+      // AGENT_DEADLINE_TS: o Python deriva o orçamento do bounded_parallel_map
+      // do tempo que realmente resta até FETCH_TIMEOUT_MS, em vez de usar uma
+      // constante própria que precisava adivinhar o custo de startup (~8s só de
+      // import). Aqui a folga era a mais apertada de todas: 20s de budget
+      // interno contra 30s de timeout. Ver bounded_parallel.py.
+      env: {
+        ...process.env,
+        PYTHONPATH: agentDir,
+        AGENT_DEADLINE_TS: String(Date.now() + FETCH_TIMEOUT_MS),
+      },
     });
     let out = "";
     let err = "";
