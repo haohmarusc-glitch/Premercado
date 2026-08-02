@@ -1,5 +1,8 @@
+import ipaddress
 import os
 import re
+import socket
+from urllib.parse import urlparse
 
 
 def validate_api_key(key, expected_prefix="sk-ant-"):
@@ -39,27 +42,78 @@ def sanitize_ticker(ticker):
     return cleaned
 
 
+def _host_is_internal(host):
+    """True se o host aponta pra rede interna/loopback/metadata de cloud.
+
+    Normaliza o host como IP antes de decidir, em vez de casar o texto cru
+    contra uma lista de regex. A versão anterior comparava padrões tipo
+    `127\\.\\d+\\.\\d+\\.\\d+` e deixava passar TODA forma alternativa de
+    escrever o mesmo endereço -- `127.1`, `127.0.1`, `2130706433` (decimal)
+    e `0x7f000001` (hex) chegam todas em 127.0.0.1 no resolver do SO, mas
+    nenhuma casa aquele regex. `socket.inet_aton` aceita exatamente esse
+    conjunto de formas legadas, então converter primeiro e só depois
+    classificar com `ipaddress` fecha as quatro de uma vez, sem precisar
+    prever cada grafia.
+    """
+    if not host:
+        return True  # sem host não dá pra afirmar que é externo
+    h = host.strip().strip(".").lower()
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+
+    # IPv6 vem entre colchetes na URL (ex.: "[::1]")
+    candidate = h[1:-1] if h.startswith("[") and h.endswith("]") else h
+
+    ip = None
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        # Formas legadas de IPv4 (curta/decimal/hex) que ip_address recusa
+        try:
+            ip = ipaddress.ip_address(socket.inet_aton(candidate))
+        except (OSError, ValueError):
+            ip = None
+
+    if ip is None:
+        return False  # nome DNS comum -- ver limitação no docstring de sanitize_url
+
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return (
+        ip.is_loopback or ip.is_private or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
 def sanitize_url(url):
+    """Valida uma URL de fonte externa antes de buscá-la (guarda de SSRF).
+
+    Só o HOST é inspecionado, não a URL inteira: a versão anterior rodava os
+    padrões de bloqueio sobre a string toda, então uma URL legítima com
+    "localhost" ou um IP privado em qualquer lugar do path/query
+    (ex.: https://data.sec.gov/search?q=localhost) era rejeitada sem motivo.
+
+    Limitação conhecida: um nome DNS que RESOLVE pra um IP interno passa --
+    checar isso exigiria resolução de DNS aqui dentro (I/O de rede numa
+    função pura) e ainda assim não fecharia DNS rebinding, já que o endereço
+    pode mudar entre a checagem e a requisição de verdade. Esta função é a
+    primeira barreira, não a única: as chamadas de rede daqui vão só pra
+    domínios fixos conhecidos (SEC, FRED, Yahoo, etc.).
+    """
     if not url or not isinstance(url, str):
         raise ValueError("URL invalida")
-    if not any(url.startswith(p) for p in ("http://", "https://")):
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        raise ValueError(f"URL invalida: {url}")
+    if parsed.scheme.lower() not in ("http", "https"):
         raise ValueError(f"Protocolo invalido: {url}")
-    blocked = [
-        r"localhost",
-        r"127\.\d+\.\d+\.\d+",
-        r"0\.0\.0\.0",
-        r"10\.\d+\.\d+\.\d+",
-        r"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+",
-        r"192\.168\.\d+\.\d+",
-        r"169\.254\.\d+\.\d+",
-        r"\[::1\]",
-        r"::1(?![\da-f])",
-        r"file://",
-        r"ftp://",
-    ]
-    for p in blocked:
-        if re.search(p, url, re.I):
-            raise ValueError(f"URL bloqueada: {url}")
+    try:
+        host = parsed.hostname
+    except ValueError:
+        raise ValueError(f"URL invalida: {url}")
+    if _host_is_internal(host):
+        raise ValueError(f"URL bloqueada: {url}")
     return url
 
 

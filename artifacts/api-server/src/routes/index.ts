@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import authRouter from "./auth";
 import { requireAuth } from "../middleware/require-auth";
+import { llmLimiter } from "../middleware/llm-rate-limit";
 import healthRouter from "./health";
 import reportsRouter from "./reports";
 import observationsRouter from "./observations";
@@ -39,6 +40,14 @@ router.use(authRouter); // login/signup/logout/me/claim -- abertas, sem exigir s
 // Tudo abaixo exige sessão de login (cookie) OU bearer OPERATOR_API_KEY
 // (agente Python / carteira.py) -- ver middleware/require-auth.ts.
 router.use(requireAuth);
+
+// Teto estrito só nas rotas que gastam LLM por chamada (ver
+// middleware/llm-rate-limit.ts). Aplicado por MÉTODO+CAMINHO exato, nunca
+// no router inteiro: GET /agent/status é polado a cada 5s pelo frontend
+// enquanto uma run está ativa e estouraria qualquer limite baixo, e
+// GET /chat/sessions é leitura barata de histórico.
+router.post("/agent/run", llmLimiter);
+router.post("/chat/message", llmLimiter);
 
 router.use(reportsRouter);
 router.use(quotesRouter);
