@@ -58,6 +58,26 @@ function pythonEnv(timeoutMs: number): NodeJS.ProcessEnv {
   };
 }
 
+
+/**
+ * Mensagem de timeout com o stderr que o processo alcançou emitir.
+ *
+ * Antes disto o caminho de timeout fazia `reject(new Error("timeout"))` e o
+ * `err` acumulado era descartado -- ele só era usado quando o processo saía com
+ * código != 0. O resultado: os diagnósticos que os próprios scripts imprimem
+ * (as marcas do startup_probe, o aviso de orçamento do bounded_parallel) eram
+ * invisíveis exatamente no caminho em que interessam, e todo timeout chegava ao
+ * log como a mesma linha sem informação.
+ */
+function timeoutError(rotulo: string, stderr: string, timeoutMs: number): Error {
+  const cauda = stderr.trim().slice(-2000);
+  return new Error(
+    cauda
+      ? `${rotulo} (${timeoutMs}ms). stderr: ${cauda}`
+      : `${rotulo} (${timeoutMs}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`,
+  );
+}
+
 interface Quote {
   symbol: string;
   changePct: number | null;
@@ -91,7 +111,7 @@ function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 60_000);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, 60_000)); }, 60_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_technicals: script failed")); return; }
@@ -269,7 +289,7 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, SPIKE_TIMEOUT_MS);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, SPIKE_TIMEOUT_MS)); }, SPIKE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_intraday_spikes: script failed")); return; }
@@ -348,7 +368,7 @@ function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, BOUNCE_TIMEOUT_MS);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, BOUNCE_TIMEOUT_MS)); }, BOUNCE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_bounce_alerts: script failed")); return; }
@@ -453,7 +473,7 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
     // iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por
     // 30min, o primeiro poll depois de um restart pode ser lento com a
     // watchlist inteira. Timeout mais generoso que os demais checkers.
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, SQUEEZE_TIMEOUT_MS);
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, SQUEEZE_TIMEOUT_MS)); }, SQUEEZE_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) { reject(new Error(err || "get_squeeze_alerts: script failed")); return; }

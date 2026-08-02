@@ -24,9 +24,17 @@ alert-checker.ts decidir a direção sem precisar reparsear o título.
 import sys
 import json
 
+# Mede quanto do tempo do processo é interpretador+import, antes de
+# qualquer trabalho útil. Ver startup_probe.py.
+from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+
+_probe_boot()
+
 from agent import config
 from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.market_alerts import check_dead_cat_bounce
+
+_probe_imports()
 
 # Timeout do lado Node (alert-checker.ts::fetchBounceAlerts) é 60s.
 # Fallback quando o processo roda sem AGENT_DEADLINE_TS no env (execução

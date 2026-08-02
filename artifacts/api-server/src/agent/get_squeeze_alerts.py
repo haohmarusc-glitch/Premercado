@@ -28,9 +28,17 @@ vale a pena notificar algo tão longe do setup completo).
 import sys
 import json
 
+# Mede quanto do tempo do processo é interpretador+import, antes de
+# qualquer trabalho útil. Ver startup_probe.py.
+from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+
+_probe_boot()
+
 from agent import config
 from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.tools import check_squeeze_setup
+
+_probe_imports()
 
 # Timeout do lado Node (alert-checker.ts::fetchSqueezeAlerts) é 120s -- mais
 # generoso que os demais checkers (check_squeeze_setup faz várias chamadas

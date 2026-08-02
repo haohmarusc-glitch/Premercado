@@ -41,7 +41,7 @@ import yfinance as yf
 from . import config
 from .cache import cached
 from .http_retry import SESSION
-from .security import sanitize_for_llm, sanitize_url
+from .security import mask_sensitive_data, sanitize_for_llm, sanitize_url
 
 # Teto de bytes aceito de um feed RSS antes de tentar parsear. O
 # xml.etree.ElementTree da stdlib não expande entidade EXTERNA (então não dá
@@ -463,7 +463,7 @@ def _source_for_symbol(origin: str, symbol: str, max_items: int) -> list[dict]:
             return _fetch_finnhub(symbol, max_items)
         return []
     except Exception as e:
-        print(f"[news_sources] {origin}/{symbol}: {e}", file=sys.stderr)
+        print(f"[news_sources] {origin}/{symbol}: {mask_sensitive_data(str(e))}", file=sys.stderr)
         return [{"error": str(e), "origin": origin}]
 
 
@@ -539,7 +539,7 @@ def _macro_source(origin: str, key: str, max_items: int) -> list[dict]:
             return _fetch_google_rss(f"{key} when:{config.NEWS_RSS_WINDOW}", max_items)
         return []
     except Exception as e:
-        print(f"[news_sources] macro {origin}/{key}: {e}", file=sys.stderr)
+        print(f"[news_sources] macro {origin}/{key}: {mask_sensitive_data(str(e))}", file=sys.stderr)
         return [{"error": str(e), "origin": origin}]
 
 
