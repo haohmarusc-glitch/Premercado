@@ -12,33 +12,28 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yfinance as yf
 
+from . import brt
 from . import config
 from . import memory
 from . import tools as t
 from .provider import get_client, ProviderClient
 from .sector_contagion import SECTOR_GROUPS
+from .report_validator import (
+    collect_tool_result,
+    correction_prompt,
+    lint_report,
+    new_snapshot,
+)
 from .veredito_validator import lint_veredito, validate_snapshot
 
-# Brasília (America/Sao_Paulo) não observa mais horário de verão desde 2019 --
-# offset fixo UTC-3 (mesma convenção do backend TS, ver lib/timezone.ts).
-# `datetime.date.today()`/`datetime.datetime.now()` sozinhos usam o fuso do
-# processo (UTC no container), fazendo o dia virar 3h cedo demais pro usuário
-# em horário de Brasília -- e o prompt rotulava esse valor "BRT" sem de fato
-# converter. Usar estes helpers em todo lugar que informa "hoje"/"agora" ao
-# agente (senão earnings/plano de saída ficam 1 dia errados perto da meia-noite BRT).
-_BRT_OFFSET = datetime.timedelta(hours=3)
-
-
-def _now_brt(now_utc: "datetime.datetime | None" = None) -> datetime.datetime:
-    return (now_utc if now_utc is not None else datetime.datetime.utcnow()) - _BRT_OFFSET
-
-
-def _today_brt_str(now_utc: "datetime.datetime | None" = None) -> str:
-    return _now_brt(now_utc).strftime("%d/%m/%Y")
-
-
-def _now_brt_str(now_utc: "datetime.datetime | None" = None) -> str:
-    return _now_brt(now_utc).strftime("%H:%M")
+# Helpers de horário de Brasília moram em brt.py (fonte única) -- tools.py
+# também precisa deles e não pode importar agent.py, que importaria de volta.
+# Os nomes privados abaixo continuam existindo como fachada: são usados em
+# ~10 pontos deste módulo e nos testes (test_agent_brt_time.py).
+_BRT_OFFSET = brt.BRT_OFFSET
+_now_brt = brt.now_brt
+_today_brt_str = brt.today_brt_str
+_now_brt_str = brt.now_brt_str
 
 
 def _sector_groups_text() -> str:
@@ -140,7 +135,10 @@ TODOS os ativos do Grupo A antes de seguir para a próxima categoria:
 
 1. Cotação e pré-mercado — get_stock_data
 2. Manchetes — get_news (UMA chamada só, passando a lista com TODOS os
-   tickers do Grupo A juntos — get_news já aceita a lista inteira de uma vez)
+   tickers do Grupo A juntos — get_news já aceita a lista inteira de uma vez).
+   As manchetes chegam de várias origens já mescladas: priorize FATO
+   verificável (guidance, contrato, tarifa, filing) sobre opinião de manchete,
+   e ignore o campo `origin` na análise — ele só existe para depuração.
 3. Indicadores técnicos — get_technical_indicators
 4. Padrões de candlestick — detect_candle_patterns
 5. Exposição short — get_short_interest
@@ -182,6 +180,8 @@ Outras regras de eficiência:
   • Todos os demais tickers em cobertura não incluídos no Grupo A
   Registre preço e variação no relatório; não chame outras ferramentas para eles.
   Agrupe: uma resposta com get_stock_data de todos os tickers do Grupo B juntos.
+  NÃO atribua rótulo de cor ao Grupo B — sem IV/técnico/short coletados não há
+  como avaliar os gates, e um rótulo aqui seria chute.
 
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
@@ -190,6 +190,51 @@ A gestão de alertas de preço (criar/remover com create_alert/delete_alert)
 NÃO é parte deste fluxo — roda numa execução própria, separada, logo depois
 desta (ver run_alerts_management), pra nunca ser sacrificada quando esta
 análise principal estoura o tempo disponível.
+
+**RÓTULO POR ATIVO** (aplicar ao ESCREVER o relatório final; só Grupo A)
+
+Cada seção de ativo do Grupo A abre com UM rótulo de cor. O rótulo é SEMPRE
+sobre o setup dos próximos 1–5 pregões — NUNCA sobre a tese de 6–12 meses.
+Essa separação é obrigatória: a tese vai numa linha própria "Tese (6–12m):",
+pra não disputar espaço com o timing. Um ativo pode perfeitamente ter tese
+boa e rótulo 🟡/🔴 no dia; isso não é contradição, é o formato funcionando.
+
+  🟢 = setup favorável AGORA (entrar/aumentar faz sentido hoje)
+  🟡 = tese ok, timing ruim ou não confirmado — esperar
+  🔴 = risco de curto prazo domina a decisão de hoje
+
+GATES — o rótulo NÃO PODE ser 🟢 se QUALQUER um destes valer:
+  • variação do dia negativa (get_stock_data)
+  • `days_until_earnings` ≤ 5 (get_earnings_calendar; são dias CORRIDOS,
+    não pregões — não converta, use o campo como vem)
+  • IV ATM ≥ 2× a volatilidade anualizada do próprio ativo — compare
+    `atm_iv_pct` (get_options_data) com `atr_pct` × 16 (get_technical_indicators).
+    A comparação é por ATIVO, não por um corte fixo de IV: 96% é normal em
+    SMCI e seria evento em GOOGL, mesma lógica das bandas de RSI calibradas
+    por ATR%.
+  • bloco técnico defasado (regra de frescor abaixo)
+Com um gate ativo, o teto é 🟡; com dois ou mais, use 🔴.
+
+Estes gates governam o RÓTULO (consistência do texto), não são sinal de
+entrada/saída validado por backtest — não os reaproveite como threshold de
+estratégia nem os cite como se fossem sinal testado.
+
+Logo abaixo do rótulo, UMA linha justificando com o número que o determinou
+(ex.: "🟡 — earnings em 3 dias e engolfo de baixa na zona da MM200").
+
+**Frescor do dado técnico**
+
+get_technical_indicators devolve `rsi_date`: a data da barra que gerou TODO o
+bloco técnico (rsi, macd, sma50, sma200, ema, bollinger vêm todos do mesmo
+histórico, não só o RSI). Se `rsi_date` for anterior ao `as_of` do
+get_stock_data do mesmo ativo (as duas datas são comparáveis: ambas são a
+data da última barra diária, no formato YYYY-MM-DD):
+  • não use esse bloco para sustentar o rótulo;
+  • se citar algum número dele mesmo assim, diga a data explicitamente;
+  • o gate de frescor acima passa a valer (teto 🟡).
+Visto em produção (02/08): o relatório citou "38,9% acima da MM200 (dado
+defasado)" e ainda assim usou a MM200 no veredito do ativo — marcar como
+defasado em prosa não basta, o número não pode sustentar a conclusão.
 
 Princípios:
 - Seja factual e cite os números.
@@ -624,6 +669,7 @@ def _agent_loop(
     require_observations: bool = False,
     min_observations: int = 1,
     deadline_ts: float | None = None,
+    report_snapshot: dict | None = None,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
@@ -719,6 +765,16 @@ def _agent_loop(
                         observations_saved += 1
                     else:
                         print(f"[agent] save_observation falhou: {result}", flush=True)
+                if report_snapshot is not None:
+                    # Snapshot montado do que o modelo REALMENTE recebeu, em vez
+                    # de refazer as chamadas depois: refazer gastaria orçamento
+                    # de tempo da run e ainda poderia divergir do que ele viu.
+                    try:
+                        collect_tool_result(report_snapshot, block.name, block.input, result)
+                    except Exception as e:
+                        # Coleta é acessória -- nunca pode derrubar a run.
+                        print(f"[report_validator] coleta falhou em {block.name}: {e}",
+                              file=sys.stderr, flush=True)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -832,16 +888,21 @@ def run(progress_callback=None) -> str:
     # de catch_up que costumam entrar no Grupo A.
     n_min = len(config.PORTFOLIO_TICKERS)
     max_turns = max(config.MAX_AGENT_TURNS, n_min * 2 + 6)
-    return _agent_loop(
+    model = client.models["full"]
+    system = build_system_prompt_blocks()
+    user_msg = (
+        "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
+        "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
+        "as observações do dia ao final."
+    )
+    snapshot = new_snapshot()
+
+    final_text = _agent_loop(
         client=client,
-        model=client.models["full"],
-        system=build_system_prompt_blocks(),
+        model=model,
+        system=system,
         tools=t.TOOLS,
-        messages=[{"role": "user", "content": (
-            "Faça a análise pré-mercado de hoje para os ativos sob cobertura, "
-            "seguindo seu fluxo. Use as ferramentas conforme necessário e registre "
-            "as observações do dia ao final."
-        )}],
+        messages=[{"role": "user", "content": user_msg}],
         max_turns=max_turns,
         max_tokens=config.MAX_TOKENS,
         progress_callback=progress_callback,
@@ -852,7 +913,41 @@ def run(progress_callback=None) -> str:
         # exata só é conhecida em runtime, então não entram no piso.
         min_observations=len(config.PORTFOLIO_TICKERS),
         deadline_ts=config.SOFT_DEADLINE_TS,
+        report_snapshot=snapshot,
     )
+
+    # A rubrica de rótulo vive no prompt, mas prompt é pedido, não garantia --
+    # aqui os mesmos gates viram checagem determinística, com um retry de
+    # correção (mesma mecânica de run_veredito).
+    lrep = lint_report(final_text, snapshot)
+    if lrep.has_errors:
+        print(f"[report_validator] rótulos violando a rubrica, tentando 1 retry:\n"
+              f"{lrep.summary()}", file=sys.stderr, flush=True)
+        if progress_callback:
+            progress_callback("Corrigindo rótulos que violam a rubrica...")
+        try:
+            fix_resp = client.create(
+                model=model,
+                max_tokens=config.MAX_TOKENS,
+                system=system,
+                tools=[],
+                messages=[
+                    {"role": "user", "content": user_msg},
+                    {"role": "assistant", "content": final_text},
+                    {"role": "user", "content": correction_prompt(lrep)},
+                ],
+            )
+            from .provider import TextBlock
+            for block in fix_resp.content:
+                if isinstance(block, TextBlock) and block.text.strip():
+                    final_text = block.text
+                    break
+        except Exception as e:
+            # Igual ao veredito: falha no retry não derruba o relatório inteiro
+            # -- fica o texto original, com as violações já logadas acima.
+            print(f"[report_validator] retry de correção falhou: {e}", file=sys.stderr, flush=True)
+
+    return final_text
 
 
 def run_portfolio(progress_callback=None, mode: str = "portfolio") -> str:

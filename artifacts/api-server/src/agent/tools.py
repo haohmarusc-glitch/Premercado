@@ -11,8 +11,11 @@ import sys
 import requests
 import yfinance as yf
 
+from . import brt
+from . import config
 from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
+from . import news_sources as _news_sources
 from . import sector_contagion as _sc
 from .backtest import run_backtest as _run_backtest
 from .cache import cached
@@ -65,10 +68,19 @@ def get_stock_data(ticker: str) -> dict:
         # Mesmo padrão já usado e comprovado em market_alerts.py::_gap_pct
         # (iloc[-1] = pregão mais recente, iloc[-2] = fechamento anterior).
         prev_close = None
+        # as_of = data da barra diária mais recente. Sem ela não dá pra saber se
+        # o bloco técnico (get_technical_indicators.rsi_date) é do MESMO pregão
+        # que esta cotação -- que é a condição do gate de frescor do rótulo no
+        # relatório diário. Antes disso o gate era inavaliável: o preço vem do
+        # fast_info (live, sem data) e nada no retorno dizia de quando era.
+        as_of = None
+        prev_close_date = None
         try:
             hist = t.history(period="5d")
             if hist is not None and len(hist) >= 2:
                 prev_close = float(hist["Close"].iloc[-2])
+                as_of = hist.index[-1].strftime("%Y-%m-%d")
+                prev_close_date = hist.index[-2].strftime("%Y-%m-%d")
         except Exception:
             pass
         if prev_close is None:
@@ -90,6 +102,8 @@ def get_stock_data(ticker: str) -> dict:
 
         return {
             "ticker": ticker,
+            "as_of": as_of,
+            "previous_close_date": prev_close_date,
             "last_close": round(price, 4) if price is not None else None,
             "previous_close": round(prev_close, 4) if prev_close is not None else None,
             "pre_market_price": pre_market,
@@ -108,100 +122,96 @@ def get_stock_data(ticker: str) -> dict:
 # ── Notícias ──────────────────────────────────────────────────────────────────
 
 
-def _parse_news_items(news: list, max_items: int) -> list[dict]:
-    """Normaliza a lista bruta de `Ticker.news` do yfinance pro formato
-    enxuto usado pelo agente (resumo truncado pra economizar tokens de
-    input). Compartilhado por _get_news_for_ticker e _get_news_for_macro_proxy."""
-    result = []
-    for item in news[:max_items]:
-        content = item.get("content", {})
-        summary = content.get("summary", item.get("summary", "")) or ""
-        result.append(
-            {
-                "title": sanitize_for_llm(content.get("title", item.get("title", ""))),
-                "published": content.get(
-                    "pubDate", item.get("providerPublishTime", "")
-                ),
-                # Truncado: o modelo precisa do gist, não do texto completo da notícia.
-                "summary": sanitize_for_llm(summary[:280] + ("..." if len(summary) > 280 else "")),
-                "source": content.get("provider", {}).get("displayName", "")
-                if isinstance(content.get("provider"), dict)
-                else "",
-                # url removida do payload — não é usada na análise e só consome tokens de input.
-            }
-        )
-    return result
+# A coleta em si (Yahoo + Google News RSS + FMP + Finnhub, com dedupe e
+# fail-open por fonte) mora em news_sources.py. Aqui ficam só as duas
+# ferramentas que o LLM enxerga -- de propósito: uma tool por provedor
+# multiplicaria turnos do agente sem acrescentar informação nenhuma.
+_parse_news_items = _news_sources.parse_yahoo_items  # compat: usado nos testes
 
 
-@cached("news:{0}:{1}", ttl=600)
-def _get_news_for_ticker(ticker: str, max_items: int = 6) -> list[dict]:
-    """Manchetes recentes de UM ticker via yfinance (resumo truncado para economizar
-    tokens). Cacheada por ticker — chamada internamente por get_news, que agrupa vários
-    tickers numa única ferramenta sem perder o cache individual de cada um."""
-    try:
-        ticker = sanitize_ticker(ticker)
-    except ValueError as e:
-        return [{"error": str(e)}]
-    try:
-        t = yf.Ticker(ticker)
-        return _parse_news_items(t.news or [], max_items)
-    except Exception as e:
-        return [{"error": str(e)}]
-
-
-def get_news(tickers: list[str], max_items: int = 6) -> dict[str, list[dict]]:
+def get_news(tickers: list[str], max_items: int | None = None) -> dict[str, list[dict]]:
     """Retorna as manchetes mais recentes de UM OU MAIS tickers numa única chamada.
 
     Sempre passe TODOS os tickers relevantes juntos nesta única chamada (nunca
     um por vez em turnos separados) — o retorno já vem no formato
     {ticker: [manchetes...]}, pronto para ser usado direto como
     headlines_by_ticker em check_market_alerts.
+
+    Cada manchete traz `origin` (yahoo/google_rss/fmp/finnhub) só para
+    depuração — a análise não deve mudar em função da fonte.
     """
     if isinstance(tickers, str):
         tickers = [tickers]  # tolerância a chamada acidental com string única
-    return {ticker: _get_news_for_ticker(ticker, max_items) for ticker in tickers}
+    limit = max_items or config.NEWS_MAX_ITEMS
+
+    result: dict[str, list[dict]] = {}
+    valid: dict[str, str] = {}  # ticker como veio -> ticker saneado
+    for raw in tickers:
+        try:
+            valid[raw] = sanitize_ticker(raw)
+        except ValueError as e:
+            result[raw] = [{"error": str(e)}]
+
+    # As chaves de saída são os tickers COMO VIERAM: o agente usa esse dict
+    # direto como headlines_by_ticker de check_market_alerts, que cruza pelas
+    # mesmas strings que ele passou aqui.
+    fetched = _news_sources.headlines_for_tickers(
+        list(dict.fromkeys(valid.values())), limit
+    )
+    for raw, symbol in valid.items():
+        result[raw] = fetched.get(symbol, [])
+    return result
 
 
-# Proxies de mercado amplo cujas manchetes do yfinance naturalmente cobrem
-# falas/decisões de chefes de estado (tarifas, sanções, política econômica),
-# guerra, petróleo e controle de exportação de semicondutores -- sem precisar
-# de API paga de rede social (X/Twitter exige plano pago desde 2023 pra
-# busca; ver decisão do usuário em 18/07). Cada entrada usa o MESMO
-# mecanismo já validado em produção (Ticker.news) que get_news, só que
-# apontado pra um índice/futuro/ETF em vez de uma ação específica.
-_MACRO_NEWS_PROXIES = {
-    "^GSPC": "mercado_amplo_eua",  # S&P 500 -- tarifas, Fed, geopolítica geral
-    "^NDX": "big_techs",  # Nasdaq-100 -- antitrust/regulação de Big Techs, IA
-    "CL=F": "petroleo_wti",  # petróleo WTI -- guerra, OPEC, sanções
-    "SOXX": "semicondutores",  # ETF de semicondutores -- export controls China/Taiwan
+# Temas macro/geopolíticos cobertos por get_geopolitical_news. Cada tema tem
+# duas pernas complementares:
+# - `proxy`: índice/futuro/ETF cujas manchetes no yfinance já cobrem o tema
+#   (mecanismo original, validado em produção desde 18/07);
+# - `query`: busca temática no Google News, que pega o assunto DIRETO em vez
+#   de depender do que o Yahoo pendurou naquele índice — é o que permite ter
+#   tema sem proxy razoável (Fed, carvão metalúrgico) e o que salva o tema
+#   quando o Yahoo não devolve nada pro índice.
+# Continua sem API paga de rede social (X/Twitter exige plano pago desde 2023
+# pra busca; ver decisão do usuário em 18/07).
+_MACRO_NEWS_TOPICS = {
+    "mercado_amplo_eua": {  # tarifas, comércio, geopolítica geral
+        "proxy": "^GSPC",
+        "query": '"US China tariffs" OR "trade restrictions" OR "export ban"',
+    },
+    "big_techs": {  # antitrust/regulação de Big Techs, IA
+        "proxy": "^NDX",
+        "query": '"Big Tech antitrust" OR "AI regulation" OR "AI capex"',
+    },
+    "petroleo_wti": {  # guerra, OPEC, sanções
+        "proxy": "CL=F",
+        "query": '"crude oil prices" OR OPEC OR "oil sanctions"',
+    },
+    "semicondutores": {  # export controls China/Taiwan
+        "proxy": "SOXX",
+        "query": '"semiconductor export controls" OR "chip export" OR "Taiwan chips"',
+    },
+    "juros_fed": {  # sem proxy: índice reage a juro, mas não noticia juro
+        "proxy": None,
+        "query": '"Federal Reserve" AND ("interest rate" OR inflation OR FOMC)',
+    },
+    "carvao_metalurgico": {  # HCC/AMR estão na cesta e não têm proxy de ETF
+        "proxy": None,
+        "query": '"coking coal" OR "metallurgical coal" OR "steel prices"',
+    },
 }
 
 
-@cached("macro_news:{0}:{1}", ttl=1800)
-def _get_news_for_macro_proxy(proxy_ticker: str, max_items: int = 6) -> list[dict]:
-    """Mesma lógica de _get_news_for_ticker, mas pra um índice/futuro/ETF
-    usado como proxy de tema macro (não uma ação da carteira). Cache mais
-    longo (30min) que notícia de ação (10min) — esse tipo de manchete muda
-    com menos frequência ao longo do dia."""
-    try:
-        t = yf.Ticker(proxy_ticker)
-        return _parse_news_items(t.news or [], max_items)
-    except Exception as e:
-        return [{"error": str(e)}]
-
-
-def get_geopolitical_news(max_items: int = 6) -> dict[str, list[dict]]:
+def get_geopolitical_news(max_items: int | None = None) -> dict[str, list[dict]]:
     """Retorna manchetes recentes sobre temas macro/geopolíticos que
     impactam a bolsa: falas e decisões de chefes de estado (EUA e outros
     países) sobre tarifas/comércio, guerra, preço do petróleo, Big Techs
-    (antitrust/regulação/IA) e controle de exportação de semicondutores
-    (China/Taiwan). Não precisa de ticker — chame isso UMA vez por
-    execução, já cobre todos os temas de uma vez. Complementa get_news (que
-    é por ativo específico da carteira)."""
-    return {
-        label: _get_news_for_macro_proxy(proxy_ticker, max_items)
-        for proxy_ticker, label in _MACRO_NEWS_PROXIES.items()
-    }
+    (antitrust/regulação/IA), controle de exportação de semicondutores
+    (China/Taiwan), decisões de juros do Fed e carvão metalúrgico/aço. Não
+    precisa de ticker — chame isso UMA vez por execução, já cobre todos os
+    temas de uma vez. Complementa get_news (que é por ativo específico da
+    carteira)."""
+    limit = max_items or config.NEWS_MAX_ITEMS
+    return _news_sources.headlines_for_macro_topics(_MACRO_NEWS_TOPICS, limit)
 
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────
@@ -1941,8 +1951,13 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
                 str(next_date.date()) if hasattr(next_date, "date") else str(next_date)
             )
             try:
+                # today_brt(), não date.today(): o processo roda em UTC, então
+                # entre 21h e 23h59 BRT o dia do container já virou e todo
+                # days_until_earnings sairia 1 dia menor. Isso alimenta o gate
+                # de earnings do rótulo no relatório diário (≤ 5 dias), então
+                # o off-by-one vira rótulo errado, não só texto errado.
                 days_until = (
-                    datetime.date.fromisoformat(date_str) - datetime.date.today()
+                    datetime.date.fromisoformat(date_str) - brt.today_brt()
                 ).days
             except Exception:
                 days_until = None
@@ -2143,6 +2158,11 @@ def get_global_market_snapshot() -> dict:
     durante o pré-mercado da Nasdaq: Ásia overnight (Nikkei, KOSPI, Hang Seng),
     Europa em overlap direto (DAX, FTSE, CAC), EUR/USD e futuros de índice dos
     EUA (NQ, ES). Dado bruto de contexto — sem pontuação/composite embutido.
+
+    Cada item traz `asOf`/`prevBarDate` (as duas barras usadas no cálculo) e
+    `suspect`. Quando `suspect` é true, `suspectReason` explica por quê — a
+    variação atravessou sessões não vizinhas, ou é grande demais para um
+    pregão de índice amplo. NUNCA cite um valor com `suspect` como fato.
     """
     try:
         return _ma.get_global_market_snapshot()
@@ -2237,7 +2257,10 @@ TOOLS = [
         "description": (
             "Retorna as manchetes mais recentes de um ou mais tickers em UMA ÚNICA "
             "chamada. Sempre inclua TODOS os tickers que você precisa analisar nesta "
-            "mesma chamada (lista), nunca um por vez em chamadas separadas."
+            "mesma chamada (lista), nunca um por vez em chamadas separadas. As "
+            "manchetes vêm de várias origens já mescladas e sem duplicata (o campo "
+            "'origin' é só depuração): priorize FATO verificável (guidance, contrato, "
+            "tarifa, filing) sobre opinião/especulação de manchete."
         ),
         "input_schema": {
             "type": "object",
@@ -2606,8 +2629,9 @@ TOOLS = [
         "description": (
             "Retorna manchetes recentes sobre temas macro/geopolíticos que impactam a bolsa: "
             "falas e decisões de chefes de estado (EUA e outros países) sobre tarifas/comércio, "
-            "guerra, preço do petróleo, Big Techs (antitrust/regulação/IA) e controle de "
-            "exportação de semicondutores (China/Taiwan). Não precisa de ticker — chame UMA vez "
+            "guerra, preço do petróleo, Big Techs (antitrust/regulação/IA), controle de "
+            "exportação de semicondutores (China/Taiwan), juros/inflação do Fed e carvão "
+            "metalúrgico/aço. Não precisa de ticker — chame UMA vez "
             "por execução, já cobre todos os temas de uma vez. Complementa get_news (que é por "
             "ativo específico da carteira), não substitui."
         ),
@@ -2646,7 +2670,10 @@ TOOLS = [
             "(Hong Kong), DAX/FTSE 100/CAC 40 (Europa, overlap direto com o pré-mercado dos EUA), "
             "EUR/USD e futuros de índice (Nasdaq 100 e S&P 500). "
             "É dado bruto de contexto, sem pontuação/composite embutido — não ajuste thresholds "
-            "de compra/venda com base nisso sem validar via backtest primeiro."
+            "de compra/venda com base nisso sem validar via backtest primeiro. "
+            "Cada item traz asOf/prevBarDate (as duas barras usadas) e suspect: quando suspect "
+            "for true, suspectReason diz por quê (variação atravessando sessões não vizinhas, ou "
+            "grande demais para um pregão de índice amplo) — não cite esse número como fato."
         ),
         "input_schema": {
             "type": "object",
