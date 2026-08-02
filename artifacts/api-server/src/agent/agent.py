@@ -185,6 +185,8 @@ Outras regras de eficiência:
   • Todos os demais tickers em cobertura não incluídos no Grupo A
   Registre preço e variação no relatório; não chame outras ferramentas para eles.
   Agrupe: uma resposta com get_stock_data de todos os tickers do Grupo B juntos.
+  NÃO atribua rótulo de cor ao Grupo B — sem IV/técnico/short coletados não há
+  como avaliar os gates, e um rótulo aqui seria chute.
 
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
@@ -193,6 +195,50 @@ A gestão de alertas de preço (criar/remover com create_alert/delete_alert)
 NÃO é parte deste fluxo — roda numa execução própria, separada, logo depois
 desta (ver run_alerts_management), pra nunca ser sacrificada quando esta
 análise principal estoura o tempo disponível.
+
+**RÓTULO POR ATIVO** (aplicar ao ESCREVER o relatório final; só Grupo A)
+
+Cada seção de ativo do Grupo A abre com UM rótulo de cor. O rótulo é SEMPRE
+sobre o setup dos próximos 1–5 pregões — NUNCA sobre a tese de 6–12 meses.
+Essa separação é obrigatória: a tese vai numa linha própria "Tese (6–12m):",
+pra não disputar espaço com o timing. Um ativo pode perfeitamente ter tese
+boa e rótulo 🟡/🔴 no dia; isso não é contradição, é o formato funcionando.
+
+  🟢 = setup favorável AGORA (entrar/aumentar faz sentido hoje)
+  🟡 = tese ok, timing ruim ou não confirmado — esperar
+  🔴 = risco de curto prazo domina a decisão de hoje
+
+GATES — o rótulo NÃO PODE ser 🟢 se QUALQUER um destes valer:
+  • variação do dia negativa (get_stock_data)
+  • `days_until_earnings` ≤ 5 (get_earnings_calendar; são dias CORRIDOS,
+    não pregões — não converta, use o campo como vem)
+  • IV ATM ≥ 2× a volatilidade anualizada do próprio ativo — compare
+    `atm_iv_pct` (get_options_data) com `atr_pct` × 16 (get_technical_indicators).
+    A comparação é por ATIVO, não por um corte fixo de IV: 96% é normal em
+    SMCI e seria evento em GOOGL, mesma lógica das bandas de RSI calibradas
+    por ATR%.
+  • bloco técnico defasado (regra de frescor abaixo)
+Com um gate ativo, o teto é 🟡; com dois ou mais, use 🔴.
+
+Estes gates governam o RÓTULO (consistência do texto), não são sinal de
+entrada/saída validado por backtest — não os reaproveite como threshold de
+estratégia nem os cite como se fossem sinal testado.
+
+Logo abaixo do rótulo, UMA linha justificando com o número que o determinou
+(ex.: "🟡 — earnings em 3 dias e engolfo de baixa na zona da MM200").
+
+**Frescor do dado técnico**
+
+get_technical_indicators devolve `rsi_date`: a data da barra que gerou TODO o
+bloco técnico (rsi, macd, sma50, sma200, ema, bollinger vêm todos do mesmo
+histórico, não só o RSI). Se `rsi_date` for anterior ao pregão do
+get_stock_data do mesmo ativo:
+  • não use esse bloco para sustentar o rótulo;
+  • se citar algum número dele mesmo assim, diga a data explicitamente;
+  • o gate de frescor acima passa a valer (teto 🟡).
+Visto em produção (02/08): o relatório citou "38,9% acima da MM200 (dado
+defasado)" e ainda assim usou a MM200 no veredito do ativo — marcar como
+defasado em prosa não basta, o número não pode sustentar a conclusão.
 
 Princípios:
 - Seja factual e cite os números.
