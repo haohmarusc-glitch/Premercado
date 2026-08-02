@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -204,8 +205,9 @@ CB_LEVEL2    = -13.0
 CB_LEVEL3    = -20.0
 CB_APPROACH  = -5.0
 
-# SEC / EDGAR
-SEC_USER_AGENT    = "Jefferson Investor jefferson@example.com"
+# SEC / EDGAR -- a SEC exige contato REAL no UA e bloqueia placeholders
+# (mesmo motivo/mesma env de tools.py::EDGAR_HEADERS).
+SEC_USER_AGENT    = f"PremarketAgent {os.environ.get('SEC_CONTACT_EMAIL', 'haohmarusc@gmail.com')}"
 EDGAR_LOOKBACK_DAYS = 5
 FORM4_CLUSTER     = 3
 FORM4_PARSE_MAX   = 10

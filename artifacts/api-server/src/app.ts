@@ -23,12 +23,19 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
   : ["http://localhost:3000"];
 
-// Rate limit global -- protege rotas de auth (força bruta de login) e rotas
-// que custam LLM por chamada (agente/chat) de serem esgotadas por excesso de
-// requisições. Generoso o bastante pra uso normal de um usuario so'.
+// Rate limit global -- barreira contra abuso genérico (ex.: força bruta de
+// login). Precisa ser GENEROSO porque a maior parte do tráfego normal é
+// polling barato do frontend, não ação do usuário: só o layout já faz
+// alertas (60s) + cotações (60s) + plano de saída (5min) + status do agente
+// (5s enquanto uma run está ativa), e páginas como /quotes-bubbles e
+// /grafico somam mais um poll de 15s. Com o agente rodando isso passa de
+// 280 req/15min só de polling -- o teto anterior (300) encostava nisso e
+// começaria a devolver 429 em uso legítimo. Custo de LLM NÃO é contido
+// aqui: quem faz isso é o llmLimiter (middleware/llm-rate-limit.ts),
+// aplicado em routes/index.ts só onde há gasto real.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 300,
+  limit: 1000,
   standardHeaders: true,
   legacyHeaders: false,
 });
