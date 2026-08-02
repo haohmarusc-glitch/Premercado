@@ -36,7 +36,13 @@ export function runScript(scriptName: string, args: string[]): Promise<string> {
     const py = spawn(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
     let out = "";
     let err = "";
-    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error(`${scriptName} timeout`)); }, SCRIPT_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      py.kill("SIGTERM");
+      const cauda = err.trim().slice(-2000);
+      reject(new Error(cauda
+        ? `${scriptName} timeout (${SCRIPT_TIMEOUT_MS}ms). stderr: ${cauda}`
+        : `${scriptName} timeout (${SCRIPT_TIMEOUT_MS}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`));
+    }, SCRIPT_TIMEOUT_MS);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
@@ -57,7 +63,13 @@ function runStdinScript(scriptName: string, payload: object, timeoutMs = SCRIPT_
     py.stdin.end();
     let out = "";
     let err = "";
-    const timer = setTimeout(() => { py.kill("SIGTERM"); reject(new Error(`${scriptName} timeout`)); }, timeoutMs);
+    const timer = setTimeout(() => {
+      py.kill("SIGTERM");
+      const cauda = err.trim().slice(-2000);
+      reject(new Error(cauda
+        ? `${scriptName} timeout (${timeoutMs}ms). stderr: ${cauda}`
+        : `${scriptName} timeout (${timeoutMs}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`));
+    }, timeoutMs);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {
