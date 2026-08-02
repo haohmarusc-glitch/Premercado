@@ -9,6 +9,18 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// UM hop de proxy confiável (o do Replit, que termina o TLS e põe o
+// X-Forwarded-For). Sem isto o Express deixa `trust proxy` em false, req.ip
+// vira o endereço do PRÓPRIO proxy, e os dois rate limiters abaixo passam a
+// keyar todo mundo no mesmo bucket -- o llmLimiter (30/15min) deixaria de ser
+// por cliente e viraria um teto global. O express-rate-limit detecta a
+// incoerência e loga ERR_ERL_UNEXPECTED_X_FORWARDED_FOR a cada request.
+//
+// Precisa ser 1, NUNCA `true`: com `true` o Express confia na cadeia inteira de
+// X-Forwarded-For, e aí qualquer cliente forja o header pra ganhar um bucket
+// novo a cada request, desligando na prática o limite de custo de LLM.
+app.set("trust proxy", 1);
+
 // crossOriginResourcePolicy "cross-origin" -- o padrao do helmet
 // ("same-origin") bloqueia fetch() do frontend quando ele roda em origem
 // diferente do backend (exatamente o caso que o cors() abaixo ja permite

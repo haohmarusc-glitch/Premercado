@@ -29,14 +29,17 @@ import sys
 import json
 
 from agent import config
-from agent.bounded_parallel import bounded_parallel_map, exit_now
+from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.tools import check_squeeze_setup
 
 # Timeout do lado Node (alert-checker.ts::fetchSqueezeAlerts) é 120s -- mais
 # generoso que os demais checkers (check_squeeze_setup faz várias chamadas
-# de rede por ticker: yfinance, iBorrowDesk, FINRA, Unusual Whales
-# opcional). Ver bounded_parallel.py pro motivo do orçamento ficar abaixo
-# do timeout externo.
+# de rede por ticker: yfinance, iBorrowDesk, FINRA, Unusual Whales opcional).
+# Fallback quando o processo roda sem AGENT_DEADLINE_TS no env (execução
+# manual do script). Com a variável definida, o orçamento real vem do
+# deadline do chamador via budget_from_deadline() -- constante fixa aqui
+# não conseguia cobrir o custo de import (~8s de pandas/numpy/yfinance),
+# que sai da mesma folga. Ver bounded_parallel.py.
 BUDGET_S = 100
 
 # Rótulos legíveis pros 4 sinais de risco de squeeze (mesma ordem/definição
@@ -172,7 +175,12 @@ if __name__ == "__main__":
 
     tickers = args.get("tickers") or config.TICKERS
 
-    results = bounded_parallel_map(_progress_for, tickers, budget_s=BUDGET_S, label="get_squeeze_alerts")
+    results = bounded_parallel_map(
+        _progress_for,
+        tickers,
+        budget_s=budget_from_deadline(BUDGET_S, label="get_squeeze_alerts"),
+        label="get_squeeze_alerts",
+    )
     alerts = [a for a in results if a is not None]
 
     order = {"confirmed": 0, "near": 1}

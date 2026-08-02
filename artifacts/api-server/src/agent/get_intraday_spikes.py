@@ -19,13 +19,15 @@ import sys
 import json
 
 from agent import config
-from agent.bounded_parallel import bounded_parallel_map, exit_now
+from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from agent.market_alerts import check_intraday_spike, Severity
 
-# Timeout do lado Node (alert-checker.ts::fetchIntradaySpikes) é 60s --
-# orçamento aqui fica abaixo disso de propósito, senão o processo Python
-# só descobre que estourou quando o Node já matou o subprocesso à força
-# (ver bounded_parallel.py).
+# Timeout do lado Node (alert-checker.ts::fetchIntradaySpikes) é 60s.
+# Fallback quando o processo roda sem AGENT_DEADLINE_TS no env (execução
+# manual do script). Com a variável definida, o orçamento real vem do
+# deadline do chamador via budget_from_deadline() -- constante fixa aqui
+# não conseguia cobrir o custo de import (~8s de pandas/numpy/yfinance),
+# que sai da mesma folga. Ver bounded_parallel.py.
 BUDGET_S = 45
 
 
@@ -45,7 +47,12 @@ if __name__ == "__main__":
 
     tickers = args.get("tickers") or config.TICKERS
 
-    results = bounded_parallel_map(_spikes_for, tickers, budget_s=BUDGET_S, label="get_intraday_spikes")
+    results = bounded_parallel_map(
+        _spikes_for,
+        tickers,
+        budget_s=budget_from_deadline(BUDGET_S, label="get_intraday_spikes"),
+        label="get_intraday_spikes",
+    )
     alerts = [a for sub in results for a in sub]
 
     order = {Severity.CRITICO: 0, Severity.ATENCAO: 1, Severity.INFO: 2}
