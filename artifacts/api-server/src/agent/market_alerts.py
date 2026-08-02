@@ -372,6 +372,76 @@ def _day_change_pct(ticker: str) -> Optional[float]:
     return round((last / prev - 1) * 100, 2)
 
 
+# Guardrails do snapshot global (get_global_market_snapshot). Aplicam-se SO a
+# indice amplo -- _day_change_pct sozinha continua sem teto porque tambem serve
+# acao individual, onde +20% num dia de earnings e' real (AVGO/SMCI ja fizeram).
+#
+# Visto em producao (02/08): o snapshot reportou KOSPI +17,9% num dia, numero
+# impossivel numa sessao de indice amplo (circuit breaker da KRX interrompe bem
+# antes). A causa provavel e' a comparacao atravessar sessoes: _day_change_pct
+# pega os DOIS ULTIMOS closes disponiveis de period="5d" sem olhar a data, entao
+# um buraco no historico (feriado, falha do yfinance) faz a "variacao do dia"
+# abranger varios pregoes em silencio. Nao da pra confirmar a origem exata sem
+# rede, mas o numero nao deveria ter chegado ao prompt de qualquer forma.
+IMPLAUSIBLE_INDEX_MOVE_PCT = 8.0
+# Sessoes consecutivas ficam a 1 dia (3 no fim de semana, ~4-5 com feriado
+# emendado). Acima disso as duas barras nao sao pregoes vizinhos.
+MAX_SESSION_GAP_DAYS = 5
+
+
+def _day_change_detail(ticker: str) -> dict:
+    """_day_change_pct + rastro de como o numero foi obtido.
+
+    Devolve as datas das DUAS barras usadas e marca `suspect` quando o par nao
+    sustenta a leitura de "variacao do ultimo pregao". Nao substitui
+    _day_change_pct (que tem 8 chamadores e fica intacta) -- serve o snapshot
+    global, onde o consumidor e' o LLM e um numero errado vira texto.
+
+    O que NAO e' checado aqui: quao velha e' a ultima barra em relacao a hoje.
+    Asia/Europa/futuros fecham em fusos diferentes e o processo roda em UTC,
+    entao "ultima barra e' de ontem" e' o estado normal pra metade desta lista
+    -- checar isso geraria falso positivo diario. O gap ENTRE as barras, que e'
+    o que realmente detecta a comparacao atravessando sessoes, independe de fuso.
+    """
+    df = _history(ticker, period="5d")
+    if df is None or len(df) < 2:
+        return {"changePct": None, "suspect": False}
+
+    prev, last = df["Close"].iloc[-2], df["Close"].iloc[-1]
+    if prev == 0:
+        return {"changePct": None, "suspect": False}
+    pct = round((last / prev - 1) * 100, 2)
+
+    prev_date, last_date = df.index[-2], df.index[-1]
+    gap_days = (last_date - prev_date).days
+
+    reasons = []
+    if gap_days > MAX_SESSION_GAP_DAYS:
+        reasons.append(
+            f"as duas barras estao a {gap_days} dias de distancia -- nao sao "
+            f"pregoes vizinhos, entao isto nao e' a variacao de um dia"
+        )
+    if abs(pct) > IMPLAUSIBLE_INDEX_MOVE_PCT:
+        reasons.append(
+            f"{pct:+.2f}% excede o maximo plausivel de "
+            f"{IMPLAUSIBLE_INDEX_MOVE_PCT}% pra um indice amplo num pregao"
+        )
+
+    detail: dict = {
+        "changePct": pct,
+        "asOf": last_date.strftime("%Y-%m-%d"),
+        "prevBarDate": prev_date.strftime("%Y-%m-%d"),
+        "sessionGapDays": gap_days,
+        "suspect": bool(reasons),
+    }
+    if reasons:
+        # O numero continua exposto (nao inventamos substituto), mas rotulado
+        # pra nao ser citado como fato -- mesma postura do fail-open das fontes
+        # de noticia: degradar com aviso, nao sumir com o dado.
+        detail["suspectReason"] = "; ".join(reasons)
+    return detail
+
+
 def _pct_change_over(ticker: str, lookback_days: int) -> Optional[float]:
     """Variacao % entre o close de hoje e o close de `lookback_days` pregoes
     atras -- usado pro choque de petroleo (janela curta detecta choque de
@@ -844,10 +914,17 @@ def get_global_market_snapshot() -> dict:
     sem validar via backtest primeiro (mesma licao do ConfluenceEngine).
     """
     items = [
-        {"ticker": ticker, "label": label, "changePct": _day_change_pct(ticker)}
+        {"ticker": ticker, "label": label, **_day_change_detail(ticker)}
         for ticker, label in GLOBAL_MARKETS.items()
     ]
-    return {"items": items}
+    suspects = [i["ticker"] for i in items if i.get("suspect")]
+    result: dict = {"items": items}
+    if suspects:
+        result["warning"] = (
+            f"Variacao suspeita em: {', '.join(suspects)}. Ver suspectReason de "
+            f"cada um -- NAO cite esses numeros como fato no relatorio."
+        )
+    return result
 
 
 # Validado por backtest real (PRs #54-#61, ver memory doc skhy-ipo-monitoring.md):

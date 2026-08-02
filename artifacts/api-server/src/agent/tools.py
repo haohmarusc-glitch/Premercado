@@ -11,6 +11,7 @@ import sys
 import requests
 import yfinance as yf
 
+from . import brt
 from . import config
 from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
@@ -67,10 +68,19 @@ def get_stock_data(ticker: str) -> dict:
         # Mesmo padrão já usado e comprovado em market_alerts.py::_gap_pct
         # (iloc[-1] = pregão mais recente, iloc[-2] = fechamento anterior).
         prev_close = None
+        # as_of = data da barra diária mais recente. Sem ela não dá pra saber se
+        # o bloco técnico (get_technical_indicators.rsi_date) é do MESMO pregão
+        # que esta cotação -- que é a condição do gate de frescor do rótulo no
+        # relatório diário. Antes disso o gate era inavaliável: o preço vem do
+        # fast_info (live, sem data) e nada no retorno dizia de quando era.
+        as_of = None
+        prev_close_date = None
         try:
             hist = t.history(period="5d")
             if hist is not None and len(hist) >= 2:
                 prev_close = float(hist["Close"].iloc[-2])
+                as_of = hist.index[-1].strftime("%Y-%m-%d")
+                prev_close_date = hist.index[-2].strftime("%Y-%m-%d")
         except Exception:
             pass
         if prev_close is None:
@@ -92,6 +102,8 @@ def get_stock_data(ticker: str) -> dict:
 
         return {
             "ticker": ticker,
+            "as_of": as_of,
+            "previous_close_date": prev_close_date,
             "last_close": round(price, 4) if price is not None else None,
             "previous_close": round(prev_close, 4) if prev_close is not None else None,
             "pre_market_price": pre_market,
@@ -1939,8 +1951,13 @@ def get_earnings_calendar(tickers: list[str] | None = None) -> list[dict]:
                 str(next_date.date()) if hasattr(next_date, "date") else str(next_date)
             )
             try:
+                # today_brt(), não date.today(): o processo roda em UTC, então
+                # entre 21h e 23h59 BRT o dia do container já virou e todo
+                # days_until_earnings sairia 1 dia menor. Isso alimenta o gate
+                # de earnings do rótulo no relatório diário (≤ 5 dias), então
+                # o off-by-one vira rótulo errado, não só texto errado.
                 days_until = (
-                    datetime.date.fromisoformat(date_str) - datetime.date.today()
+                    datetime.date.fromisoformat(date_str) - brt.today_brt()
                 ).days
             except Exception:
                 days_until = None
@@ -2141,6 +2158,11 @@ def get_global_market_snapshot() -> dict:
     durante o pré-mercado da Nasdaq: Ásia overnight (Nikkei, KOSPI, Hang Seng),
     Europa em overlap direto (DAX, FTSE, CAC), EUR/USD e futuros de índice dos
     EUA (NQ, ES). Dado bruto de contexto — sem pontuação/composite embutido.
+
+    Cada item traz `asOf`/`prevBarDate` (as duas barras usadas no cálculo) e
+    `suspect`. Quando `suspect` é true, `suspectReason` explica por quê — a
+    variação atravessou sessões não vizinhas, ou é grande demais para um
+    pregão de índice amplo. NUNCA cite um valor com `suspect` como fato.
     """
     try:
         return _ma.get_global_market_snapshot()
@@ -2648,7 +2670,10 @@ TOOLS = [
             "(Hong Kong), DAX/FTSE 100/CAC 40 (Europa, overlap direto com o pré-mercado dos EUA), "
             "EUR/USD e futuros de índice (Nasdaq 100 e S&P 500). "
             "É dado bruto de contexto, sem pontuação/composite embutido — não ajuste thresholds "
-            "de compra/venda com base nisso sem validar via backtest primeiro."
+            "de compra/venda com base nisso sem validar via backtest primeiro. "
+            "Cada item traz asOf/prevBarDate (as duas barras usadas) e suspect: quando suspect "
+            "for true, suspectReason diz por quê (variação atravessando sessões não vizinhas, ou "
+            "grande demais para um pregão de índice amplo) — não cite esse número como fato."
         ),
         "input_schema": {
             "type": "object",
