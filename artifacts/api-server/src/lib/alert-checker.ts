@@ -15,6 +15,7 @@ import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFir
 import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
+import { runExclusive } from "./python-queue";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
 import { todayBRTDateString } from "./timezone";
@@ -84,25 +85,31 @@ interface Quote {
   price: number | null;
 }
 
+const QUOTES_TIMEOUT_MS = 60_000;
+
 function fetchQuotes(tickers: string[]): Promise<Quote[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_quotes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
-      env: { ...process.env, PYTHONPATH: agentDir },
+      env: pythonEnv(QUOTES_TIMEOUT_MS),
     });
     let out = "";
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    // Este era o ÚNICO spawn sem timeout: podia pendurar pra sempre, e agora
+    // travaria a fila inteira junto (ver invariante em python-queue.ts).
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("get_quotes timeout", err, QUOTES_TIMEOUT_MS)); }, QUOTES_TIMEOUT_MS);
     py.on("close", (code) => {
+      clearTimeout(t);
       if (code !== 0) { reject(new Error(`get_quotes: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_technicals", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
     const py = spawn(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ tickers }));
@@ -120,7 +127,7 @@ function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
         resolve(parsed.items ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 async function fireAlert(
@@ -278,7 +285,7 @@ interface IntradaySpikeAlert {
 // relativo que só resolve nesse contexto (mesmo motivo/padrão de
 // routes/analysis.ts::runMarketAlertsSnapshot).
 function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_intraday_spikes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_intraday_spikes"], {
       cwd: agentDir,
       env: pythonEnv(SPIKE_TIMEOUT_MS),
@@ -298,7 +305,7 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 // Persiste os picos intraday detectados (candle de 1min) pra aparecerem no
@@ -357,7 +364,7 @@ async function checkIntradaySpikes(): Promise<void> {
 // get_bounce_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
 // pacote) -- mesmo motivo de fetchIntradaySpikes acima.
 function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_bounce_alerts", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_bounce_alerts"], {
       cwd: agentDir,
       env: pythonEnv(BOUNCE_TIMEOUT_MS),
@@ -377,7 +384,7 @@ function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 // Notifica por e-mail quando market_alerts.py::check_dead_cat_bounce detecta
@@ -458,7 +465,7 @@ interface SqueezeAlert {
 // get_squeeze_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
 // pacote) -- mesmo motivo de fetchIntradaySpikes/fetchBounceAlerts acima.
 function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
-  return new Promise((resolve, reject) => {
+  return runExclusive("get_squeeze_alerts", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_squeeze_alerts"], {
       cwd: agentDir,
       env: pythonEnv(SQUEEZE_TIMEOUT_MS),
@@ -482,7 +489,7 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 // Notifica por e-mail o progresso de um setup de squeeze (tools.py::
