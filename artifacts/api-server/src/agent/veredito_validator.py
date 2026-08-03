@@ -55,6 +55,20 @@ GAP_UP_PCT = 2.0  # abertura X% acima do fech. anterior conta como gap
 MENTION_PCT_TOLERANCE_PP = 0.30  # tolerância p/ percentuais citados no texto
 FLAT_CLAIM_TOLERANCE_PP = 1.5  # |variação real| acima disso invalida um claim de "flat"
 
+# Perfil que NÃO pode ser chamado de "distribuição": RSI perto de sobrevenda e
+# preço bem abaixo da SMA50 é fundo/capitulação, não topo.
+#
+# O prompt do veredito já traz essa instrução em prosa desde um incidente
+# anterior -- e ela não segurou: em 01/08 o veredito abriu com "padrão de
+# distribuição confirmado" citando ARM (RSI 31.55, -26.17% vs SMA50) e MRVL
+# (RSI 38.77, -21.66%), exatamente o perfil que a instrução descreve como o
+# oposto. E não é cosmético: a conclusão foi "vender ARM amanhã na abertura".
+#
+# Os cortes cobrem os dois casos reais com folga, sem pegar um ticker que
+# esteja só de lado (RSI 45, -3% da SMA50 não vira erro).
+DISTRIB_RSI_MAX = 40.0
+DISTRIB_PCT_SMA50_MAX = -10.0
+
 WEEKDAYS_PT = [
     "segunda-feira", "terca-feira", "quarta-feira",
     "quinta-feira", "sexta-feira", "sabado", "domingo",
@@ -329,6 +343,36 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                     f"Texto descreve {tk} como \"{m.group(2)}\", mas o dia "
                     f"real foi {real:+.2f}% (fora da faixa considerada "
                     f"flat, ±{FLAT_CLAIM_TOLERANCE_PP:.1f}pp).", ticker=tk)
+
+    # 6) "distribuição" atribuída a ticker em perfil de FUNDO, não de topo.
+    #
+    # Distribuição é padrão de topo (mãos fortes vendendo perto de uma máxima).
+    # RSI perto de sobrevenda com preço bem abaixo da SMA50 é o oposto:
+    # capitulação/teste de suporte. O prompt já dizia isso em prosa e não
+    # segurou -- ver comentário em DISTRIB_RSI_MAX.
+    technicals: dict = snapshot.get("technicals", {})
+    if "distribuic" in norm_text:  # cobre distribuição/distribuicao/distributiva
+        for tk, tec in technicals.items():
+            rsi = tec.get("rsi")
+            pct_sma50 = tec.get("pct_above_sma50")
+            if not isinstance(rsi, (int, float)) or not isinstance(pct_sma50, (int, float)):
+                continue
+            if rsi > DISTRIB_RSI_MAX or pct_sma50 > DISTRIB_PCT_SMA50_MAX:
+                continue
+            # o ticker precisa aparecer perto da palavra pra não pegar um
+            # "distribuição" dito sobre outro ativo do mesmo parágrafo
+            perto = any(
+                tk.lower() in norm_text[max(0, m.start() - 200):m.end() + 200]
+                for m in re.finditer("distribuic", norm_text)
+            )
+            if not perto:
+                continue
+            rep.add("ERROR", "DISTRIBUICAO_INVERTIDA",
+                    f"Texto associa {tk} a 'distribuição', mas RSI {rsi:.1f} "
+                    f"(≤{DISTRIB_RSI_MAX:.0f}) e {pct_sma50:+.1f}% vs SMA50 "
+                    f"(≤{DISTRIB_PCT_SMA50_MAX:.0f}%) são perfil de FUNDO — "
+                    f"capitulação/teste de suporte, não topo. Distribuição "
+                    f"pressupõe estar perto de uma máxima.", ticker=tk)
 
     return rep
 
