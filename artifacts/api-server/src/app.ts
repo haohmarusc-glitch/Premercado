@@ -6,8 +6,18 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import {
+  observar5xx,
+  marcarEntradaNoRouter,
+  marcarOrigemErrorHandler,
+} from "./middleware/observar-5xx";
 
 const app: Express = express();
+
+// PRIMEIRO de tudo, de propósito: o gancho é res.on("finish"), então precisa
+// estar instalado antes de qualquer camada que possa responder sozinha (helmet,
+// cors, rate limit, parsers). Ver observar-5xx.ts.
+app.use(observar5xx);
 
 // UM hop de proxy confiável (o do Replit, que termina o TLS e põe o
 // X-Forwarded-For). Sem isto o Express deixa `trust proxy` em false, req.ip
@@ -84,7 +94,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-app.use("/api", router);
+app.use("/api", marcarEntradaNoRouter, router);
 
 // Handler de erro global -- rotas devem chamar next(e) no catch em vez de
 // responder o erro cru (String(e) vazava mensagem/stack interno pro
@@ -93,6 +103,7 @@ app.use("/api", router);
 // exatamente 4 parâmetros para o Express reconhecer como error handler.
 const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   logger.error({ err }, "Unhandled route error");
+  marcarOrigemErrorHandler(res);
   if (res.headersSent) return;
   res.status(500).json({ error: "Internal server error" });
 };

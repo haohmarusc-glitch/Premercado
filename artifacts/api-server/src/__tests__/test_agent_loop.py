@@ -259,7 +259,18 @@ def _texto(t: str) -> NormalizedResponse:
     return NormalizedResponse(content=[TextBlock(text=t)], stop_reason="end_turn")
 
 
-def _rodar(monkeypatch, responses, min_observations=3):
+def _obs_tickers(*tickers: str) -> NormalizedResponse:
+    """Igual a _obs_call, mas com os tickers nomeados (pra checar identidade)."""
+    return NormalizedResponse(
+        content=[
+            ToolUseBlock(id=f"obs_{tk}", name="save_observation", input={"ticker": tk})
+            for tk in tickers
+        ],
+        stop_reason="tool_use",
+    )
+
+
+def _rodar(monkeypatch, responses, min_observations=3, required_tickers=None):
     # O loop só conta a observação quando o retorno traz saved=true -- é assim
     # que ele distingue "salvou" de "chamou e falhou".
     monkeypatch.setattr(
@@ -277,6 +288,7 @@ def _rodar(monkeypatch, responses, min_observations=3):
         max_tokens=1024,
         require_observations=True,
         min_observations=min_observations,
+        required_tickers=required_tickers,
     )
     return texto, client
 
@@ -368,6 +380,124 @@ def test_nao_cobra_relatorio_de_quem_ainda_nao_registrou_observacao(monkeypatch)
     ])
     assert "registrar as observações pendentes" in texto
     assert len(client.calls) == 3
+
+
+# ── Piso por identidade, não por contagem ─────────────────────────────────────
+#
+# Visto em produção 03/08 (relatório diário): o Grupo A saiu com 7 ativos (6
+# posições da carteira + HCC, um líder de contágio de fora dela), o modelo
+# salvou as 7 observações, o piso exigia 8, e a cobrança disse apenas "chame
+# save_observation para os ativos que faltam" -- sem nomear nenhum. O modelo não
+# tinha como saber quais eram (a carteira aparece no prompt, mas ele já
+# "achava" que tinha coberto tudo), gastou as duas cobranças em reconhecimentos
+# vazios, e a run inteira -- coletada, salva e paga -- virou "Análise
+# incompleta".
+#
+# A contagem também erra pro outro lado: 8 observações cobrindo 7 posições + 1
+# ticker de fora satisfaziam o piso com uma posição da carteira sem registro.
+
+
+def _ultimo_texto_do_usuario(client) -> str:
+    """A última mensagem de usuário que o loop enfileirou (a cobrança)."""
+    for msg in reversed(client.calls[-1]):
+        if msg["role"] == "user" and isinstance(msg["content"], str):
+            return msg["content"]
+    return ""
+
+
+def test_cobranca_nomeia_os_ativos_que_faltam(monkeypatch):
+    """O ponto todo: a cobrança precisa ser um pedido mecânico, não um enigma."""
+    texto, client = _rodar(
+        monkeypatch,
+        [
+            _obs_tickers("NVDA", "SMCI"),
+            _texto("Terminei a análise."),   # falta GOOGL -> cobrança nomeada
+            _obs_tickers("GOOGL"),
+            _texto(_RELATORIO_OK),
+        ],
+        required_tickers=["NVDA", "SMCI", "GOOGL"],
+    )
+    cobranca = _ultimo_texto_do_usuario(client)
+    assert "GOOGL" in cobranca
+    assert "NVDA" not in cobranca and "SMCI" not in cobranca
+    assert "Análise detalhada" in texto
+    assert "Análise incompleta" not in texto
+
+
+def test_contagem_certa_com_ativo_errado_nao_satisfaz_o_piso(monkeypatch):
+    """3 observações, mas uma é de um ticker de fora da lista exigida."""
+    texto, client = _rodar(
+        monkeypatch,
+        [
+            _obs_tickers("NVDA", "SMCI", "HCC"),  # HCC não está na lista exigida
+            _texto("Terminei."),   # a contagem (3 de 3) passaria aqui
+            _obs_tickers("GOOGL"),
+            _texto(_RELATORIO_OK),
+        ],
+        required_tickers=["NVDA", "SMCI", "GOOGL"],
+    )
+    assert "GOOGL" in _ultimo_texto_do_usuario(client)
+    assert "Análise detalhada" in texto
+
+
+def test_ticker_faltante_aparece_na_mensagem_final(monkeypatch):
+    """Cobranças esgotadas: quem lê o relatório precisa saber o que faltou."""
+    texto, _ = _rodar(
+        monkeypatch,
+        [
+            _obs_tickers("NVDA", "SMCI"),
+            _texto("Terminei."),   # cobrança #1
+            _texto("Certo."),      # cobrança #2
+            _texto("Certo."),      # esgotado
+        ],
+        required_tickers=["NVDA", "SMCI", "GOOGL"],
+    )
+    assert "Análise incompleta" in texto
+    assert "GOOGL" in texto
+
+
+def test_lista_exigida_define_o_piso_mesmo_com_min_observations_divergente(monkeypatch):
+    """required_tickers é a fonte da verdade -- caller e piso não podem divergir."""
+    texto, _ = _rodar(
+        monkeypatch,
+        [
+            _obs_tickers("NVDA", "SMCI"),
+            _texto(_RELATORIO_OK),
+        ],
+        min_observations=99,               # valor errado de propósito
+        required_tickers=["NVDA", "SMCI"],
+    )
+    assert "Análise detalhada" in texto
+    assert "Aviso: apenas" not in texto
+
+
+def test_sem_lista_exigida_o_piso_continua_sendo_a_contagem(monkeypatch):
+    """Fluxos sem cesta fixa não têm identidade a conferir -- não podem quebrar."""
+    texto, _ = _rodar(
+        monkeypatch,
+        [
+            _obs_call(3),
+            _texto(_RELATORIO_OK),
+        ],
+        min_observations=3,
+    )
+    assert "Análise detalhada" in texto
+    assert "Aviso: apenas" not in texto
+
+
+def test_ticker_em_caixa_baixa_conta_como_registrado(monkeypatch):
+    """O modelo às vezes manda 'nvda'; sanitize_ticker normaliza depois, mas o
+    loop compara antes -- a comparação precisa ser case-insensitive."""
+    texto, _ = _rodar(
+        monkeypatch,
+        [
+            _obs_tickers("nvda", "smci"),
+            _texto(_RELATORIO_OK),
+        ],
+        required_tickers=["NVDA", "SMCI"],
+    )
+    assert "Análise detalhada" in texto
+    assert "Aviso: apenas" not in texto
 
 
 # ── Diagnóstico de truncamento ────────────────────────────────────────────────

@@ -64,12 +64,32 @@ def _marca(rotulo: str, desde: float | None) -> None:
     print(f"[probe] {rotulo} +{time.time() - desde:.2f}s", file=sys.stderr, flush=True)
 
 
+# Um boot por PROCESSO, não por módulo que chama.
+#
+# run_checkers.py importa get_intraday_spikes/get_bounce_alerts/
+# get_squeeze_alerts sob demanda, e cada um chama boot() no topo. Sem esta
+# guarda o log ganhava três "[probe] boot +1.72s" no mesmo processo -- cada
+# número certo como "decorrido desde o exec()", mas lido por qualquer humano
+# como três boots de 1,72s. O tempo por check quem mede é o run_checkers, que
+# imprime a duração real de cada um.
+_ja_marcou: set[str] = set()
+
+
+def _uma_vez(chave: str) -> bool:
+    if chave in _ja_marcou:
+        return False
+    _ja_marcou.add(chave)
+    return True
+
+
 def boot() -> None:
     """Chame na PRIMEIRA linha executável do script, antes dos imports pesados."""
-    _marca("boot", _INICIO_PROCESSO)
+    if _uma_vez("boot"):
+        _marca("boot", _INICIO_PROCESSO)
 
 
 def imports_prontos() -> None:
     """Chame logo depois dos imports pesados (pandas/numpy/yfinance)."""
-    _marca("imports", _IMPORTADO_EM)
-    _marca("total_ate_imports", _INICIO_PROCESSO)
+    if _uma_vez("imports"):
+        _marca("imports", _IMPORTADO_EM)
+        _marca("total_ate_imports", _INICIO_PROCESSO)
