@@ -1,0 +1,33 @@
+--- a/artifacts/api-server/src/agent/agent.py
++++ b/artifacts/api-server/src/agent/agent.py
+@@ -54,7 +54,7 @@
+ def _as_system(text: str) -> list:
+-    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
++    return [{"type": "text", "text": text, "cache_control": config.anthropic_cache_control()}]
+ 
+ def _system_blocks(stable_text: str, volatile_text: str = "") -> list:
+@@ -70,15 +70,22 @@
+-    blocks = [{"type": "text", "text": stable_text, "cache_control": {"type": "ephemeral"}}]
++    blocks = [{
++        "type": "text",
++        "text": stable_text,
++        "cache_control": config.anthropic_cache_control(),
++    }]
+     if volatile_text:
+         blocks.append({"type": "text", "text": volatile_text})
+     return blocks
+ 
+ def _cached_tools(tools: list) -> list:
+-    """Cache hint para Anthropic — outros provedores ignoram o campo extra."""
++    """Marca o último tool com cache_control (TTL 1h default)."""
+     if not tools:
+         return tools
+     cached = list(tools)
+-    cached[-1] = {**cached[-1], "cache_control": {"type": "ephemeral"}}
++    cached[-1] = {**cached[-1], "cache_control": config.anthropic_cache_control()}
+     return cached
+@@ -793,7 +800,7 @@
+             system=system,
+-            tools=tools,
++            tools=_cached_tools(tools),  # breakpoint TTL 1h nas tool defs
+             messages=messages,
