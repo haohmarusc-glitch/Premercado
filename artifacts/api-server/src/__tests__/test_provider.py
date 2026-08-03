@@ -21,8 +21,11 @@ from agent.provider import (
     _anthropic_tools_to_openai,
     _extract_leaked_function_calls,
     _has_key,
+    _is_model_not_found,
     _is_quota_error,
+    _is_transient_error,
     _openai_response_to_normalized,
+    _DEFAULT_ORDER,
     _provider_order,
     _resolve_tier,
     _truncate_history_for_fallback,
@@ -490,3 +493,58 @@ class TestProvidersConfig:
     def test_openai_compatible_providers_have_base_url(self):
         for name in ("openai", "gemini", "openrouter", "kimi"):
             assert PROVIDERS[name]["base_url"], f"{name} sem base_url"
+
+
+class TestIsModelNotFound:
+    """Modelo inexistente é erro de CONFIGURAÇÃO, e precisa ser separado de
+    quota/capacidade -- foi essa confusão que escondeu o `gemini-2.5-pro`
+    respondendo 404 por meses, com o log só dizendo 'trying anthropic...'."""
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "Error code: 404 - models/gemini-2.5-pro is not found for API version v1beta",
+            "404 NOT_FOUND: Publisher Model not available to new users",
+            "This model is no longer available to new users (404)",
+        ],
+    )
+    def test_reconhece_modelo_inexistente(self, msg):
+        assert _is_model_not_found(Exception(msg)) is True
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "429 Too Many Requests",
+            "503 Service Unavailable: high demand",
+            "connection reset by peer",
+            # 404 de rota/endpoint, sem falar de modelo: não é este caso.
+            "404 page not found",
+        ],
+    )
+    def test_nao_confunde_com_quota_capacidade_ou_rede(self, msg):
+        assert _is_model_not_found(Exception(msg)) is False
+
+    def test_nao_colide_com_erro_transitorio(self):
+        """As duas checagens precisam ser mutuamente exclusivas: um 503 de
+        capacidade merece retry, um 404 de modelo nunca vai passar."""
+        capacidade = Exception("503 Service Unavailable: high demand")
+        assert _is_transient_error(capacidade) is True
+        assert _is_model_not_found(capacidade) is False
+
+
+class TestDefaultOrderContrato:
+    """A ordem de fallback é o que o teto de custo precisa poder recortar --
+    o runner.ts monta AGENT_PROVIDER_ORDER a partir de uma cópia desta lista
+    (ver lib/agent-budget.ts, que tem o teste espelho)."""
+
+    def test_ordem_padrao_comeca_no_anthropic(self):
+        assert _DEFAULT_ORDER[0] == "anthropic"
+
+    def test_env_sobrescreve_a_ordem_inteira(self, monkeypatch):
+        """É por aqui que o rebaixamento por orçamento tira o provedor
+        estourado da cadeia -- se AGENT_PROVIDER_ORDER deixasse de mandar, o
+        teto voltaria a ser decorativo."""
+        monkeypatch.setenv("AGENT_PROVIDER_ORDER", "gemini,openrouter,openai,kimi")
+        monkeypatch.setenv("AGENT_PROVIDER", "anthropic")
+        assert _provider_order() == ["gemini", "openrouter", "openai", "kimi"]
+        assert "anthropic" not in _provider_order()
