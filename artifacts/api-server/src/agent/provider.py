@@ -777,6 +777,36 @@ def _is_model_not_found(exc: Exception) -> bool:
     return any(k in msg for k in ["model", "publisher", "not available", "no longer available"])
 
 
+# Sinais de conta esgotada/suspensa. Diferente de "429 rate limit", que passa
+# em segundos: aqui não há saldo, e nenhuma espera dentro desta run resolve.
+_SEM_SALDO = (
+    "insufficient_quota",
+    "insufficient balance",
+    "suspended",
+    "credit balance is too low",
+    "exceeded_current_quota",
+)
+
+
+def _is_falha_permanente(exc: Exception) -> bool:
+    """Erro que condena o provedor pelo RESTO da run, não só por esta chamada.
+
+    Duas famílias, ambas vistas em produção 03/08 na mesma cascata:
+      - modelo inexistente (gemini-2.5-pro 404; llama-3.3-70b:free saiu do
+        tier grátis do OpenRouter);
+      - conta sem saldo (openai insufficient_quota; kimi suspensa).
+
+    Por que separar de _is_quota_error: aquele trata "429/rate limit" junto com
+    "sem crédito", e os dois têm prazos opostos. Rate limit passa em segundos e
+    merece nova tentativa; conta suspensa não passa hoje. Marcar um provedor
+    como morto por causa de um rate limit passageiro seria pior que o problema.
+    """
+    if _is_model_not_found(exc):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in _SEM_SALDO)
+
+
 def _truncate_history_for_fallback(messages: list) -> list:
     """
     Ao trocar para um provider diferente do que iniciou esta chamada, o
@@ -789,7 +819,18 @@ def _truncate_history_for_fallback(messages: list) -> list:
 
 
 class FallbackClient:
-    """Tries providers in order, falling back on quota/auth errors."""
+    """Percorre os provedores em ordem, caindo pro próximo quando um falha.
+
+    Mantém uma lista de provedores CONDENADOS na run (`_mortos`): modelo
+    inexistente ou conta sem saldo não voltam a funcionar no meio da mesma
+    execução, e re-tentá-los a cada turno é latência pura antes de falhar
+    igual.
+
+    Medido em produção 03/08: a cascata gemini(404) -> openrouter(404) ->
+    openai(429 sem cota) -> kimi(conta suspensa) levou ~15s pra chegar em
+    "All providers exhausted". Sem o disjuntor, esses mesmos 15s se repetem em
+    CADA turno que precise do fallback, dentro de uma run que tem prazo.
+    """
 
     def __init__(self):
         self._order = [p for p in _provider_order() if _has_key(p)]
@@ -799,6 +840,19 @@ class FallbackClient:
             )
         self._clients: dict[str, ProviderClient] = {}
         self._current_idx = 0
+        # nome -> motivo. Só entra aqui por falha PERMANENTE (ver
+        # _is_falha_permanente); rate limit passageiro nunca condena.
+        self._mortos: dict[str, str] = {}
+
+    def _condenar(self, name: str, motivo: str) -> None:
+        if name in self._mortos:
+            return
+        self._mortos[name] = motivo
+        print(
+            f"[provider] {name} fora desta run (falha permanente) -- "
+            f"não será tentado de novo até o próximo processo.",
+            flush=True,
+        )
 
     @property
     def provider_name(self) -> str:
@@ -835,6 +889,9 @@ class FallbackClient:
         primary_name = self._order[self._current_idx]
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
+            if name in self._mortos:
+                # Já condenado nesta run: pular sem gastar round-trip.
+                continue
             c = self._get_client(name)
             tier = _resolve_tier(model)
             resolved_model = c.models.get(tier, model) if tier else model
@@ -894,6 +951,8 @@ class FallbackClient:
                     break
 
             safe_exc = mask_sensitive_data(str(last_exc))
+            if last_exc is not None and _is_falha_permanente(last_exc):
+                self._condenar(name, safe_exc)
             if last_exc is not None and _is_model_not_found(last_exc):
                 # Erro de configuração, não de capacidade -- cair pro próximo
                 # provedor não conserta e esconde a causa. Nomeia o modelo pra
@@ -906,13 +965,24 @@ class FallbackClient:
                 )
             else:
                 print(f"[provider] {name} failed: {safe_exc}", flush=True)
-            if idx + 1 < len(self._order):
-                print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
+            proximos = [p for p in self._order[idx + 1:] if p not in self._mortos]
+            if proximos:
+                print(f"[provider] trying {proximos[0]}...", flush=True)
             else:
+                # Diagnóstico junto do erro: sem isso o operador só vê o último
+                # motivo e não sabe que a cadeia INTEIRA está fora, nem por quê.
+                # Em 03/08 os quatro provedores de fallback estavam mortos ao
+                # mesmo tempo (dois com modelo 404, dois com conta sem saldo) e
+                # o erro só citava o último.
+                resumo = " | ".join(f"{p}: {m}" for p, m in self._mortos.items())
                 raise RuntimeError(
                     f"All providers exhausted. Last error: {safe_exc}"
+                    + (f" -- condenados nesta run: {resumo}" if resumo else "")
                 ) from last_exc
-        raise RuntimeError("No providers available")
+        raise RuntimeError(
+            "No providers available"
+            + (f" -- todos condenados: {', '.join(self._mortos)}" if self._mortos else "")
+        )
 
 
 # Tier detection: map a model name back to its tier key

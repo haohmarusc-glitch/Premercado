@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mede quais modelos do Gemini servem para o tier "full" da cadeia de fallback.
+Mede quais modelos servem para o tier "full" da cadeia de fallback de LLM.
 
 POR QUE MEDIR EM VEZ DE ESCOLHER PELO NOME
 ------------------------------------------
@@ -25,15 +25,21 @@ de código da produção (provider.ProviderClient), então o que ele mede é o q
 o agente vai encontrar -- incluindo a recuperação de chamada vazada como
 texto, que é aplicada de verdade em runs reais.
 
+Cobre todos os provedores OpenAI-compatíveis (gemini, openrouter, openai,
+kimi), não só o Gemini: em 03/08 os QUATRO estavam fora ao mesmo tempo -- dois
+com modelo 404 e dois com conta sem saldo -- e a run morreu em "All providers
+exhausted". Sondar um só não teria mostrado isso.
+
 USO
 ---
-    export GEMINI_API_KEY=...
-    python artifacts/api-server/src/agent/probe_gemini.py
-    python artifacts/api-server/src/agent/probe_gemini.py --models gemini-2.5-flash,gemini-3-pro
-    python artifacts/api-server/src/agent/probe_gemini.py --json
+    python artifacts/api-server/src/agent/probe_providers.py --provider todos
+    python artifacts/api-server/src/agent/probe_providers.py --provider openrouter
+    python artifacts/api-server/src/agent/probe_providers.py --models gemini-2.5-flash
+    python artifacts/api-server/src/agent/probe_providers.py --provider todos --json
 
-Precisa de rede até generativelanguage.googleapis.com (não roda de dentro de
-sandbox com proxy fechado).
+Lê a chave de cada provedor do ambiente (GEMINI_API_KEY, OPENROUTER_API_KEY,
+...); provedor sem chave é pulado com aviso, não é erro. Precisa de rede até
+as APIs (não roda de dentro de sandbox com proxy fechado).
 """
 
 import argparse
@@ -61,14 +67,16 @@ from agent.provider import (  # noqa: E402
     ToolUseBlock,
 )
 
-BASE_URL = PROVIDERS["gemini"]["base_url"]
-API_KEY_ENV = PROVIDERS["gemini"]["api_key_env"]
+# Provedores que dá pra sondar: todos os OpenAI-compatíveis. O anthropic fica
+# de fora porque não é a camada compat e não é ele que está quebrado -- é o
+# fallback DEPOIS dele.
+PROVEDORES_SONDAVEIS = [n for n, c in PROVIDERS.items() if c.get("base_url")]
 
 # Modelos que nunca serviriam para o tier "full": não são de chat com
 # ferramentas. Filtrar aqui evita gastar uma chamada só para levar 400.
 PADROES_IGNORADOS = (
     "embedding", "aqa", "imagen", "veo", "tts", "image-generation",
-    "learnlm", "gemma",
+    "learnlm", "gemma", "whisper", "dall-e", "moderation", "audio",
 )
 
 # Ferramenta de teste em formato Anthropic -- ProviderClient converte para o
@@ -97,16 +105,16 @@ RESULTADO_FALSO = json.dumps({"ticker": "NVDA", "price": 181.42, "change_pct": 1
 MIN_CHARS_RESPOSTA = 40
 
 
-def listar_modelos(api_key: str) -> list[str]:
+def listar_modelos(provedor: str, api_key: str) -> list[str]:
     """Ids servidos pela camada compatível com OpenAI.
 
-    É essa a camada que o provider.py usa -- a API nativa do Gemini pode
-    listar modelo que a compat não serve, então perguntar para a nativa daria
+    É essa a camada que o provider.py usa -- a API nativa do Gemini, por
+    exemplo, lista modelo que a compat não serve, e perguntar para ela daria
     uma lista otimista demais.
     """
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=BASE_URL)
+    client = OpenAI(api_key=api_key, base_url=PROVIDERS[provedor]["base_url"])
     return sorted(m.id.removeprefix("models/") for m in client.models.list())
 
 
@@ -125,16 +133,16 @@ def _tool_uses(resp) -> list:
     return [b for b in resp.content if isinstance(b, ToolUseBlock)]
 
 
-def probe(model: str) -> dict:
+def probe(provedor: str, model: str) -> dict:
     """Dois turnos reais contra o modelo. Nunca levanta: erro vira resultado."""
     r = {
-        "model": model, "ok": False, "chamou_ferramenta": False,
+        "provedor": provedor, "model": model, "ok": False, "chamou_ferramenta": False,
         "vazou_como_texto": False, "fechou_com_texto": False,
         "tem_preco": model in MODEL_PRICING, "segundos": None, "erro": None,
     }
     inicio = time.monotonic()
     try:
-        client = ProviderClient("gemini")
+        client = ProviderClient(provedor)
 
         # --- turno 1: precisa pedir a ferramenta -------------------------------
         messages = [{"role": "user", "content": PEDIDO}]
@@ -188,8 +196,9 @@ def _marca(v: bool) -> str:
 
 def imprimir(resultados: list[dict]) -> None:
     print()
-    print(f"{'modelo':<34} {'2 turnos':<9} {'tool':<6} {'preço':<6} {'s':>5}  observação")
-    print("-" * 100)
+    print(f"{'provedor':<12} {'modelo':<40} {'2 turnos':<9} {'tool':<6} "
+          f"{'preço':<6} {'s':>5}  observação")
+    print("-" * 120)
     for r in resultados:
         obs = r["erro"] or ""
         if r["ok"] and r["vazou_como_texto"]:
@@ -197,29 +206,40 @@ def imprimir(resultados: list[dict]) -> None:
         if r["ok"] and not r["tem_preco"]:
             obs = (obs + "; " if obs else "") + "sem preço em MODEL_PRICING"
         print(
-            f"{r['model']:<34} {_marca(r['ok']):<9} {_marca(r['chamou_ferramenta']):<6} "
-            f"{_marca(r['tem_preco']):<6} {r['segundos'] or 0:>5}  {obs}"
+            f"{r.get('provedor', '?'):<12} {r['model']:<40} {_marca(r['ok']):<9} "
+            f"{_marca(r['chamou_ferramenta']):<6} {_marca(r['tem_preco']):<6} "
+            f"{r['segundos'] or 0:>5}  {obs}"
         )
 
-    aprovados = [r for r in resultados if r["ok"]]
     print()
-    if not aprovados:
-        print("Nenhum candidato sustentou os dois turnos. NÃO troque o tier 'full' "
-              "às cegas -- sem modelo que feche o fluxo, o rebaixamento por "
-              "orçamento continua caindo no openrouter.")
-        return
+    por_provedor: dict[str, list[dict]] = {}
+    for r in resultados:
+        por_provedor.setdefault(r.get("provedor", "?"), []).append(r)
 
-    limpos = [r for r in aprovados if not r["vazou_como_texto"]]
-    escolha = (limpos or aprovados)[0]
-    print(f"Candidatos que sustentaram os dois turnos: "
-          f"{', '.join(r['model'] for r in aprovados)}")
-    print(f"Sugestão para PROVIDERS['gemini']['models']['full']: {escolha['model']}")
-    if not escolha["tem_preco"]:
-        print()
-        print(f"ANTES DE TROCAR: adicione {escolha['model']} em MODEL_PRICING "
-              "(provider.py). Modelo sem preço reporta custo None, e custo None "
-              "soma ZERO no teto diário -- é um furo conhecido do teto.")
+    algum = False
+    for provedor, rs in por_provedor.items():
+        aprovados = [r for r in rs if r["ok"]]
+        if not aprovados:
+            print(f"{provedor}: NENHUM candidato sustentou os dois turnos.")
+            continue
+        algum = True
+        # Um modelo que vaza a chamada como texto funciona porque o provider.py
+        # resgata -- mas é remendo. Entre um limpo e um vazando, o limpo ganha.
+        limpos = [r for r in aprovados if not r["vazou_como_texto"]]
+        escolha = (limpos or aprovados)[0]
+        print(f"{provedor}: sugestão para PROVIDERS['{provedor}']['models']['full'] "
+              f"-> {escolha['model']}")
+        if not escolha["tem_preco"]:
+            print(f"    ANTES DE TROCAR: adicione {escolha['model']} em MODEL_PRICING "
+                  "(provider.py). Modelo sem preço reporta custo None, e custo None "
+                  "soma ZERO no teto diário -- furo conhecido do teto.")
+
     print()
+    if not algum:
+        print("Nenhum provedor tem modelo utilizável. Enquanto isso, a cadeia de "
+              "fallback é decorativa: qualquer soluço do anthropic mata a run "
+              "inteira, que foi o que aconteceu em 03/08.")
+        return
     print("Lembrete: dois turnos aqui é o piso, não a prova completa. O fluxo "
           "diário tem ~12 rodadas, e já houve modelo que passou num teste curto "
           "e abandonou o fluxo longo no meio.")
@@ -227,31 +247,55 @@ def imprimir(resultados: list[dict]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--provider", default="gemini",
+                    help=f"um de {', '.join(PROVEDORES_SONDAVEIS)}, ou 'todos'")
     ap.add_argument("--models", help="lista separada por vírgula; padrão = descobre pela API")
     ap.add_argument("--json", action="store_true", help="saída em JSON")
     args = ap.parse_args()
 
-    api_key = os.environ.get(API_KEY_ENV, "").strip()
-    if not api_key:
-        print(f"Defina {API_KEY_ENV} no ambiente.", file=sys.stderr)
+    if args.provider == "todos":
+        provedores = list(PROVEDORES_SONDAVEIS)
+        if args.models:
+            print("--models só faz sentido com um provedor específico.", file=sys.stderr)
+            return 2
+    elif args.provider in PROVEDORES_SONDAVEIS:
+        provedores = [args.provider]
+    else:
+        print(f"Provedor desconhecido: {args.provider}. "
+              f"Use um de: {', '.join(PROVEDORES_SONDAVEIS)}, ou 'todos'.", file=sys.stderr)
         return 2
 
-    if args.models:
-        alvos = [m.strip() for m in args.models.split(",") if m.strip()]
-    else:
-        try:
-            todos = listar_modelos(api_key)
-        except Exception as e:  # noqa: BLE001
-            print(f"Falha ao listar modelos: {type(e).__name__}: {e}", file=sys.stderr)
-            return 1
-        alvos = candidatos(todos)
-        print(f"{len(todos)} modelos servidos pela camada OpenAI-compat; "
-              f"{len(alvos)} candidatos a chat com ferramenta.", file=sys.stderr)
-
     resultados = []
-    for m in alvos:
-        print(f"  testando {m}...", file=sys.stderr, flush=True)
-        resultados.append(probe(m))
+    for provedor in provedores:
+        env = PROVIDERS[provedor]["api_key_env"]
+        api_key = os.environ.get(env, "").strip()
+        if not api_key:
+            # Sem chave não é erro: só quer dizer que esse provedor não
+            # participa da cadeia mesmo. Avisa e segue pros outros.
+            print(f"[{provedor}] {env} não definida -- pulando.", file=sys.stderr)
+            continue
+
+        if args.models:
+            alvos = [m.strip() for m in args.models.split(",") if m.strip()]
+        else:
+            try:
+                todos = listar_modelos(provedor, api_key)
+            except Exception as e:  # noqa: BLE001
+                print(f"[{provedor}] falha ao listar modelos: {type(e).__name__}: {e}",
+                      file=sys.stderr)
+                continue
+            alvos = candidatos(todos)
+            print(f"[{provedor}] {len(todos)} modelos na camada OpenAI-compat; "
+                  f"{len(alvos)} candidatos a chat com ferramenta.", file=sys.stderr)
+
+        for m in alvos:
+            print(f"  testando {provedor}/{m}...", file=sys.stderr, flush=True)
+            resultados.append(probe(provedor, m))
+
+    if not resultados:
+        print("Nada foi testado -- nenhuma chave de provedor no ambiente.",
+              file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(resultados, ensure_ascii=False, indent=2))

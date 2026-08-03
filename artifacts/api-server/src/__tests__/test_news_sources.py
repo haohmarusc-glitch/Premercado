@@ -606,3 +606,40 @@ def test_a_mensagem_distingue_chave_de_plano(monkeypatch):
     assert "renove FMP_API_KEY" in ns._FMP_RECUSAS[401]
     assert "plano" in ns._FMP_RECUSAS[402]
     assert "renove" not in ns._FMP_RECUSAS[402]
+
+
+def test_desligamento_da_fmp_e_seguro_sob_concorrencia(capsys, monkeypatch):
+    """As fontes de cada ticker são buscadas EM PARALELO, e o desligamento era
+    check-then-act: várias threads passavam pelo teste antes de a primeira
+    gravar a flag.
+
+    Visto em produção 03/08 -- o aviso saiu DUAS vezes na mesma run, ou seja,
+    duas chamadas condenadas em vez de uma. A garantia que interessa não é o
+    log limpo: é "no máximo uma chamada condenada por execução", que era o
+    ponto de existir a flag.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setenv("FMP_API_KEY", "chave-sem-plano")
+    chamadas = []
+    trava = threading.Lock()
+    largada = threading.Event()
+
+    def _fake_get(url, params=None, timeout=None):
+        # Segura todas as threads no mesmo ponto pra maximizar a janela de
+        # corrida -- sem isso o teste passaria por acaso de escalonamento.
+        largada.wait(timeout=2)
+        with trava:
+            chamadas.append(url)
+        return _FakeResponse(status=402)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futuros = [pool.submit(ns._fetch_fmp, t, 3)
+                   for t in ("NVDA", "SMCI", "ARM", "MU", "AVGO", "MRVL", "SKHY", "HCC")]
+        largada.set()
+        assert all(f.result() == [] for f in futuros)
+
+    assert capsys.readouterr().err.count("FMP desativada") == 1, "aviso duplicado"
