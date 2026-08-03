@@ -105,6 +105,30 @@ RESULTADO_FALSO = json.dumps({"ticker": "NVDA", "price": 181.42, "change_pct": 1
 MIN_CHARS_RESPOSTA = 40
 
 
+def _exigir_openai() -> str | None:
+    """Devolve mensagem de erro se o SDK `openai` não estiver importável.
+
+    Checado UMA vez, antes de qualquer provedor: sem isso, o mesmo
+    ModuleNotFoundError aparecia repetido por provedor e a causa real (o
+    interpretador errado) ficava enterrada em quatro linhas idênticas.
+
+    O caso concreto: este script é rodado à mão, e o `python` do shell não é o
+    mesmo que o servidor usa. O runner.ts escolhe `.venv/bin/python` quando
+    existe (ver getPythonBin), e é lá que as dependências estão instaladas.
+    """
+    try:
+        import openai  # noqa: F401
+    except ImportError:
+        return (
+            "O SDK `openai` não está instalado NESTE interpretador.\n"
+            "Este script precisa do mesmo Python que o servidor usa -- o "
+            "runner.ts escolhe .venv/bin/python quando existe. Tente:\n"
+            "    .venv/bin/python artifacts/api-server/src/agent/probe_providers.py "
+            "--provider todos"
+        )
+    return None
+
+
 def listar_modelos(provedor: str, api_key: str) -> list[str]:
     """Ids servidos pela camada compatível com OpenAI.
 
@@ -265,7 +289,14 @@ def main() -> int:
               f"Use um de: {', '.join(PROVEDORES_SONDAVEIS)}, ou 'todos'.", file=sys.stderr)
         return 2
 
+    falta = _exigir_openai()
+    if falta:
+        print(falta, file=sys.stderr)
+        return 2
+
     resultados = []
+    sem_chave: list[str] = []
+    sem_listagem: list[str] = []
     for provedor in provedores:
         env = PROVIDERS[provedor]["api_key_env"]
         api_key = os.environ.get(env, "").strip()
@@ -273,6 +304,7 @@ def main() -> int:
             # Sem chave não é erro: só quer dizer que esse provedor não
             # participa da cadeia mesmo. Avisa e segue pros outros.
             print(f"[{provedor}] {env} não definida -- pulando.", file=sys.stderr)
+            sem_chave.append(provedor)
             continue
 
         if args.models:
@@ -283,6 +315,7 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 print(f"[{provedor}] falha ao listar modelos: {type(e).__name__}: {e}",
                       file=sys.stderr)
+                sem_listagem.append(provedor)
                 continue
             alvos = candidatos(todos)
             print(f"[{provedor}] {len(todos)} modelos na camada OpenAI-compat; "
@@ -293,8 +326,21 @@ def main() -> int:
             resultados.append(probe(provedor, m))
 
     if not resultados:
-        print("Nada foi testado -- nenhuma chave de provedor no ambiente.",
-              file=sys.stderr)
+        # Dizer o motivo CERTO. A primeira versão afirmava "nenhuma chave no
+        # ambiente" sempre que a lista saía vazia -- e na primeira execução
+        # real isso foi falso: as quatro chaves estavam lá, o que falhou foi a
+        # listagem. Mensagem que acusa a causa errada custa mais tempo do que
+        # mensagem nenhuma.
+        if sem_listagem:
+            print(f"Nada foi testado -- falha ao listar modelos em: "
+                  f"{', '.join(sem_listagem)}. As chaves existem; o problema é "
+                  "de rede ou de ambiente, não de credencial.", file=sys.stderr)
+        elif sem_chave:
+            print(f"Nada foi testado -- sem chave para: {', '.join(sem_chave)}.",
+                  file=sys.stderr)
+        else:
+            print("Nada foi testado -- nenhum candidato sobrou após o filtro.",
+                  file=sys.stderr)
         return 1
 
     if args.json:
