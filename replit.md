@@ -96,6 +96,7 @@ alertas de preço e chat conversacional.
   - `sector_contagion.py` — detecção de líder/catch-up entre grupos da cadeia de IA
   - `memory.py` — lê observações anteriores via API interna para injetar no prompt
   - `run_agent.py` / `run_chat.py` — entry points chamados como subprocess pelo Node
+  - `run_checkers.py` — roda spike/bounce/squeeze num processo só (ver decisão abaixo)
   - `config.py` — `TICKERS`, modelos por tier, limites de turnos/tokens, cache TTL
 - `artifacts/premarket/src/` — frontend React
 - `carteira.py` — script standalone de carteira (usa `psycopg2` direto, fora do agente)
@@ -107,6 +108,15 @@ alertas de preço e chat conversacional.
   Node após o processo terminar
 - Chat usa o mesmo padrão de subprocess, mas com streaming SSE (`STEP:`,
   `RESULT:`, `TITLE:` no stdout) em vez de esperar o processo terminar
+- Os checkers de mercado (spike, bounce, squeeze) rodam num subprocess ÚNICO
+  por ciclo (`run_checkers.py`), não um por checker: cada spawn pagava do zero
+  o import de pandas+numpy+yfinance e eles subiam juntos, disputando a CPU do
+  container (medido: 8-46s só de startup contra ~1s a quente). Batelados, o
+  import é pago uma vez e o cache de histórico do `market_alerts` é
+  compartilhado entre os três. O orçamento de tempo é POR CHECK, com a sobra
+  de quem termina cedo redistribuída — um orçamento único pro lote trocaria
+  três falhas parciais independentes por uma falha total. SIGTERM entrega o
+  parcial em vez de perder tudo
 - Observações salvas via chamada HTTP interna do Python para
   `POST /api/observations/internal`; memória dos últimos 7 dias injetada no
   system prompt via `GET /api/observations/internal`
