@@ -21,11 +21,13 @@ from agent.provider import (
     _anthropic_tools_to_openai,
     _extract_leaked_function_calls,
     _has_key,
+    _is_falha_permanente,
     _is_model_not_found,
     _is_quota_error,
     _is_transient_error,
     _openai_response_to_normalized,
     _DEFAULT_ORDER,
+    FallbackClient,
     _provider_order,
     _resolve_tier,
     _truncate_history_for_fallback,
@@ -548,3 +550,124 @@ class TestDefaultOrderContrato:
         monkeypatch.setenv("AGENT_PROVIDER", "anthropic")
         assert _provider_order() == ["gemini", "openrouter", "openai", "kimi"]
         assert "anthropic" not in _provider_order()
+
+
+class TestFalhaPermanente:
+    """Separa "acabou o saldo/modelo não existe" de "429 passageiro".
+
+    As duas famílias vieram juntas na cascata de 03/08 -- gemini e openrouter
+    com modelo 404, openai sem cota e kimi com a conta suspensa -- mas só uma
+    delas condena o provedor. Rate limit passa em segundos; conta suspensa não
+    passa hoje. Marcar um provedor como morto por rate limit passageiro seria
+    pior que o problema.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        "Error code: 404 - models/gemini-2.5-pro is no longer available to new users",
+        "404 - This model is unavailable for free. The paid version is available now",
+        "Error code: 429 - insufficient_quota: You exceeded your current quota",
+        "429 - Your account is suspended due to insufficient balance",
+        "exceeded_current_quota_error",
+        "Your credit balance is too low to access the API",
+    ])
+    def test_reconhece_o_que_condena(self, msg):
+        assert _is_falha_permanente(Exception(msg)) is True
+
+    @pytest.mark.parametrize("msg", [
+        "429 Too Many Requests, please retry",
+        "rate limit exceeded, Retry-After: 30",
+        "503 Service Unavailable: high demand",
+        "connection reset by peer",
+    ])
+    def test_nao_condena_por_erro_passageiro(self, msg):
+        assert _is_falha_permanente(Exception(msg)) is False
+
+    def test_rate_limit_e_quota_mas_nao_e_permanente(self):
+        """_is_quota_error junta os dois; _is_falha_permanente precisa separar."""
+        passageiro = Exception("429 Too Many Requests, please retry")
+        assert _is_quota_error(passageiro) is True
+        assert _is_falha_permanente(passageiro) is False
+
+
+class _ClienteQueFalha:
+    """ProviderClient falso: levanta o erro configurado e conta as tentativas."""
+
+    def __init__(self, erro, models=None):
+        self.erro = erro
+        self.models = models or {"full": "m", "flash": "m", "chat": "m"}
+        self.tentativas = 0
+
+    def create(self, **kwargs):
+        self.tentativas += 1
+        raise self.erro
+
+
+class TestDisjuntorDeProvedor:
+    """Provedor condenado não é re-tentado no resto da run.
+
+    Medido em produção 03/08: a cascata gemini(404) -> openrouter(404) ->
+    openai(sem cota) -> kimi(suspensa) levou ~15s pra chegar em "All providers
+    exhausted". Sem disjuntor, esses 15s se repetem em CADA turno que precise
+    do fallback, dentro de uma run que tem prazo.
+    """
+
+    def _cliente(self, monkeypatch, erros: dict):
+        monkeypatch.setenv("AGENT_PROVIDER_ORDER", ",".join(erros))
+        for nome in erros:
+            monkeypatch.setenv(PROVIDERS[nome]["api_key_env"], "k")
+        fc = FallbackClient()
+        falsos = {nome: _ClienteQueFalha(err) for nome, err in erros.items()}
+        fc._clients = falsos
+        monkeypatch.setattr(fc, "_get_client", lambda n: falsos[n])
+        return fc, falsos
+
+    def test_nao_re_tenta_provedor_condenado(self, monkeypatch):
+        fc, falsos = self._cliente(monkeypatch, {
+            "gemini": Exception("Error code: 404 - model no longer available"),
+            "openai": Exception("Error code: 429 - insufficient_quota"),
+        })
+
+        # 1ª chamada: tenta os dois, ambos falham, ambos são condenados.
+        with pytest.raises(RuntimeError, match="All providers exhausted"):
+            fc.create(model="m", max_tokens=10, system="s", tools=[], messages=[])
+
+        # Da 2ª em diante nem chega a tentar -- e a mensagem MUDA de propósito:
+        # "esgotei tentando" e "não sobrou ninguém pra tentar" são situações
+        # diferentes, e a segunda precisa nomear quem já caiu.
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="No providers available") as exc:
+                fc.create(model="m", max_tokens=10, system="s", tools=[], messages=[])
+            assert "gemini" in str(exc.value) and "openai" in str(exc.value)
+
+        # Uma tentativa cada, não três.
+        assert falsos["gemini"].tentativas == 1
+        assert falsos["openai"].tentativas == 1
+
+    def test_erro_passageiro_continua_sendo_re_tentado(self, monkeypatch):
+        """O disjuntor não pode transformar instabilidade em desistência."""
+        monkeypatch.setenv("AGENT_TRANSIENT_RETRIES", "0")
+        fc, falsos = self._cliente(monkeypatch, {
+            "gemini": Exception("429 Too Many Requests, please retry"),
+        })
+
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                fc.create(model="m", max_tokens=10, system="s", tools=[], messages=[])
+
+        assert falsos["gemini"].tentativas == 3
+
+    def test_erro_final_lista_todos_os_condenados(self, monkeypatch):
+        """Sem isso o operador só vê o motivo do ÚLTIMO da fila e não descobre
+        que a cadeia inteira está fora, nem por quê -- que foi exatamente o que
+        aconteceu em 03/08."""
+        fc, _ = self._cliente(monkeypatch, {
+            "gemini": Exception("Error code: 404 - model no longer available"),
+            "kimi": Exception("account is suspended due to insufficient balance"),
+        })
+
+        with pytest.raises(RuntimeError) as exc:
+            fc.create(model="m", max_tokens=10, system="s", tools=[], messages=[])
+
+        msg = str(exc.value)
+        assert "condenados nesta run" in msg
+        assert "gemini" in msg and "kimi" in msg
