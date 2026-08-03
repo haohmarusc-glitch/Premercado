@@ -130,6 +130,15 @@ class TextBlock:
 class NormalizedResponse:
     content: list
     stop_reason: str  # "tool_use" | "end_turn"
+    # Motivo de parada CRU do provedor, antes de achatar pros dois valores
+    # acima. Existe porque a normalização apagava a diferença entre "o modelo
+    # terminou" e "eu cortei no meio por max_tokens" -- e o corte no meio de um
+    # tool_use deixa o JSON de input incompleto, que chega às ferramentas como
+    # {} e vira TypeError de argumento faltando. Visto em produção 03/08 com
+    # get_technical_indicators e get_short_interest, sem NENHUM sinal do corte
+    # em lugar nenhum: só o sintoma, a 3 camadas de distância da causa.
+    # Anthropic usa "max_tokens"; a camada OpenAI-compat usa "length".
+    raw_stop_reason: str = ""
 
 
 # ── Pseudo tool-call leak detection ───────────────────────────────────────────
@@ -422,7 +431,9 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
     content.extend(leaked_calls)
 
     stop_reason = "tool_use" if (finish == "tool_calls" or leaked_calls) else "end_turn"
-    return NormalizedResponse(content=content, stop_reason=stop_reason)
+    return NormalizedResponse(
+        content=content, stop_reason=stop_reason, raw_stop_reason=str(finish or ""),
+    )
 
 
 # ── Main client ───────────────────────────────────────────────────────────────
@@ -625,7 +636,10 @@ class ProviderClient:
                     ToolUseBlock(id=block.id, name=block.name, input=dict(block.input))
                 )
         stop_reason = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
-        return NormalizedResponse(content=content, stop_reason=stop_reason)
+        return NormalizedResponse(
+            content=content, stop_reason=stop_reason,
+            raw_stop_reason=str(getattr(resp, "stop_reason", "") or ""),
+        )
 
     def _call_openai(
         self, *, model, max_tokens, system, tools, messages
