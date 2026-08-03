@@ -225,3 +225,146 @@ def test_deadline_none_does_not_affect_normal_flow(monkeypatch):
 
     assert "Relatório final completo" in result
     assert len(client.calls) == 1
+
+
+# ── Orçamento das cobranças ───────────────────────────────────────────────────
+#
+# As duas cobranças do loop tratam falhas DIFERENTES:
+#   1. o modelo encerrou sem registrar as save_observation;
+#   2. o modelo registrou tudo mas devolveu texto curto demais pra ser o
+#      relatório.
+# Elas dividiam um contador único, então a primeira podia consumir todo o
+# orçamento e deixar a segunda sem nenhuma tentativa.
+#
+# Visto em produção 03/08 (relatório diário, claude-sonnet-5): o modelo passou
+# dois turnos seguidos sem salvar observação (gastou as duas cobranças), no
+# turno 10 salvou as nove de uma vez e no turno 11 devolveu texto curto. Sem
+# orçamento sobrando pra pedir o relatório, a run -- que já tinha coletado
+# tudo, salvo tudo e custado US$ 0,60 -- foi descartada a UM pedido do fim.
+
+_RELATORIO_OK = "# Relatório\n" + ("Análise detalhada do ativo. " * 60)
+
+
+def _obs_call(n: int) -> NormalizedResponse:
+    return NormalizedResponse(
+        content=[
+            ToolUseBlock(id=f"obs_{i}", name="save_observation", input={"ticker": f"T{i}"})
+            for i in range(n)
+        ],
+        stop_reason="tool_use",
+    )
+
+
+def _texto(t: str) -> NormalizedResponse:
+    return NormalizedResponse(content=[TextBlock(text=t)], stop_reason="end_turn")
+
+
+def _rodar(monkeypatch, responses, min_observations=3):
+    # O loop só conta a observação quando o retorno traz saved=true -- é assim
+    # que ele distingue "salvou" de "chamou e falhou".
+    monkeypatch.setattr(
+        agent_module, "run_tool",
+        lambda name, args: '{"saved": true}' if name == "save_observation" else '{"ok": true}',
+    )
+    client = _FakeClient(responses)
+    texto = agent_module._agent_loop(
+        client=client,
+        model="claude-sonnet-5",
+        system="system",
+        tools=[],
+        messages=[{"role": "user", "content": "start"}],
+        max_turns=12,
+        max_tokens=1024,
+        require_observations=True,
+        min_observations=min_observations,
+    )
+    return texto, client
+
+
+def test_cobrancas_de_observacao_nao_consomem_o_orcamento_do_relatorio(monkeypatch):
+    """A sequência exata da produção de 03/08."""
+    texto, _ = _rodar(monkeypatch, [
+        _texto("Vou continuar."),          # sem observação -> cobrança de obs #1
+        _texto("Certo, um momento."),      # sem observação -> cobrança de obs #2
+        _obs_call(3),                      # finalmente salva tudo
+        _texto("Pronto."),                 # curto -> PRECISA da cobrança de relatório
+        _texto(_RELATORIO_OK),             # e aí entrega
+    ])
+    assert "Análise detalhada" in texto
+    assert "Análise incompleta" not in texto
+
+
+def test_relatorio_curto_ainda_e_descartado_quando_as_cobrancas_acabam(monkeypatch):
+    """Separar os orçamentos não pode virar tentativa infinita."""
+    texto, client = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto("Pronto."),   # curto -> cobrança de relatório #1
+        _texto("Pronto."),   # curto -> cobrança de relatório #2
+        _texto("Pronto."),   # curto -> orçamento esgotado
+    ])
+    assert "Análise incompleta" in texto
+    assert "curta demais" in texto
+    assert len(client.calls) == 4
+
+
+def test_observacao_pendente_ainda_e_cobrada_duas_vezes(monkeypatch):
+    texto, client = _rodar(monkeypatch, [
+        _texto("Vou continuar."),
+        _texto("Certo."),
+        _texto("Certo."),   # terceira sem observação -> orçamento de obs esgotado
+    ])
+    assert "Análise incompleta" in texto
+    assert "registrar as observações pendentes" in texto
+    assert len(client.calls) == 3
+
+
+def test_caminho_feliz_nao_gasta_cobranca_nenhuma(monkeypatch):
+    texto, client = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto(_RELATORIO_OK),
+    ])
+    assert "Análise detalhada" in texto
+    assert len(client.calls) == 2
+
+
+def test_piso_do_relatorio_acompanha_o_preflight(monkeypatch):
+    """O agente é o último ponto que ainda pode CONSERTAR pedindo de novo.
+
+    Com a régua dele mais frouxa que a do preflight (800 chars), um texto no
+    meio do caminho era aceito aqui, não gerava cobrança, e só então o
+    preflight bloqueava o e-mail -- run inteira perdida sem nova tentativa.
+    """
+    assert agent_module._min_report_chars(1) >= agent_module.PREFLIGHT_MIN_CHARS
+    assert agent_module._min_report_chars(7) >= agent_module.PREFLIGHT_MIN_CHARS
+
+    quase = "x" * (agent_module.PREFLIGHT_MIN_CHARS - 1)
+    texto, _ = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto(quase),          # passaria na régua antiga (280), morreria no preflight
+        _texto(_RELATORIO_OK),  # cobrado, agora entrega de verdade
+    ])
+    assert "Análise detalhada" in texto
+
+
+def test_lista_grande_de_ativos_eleva_o_piso_acima_do_preflight(monkeypatch):
+    """Pro caso em que 40 x n passa dos 800: o piso continua sendo o maior."""
+    esperado = agent_module.MIN_REPORT_CHARS_PER_TICKER * 40
+    assert esperado > agent_module.PREFLIGHT_MIN_CHARS
+    assert agent_module._min_report_chars(40) == esperado
+
+
+def test_nao_cobra_relatorio_de_quem_ainda_nao_registrou_observacao(monkeypatch):
+    """Ordem do fluxo: registrar tudo, depois escrever.
+
+    Com observação faltando, pedir "escreva o relatório" contradiz a cobrança
+    anterior. Enquanto os dois orçamentos eram um só isso não podia acontecer
+    (o de observação esgotava primeiro); ao separá-los, virou um caminho
+    possível que precisa continuar fechado.
+    """
+    texto, client = _rodar(monkeypatch, [
+        _texto("Vou continuar."),  # cobrança de obs #1
+        _texto("Certo."),          # cobrança de obs #2
+        _texto("Certo."),          # obs esgotado -> desiste, NÃO cobra relatório
+    ])
+    assert "registrar as observações pendentes" in texto
+    assert len(client.calls) == 3
