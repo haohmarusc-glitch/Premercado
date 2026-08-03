@@ -508,9 +508,9 @@ def test_caminho_feliz_nao_gera_ruido(capsys, monkeypatch):
 @pytest.fixture(autouse=True)
 def _fmp_religada():
     """A flag é global do processo -- religa entre casos pra não vazar."""
-    ns._FMP_SEM_CREDENCIAL = False
+    ns._FMP_SEM_ACESSO = False
     yield
-    ns._FMP_SEM_CREDENCIAL = False
+    ns._FMP_SEM_ACESSO = False
 
 
 def test_401_na_stable_desliga_a_fmp_para_os_tickers_seguintes(capsys, monkeypatch):
@@ -534,7 +534,7 @@ def test_401_na_stable_desliga_a_fmp_para_os_tickers_seguintes(capsys, monkeypat
     err = capsys.readouterr().err
     assert "FMP desativada nesta execução" in err
     assert err.count("FMP desativada") == 1, "aviso repetido por ticker"
-    assert "Renove FMP_API_KEY" in err
+    assert "renove FMP_API_KEY" in err, "aviso precisa dizer a ação a tomar"
 
 
 def test_403_na_legada_nao_desliga_a_fonte(monkeypatch):
@@ -551,7 +551,7 @@ def test_403_na_legada_nao_desliga_a_fonte(monkeypatch):
 
     with pytest.raises(Exception):
         ns._fetch_fmp("NVDA", 3)
-    assert ns._FMP_SEM_CREDENCIAL is False
+    assert ns._FMP_SEM_ACESSO is False
 
 
 def test_erro_transitorio_na_stable_nao_desliga_a_fonte(monkeypatch):
@@ -567,4 +567,42 @@ def test_erro_transitorio_na_stable_nao_desliga_a_fonte(monkeypatch):
     monkeypatch.setattr(ns.SESSION, "get", _fake_get)
 
     assert ns._fetch_fmp("NVDA", 3)[0]["title"] == "ok"
-    assert ns._FMP_SEM_CREDENCIAL is False
+    assert ns._FMP_SEM_ACESSO is False
+
+
+def test_402_tambem_desliga_a_fonte(capsys, monkeypatch):
+    """402 = chave VÁLIDA, plano sem acesso (ou limite estourado).
+
+    Confirmado em produção 03/08: depois de renovar a chave morta, a conta
+    passou a responder 402. A primeira versão desta proteção só olhava
+    401/403, então a FMP voltou a queimar uma chamada condenada por ticker --
+    o mesmo desperdício de antes, entrando por outra porta.
+    """
+    monkeypatch.setenv("FMP_API_KEY", "chave-valida-plano-limitado")
+    chamadas = []
+
+    def _fake_get(url, params=None, timeout=None):
+        chamadas.append(url)
+        return _FakeResponse(status=402)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    assert ns._fetch_fmp("NVDA", 3) == []
+    for ticker in ("SMCI", "ARM", "MU", "AVGO"):
+        assert ns._fetch_fmp(ticker, 3) == []
+    assert len(chamadas) == 1, "ticker seguinte repetiu a chamada condenada"
+
+    err = capsys.readouterr().err
+    assert "402" in err
+    # A ação de 402 é oposta à de 401: não adianta renovar a chave.
+    assert "plano" in err
+    assert "renove FMP_API_KEY" not in err
+
+
+def test_a_mensagem_distingue_chave_de_plano(monkeypatch):
+    """401 e 402 levam a lugares opostos -- trocar a chave não resolve 402, e
+    mexer no plano não resolve 401. Uma mensagem só pros dois seria pior que
+    nenhuma."""
+    assert "renove FMP_API_KEY" in ns._FMP_RECUSAS[401]
+    assert "plano" in ns._FMP_RECUSAS[402]
+    assert "renove" not in ns._FMP_RECUSAS[402]
