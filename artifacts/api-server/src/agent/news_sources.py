@@ -57,6 +57,22 @@ _FMP_STABLE_NEWS = "https://financialmodelingprep.com/stable/news/stock"
 _FMP_LEGACY_NEWS = "https://financialmodelingprep.com/api/v3/stock_news"
 _FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
 
+
+class _FmpSemCredencial(RuntimeError):
+    """401/403 da FMP: chave inválida ou plano sem acesso ao endpoint.
+
+    Categoria à parte porque é PERMANENTE -- nenhuma espera resolve e nenhum
+    outro ticker vai se sair melhor. Herda de RuntimeError pra continuar sendo
+    pega pelos `except Exception` que já existem no caminho da API legada,
+    onde 403 é resposta esperada e não deve desligar nada.
+    """
+
+
+# Desliga a FMP pelo resto do processo depois de um 401/403 na API stable.
+# Cada run do agente é um processo novo, então isso zera sozinho -- e uma
+# chave renovada volta a valer na execução seguinte sem precisar de restart.
+_FMP_SEM_CREDENCIAL = False
+
 _HTTP_TIMEOUT = 10
 
 # Nome da empresa pra montar a query do Google News: buscar só "ALAB" traz
@@ -284,12 +300,19 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
     pra quem já era assinante antes disso — então a ordem inversa faria a
     maioria das contas gastar um round-trip inútil antes de acertar.
     """
+    global _FMP_SEM_CREDENCIAL
+
     api_key = os.environ.get("FMP_API_KEY", "").strip()
-    if not api_key:
+    if not api_key or _FMP_SEM_CREDENCIAL:
         return []
 
     def _rows(url, params):
         resp = SESSION.get(url, params=params, timeout=_HTTP_TIMEOUT)
+        # 401/403 é permanente: nenhuma espera conserta e nenhum outro ticker
+        # vai se sair melhor. Separar aqui é o que permite desistir da fonte
+        # em vez de repetir a mesma falha por ticker.
+        if getattr(resp, "status_code", 0) in (401, 403):
+            raise _FmpSemCredencial(f"HTTP {resp.status_code}")
         resp.raise_for_status()
         body = resp.json()
         return body if isinstance(body, list) else []
@@ -311,6 +334,19 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
             _FMP_STABLE_NEWS,
             {"symbols": symbol, "limit": max_items, "apikey": api_key},
         )
+    except _FmpSemCredencial as e:
+        # A chave não serve. Desliga a fonte pelo resto do processo em vez de
+        # repetir a mesma falha em cada ticker: em 03/08 foram 9 chamadas
+        # condenadas por run, dentro de um orçamento de notícias de 10s que
+        # estourou e derrubou 6 pares (ticker, fonte) que teriam funcionado --
+        # ou seja, a chave morta não tirava só a FMP, tirava notícia boa junto.
+        _FMP_SEM_CREDENCIAL = True
+        print(
+            f"[news_sources] FMP desativada nesta execução: {e} na API stable "
+            "-- chave inválida ou sem acesso. Renove FMP_API_KEY.",
+            file=sys.stderr, flush=True,
+        )
+        return []
     except Exception as e:
         falha_stable = f"{type(e).__name__}: {e}"
         rows = []
