@@ -1,0 +1,56 @@
+--- a/artifacts/api-server/src/agent/provider.py
++++ b/artifacts/api-server/src/agent/provider.py
+@@ -11,6 +11,7 @@
+ from dataclasses import dataclass, field
+ from typing import Any
+ from .security import mask_sensitive_data
++from . import config as agent_config
+ 
+ # ── Preços por modelo (US$ por 1M tokens; referência 2026-07) ─────────────────
+@@ -48,11 +49,19 @@
+     p = MODEL_PRICING.get(model)
+     if p is None:
+         return None
++    # MODEL_PRICING cache_write = tarifa TTL 5m (~1.25×). Com TTL 1h a
++    # Anthropic cobra ~2× input.
++    write_rate = p.get("cache_write", p["input"])
++    try:
++        if getattr(agent_config, "ANTHROPIC_CACHE_TTL", "5m") == "1h":
++            write_rate = p["input"] * 2.0
++    except Exception:
++        pass
+     cost = (
+         input_tokens * p["input"]
+         + output_tokens * p["output"]
+         + cache_read * p.get("cache_read", p["input"])
+-        + cache_write * p.get("cache_write", p["input"])
++        + cache_write * write_rate
+     ) / 1_000_000
+     return cost
+@@ -578,7 +587,7 @@
+             last_block = content[-1]
+             if not isinstance(last_block, dict):
+                 continue
+-            content[-1] = {**last_block, "cache_control": {"type": "ephemeral"}}
++            content[-1] = {**last_block, "cache_control": agent_config.anthropic_cache_control("5m")}
+             out[i] = {**msg, "content": content}
+             marked += 1
+         return out
+@@ -592,13 +601,22 @@
+         if isinstance(system, str):
+             system = [
+-                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
++                {
++                    "type": "text",
++                    "text": system,
++                    "cache_control": agent_config.anthropic_cache_control(),
++                }
+             ]
++        # Cache de ferramentas: breakpoint no último tool (TTL 1h default).
+         cached_tools = list(tools)
+         if cached_tools:
+             cached_tools[-1] = {
+                 **cached_tools[-1],
+-                "cache_control": {"type": "ephemeral"},
++                "cache_control": agent_config.anthropic_cache_control(),
+             }
