@@ -294,19 +294,49 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
         body = resp.json()
         return body if isinstance(body, list) else []
 
+    # A falha da chamada PRINCIPAL não pode ser engolida.
+    #
+    # Antes, o except da stable fazia `rows = []` em silêncio e só a legada
+    # podia levantar -- então o único erro que chegava ao log era o da fonte
+    # que já se espera falhar. Em produção 03/08 isso apareceu como
+    # "403 Forbidden" em /api/v3/stock_news para os 9 tickers, que lido de
+    # fora parece chave morta; mas 403 na legada é o comportamento NORMAL de
+    # conta posterior a 31/08/2025 (ver docstring). O que realmente aconteceu
+    # com a stable -- 401? 429 de cota? plano sem notícias? zero itens? --
+    # não foi registrado em lugar nenhum, e era a única informação útil.
     rows = []
+    falha_stable = None
     try:
         rows = _rows(
             _FMP_STABLE_NEWS,
             {"symbols": symbol, "limit": max_items, "apikey": api_key},
         )
-    except Exception:
+    except Exception as e:
+        falha_stable = f"{type(e).__name__}: {e}"
         rows = []
+
     if not rows:
-        rows = _rows(
-            _FMP_LEGACY_NEWS,
-            {"tickers": symbol, "limit": max_items, "apikey": api_key},
-        )
+        motivo_stable = falha_stable or "respondeu sem itens"
+        try:
+            rows = _rows(
+                _FMP_LEGACY_NEWS,
+                {"tickers": symbol, "limit": max_items, "apikey": api_key},
+            )
+        except Exception as e:
+            # As DUAS pontas na mesma linha: sem isso o diagnóstico aponta
+            # para a fonte errada. O mascaramento da chave é aplicado por
+            # quem loga (ver o print de [news_sources] mais abaixo).
+            raise RuntimeError(
+                f"stable {motivo_stable} | legada {type(e).__name__}: {e}"
+            ) from e
+        if falha_stable:
+            # Legada salvou a jogada, mas a principal está quebrada e isso
+            # precisa aparecer -- senão só se descobre quando a legada morrer.
+            print(
+                f"[news_sources] fmp/{symbol}: stable falhou "
+                f"({mask_sensitive_data(motivo_stable)}), servido pela legada",
+                file=sys.stderr, flush=True,
+            )
 
     return [
         _item(

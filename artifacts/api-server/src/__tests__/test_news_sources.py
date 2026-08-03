@@ -401,3 +401,91 @@ def test_get_news_reporta_ticker_invalido_sem_derrubar_os_demais(monkeypatch):
 
     assert result["NVDA"][0]["title"] == "Manchete"
     assert "error" in result["!!!"][0]
+
+
+# ── Diagnóstico da FMP ────────────────────────────────────────────────────────
+#
+# O except da chamada stable fazia `rows = []` em silêncio, e só a legada podia
+# levantar exceção. Resultado: o único erro que chegava ao log vinha da fonte
+# que já se ESPERA falhar.
+#
+# Em produção 03/08 isso apareceu como "403 Forbidden" em /api/v3/stock_news
+# nos 9 tickers -- que lido de fora parece chave morta. Mas 403 na legada é o
+# comportamento normal de conta posterior a 31/08/2025. O que aconteceu com a
+# stable (401? 429 de cota? plano sem notícias?) não foi registrado em lugar
+# nenhum, e era a única informação que importava.
+
+
+def test_erro_da_stable_aparece_junto_com_o_da_legada(monkeypatch):
+    """O caso de produção: as duas falham, e o log precisa citar as DUAS."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(status=401)
+        return _FakeResponse(status=403)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with pytest.raises(Exception) as exc:
+        ns._fetch_fmp("NVDA", 3)
+
+    msg = str(exc.value)
+    assert "stable" in msg and "401" in msg, "erro da chamada principal sumiu"
+    assert "legada" in msg and "403" in msg
+
+
+def test_stable_vazia_e_legada_falhando_diz_que_a_stable_veio_vazia(monkeypatch):
+    """Distinguir "a stable ERROU" de "a stable respondeu sem itens" é o que
+    separa chave quebrada de simplesmente não haver notícia."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(payload=[])
+        return _FakeResponse(status=403)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with pytest.raises(Exception) as exc:
+        ns._fetch_fmp("NVDA", 3)
+
+    assert "sem itens" in str(exc.value)
+    assert "401" not in str(exc.value)
+
+
+def test_avisa_quando_a_legada_salva_uma_stable_quebrada(capsys, monkeypatch):
+    """Sem esse aviso, a stable quebrada fica invisível até a legada morrer
+    também -- e aí as notícias somem de uma vez, sem histórico do porquê."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(status=429)
+        return _FakeResponse(payload=[{
+            "title": "Nvidia sobe",
+            "publishedDate": "2026-08-03 12:00:00",
+            "text": "resumo",
+            "site": "reuters.com",
+        }])
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    items = ns._fetch_fmp("NVDA", 3)
+
+    assert items[0]["title"] == "Nvidia sobe"  # o usuário ainda recebe a notícia
+    err = capsys.readouterr().err
+    assert "stable falhou" in err
+    assert "429" in err
+
+
+def test_caminho_feliz_nao_gera_ruido(capsys, monkeypatch):
+    """Aviso que aparece sempre não é aviso."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+    monkeypatch.setattr(ns.SESSION, "get", lambda url, params=None, timeout=None: _FakeResponse(
+        payload=[{"title": "ok", "publishedDate": "2026-08-03 12:00:00",
+                  "text": "t", "site": "s"}]
+    ))
+
+    assert ns._fetch_fmp("NVDA", 3)[0]["title"] == "ok"
+    assert capsys.readouterr().err == ""
