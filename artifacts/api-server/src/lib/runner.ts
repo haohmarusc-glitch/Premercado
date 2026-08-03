@@ -9,6 +9,7 @@ import { asc, eq, inArray, gte } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
+import { bannerDeAvisos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
 import { isPositionActiveFromLots } from "./portfolio-math";
 
@@ -366,8 +367,33 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
         .catch((err) => logger.error({ err }, "Failed to update success run record"));
     }
 
+    // Checklist antes do envio: última porta antes do e-mail chegar ao
+    // usuário. Só relatório vazio e envio duplicado bloqueiam; o resto vira
+    // aviso no topo do e-mail (ver report-preflight.ts).
+    let corpoEmail = content;
+    try {
+      const pre = await preflightRelatorio({ content, date: today, mode, tickers });
+      if (pre.achados.length) {
+        logger.warn(
+          { mode, achados: pre.achados, bloqueado: pre.bloqueado },
+          "Preflight do relatório encontrou problemas",
+        );
+      }
+      if (pre.bloqueado) {
+        logger.error(
+          { mode, achados: pre.achados.filter((a) => a.severity === "BLOCK") },
+          "E-mail NÃO enviado — preflight bloqueou",
+        );
+        return;
+      }
+      corpoEmail = bannerDeAvisos(pre.achados) + content;
+    } catch (err) {
+      // Preflight com defeito não pode impedir o relatório de sair.
+      logger.error({ err }, "Preflight falhou — enviando e-mail sem verificação");
+    }
+
     // Send e-mail notification
-    await sendReportEmail(content, today, tickers);
+    await sendReportEmail(corpoEmail, today, tickers, mode);
   });
   } catch (err) {
     logger.error({ err }, "Unexpected error while running agent");
