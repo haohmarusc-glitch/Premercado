@@ -140,9 +140,12 @@ def _run_tool_falso(quote: dict):
 
 
 def _respostas_com_rotulo(rotulo: str):
-    # Acima de _min_report_chars(1) = 150 chars, senão o loop trata como
-    # "resposta curta demais para ser relatório" e cobra continuação.
-    relatorio = f"# Relatório\n\n## ARM\n\n{rotulo} — leitura do dia.\n\n" + ("blá " * 60)
+    # Precisa passar de _min_report_chars(1), senão o loop trata como "resposta
+    # curta demais para ser relatório" e cobra continuação. Derivado da
+    # constante, não escrito na mão: o piso já mudou uma vez (subiu pra
+    # acompanhar o do preflight) e um número fixo aqui quebra junto.
+    enchimento = "blá " * (agent_module._min_report_chars(1) // 4 + 20)
+    relatorio = f"# Relatório\n\n## ARM\n\n{rotulo} — leitura do dia.\n\n" + enchimento
     return [
         NormalizedResponse(
             content=[ToolUseBlock(id="t1", name="get_stock_data", input={"ticker": "ARM"})],

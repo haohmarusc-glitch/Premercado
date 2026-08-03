@@ -727,9 +727,24 @@ Para cada ativo: preço atual | variação % | sentimento | 1-2 linhas de análi
 MIN_REPORT_CHARS_PER_TICKER = 40
 MIN_REPORT_CHARS_FLOOR = 150
 
+# Piso do preflight do lado Node (lib/report-preflight.ts::MIN_CHARS): abaixo
+# disso o e-mail é BLOQUEADO e o usuário não recebe nada.
+#
+# Precisa ser o piso daqui também, senão as duas checagens discordam no pior
+# sentido possível: o agente aceita um texto de, digamos, 400 caracteres (o
+# limiar dele pra 7 ativos era 280), encerra satisfeito e não cobra reescrita
+# -- e o preflight, que só roda depois, joga fora a run inteira. O agente é o
+# único ponto que ainda pode CONSERTAR pedindo de novo; deixá-lo com a régua
+# mais frouxa que a do porteiro desperdiça essa última chance.
+PREFLIGHT_MIN_CHARS = 800
+
 
 def _min_report_chars(min_observations: int) -> int:
-    return max(MIN_REPORT_CHARS_FLOOR, MIN_REPORT_CHARS_PER_TICKER * min_observations)
+    return max(
+        PREFLIGHT_MIN_CHARS,
+        MIN_REPORT_CHARS_FLOOR,
+        MIN_REPORT_CHARS_PER_TICKER * min_observations,
+    )
 
 
 def _agent_loop(
@@ -751,7 +766,17 @@ def _agent_loop(
 
     final_text = ""
     observations_saved = 0
-    nudges_left = 2  # cobranças de save_observation antes de aceitar o fim da run
+    # DOIS orçamentos separados, não um só. Eles cobram falhas diferentes --
+    # "não registrou as observações" e "não escreveu o relatório" -- e um
+    # contador único deixa a primeira faminta a segunda.
+    #
+    # Visto em produção 03/08: o modelo terminou dois turnos seguidos sem
+    # salvar observação (gastou as duas cobranças), no turno 10 salvou as nove
+    # de uma vez, e no turno 11 devolveu texto curto. Aí não havia mais
+    # orçamento pra pedir o relatório -- a run coletou tudo, salvou tudo,
+    # custou US$ 0,60 e foi descartada a UM pedido da linha de chegada.
+    nudges_obs_left = 2
+    nudges_report_left = 2
     for turn in range(max_turns):
         if deadline_ts is not None and time.time() >= deadline_ts:
             # runner.ts vai mandar SIGTERM em breve (deadline_ts já reserva a
@@ -881,8 +906,8 @@ def _agent_loop(
             # deixa a análise incompleta — checar só "zero" deixava esse caso
             # passar em silêncio (bug visto em produção em runs de carteira).
             missing = min_observations - observations_saved
-            if require_observations and missing > 0 and nudges_left > 0:
-                nudges_left -= 1
+            if require_observations and missing > 0 and nudges_obs_left > 0:
+                nudges_obs_left -= 1
                 if progress_callback:
                     progress_callback(f"{step_prefix}Cobrando save_observation pendente...")
                 messages.append({"role": "user", "content": (
@@ -907,8 +932,19 @@ def _agent_loop(
                 require_observations is False
                 or len(final_text.strip()) >= _min_report_chars(min_observations)
             )
-            if require_observations and not looks_like_report and nudges_left > 0:
-                nudges_left -= 1
+            # `missing <= 0` é pré-requisito: com observação faltando, pedir
+            # "escreva o relatório" é o pedido errado -- o fluxo manda registrar
+            # tudo ANTES de escrever. Enquanto os dois orçamentos eram um só
+            # isso nunca aparecia (o de observação esgotava primeiro e o
+            # `continue` não era alcançado); ao separá-los, sem esta condição a
+            # run passaria a cobrar relatório de quem ainda nem coletou.
+            if (
+                require_observations
+                and missing <= 0
+                and not looks_like_report
+                and nudges_report_left > 0
+            ):
+                nudges_report_left -= 1
                 if progress_callback:
                     progress_callback(f"{step_prefix}Cobrando o relatório final por completo...")
                 messages.append({"role": "user", "content": (
