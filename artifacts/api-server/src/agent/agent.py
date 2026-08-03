@@ -969,13 +969,27 @@ def _registrar_iv(snapshot: dict) -> None:
     Só entra ticker com os DOIS números: o consumidor (IV Rank) precisa da IV,
     e o atr_pct vai junto porque é o proxy usado enquanto a série não tem
     tamanho pra rank -- guardar os dois evita ter que recalcular depois.
+
+    Segunda barreira contra IV implausível, além da que já existe na origem
+    (tools.py::_atm_iv_pct). Vale a redundância porque aqui o custo do erro é
+    diferente e permanente: uma linha errada em iv_history não volta atrás e
+    não dá pra distinguir de uma boa depois -- ela contamina o IV Rank de todo
+    dia futuro que olhar para trás. Em 03/08 sete tickers foram gravados com
+    IV entre 0,78 e 2,61 antes de existir qualquer checagem.
     """
     _ULTIMA_IV.clear()
     opcoes = snapshot.get("options", {})
     tecnicos = snapshot.get("technicals", {})
     for ticker, o in opcoes.items():
         iv = o.get("atm_iv_pct")
-        if not isinstance(iv, (int, float)):
+        if not isinstance(iv, (int, float)) or isinstance(iv, bool):
+            continue
+        if not (t.IV_ATM_MIN_PCT <= iv <= t.IV_ATM_MAX_PCT):
+            print(
+                f"[iv] {ticker}: atm_iv_pct={iv} fora da faixa plausível "
+                f"({t.IV_ATM_MIN_PCT}-{t.IV_ATM_MAX_PCT}%) -- não gravado",
+                file=sys.stderr, flush=True,
+            )
             continue
         atr = (tecnicos.get(ticker) or {}).get("atr_pct")
         _ULTIMA_IV[ticker] = {

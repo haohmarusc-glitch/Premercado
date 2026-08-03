@@ -405,17 +405,27 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       try {
         const iv = JSON.parse(ivMatch[1]) as Record<string, { atm_iv_pct: number; atr_pct: number | null }>;
         const linhas = Object.entries(iv);
+        let gravadas = 0;
         for (const [ticker, v] of linhas) {
-          await db.execute(sql`
-            INSERT INTO iv_history (ticker, date, atm_iv_pct, atr_pct)
-            VALUES (${ticker}, ${today}, ${v.atm_iv_pct}, ${v.atr_pct})
-            ON CONFLICT (ticker, date) DO UPDATE
-              SET atm_iv_pct = EXCLUDED.atm_iv_pct,
-                  atr_pct = EXCLUDED.atr_pct,
-                  recorded_at = now()
-          `);
+          // try POR LINHA: a tabela tem CHECK de sanidade na IV, então um
+          // ticker com número absurdo é rejeitado pelo banco -- e num try
+          // único isso abortaria o laço e descartaria os tickers seguintes,
+          // que estavam bons. Perder um é o custo; perder o resto junto não.
+          try {
+            await db.execute(sql`
+              INSERT INTO iv_history (ticker, date, atm_iv_pct, atr_pct)
+              VALUES (${ticker}, ${today}, ${v.atm_iv_pct}, ${v.atr_pct})
+              ON CONFLICT (ticker, date) DO UPDATE
+                SET atm_iv_pct = EXCLUDED.atm_iv_pct,
+                    atr_pct = EXCLUDED.atr_pct,
+                    recorded_at = now()
+            `);
+            gravadas += 1;
+          } catch (err) {
+            logger.warn({ err, ticker, iv: v.atm_iv_pct }, "IV recusada na gravação da série");
+          }
         }
-        if (linhas.length) logger.info({ n: linhas.length }, "Série de IV registrada");
+        if (gravadas) logger.info({ n: gravadas, de: linhas.length }, "Série de IV registrada");
       } catch (err) {
         // Falha aqui não pode derrubar o relatório -- é dado acessório.
         logger.warn({ err }, "Falha ao registrar série de IV");

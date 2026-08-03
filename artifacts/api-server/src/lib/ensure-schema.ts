@@ -358,6 +358,32 @@ export async function ensureSchema(): Promise<void> {
     // 31/07 saíram três -- e não pode duplicar a série.
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_iv_history_ticker_date ON iv_history(ticker, date)`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_iv_history_ticker ON iv_history(ticker)`);
+
+    // Limpeza + trava de sanidade. A primeira run com gravação (03/08) escreveu
+    // os sete ativos com atm_iv_pct entre 0,78 e 2,61 (NVDA em 2,08, sendo que
+    // a IV real fica em 40-50) porque a média ATM engolia contrato com
+    // impliedVolatility = 0 do yfinance como se fosse vol zero.
+    //
+    // Apagar em vez de conviver: iv_history existe pra virar IV Rank, que é
+    // percentil contra o próprio histórico do papel -- uma linha absurda
+    // desloca o percentil de todo dia futuro que olhar pra trás, e depois de
+    // gravada não dá pra distinguir de leitura boa.
+    //
+    // O DELETE vem antes do CHECK de propósito: com linha fora da faixa ainda
+    // na tabela, o ADD CONSTRAINT falha.
+    await db.execute(sql`DELETE FROM iv_history WHERE atm_iv_pct < 5 OR atm_iv_pct > 500`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'ck_iv_history_atm_iv_plausivel'
+        ) THEN
+          ALTER TABLE iv_history
+            ADD CONSTRAINT ck_iv_history_atm_iv_plausivel
+            CHECK (atm_iv_pct >= 5 AND atm_iv_pct <= 500);
+        END IF;
+      END $$;
+    `);
     logger.info("Schema check ok (iv_history table)");
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (iv_history table)");
