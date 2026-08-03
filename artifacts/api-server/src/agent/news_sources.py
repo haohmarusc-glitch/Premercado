@@ -58,20 +58,37 @@ _FMP_LEGACY_NEWS = "https://financialmodelingprep.com/api/v3/stock_news"
 _FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
 
 
-class _FmpSemCredencial(RuntimeError):
-    """401/403 da FMP: chave inválida ou plano sem acesso ao endpoint.
+# Recusas da FMP que são da CONTA, não da requisição: nenhuma espera resolve,
+# e nenhum outro ticker vai se sair melhor. Cada uma pede uma ação diferente
+# de quem opera, então a mensagem precisa distinguir -- "renove a chave" e
+# "seu plano não cobre isso" levam a lugares opostos.
+_FMP_RECUSAS = {
+    401: "chave inválida ou expirada -- renove FMP_API_KEY",
+    402: "plano não cobre este endpoint, ou o limite da conta estourou "
+         "-- a chave é válida, o acesso é que não vem junto",
+    403: "sem acesso a este endpoint neste plano",
+}
 
-    Categoria à parte porque é PERMANENTE -- nenhuma espera resolve e nenhum
-    outro ticker vai se sair melhor. Herda de RuntimeError pra continuar sendo
-    pega pelos `except Exception` que já existem no caminho da API legada,
-    onde 403 é resposta esperada e não deve desligar nada.
+
+class _FmpSemAcesso(RuntimeError):
+    """Recusa de conta da FMP (401/402/403), não falha da requisição.
+
+    Categoria à parte porque é PERMANENTE dentro da run. Herda de RuntimeError
+    pra continuar sendo pega pelos `except Exception` que já existem no caminho
+    da API legada, onde 402/403 é resposta esperada e não deve desligar nada.
+
+    O 402 entrou depois dos outros dois, e por um motivo que vale registrar: a
+    primeira versão só tratava 401/403, então quando a chave foi renovada em
+    03/08 e a conta passou a responder 402, a fonte voltou a queimar uma
+    chamada condenada por ticker -- o mesmo desperdício, por outra porta.
     """
 
 
-# Desliga a FMP pelo resto do processo depois de um 401/403 na API stable.
-# Cada run do agente é um processo novo, então isso zera sozinho -- e uma
-# chave renovada volta a valer na execução seguinte sem precisar de restart.
-_FMP_SEM_CREDENCIAL = False
+# Desliga a FMP pelo resto do processo depois de uma recusa de conta na API
+# stable. Cada run do agente é um processo novo, então isso zera sozinho -- uma
+# chave renovada (ou um plano atualizado) volta a valer na execução seguinte
+# sem precisar de restart.
+_FMP_SEM_ACESSO = False
 
 _HTTP_TIMEOUT = 10
 
@@ -300,19 +317,20 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
     pra quem já era assinante antes disso — então a ordem inversa faria a
     maioria das contas gastar um round-trip inútil antes de acertar.
     """
-    global _FMP_SEM_CREDENCIAL
+    global _FMP_SEM_ACESSO
 
     api_key = os.environ.get("FMP_API_KEY", "").strip()
-    if not api_key or _FMP_SEM_CREDENCIAL:
+    if not api_key or _FMP_SEM_ACESSO:
         return []
 
     def _rows(url, params):
         resp = SESSION.get(url, params=params, timeout=_HTTP_TIMEOUT)
-        # 401/403 é permanente: nenhuma espera conserta e nenhum outro ticker
-        # vai se sair melhor. Separar aqui é o que permite desistir da fonte
-        # em vez de repetir a mesma falha por ticker.
-        if getattr(resp, "status_code", 0) in (401, 403):
-            raise _FmpSemCredencial(f"HTTP {resp.status_code}")
+        # Recusa de conta é permanente: nenhuma espera conserta e nenhum
+        # outro ticker vai se sair melhor. Separar aqui é o que permite
+        # desistir da fonte em vez de repetir a mesma falha por ticker.
+        codigo = getattr(resp, "status_code", 0)
+        if codigo in _FMP_RECUSAS:
+            raise _FmpSemAcesso(f"HTTP {codigo} ({_FMP_RECUSAS[codigo]})")
         resp.raise_for_status()
         body = resp.json()
         return body if isinstance(body, list) else []
@@ -334,16 +352,15 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
             _FMP_STABLE_NEWS,
             {"symbols": symbol, "limit": max_items, "apikey": api_key},
         )
-    except _FmpSemCredencial as e:
+    except _FmpSemAcesso as e:
         # A chave não serve. Desliga a fonte pelo resto do processo em vez de
         # repetir a mesma falha em cada ticker: em 03/08 foram 9 chamadas
         # condenadas por run, dentro de um orçamento de notícias de 10s que
         # estourou e derrubou 6 pares (ticker, fonte) que teriam funcionado --
         # ou seja, a chave morta não tirava só a FMP, tirava notícia boa junto.
-        _FMP_SEM_CREDENCIAL = True
+        _FMP_SEM_ACESSO = True
         print(
-            f"[news_sources] FMP desativada nesta execução: {e} na API stable "
-            "-- chave inválida ou sem acesso. Renove FMP_API_KEY.",
+            f"[news_sources] FMP desativada nesta execução: {e} na API stable.",
             file=sys.stderr, flush=True,
         )
         return []
