@@ -212,3 +212,58 @@ class TestVariosProvedores:
         ])
         out = capsys.readouterr().out
         assert "cadeia de fallback é decorativa" in out
+
+
+class TestDiagnosticoDeAmbiente:
+    """A primeira execução real do script falhou por interpretador errado, e a
+    mensagem final acusou a causa ERRADA: disse "nenhuma chave de provedor no
+    ambiente" quando as quatro chaves estavam lá -- o que quebrou foi o import
+    do SDK `openai`, porque o `python` do shell não é o mesmo que o servidor
+    usa (runner.ts::getPythonBin escolhe .venv/bin/python).
+
+    Mensagem que acusa a causa errada custa mais tempo do que mensagem nenhuma.
+    """
+
+    def test_sem_o_sdk_openai_o_erro_aponta_o_interpretador(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _sem_openai(nome, *a, **kw):
+            if nome == "openai":
+                raise ImportError("No module named 'openai'")
+            return real_import(nome, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", _sem_openai)
+
+        msg = pg._exigir_openai()
+        assert msg is not None
+        assert ".venv/bin/python" in msg, "precisa dizer QUAL interpretador usar"
+
+    def test_com_o_sdk_presente_nao_reclama(self, monkeypatch):
+        import sys as _sys
+        import types
+
+        monkeypatch.setitem(_sys.modules, "openai", types.ModuleType("openai"))
+        assert pg._exigir_openai() is None
+
+    def test_falha_de_listagem_nao_e_reportada_como_falta_de_chave(
+        self, monkeypatch, capsys
+    ):
+        """O caso exato de produção: chaves presentes, listagem quebrada."""
+        import sys as _sys
+        import types
+
+        monkeypatch.setitem(_sys.modules, "openai", types.ModuleType("openai"))
+        for nome in pg.PROVEDORES_SONDAVEIS:
+            monkeypatch.setenv(pg.PROVIDERS[nome]["api_key_env"], "chave-presente")
+        monkeypatch.setattr(pg, "listar_modelos", lambda p, k: (_ for _ in ()).throw(
+            RuntimeError("conexão recusada")))
+        monkeypatch.setattr(_sys, "argv", ["probe", "--provider", "todos"])
+
+        assert pg.main() == 1
+
+        err = capsys.readouterr().err
+        assert "falha ao listar modelos" in err
+        assert "As chaves existem" in err
+        assert "nenhuma chave de provedor" not in err
