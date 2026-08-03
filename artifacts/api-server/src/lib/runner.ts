@@ -5,7 +5,7 @@
 import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
-import { asc, eq, inArray, gte } from "drizzle-orm";
+import { asc, eq, inArray, gte, sql } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
@@ -365,6 +365,33 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
         .set({ status: "success", finishedAt, durationMs, ...usageFields })
         .where(eq(agentRunsTable.id, runId))
         .catch((err) => logger.error({ err }, "Failed to update success run record"));
+    }
+
+    // Série de IV: grava o que a run já coletou de graça (get_options_data).
+    // Sem isto nunca haverá IV Rank -- o yfinance só devolve a cadeia ao vivo,
+    // então não existe histórico pra consultar nem como preencher depois.
+    // ON CONFLICT DO UPDATE porque mais de uma run no mesmo dia acontece (em
+    // 31/07 saíram três) e a última é a mais recente, não uma duplicata.
+    const ivMatch = output.match(/^IVDATA:(\{.*\})\s*$/m);
+    if (ivMatch) {
+      try {
+        const iv = JSON.parse(ivMatch[1]) as Record<string, { atm_iv_pct: number; atr_pct: number | null }>;
+        const linhas = Object.entries(iv);
+        for (const [ticker, v] of linhas) {
+          await db.execute(sql`
+            INSERT INTO iv_history (ticker, date, atm_iv_pct, atr_pct)
+            VALUES (${ticker}, ${today}, ${v.atm_iv_pct}, ${v.atr_pct})
+            ON CONFLICT (ticker, date) DO UPDATE
+              SET atm_iv_pct = EXCLUDED.atm_iv_pct,
+                  atr_pct = EXCLUDED.atr_pct,
+                  recorded_at = now()
+          `);
+        }
+        if (linhas.length) logger.info({ n: linhas.length }, "Série de IV registrada");
+      } catch (err) {
+        // Falha aqui não pode derrubar o relatório -- é dado acessório.
+        logger.warn({ err }, "Falha ao registrar série de IV");
+      }
     }
 
     // Checklist antes do envio: última porta antes do e-mail chegar ao

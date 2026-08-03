@@ -139,7 +139,10 @@ def collect_tool_result(
     elif nome == "get_options_data" and isinstance(dados, dict):
         ticker = dados.get("ticker")
         if ticker and "error" not in dados:
-            snap["options"][ticker] = {"atm_iv_pct": dados.get("atm_iv_pct")}
+            snap["options"][ticker] = {
+                "atm_iv_pct": dados.get("atm_iv_pct"),
+                "as_of": dados.get("as_of"),
+            }
 
     elif nome == "get_short_interest" and isinstance(dados, dict):
         ticker = dados.get("ticker")
@@ -254,9 +257,15 @@ def _gates_violados(ticker: str, snap: dict[str, Any]) -> list[tuple[str, str]]:
         gates.append((ATIVO, f"variação do dia é {change:+.2f}% (negativa)"))
 
     # --- ativo: IV de evento --------------------------------------------------
+    #
+    # Suprimido na semana de earnings: nesse período a IV está alta POR CAUSA
+    # do evento, e o gate de earnings (crítico) já captura o mesmo fato.
+    # Contar os dois seria double-count -- inflaria o 🔴 a partir de uma
+    # informação só, que é o tipo de acúmulo que a severidade veio evitar.
+    earnings_domina = isinstance(dias, (int, float)) and 0 <= dias <= EARNINGS_CRITICO_DIAS
     iv = opts.get("atm_iv_pct")
     atr = tec.get("atr_pct")
-    if isinstance(iv, (int, float)) and isinstance(atr, (int, float)) and atr > 0:
+    if not earnings_domina and isinstance(iv, (int, float)) and isinstance(atr, (int, float)) and atr > 0:
         limite = IV_EVENT_MULTIPLE_ATR * atr
         if iv >= limite:
             gates.append((ATIVO,
