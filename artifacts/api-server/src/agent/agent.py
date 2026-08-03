@@ -257,11 +257,50 @@ Princípios:
   sinalize a moeda; não misture R$ com US$ em comparações diretas."""
 
 
-def _system_volatile() -> str:
-    """Parte VOLÁTIL: muda a cada execução, fica num bloco SEM cache."""
-    today = _today_brt_str()
-    return f"""Data de hoje: {today}.
+_DIAS_SEMANA_PT = [
+    "segunda-feira", "terça-feira", "quarta-feira",
+    "quinta-feira", "sexta-feira", "sábado", "domingo",
+]
 
+
+def _aviso_sem_pregao(agora_utc: "datetime.datetime | None" = None) -> str:
+    """Aviso explícito quando o dia corrente não tem pregão nos EUA.
+
+    Visto em produção: as análises de sábado (01/08) e domingo (02/08)
+    apresentaram o fechamento de sexta como se fosse a leitura do dia, sem
+    dizer em nenhum momento que o mercado estava fechado. O veredito de 01/08
+    chegou a escrever "+2,32% no fechamento de 01 ago" e "SKHY desceu -3,54%
+    hoje" -- os dois números eram de 31/07.
+
+    Cobre só FIM DE SEMANA. Feriado de bolsa não entra de propósito: manter
+    uma lista de feriados à mão é a mesma armadilha do TICKER_TO_CIK
+    (desatualiza em silêncio e passa a mentir), e um feriado não sinalizado é
+    menos danoso que uma lista errada afirmando que houve pregão. Quando
+    houver dúvida, o `as_of` do get_stock_data é a fonte real do último pregão.
+    """
+    hoje = brt.now_brt(agora_utc).date()
+    if hoje.weekday() < 5:
+        return ""
+    return (
+        f"\nATENÇÃO — HOJE É {_DIAS_SEMANA_PT[hoje.weekday()].upper()}: "
+        f"NÃO HÁ PREGÃO nos EUA.\n"
+        f"Todos os preços, variações e indicadores que você receber são do "
+        f"ÚLTIMO PREGÃO FECHADO (confirme a data no campo `as_of` do "
+        f"get_stock_data), não de hoje.\n"
+        f"  • Diga isso logo no início do relatório, com a data do pregão.\n"
+        f"  • NUNCA escreva \"hoje\", \"no fechamento de {hoje.strftime('%d/%m')}\" "
+        f"ou \"a ação subiu/caiu hoje\" para esses números — eles não são de hoje.\n"
+        f"  • O gate de variação do dia continua valendo, mas você deve deixar "
+        f"claro que a variação é do último pregão, não de hoje.\n"
+    )
+
+
+def _system_volatile(agora_utc: "datetime.datetime | None" = None) -> str:
+    """Parte VOLÁTIL: muda a cada execução, fica num bloco SEM cache."""
+    today = _today_brt_str(agora_utc)
+    dia_semana = _DIAS_SEMANA_PT[brt.now_brt(agora_utc).date().weekday()]
+    return f"""Data de hoje: {today} ({dia_semana}).
+{_aviso_sem_pregao(agora_utc)}
 === MEMÓRIA DOS DIAS ANTERIORES ===
 {memory.recent_context()}
 === FIM DA MEMÓRIA ==="""
@@ -1109,7 +1148,14 @@ def _build_veredito_snapshot(tickers: list[str]) -> dict:
     for tk in tickers:
         ti = t.get_technical_indicators(tk)
         if "rsi_14" in ti and ti.get("rsi_date"):
-            technicals[tk] = {"rsi": ti["rsi_14"], "rsi_date": ti["rsi_date"]}
+            # pct_above_sma50 entra pro check DISTRIBUICAO_INVERTIDA do lint:
+            # sem ele não dá pra distinguir topo de fundo, que é exatamente o
+            # que o veredito de 01/08 errou em ARM e MRVL.
+            technicals[tk] = {
+                "rsi": ti["rsi_14"],
+                "rsi_date": ti["rsi_date"],
+                "pct_above_sma50": ti.get("pct_above_sma50"),
+            }
 
     earnings: dict = {}
     for row in t.get_earnings_calendar(tickers):

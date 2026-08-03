@@ -439,7 +439,34 @@ export async function sendScenarioAlertEmail(opts: {
   }
 }
 
-export async function sendReportEmail(reportContent: string, date: string, tickers?: string[]): Promise<void> {
+/**
+ * Prefixo do assunto por MODO de execução.
+ *
+ * Todos os fluxos usavam "Pré-Mercado ..." no assunto, então a caixa de
+ * entrada misturava relatório diário, Veredito do Dia, revisão de plano de
+ * saída e varredura de notícias sob o mesmo rótulo. Revendo 7 e-mails
+ * seguidos, só 3 eram de fato o relatório pré-mercado -- os outros eram
+ * fluxos diferentes, com prompt, ferramentas e critérios próprios. O arquivo
+ * fica ilegível depois de alguns dias, e comparar um com o outro mede ruído.
+ */
+const ASSUNTO_POR_MODO: Record<string, string> = {
+  daily: "Pré-Mercado",
+  premarket: "Flash Pré-Mercado",
+  veredito: "Veredito do Dia",
+  exit_plan: "Plano de Saída",
+  portfolio: "Carteira",
+  news: "Notícias",
+  alerts: "Alertas",
+  coal: "Setor Carvão",
+  ai: "Setor IA",
+};
+
+export async function sendReportEmail(
+  reportContent: string,
+  date: string,
+  tickers?: string[],
+  mode = "daily",
+): Promise<void> {
   const to = await resolveNotifyEmail();
   if (!to) {
     logger.warn("No notify email configured — skipping e-mail notification");
@@ -450,7 +477,8 @@ export async function sendReportEmail(reportContent: string, date: string, ticke
     return;
   }
 
-  const subject = `Pré-Mercado ${date}${tickers && tickers.length ? ` — ${tickers.join(", ")}` : ""}`;
+  const prefixo = ASSUNTO_POR_MODO[mode] ?? "Pré-Mercado";
+  const subject = `${prefixo} ${date}${tickers && tickers.length ? ` — ${tickers.join(", ")}` : ""}`;
 
   const htmlBody = reportContent
     .replace(/&/g, "&amp;")

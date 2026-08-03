@@ -143,3 +143,66 @@ def test_prompt_block_lists_signals_only():
     assert "SKHY" in block
     assert "ARM" in block
     assert "AVGO" not in block  # AVGO so' tem issue (ERROR), nao signal
+
+
+# ------------------------------------------- distribuição invertida ---
+#
+# O prompt do veredito já trazia a instrução em prosa desde um incidente
+# anterior, e ela não segurou: em 01/08 o veredito abriu com "padrão de
+# distribuição confirmado" citando ARM (RSI 31.55, -26.17% vs SMA50) e MRVL
+# (RSI 38.77, -21.66%) -- exatamente o perfil de FUNDO que a instrução
+# descreve como o oposto de distribuição. E concluiu "vender ARM amanhã".
+
+
+def _snap_distrib(rsi, pct_sma50, ticker="ARM"):
+    return {
+        "as_of": "2026-07-31",
+        "quotes": {ticker: {"price": 239.69, "previous_close": 241.54,
+                             "as_of": "2026-07-31"}},
+        "technicals": {ticker: {"rsi": rsi, "rsi_date": "2026-07-31",
+                                 "pct_above_sma50": pct_sma50}},
+        "earnings": {},
+    }
+
+
+def test_distribuicao_em_perfil_de_fundo_e_erro():
+    """O caso ARM de 01/08, com os números reais."""
+    texto = "Padrão de distribuição confirmado em ARM, que rejeitou o gap de alta."
+    rep = lint_veredito(texto, _snap_distrib(31.55, -26.17))
+    assert rep.has_errors
+    assert "DISTRIBUICAO_INVERTIDA" in rep.summary()
+    assert "perfil de FUNDO" in rep.summary()
+
+
+def test_distribuicao_em_mrvl_tambem():
+    texto = "Distribuição institucional visível em MRVL após o gap."
+    rep = lint_veredito(texto, _snap_distrib(38.77, -21.66, "MRVL"))
+    assert rep.has_errors
+
+
+def test_distribuicao_perto_do_topo_nao_e_erro():
+    """RSI alto e acima da SMA50 é o cenário em que distribuição faz sentido."""
+    texto = "Padrão de distribuição em ARM perto da máxima."
+    rep = lint_veredito(texto, _snap_distrib(72.0, 8.5))
+    assert not any(i.code == "DISTRIBUICAO_INVERTIDA" for i in rep.issues)
+
+
+def test_ticker_de_lado_nao_dispara():
+    """RSI 45 e -3% da SMA50 não é fundo nem topo -- não vira erro."""
+    texto = "Sinais de distribuição em ARM."
+    rep = lint_veredito(texto, _snap_distrib(45.0, -3.0))
+    assert not any(i.code == "DISTRIBUICAO_INVERTIDA" for i in rep.issues)
+
+
+def test_sem_a_palavra_distribuicao_nao_dispara():
+    texto = "ARM segue em capitulação técnica após o resultado."
+    rep = lint_veredito(texto, _snap_distrib(31.55, -26.17))
+    assert not any(i.code == "DISTRIBUICAO_INVERTIDA" for i in rep.issues)
+
+
+def test_sem_pct_sma50_no_snapshot_nao_dispara():
+    """Ausência de dado nunca vira violação."""
+    snap = _snap_distrib(31.55, -26.17)
+    snap["technicals"]["ARM"]["pct_above_sma50"] = None
+    rep = lint_veredito("Distribuição clara em ARM.", snap)
+    assert not any(i.code == "DISTRIBUICAO_INVERTIDA" for i in rep.issues)
