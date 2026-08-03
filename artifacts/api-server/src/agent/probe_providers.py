@@ -44,6 +44,7 @@ as APIs (não roda de dentro de sandbox com proxy fechado).
 
 import argparse
 import json
+import re
 import os
 import sys
 import time
@@ -218,6 +219,45 @@ def _marca(v: bool) -> str:
     return "sim" if v else "NÃO"
 
 
+# Tier do modelo, do mais capaz pro menos. O tier "full" da cadeia é usado
+# quando o teto de custo rebaixa a run -- ali ainda vale gastar mais por
+# chamada pra ter chance real de completar o fluxo, em vez de queimar a run
+# inteira (ver o comentário de PROVIDERS['gemini'] em provider.py).
+_ORDEM_TIER = ("pro", "flash-lite", "flash")
+
+
+def _ranking(model: str) -> tuple:
+    """Chave de ordenação por capacidade PROVÁVEL. Heurística, não medição.
+
+    Existe porque a primeira versão sugeria o primeiro aprovado da lista -- e a
+    lista vem em ordem alfabética, que não tem relação nenhuma com qualidade.
+    Na primeira execução real isso apontou `gemini-2.5-flash`, exatamente o
+    modelo que este repo já documenta como tendo completado as 12 rodadas do
+    fluxo diário sem NUNCA chamar save_observation, só porque "2.5" ordena
+    antes de "3".
+
+    Critérios, nesta ordem:
+      1. versão maior primeiro (3.1 > 3 > 2.5);
+      2. pro antes de flash -- o tier "full" precisa aguentar fluxo longo;
+      3. estável antes de preview: modelo preview é retirado sem aviso, que foi
+         como o gemini-2.5-pro virou 404 no meio do caminho.
+
+    O probe mede DOIS turnos; a ordem aqui não substitui isso -- só decide o
+    desempate entre os que já passaram.
+    """
+    m = re.search(r"(\d+(?:\.\d+)?)", model)
+    versao = float(m.group(1)) if m else 0.0
+
+    tier = len(_ORDEM_TIER)
+    for i, nome in enumerate(_ORDEM_TIER):
+        if nome in model:
+            tier = i
+            break
+
+    preview = 1 if "preview" in model or "exp" in model else 0
+    return (-versao, tier, preview, model)
+
+
 def imprimir(resultados: list[dict]) -> None:
     print()
     print(f"{'provedor':<12} {'modelo':<40} {'2 turnos':<9} {'tool':<6} "
@@ -250,7 +290,10 @@ def imprimir(resultados: list[dict]) -> None:
         # Um modelo que vaza a chamada como texto funciona porque o provider.py
         # resgata -- mas é remendo. Entre um limpo e um vazando, o limpo ganha.
         limpos = [r for r in aprovados if not r["vazou_como_texto"]]
-        escolha = (limpos or aprovados)[0]
+        escolha = sorted(limpos or aprovados, key=lambda r: _ranking(r["model"]))[0]
+        if len(aprovados) > 1:
+            print(f"{provedor}: aprovados -> "
+                  f"{', '.join(r['model'] for r in aprovados)}")
         print(f"{provedor}: sugestão para PROVIDERS['{provedor}']['models']['full'] "
               f"-> {escolha['model']}")
         if not escolha["tem_preco"]:
