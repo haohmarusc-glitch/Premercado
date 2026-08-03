@@ -735,6 +735,12 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 
         return {
             "ticker": ticker,
+            # Data da leitura da cadeia. A IV vem do chain AO VIVO e não tinha
+            # data nenhuma no retorno -- mesmo buraco que o get_stock_data
+            # tinha antes do as_of: o gate de IV não conseguia saber se o
+            # número era do pregão corrente. Aqui é a data BRT da consulta,
+            # não a de um candle, porque a cadeia não tem barra diária.
+            "as_of": brt.today_brt().isoformat(),
             "expiry_used": exp,
             "next_expirations": list(expirations[:5]),
             "put_call_ratio": pc_ratio,

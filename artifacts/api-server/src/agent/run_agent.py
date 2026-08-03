@@ -46,6 +46,20 @@ def emit_usage() -> None:
         pass
 
 
+def emit_iv() -> None:
+    """Emite IVDATA:{json} com a IV ATM por ticker que esta run já coletou.
+
+    Sem custo extra: o dado veio do get_options_data que o relatório já chamou.
+    O runner.ts persiste em iv_history, que é o que vai permitir IV Rank daqui
+    a ~60 pregões (ver agent.py::get_last_iv_snapshot)."""
+    try:
+        iv = a.get_last_iv_snapshot()
+        if iv:
+            print("IVDATA:" + json.dumps(iv, ensure_ascii=False), flush=True)
+    except Exception:
+        pass
+
+
 def _handle_sigterm(signum, frame) -> None:
     """runner.ts mata o processo com SIGTERM ao estourar o timeout de 10 min.
     Sem este handler, o except mais abaixo nunca roda e o custo já gasto nas
@@ -97,6 +111,7 @@ if __name__ == "__main__":
         else:
             report = a.run(progress_callback=progress)
         emit_usage()
+        emit_iv()
         print("REPORT:" + report, flush=True)
         sys.exit(0)
     except Exception as e:

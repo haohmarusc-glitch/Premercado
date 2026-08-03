@@ -339,4 +339,27 @@ export async function ensureSchema(): Promise<void> {
     logger.error({ err }, "Failed to ensure schema (squeeze_alert_firings table)");
   }
 
+  // Série diária de IV ATM por ticker: o gate de IV precisa julgar a IV de
+  // hoje contra o histórico do PRÓPRIO papel, e o yfinance só devolve a cadeia
+  // ao vivo -- não há série pra consultar nem como preencher retroativamente.
+  // A única forma de ter IV Rank é começar a gravar.
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS iv_history (
+        id serial PRIMARY KEY,
+        ticker text NOT NULL,
+        date text NOT NULL,
+        atm_iv_pct numeric NOT NULL,
+        atr_pct numeric,
+        recorded_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    // Único por (ticker, dia): mais de uma run no mesmo dia acontece -- em
+    // 31/07 saíram três -- e não pode duplicar a série.
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_iv_history_ticker_date ON iv_history(ticker, date)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_iv_history_ticker ON iv_history(ticker)`);
+    logger.info("Schema check ok (iv_history table)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (iv_history table)");
+  }
 }

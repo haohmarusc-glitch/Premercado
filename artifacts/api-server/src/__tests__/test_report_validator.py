@@ -389,3 +389,43 @@ def test_stale_sozinho_fica_amarelo_nao_vermelho():
     rep = lint_report(_relatorio("NVDA", "🔴"), snap)
     assert rep.has_errors
     assert "só sustentam 🟡" in rep.summary()
+
+
+# --------------------------------------- IV suprimida na semana de earnings ---
+#
+# Na semana do resultado a IV está alta POR CAUSA do evento. Contar IV extrema
+# E earnings ≤5d seria double-count: infla o 🔴 a partir de uma informação só,
+# que é justamente o acúmulo que a severidade veio evitar.
+
+
+def test_iv_nao_conta_com_earnings_em_ate_5_dias():
+    snap = new_snapshot()
+    snap["quotes"]["HCC"] = {"change_pct": 1.0, "as_of": "2026-08-01"}
+    snap["technicals"]["HCC"] = {"rsi_date": "2026-08-01", "atr_pct": 3.0}
+    snap["options"]["HCC"] = {"atm_iv_pct": 200.0}  # muito acima de 32 x 3 = 96
+    snap["earnings"]["HCC"] = 3
+    rep = lint_report(_relatorio("HCC", "🟢"), snap)
+    # earnings (crítico) aparece; IV não pode aparecer junto
+    assert "earnings em 3 dias" in rep.summary()
+    assert "IV ATM" not in rep.summary()
+    # e sozinho o crítico só sustenta 🟡
+    assert "deveria ser 🟡" in rep.summary()
+
+
+def test_iv_volta_a_contar_fora_da_semana_de_earnings():
+    snap = new_snapshot()
+    snap["quotes"]["HCC"] = {"change_pct": 1.0, "as_of": "2026-08-01"}
+    snap["technicals"]["HCC"] = {"rsi_date": "2026-08-01", "atr_pct": 3.0}
+    snap["options"]["HCC"] = {"atm_iv_pct": 200.0}
+    snap["earnings"]["HCC"] = 20
+    rep = lint_report(_relatorio("HCC", "🟢"), snap)
+    assert "IV ATM" in rep.summary()
+
+
+def test_coleta_guarda_as_of_das_opcoes():
+    """Sem as_of o gate de IV não sabe de quando é o número -- mesmo buraco
+    que o get_stock_data tinha antes da #197."""
+    snap = new_snapshot()
+    collect_tool_result(snap, "get_options_data", {}, json.dumps(
+        {"ticker": "NVDA", "atm_iv_pct": 44.0, "as_of": "2026-08-03"}))
+    assert snap["options"]["NVDA"]["as_of"] == "2026-08-03"

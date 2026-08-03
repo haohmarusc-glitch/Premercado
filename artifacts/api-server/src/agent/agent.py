@@ -953,6 +953,42 @@ def _agent_loop(
     return final_text
 
 
+# IV ATM da última run, por ticker. Mesmo padrão do get_run_usage(): o loop
+# acumula, o run_agent.py lê e emite no stdout, e o runner.ts persiste.
+#
+# Existe porque o gate de IV precisa comparar a IV de hoje com o histórico do
+# PRÓPRIO papel (IV Rank), e o yfinance só devolve a cadeia de opções ao vivo --
+# não há série histórica pra consultar nem como preencher retroativamente. A
+# única forma de ter rank é começar a gravar o que a run já coletou de graça.
+_ULTIMA_IV: dict = {}
+
+
+def _registrar_iv(snapshot: dict) -> None:
+    """Copia IV ATM + ATR% do snapshot da run pro buffer de emissão.
+
+    Só entra ticker com os DOIS números: o consumidor (IV Rank) precisa da IV,
+    e o atr_pct vai junto porque é o proxy usado enquanto a série não tem
+    tamanho pra rank -- guardar os dois evita ter que recalcular depois.
+    """
+    _ULTIMA_IV.clear()
+    opcoes = snapshot.get("options", {})
+    tecnicos = snapshot.get("technicals", {})
+    for ticker, o in opcoes.items():
+        iv = o.get("atm_iv_pct")
+        if not isinstance(iv, (int, float)):
+            continue
+        atr = (tecnicos.get(ticker) or {}).get("atr_pct")
+        _ULTIMA_IV[ticker] = {
+            "atm_iv_pct": iv,
+            "atr_pct": atr if isinstance(atr, (int, float)) else None,
+        }
+
+
+def get_last_iv_snapshot() -> dict:
+    """{ticker: {"atm_iv_pct": float, "atr_pct": float|None}} da última run."""
+    return dict(_ULTIMA_IV)
+
+
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
 def run(progress_callback=None) -> str:
@@ -991,6 +1027,8 @@ def run(progress_callback=None) -> str:
         deadline_ts=config.SOFT_DEADLINE_TS,
         report_snapshot=snapshot,
     )
+
+    _registrar_iv(snapshot)
 
     # A rubrica de rótulo vive no prompt, mas prompt é pedido, não garantia --
     # aqui os mesmos gates viram checagem determinística, com um retry de
