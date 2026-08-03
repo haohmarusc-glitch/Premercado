@@ -688,6 +688,62 @@ def get_backtest_summary(ticker: str, months: int = 6, strategy: str = "rsi") ->
 
 # ── Opções ────────────────────────────────────────────────────────────────────
 
+# Faixa de sanidade para IV ATM de opção de ação, em %. Não é calibração --
+# é o intervalo fora do qual o número não é uma observação de mercado, e sim
+# defeito do dado. Nenhuma ação líquida negocia opção a 2% de IV (nem as mais
+# paradas ficam abaixo de ~10%), e acima de 500% é ruído de contrato sem
+# liquidez. Fora daqui devolvemos None ("não sei"), que é honesto; devolver o
+# número faz o gate de IV comparar lixo e nunca disparar.
+IV_ATM_MIN_PCT = 5.0
+IV_ATM_MAX_PCT = 500.0
+# Quantos contratos ATM válidos bastam para uma média confiável.
+IV_ATM_CONTRATOS = 3
+
+
+def _atm_iv_pct(calls, spot) -> float | None:
+    """IV ATM em %, a partir dos contratos mais próximos do spot.
+
+    Por que não é a média direta dos 3 strikes mais próximos (como era):
+
+    1. O yfinance devolve `impliedVolatility` = 0 (ou ~1e-5) para contrato sem
+       cotação, e isso NÃO é volatilidade zero -- é dado ausente. Entrando na
+       média como se fosse observação real, cada zero derruba o resultado
+       proporcionalmente. Visto em produção 03/08: NVDA saiu com atm_iv_pct
+       2,08 (o real fica na casa de 40-50), e os sete ativos do dia vieram
+       entre 0,78 e 2,61 -- todos impossíveis.
+
+    2. Com o número nessa escala o gate de IV do relatório ficou morto sem
+       nunca falhar: ele compara `atm_iv_pct >= 32 x atr_pct`, e 32 x 3,81 =
+       121,9 nunca é alcançado por 2,08. Um gate que não pode disparar não
+       aparece como erro em lugar nenhum -- só deixa de discriminar.
+
+    Aqui os contratos sem IV são descartados ANTES de escolher os vizinhos, e
+    o resultado passa por faixa de sanidade. Sem contrato válido suficiente,
+    devolve None -- o consumidor já sabe pular o gate quando a IV é None.
+    """
+    if spot is None or calls is None or calls.empty:
+        return None
+    if "impliedVolatility" not in calls or "strike" not in calls:
+        return None
+
+    validos = calls[calls["impliedVolatility"] > 0].dropna(subset=["impliedVolatility", "strike"])
+    if len(validos) < IV_ATM_CONTRATOS:
+        return None
+
+    # .iloc no argsort é explícito de propósito: depois do filtro o índice de
+    # `validos` não é mais contíguo, e `serie[:n]` em índice inteiro tem
+    # semântica ambígua entre rótulo e posição. Aqui é sempre posição.
+    ordem = (validos["strike"] - spot).abs().argsort().iloc[:IV_ATM_CONTRATOS]
+    near = validos.iloc[ordem]
+    try:
+        pct = round(float(near["impliedVolatility"].mean()) * 100, 2)
+    except (TypeError, ValueError):
+        return None
+
+    if not (IV_ATM_MIN_PCT <= pct <= IV_ATM_MAX_PCT):
+        return None
+    return pct
+
 
 @cached("options:{0}:{1}", ttl=300)
 def get_options_data(ticker: str, expiry: str | None = None) -> dict:
@@ -728,10 +784,7 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
             )
 
         spot = getattr(t.fast_info, "last_price", None)
-        atm_iv = None
-        if spot is not None and not calls.empty:
-            near = calls.iloc[(calls["strike"] - spot).abs().argsort()[:3]]
-            atm_iv = round(float(near["impliedVolatility"].mean()) * 100, 2)
+        atm_iv = _atm_iv_pct(calls, spot)
 
         return {
             "ticker": ticker,
