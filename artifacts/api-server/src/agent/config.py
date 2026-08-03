@@ -52,7 +52,18 @@ MODEL_FLASH = os.environ.get("ANTHROPIC_MODEL_FLASH", "claude-haiku-4-5")
 MODEL_CHAT = os.environ.get("ANTHROPIC_MODEL_CHAT", "claude-haiku-4-5")
 MODEL_FALLBACK = os.environ.get("ANTHROPIC_MODEL_FALLBACK", "claude-haiku-4-5")
 
-MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
+# 4096 -> 8192. Um turno do fluxo diário emite o fan-out inteiro numa resposta
+# só (visto em produção 03/08: 9 e 12 tool_use no mesmo turno, ~2.700 tokens de
+# saída em média e picos no teto). Estourar o limite no meio do JSON de um
+# tool_use deixa o input incompleto, que chega à ferramenta como {} e vira
+# TypeError de argumento faltando -- foi assim que aquela run terminou com 0 de
+# 8 observações e US$ 0,57 gastos. O relatório final também compete pelo mesmo
+# teto, e agora precisa passar de 800 caracteres (ver PREFLIGHT_MIN_CHARS).
+#
+# Subir o teto não custa mais por si só: max_tokens é limite, não cobrança --
+# só paga o que o modelo realmente escrever. O fluxo de carteira já usava
+# max(MAX_TOKENS, 8192) justamente por isso; aqui o diário só estava para trás.
+MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "8192"))
 MAX_TOKENS_PREMARKET = int(os.environ.get("AGENT_MAX_TOKENS_PREMARKET", "512"))
 MAX_TOKENS_CHAT = int(os.environ.get("AGENT_MAX_TOKENS_CHAT", "2048"))
 MAX_AGENT_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "13"))
