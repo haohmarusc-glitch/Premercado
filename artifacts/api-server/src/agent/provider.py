@@ -1,1 +1,1 @@
-LOADING_FROM_FILE
+file:///tmp/provider_main.py
