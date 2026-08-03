@@ -8,6 +8,7 @@ import {
   integer,
   index,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -543,3 +544,32 @@ export const scenarioResolutionsTable = pgTable("scenario_resolutions", {
   unique("uq_scenario_resolutions_user_alvo").on(t.userId, t.dataAlvo),
 ]);
 export type ScenarioResolution = typeof scenarioResolutionsTable.$inferSelect;
+
+/**
+ * Série diária de IV ATM por ticker.
+ *
+ * Existe porque o gate de IV do relatório precisa saber se a IV de hoje é
+ * anormal PARA AQUELE PAPEL -- SMCI vive perto de 95% e NVDA quase nunca passa
+ * de 45%, então um corte único não discrimina. A medida certa é IV Rank /
+ * Percentile contra o próprio histórico do ticker.
+ *
+ * O yfinance só entrega a cadeia de opções AO VIVO: não há série histórica de
+ * IV para consultar nem como preencher retroativamente. A única forma de ter
+ * rank é começar a gravar. Até acumular ~60 pregões, o gate segue no proxy de
+ * volatilidade realizada (atm_iv_pct >= 32 x atr_pct, ver report_validator.py).
+ *
+ * Uma linha por ticker por dia -- a chave única evita duplicar quando mais de
+ * uma run roda no mesmo dia (acontece: em 31/07 saíram três).
+ */
+export const ivHistoryTable = pgTable("iv_history", {
+  id: serial("id").primaryKey(),
+  ticker: text("ticker").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD, dia BRT da run
+  atmIvPct: money("atm_iv_pct").notNull(),
+  atrPct: money("atr_pct"),
+  recordedAt: timestamp("recorded_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("idx_iv_history_ticker_date").on(t.ticker, t.date),
+  index("idx_iv_history_ticker").on(t.ticker),
+]);
+export type IvHistoryRow = typeof ivHistoryTable.$inferSelect;
