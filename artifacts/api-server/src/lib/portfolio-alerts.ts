@@ -28,6 +28,11 @@ interface PriceQuote {
 
 const FETCH_TIMEOUT_MS = 30_000; // 30 s — se o Python travar, rejeita
 
+// Sem prazo de validade (runExclusive, não runExclusiveFresh) de propósito: o
+// loop daqui só reagenda DEPOIS de terminar (setTimeout no fim, não
+// setInterval), então nunca há mais de uma tarefa deste checker na fila e ele
+// não tem como formar backlog. Quem precisa de descarte é o alert-checker, que
+// enfileira por setInterval independentemente de o ciclo anterior ter drenado.
 function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
   return runExclusive("get_quotes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {

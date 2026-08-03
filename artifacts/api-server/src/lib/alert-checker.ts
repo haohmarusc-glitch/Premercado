@@ -15,7 +15,8 @@ import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFir
 import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
-import { runExclusive } from "./python-queue";
+import { runExclusiveFresh } from "./python-queue";
+import { ordemRotacionada } from "./ciclo-rotativo";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
 import { todayBRTDateString } from "./timezone";
@@ -87,8 +88,8 @@ interface Quote {
 
 const QUOTES_TIMEOUT_MS = 60_000;
 
-function fetchQuotes(tickers: string[]): Promise<Quote[]> {
-  return runExclusive("get_quotes", () => new Promise((resolve, reject) => {
+function fetchQuotes(tickers: string[]): Promise<Quote[] | null> {
+  return runExclusiveFresh("get_quotes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
       env: pythonEnv(QUOTES_TIMEOUT_MS),
@@ -105,11 +106,11 @@ function fetchQuotes(tickers: string[]): Promise<Quote[]> {
       if (code !== 0) { reject(new Error(`get_quotes: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  }), CHECK_INTERVAL_MS);
 }
 
-function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
-  return runExclusive("get_technicals", () => new Promise((resolve, reject) => {
+function fetchTechnicals(tickers: string[]): Promise<Technicals[] | null> {
+  return runExclusiveFresh("get_technicals", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
     const py = spawn(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ tickers }));
@@ -127,7 +128,7 @@ function fetchTechnicals(tickers: string[]): Promise<Technicals[]> {
         resolve(parsed.items ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  }), CHECK_INTERVAL_MS);
 }
 
 async function fireAlert(
@@ -213,13 +214,16 @@ async function checkAlerts(): Promise<void> {
   // ── Alertas de preco/variacao (comportamento original) ──────────────────
   if (priceAlerts.length) {
     const symbols = [...new Set(priceAlerts.map((a) => a.symbol))];
-    let quotes: Quote[] = [];
+    // null = a fila descartou este ciclo por obsolescência (já logado lá).
+    // Mapa vazio => nenhum alerta de preço é avaliado agora, que é o certo:
+    // avaliar com cotação velha dispara alerta sobre um mercado que já mudou.
+    let quotes: Quote[] | null = [];
     try {
       quotes = await fetchQuotes(symbols);
     } catch (err) {
       logger.warn({ err }, "Alert checker: failed to fetch quotes");
     }
-    const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
+    const quoteMap = new Map((quotes ?? []).map((q) => [q.symbol, q]));
 
     for (const alert of priceAlerts) {
       const quote = quoteMap.get(alert.symbol);
@@ -251,13 +255,14 @@ async function checkAlerts(): Promise<void> {
   // ── Alertas por condicao tecnica (RSI/MACD/SMA) ──────────────────────────
   if (technicalAlerts.length) {
     const symbols = [...new Set(technicalAlerts.map((a) => a.symbol))];
-    let technicals: Technicals[] = [];
+    // null = ciclo descartado pela fila (ver fetchQuotes acima).
+    let technicals: Technicals[] | null = [];
     try {
       technicals = await fetchTechnicals(symbols);
     } catch (err) {
       logger.warn({ err }, "Alert checker: failed to fetch technicals");
     }
-    const techMap = new Map(technicals.map((t) => [t.ticker, t]));
+    const techMap = new Map((technicals ?? []).map((t) => [t.ticker, t]));
 
     for (const alert of technicalAlerts) {
       const t = techMap.get(alert.symbol);
@@ -284,8 +289,8 @@ interface IntradaySpikeAlert {
 // do pacote) -- market_alerts.py faz `from .cache import cached`, import
 // relativo que só resolve nesse contexto (mesmo motivo/padrão de
 // routes/analysis.ts::runMarketAlertsSnapshot).
-function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
-  return runExclusive("get_intraday_spikes", () => new Promise((resolve, reject) => {
+function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[] | null> {
+  return runExclusiveFresh("get_intraday_spikes", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_intraday_spikes"], {
       cwd: agentDir,
       env: pythonEnv(SPIKE_TIMEOUT_MS),
@@ -305,7 +310,7 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  }), CHECK_INTERVAL_MS);
 }
 
 // Persiste os picos intraday detectados (candle de 1min) pra aparecerem no
@@ -324,14 +329,15 @@ async function checkIntradaySpikes(): Promise<void> {
   const settings = await getOrCreateSettings();
   if (!settings.tickers.length) return;
 
-  let spikes: IntradaySpikeAlert[] = [];
+  let spikes: IntradaySpikeAlert[] | null = [];
   try {
     spikes = await fetchIntradaySpikes(settings.tickers);
   } catch (err) {
     logger.warn({ err }, "Intraday spike checker: failed to fetch spikes");
     return;
   }
-  if (!spikes.length) return;
+  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
+  if (!spikes?.length) return;
 
   const now = new Date();
   const cooldownSince = new Date(now.getTime() - INTRADAY_SPIKE_COOLDOWN_MS);
@@ -363,8 +369,8 @@ async function checkIntradaySpikes(): Promise<void> {
 
 // get_bounce_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
 // pacote) -- mesmo motivo de fetchIntradaySpikes acima.
-function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
-  return runExclusive("get_bounce_alerts", () => new Promise((resolve, reject) => {
+function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[] | null> {
+  return runExclusiveFresh("get_bounce_alerts", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_bounce_alerts"], {
       cwd: agentDir,
       env: pythonEnv(BOUNCE_TIMEOUT_MS),
@@ -384,7 +390,7 @@ function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  }), CHECK_INTERVAL_MS);
 }
 
 // Notifica por e-mail quando market_alerts.py::check_dead_cat_bounce detecta
@@ -404,14 +410,15 @@ async function checkBounceAlerts(): Promise<void> {
   const settings = await getOrCreateSettings();
   if (!settings.tickers.length) return;
 
-  let alerts: IntradaySpikeAlert[] = [];
+  let alerts: IntradaySpikeAlert[] | null = [];
   try {
     alerts = await fetchBounceAlerts(settings.tickers);
   } catch (err) {
     logger.warn({ err }, "Bounce alert checker: failed to fetch bounce alerts");
     return;
   }
-  if (!alerts.length) return;
+  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
+  if (!alerts?.length) return;
 
   const today = todayBRTDateString();
 
@@ -464,8 +471,8 @@ interface SqueezeAlert {
 
 // get_squeeze_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
 // pacote) -- mesmo motivo de fetchIntradaySpikes/fetchBounceAlerts acima.
-function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
-  return runExclusive("get_squeeze_alerts", () => new Promise((resolve, reject) => {
+function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[] | null> {
+  return runExclusiveFresh("get_squeeze_alerts", () => new Promise((resolve, reject) => {
     const py = spawn(getPythonBin(), ["-m", "agent.get_squeeze_alerts"], {
       cwd: agentDir,
       env: pythonEnv(SQUEEZE_TIMEOUT_MS),
@@ -489,7 +496,7 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[]> {
         resolve(parsed.alerts ?? []);
       } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  }), CHECK_INTERVAL_MS);
 }
 
 // Notifica por e-mail o progresso de um setup de squeeze (tools.py::
@@ -508,14 +515,15 @@ async function checkSqueezeAlerts(): Promise<void> {
   const settings = await getOrCreateSettings();
   if (!settings.tickers.length) return;
 
-  let alerts: SqueezeAlert[] = [];
+  let alerts: SqueezeAlert[] | null = [];
   try {
     alerts = await fetchSqueezeAlerts(settings.tickers);
   } catch (err) {
     logger.warn({ err }, "Squeeze alert checker: failed to fetch squeeze alerts");
     return;
   }
-  if (!alerts.length) return;
+  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
+  if (!alerts?.length) return;
 
   const today = todayBRTDateString();
 
@@ -556,21 +564,36 @@ async function checkSqueezeAlerts(): Promise<void> {
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
+const CICLO: { nome: string; run: () => Promise<void> }[] = [
+  { nome: "Alert check", run: checkAlerts },
+  { nome: "Intraday spike check", run: checkIntradaySpikes },
+  { nome: "Bounce alert check", run: checkBounceAlerts },
+  { nome: "Squeeze alert check", run: checkSqueezeAlerts },
+];
+
+let inicioDoCiclo = 0;
+
+/**
+ * Dispara o lote girando quem entra primeiro na fila a cada ciclo.
+ *
+ * A fila é FIFO com descarte por idade (python-queue.ts). Sob pressão, quem
+ * entra por último é sempre quem espera mais e, portanto, sempre o primeiro a
+ * ser descartado -- numa ordem fixa isso significaria o squeeze (o último, e o
+ * mais lento) nunca mais rodar durante uma manhã movimentada, silenciosamente.
+ * Ver ciclo-rotativo.ts.
+ */
+function dispararCiclo(): void {
+  for (const { nome, run } of ordemRotacionada(CICLO, inicioDoCiclo)) {
+    run().catch((e) => logger.error({ e }, `${nome} error`));
+  }
+  inicioDoCiclo += 1;
+}
+
 export function startAlertChecker(): void {
   if (intervalHandle) return;
   // First check after 30s startup grace period
-  const firstCheck = setTimeout(() => {
-    checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
-    checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
-    checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
-    checkSqueezeAlerts().catch((e) => logger.error({ e }, "Squeeze alert check error"));
-  }, 30_000);
+  setTimeout(dispararCiclo, 30_000);
   // Then every 5 min
-  intervalHandle = setInterval(() => {
-    checkAlerts().catch((e) => logger.error({ e }, "Alert check error"));
-    checkIntradaySpikes().catch((e) => logger.error({ e }, "Intraday spike check error"));
-    checkBounceAlerts().catch((e) => logger.error({ e }, "Bounce alert check error"));
-    checkSqueezeAlerts().catch((e) => logger.error({ e }, "Squeeze alert check error"));
-  }, CHECK_INTERVAL_MS);
+  intervalHandle = setInterval(dispararCiclo, CHECK_INTERVAL_MS);
   logger.info("Price alert checker started (interval: 5 min)");
 }

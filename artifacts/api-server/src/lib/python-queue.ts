@@ -32,6 +32,30 @@
  * enfileirá-lo bloquearia todos os checkers durante a run inteira. A separação
  * já existe pelo guard `agentState.running`, que faz os checkers pularem o
  * ciclo enquanto o agente trabalha.
+ *
+ * ── DESCARTE POR OBSOLESCÊNCIA ──────────────────────────────────────────────
+ *
+ * Serializar sozinho troca um problema por outro, e foi o que aconteceu: a
+ * contenção sumiu, mas as esperas passaram a crescer de forma monotônica
+ * (60s -> 330s ao longo de uma manhã) até nunca mais voltarem.
+ *
+ * A causa é estrutural, não de ajuste fino. O `setInterval` dos checkers
+ * enfileira um lote novo a cada 5 min INDEPENDENTEMENTE de o lote anterior ter
+ * drenado. Enquanto o tempo de drenagem for maior que o intervalo, a fila só
+ * cresce -- e como nada aqui olhava o relógio, cada tarefa velha ainda gastava
+ * um processo Python inteiro pra produzir um retrato do mercado de vários
+ * minutos atrás, empurrando as seguintes mais pra trás. Sem freio, a fila não
+ * tem ponto de equilíbrio.
+ *
+ * O freio é descartar por idade: uma tarefa periódica que esperou mais do que o
+ * próprio período dela é obsoleta POR CONSTRUÇÃO -- o ciclo seguinte, com dados
+ * mais novos, já está enfileirado atrás. Rodá-la não entrega informação, só
+ * atrasa quem vem depois. Descartar é O(1) e devolve o ponto de equilíbrio: no
+ * pior caso a fila drena um lote por período e joga fora o que envelheceu.
+ *
+ * Só quem é periódico usa isso (`runExclusiveFresh`). Rota HTTP continua no
+ * `runExclusive` sem prazo: ali existe um cliente esperando resposta, e trocar
+ * uma resposta lenta por um erro é decisão de produto, não de fila.
  */
 import { logger } from "./logger";
 
@@ -39,17 +63,48 @@ import { logger } from "./logger";
 // demais (tarefas se acumulando mais rápido do que drenam) e merece log.
 const ESPERA_NOTAVEL_MS = 10_000;
 
+/** Resultado interno de uma tarefa descartada antes de rodar. */
+const OBSOLETA = Symbol("tarefa-obsoleta");
+
 let ultima: Promise<unknown> = Promise.resolve();
+/**
+ * Quantas tarefas estão enfileiradas ou rodando. Existe porque o backlog só foi
+ * descoberto lendo tempo de espera em log -- profundidade é o número que mostra
+ * o problema formando, antes de a espera explodir.
+ */
+let pendentes = 0;
 
-export function runExclusive<T>(label: string, tarefa: () => Promise<T>): Promise<T> {
+function enfileirar<T>(
+  label: string,
+  tarefa: () => Promise<T>,
+  ttlMs: number | null,
+): Promise<T | typeof OBSOLETA> {
   const enfileiradoEm = Date.now();
+  pendentes += 1;
 
-  const executar = async (): Promise<T> => {
+  const executar = async (): Promise<T | typeof OBSOLETA> => {
     const esperou = Date.now() - enfileiradoEm;
-    if (esperou >= ESPERA_NOTAVEL_MS) {
-      logger.info({ label, esperouMs: esperou }, "Fila Python: tarefa esperou antes de rodar");
+    try {
+      if (ttlMs !== null && esperou > ttlMs) {
+        // Não spawna: o ciclo desta tarefa já passou e o próximo está atrás
+        // dela na fila. Warn (não info) porque descarte recorrente significa
+        // que a drenagem não acompanha o intervalo do checker.
+        logger.warn(
+          { label, esperouMs: esperou, ttlMs, pendentes },
+          "Fila Python: tarefa descartada por obsolescência (esperou mais que o próprio período)",
+        );
+        return OBSOLETA;
+      }
+      if (esperou >= ESPERA_NOTAVEL_MS) {
+        logger.info(
+          { label, esperouMs: esperou, pendentes },
+          "Fila Python: tarefa esperou antes de rodar",
+        );
+      }
+      return await tarefa();
+    } finally {
+      pendentes -= 1;
     }
-    return tarefa();
   };
 
   // `then(executar, executar)` roda a próxima tarefa mesmo quando a anterior
@@ -61,7 +116,34 @@ export function runExclusive<T>(label: string, tarefa: () => Promise<T>): Promis
   return resultado;
 }
 
+/** Enfileira sem prazo de validade: a tarefa roda por mais que espere. */
+export function runExclusive<T>(label: string, tarefa: () => Promise<T>): Promise<T> {
+  return enfileirar(label, tarefa, null) as Promise<T>;
+}
+
+/**
+ * Enfileira com prazo: se a vez chegar depois de `ttlMs` de espera, a tarefa é
+ * descartada e a promise resolve `null` -- sem spawnar processo e sem lançar
+ * erro, porque descarte é o funcionamento esperado sob carga, não falha.
+ *
+ * Passe como `ttlMs` o PERÍODO do checker (não o timeout dele): o que torna a
+ * tarefa inútil é existir um ciclo mais novo atrás dela na fila.
+ */
+export function runExclusiveFresh<T>(
+  label: string,
+  tarefa: () => Promise<T>,
+  ttlMs: number,
+): Promise<T | null> {
+  return enfileirar(label, tarefa, ttlMs).then((r) => (r === OBSOLETA ? null : (r as T)));
+}
+
+/** Profundidade atual da fila (enfileiradas + a que está rodando). */
+export function filaPendentes(): number {
+  return pendentes;
+}
+
 /** Só para teste: zera a corrente entre casos. */
 export function _resetQueue(): void {
   ultima = Promise.resolve();
+  pendentes = 0;
 }
