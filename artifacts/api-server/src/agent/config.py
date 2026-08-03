@@ -68,6 +68,24 @@ RETRY_DELAY_BASE = float(os.environ.get("AGENT_RETRY_DELAY_BASE", "1.0"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# Prompt caching Anthropic (API Messages):
+#   "5m" — ephemeral padrão (write ~1.25× input); TTL ~5 min
+#   "1h" — extended (write ~2× input); TTL 1 hora — melhor para system+tools
+#          estáveis reusados entre turns da mesma run e entre runs da manhã
+# Histórico do loop continua em 5m (conteúdo muda a cada turno; 1h só encarece write).
+# Ref: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+_raw_cache_ttl = os.environ.get("ANTHROPIC_CACHE_TTL", "1h").strip().lower()
+ANTHROPIC_CACHE_TTL = "1h" if _raw_cache_ttl in ("1h", "1hr", "60m", "3600") else "5m"
+
+
+def anthropic_cache_control(ttl: str | None = None) -> dict:
+    """Breakpoint de prompt cache. ttl None → ANTHROPIC_CACHE_TTL (default 1h)."""
+    t = (ttl or ANTHROPIC_CACHE_TTL).strip().lower()
+    if t in ("1h", "1hr", "60m"):
+        return {"type": "ephemeral", "ttl": "1h"}
+    return {"type": "ephemeral"}  # 5m implícito
+
+
 # runner.ts passa um epoch (ms) com folga antes do SIGTERM de hard-kill --
 # quando o agent loop cruza esse instante, ele força UM turno final sem
 # ferramentas (tools=[]) pra escrever o relatório com o que já foi coletado,
