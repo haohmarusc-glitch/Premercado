@@ -746,6 +746,23 @@ def _is_quota_error(exc: Exception) -> bool:
     )
 
 
+def _is_model_not_found(exc: Exception) -> bool:
+    """Modelo configurado não existe / não está mais disponível para esta chave.
+
+    Categoria diferente de quota e de erro transitório: nenhuma espera resolve e
+    nenhum outro provedor é a correção -- o conserto é editar PROVIDERS. Existe
+    porque isso aconteceu de verdade e ficou invisível: o `gemini-2.5-pro` do
+    tier "full" passou a responder 404 ("no longer available to new users") e o
+    log só mostrava o blob do erro seguido de "trying anthropic...", que era
+    exatamente o provedor que o teto de custo tentava evitar. Nomear a causa é
+    o que separa "provedor instável" de "configuração quebrada".
+    """
+    msg = str(exc).lower()
+    if "404" not in msg and "not_found" not in msg and "not found" not in msg:
+        return False
+    return any(k in msg for k in ["model", "publisher", "not available", "no longer available"])
+
+
 def _truncate_history_for_fallback(messages: list) -> list:
     """
     Ao trocar para um provider diferente do que iniciou esta chamada, o
@@ -863,7 +880,18 @@ class FallbackClient:
                     break
 
             safe_exc = mask_sensitive_data(str(last_exc))
-            print(f"[provider] {name} failed: {safe_exc}", flush=True)
+            if last_exc is not None and _is_model_not_found(last_exc):
+                # Erro de configuração, não de capacidade -- cair pro próximo
+                # provedor não conserta e esconde a causa. Nomeia o modelo pra
+                # o conserto ser óbvio no log.
+                print(
+                    f"[provider] {name}: modelo '{resolved_model}' não existe ou não está "
+                    f"disponível para esta chave — ERRO DE CONFIGURAÇÃO, corrija "
+                    f"PROVIDERS['{name}']['models'] em provider.py. Detalhe: {safe_exc}",
+                    flush=True,
+                )
+            else:
+                print(f"[provider] {name} failed: {safe_exc}", flush=True)
             if idx + 1 < len(self._order):
                 print(f"[provider] trying {self._order[idx + 1]}...", flush=True)
             else:
