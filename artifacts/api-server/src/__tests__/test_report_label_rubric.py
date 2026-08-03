@@ -92,8 +92,8 @@ def test_campo_do_gate_existe_na_ferramenta(prompt, fontes_das_tools, campo):
 
 def test_gates_bloqueiam_verde(prompt):
     """Os quatro gates precisam estar enunciados como bloqueio de 🟢."""
-    assert "NÃO PODE ser 🟢" in prompt
-    for gate in ("variação do dia negativa", "days_until_earnings", "IV de evento", "defasado"):
+    for gate in ("variação do dia negativa", "days_until_earnings", "IV de evento",
+                 "defasado", "pct_above_sma200", "risco binário"):
         assert gate in prompt, f"gate ausente: {gate}"
 
 
@@ -113,9 +113,24 @@ def test_limiar_de_iv_vem_fechado_em_32x(prompt):
 def test_prompt_dita_quantos_gates_para_cada_rotulo(prompt):
     """Sem isso 🔴 vira julgamento livre, e o modelo inventa gate para chegar
     lá (visto em produção com ARM)."""
-    assert "UM gate ativo → 🟡" in prompt
-    assert "DOIS OU MAIS → 🔴" in prompt
+    assert "dois críticos" in prompt
+    assert "três ativos" in prompt
     assert "não conte um gate" in prompt
+
+
+def test_severidade_dos_gates_esta_no_prompt(prompt):
+    """Sem peso, contagem simples colapsa: com 8 gates qualquer ativo em
+    correção vira 🔴 todo dia e o rótulo para de discriminar."""
+    assert "CRÍTICOS" in prompt
+    assert "ATIVOS:" in prompt
+    assert "INFORMATIVO" in prompt
+
+
+def test_macro_e_tecnico_generico_ficam_fora_dos_gates(prompt):
+    """Gate que não varia entre ativos no mesmo dia não carrega informação --
+    o juro 10y foi verdadeiro em todos os relatórios revisados."""
+    assert "NÃO são gates" in prompt
+    assert "não varia entre ativos" in prompt
 
 
 def test_gates_nao_se_apresentam_como_sinal_validado(prompt):

@@ -203,10 +203,18 @@ boa e rótulo 🟡/🔴 no dia; isso não é contradição, é o formato funcion
   🟡 = tese ok, timing ruim ou não confirmado — esperar
   🔴 = risco de curto prazo domina a decisão de hoje
 
-GATES — o rótulo NÃO PODE ser 🟢 se QUALQUER um destes valer:
+GATES — cada um tem PESO. Só CRÍTICO e ATIVO contam para a cor.
+
+CRÍTICOS (o evento/dado domina o setup do dia):
+  • bloco técnico defasado — `rsi_date` anterior ao `as_of` do get_stock_data
+    (regra de frescor abaixo)
+  • `days_until_earnings` ≤ 5 (get_earnings_calendar; dias CORRIDOS, use o
+    campo como vem)
+
+ATIVOS:
+  • `days_until_earnings` entre 6 e 14 — ainda no radar, mas o dia não é sobre
+    o evento e a IV já cobra o prêmio
   • variação do dia negativa (get_stock_data)
-  • `days_until_earnings` ≤ 5 (get_earnings_calendar; são dias CORRIDOS,
-    não pregões — não converta, use o campo como vem)
   • IV de evento: `atm_iv_pct` (get_options_data) ≥ **32 × `atr_pct`**
     (get_technical_indicators). Use esta conta exata, com o 32 já embutido —
     não a decomponha. (Ela é 2× a volatilidade anualizada do próprio ativo:
@@ -215,12 +223,28 @@ GATES — o rótulo NÃO PODE ser 🟢 se QUALQUER um destes valer:
     e reprova ativo com IV perfeitamente normal — não faça isso.)
     O corte é por ATIVO em vez de um número fixo de IV: 96% é normal em SMCI
     e seria evento em GOOGL, mesma lógica das bandas de RSI calibradas por ATR%.
-  • bloco técnico defasado (regra de frescor abaixo)
+  • `pct_above_sma200` ≥ 25% — extensão historicamente insustentável. SÓ vale
+    com o bloco técnico FRESCO; se ele estiver defasado, este gate não existe.
+  • manchete de risco binário: ITC, antitruste, patente, processo, downgrade
+    ou rating "Sell" não confirmado.
+
+INFORMATIVO (NÃO muda a cor):
+  • short alto (≥15% do float). É gate de "não perseguir a alta do dia", não
+    de rebaixar rótulo: a assimetria de squeeze corta para os dois lados, e
+    rebaixar por ela assumiria uma direção que o dado não dá. Cite no texto.
+
+NÃO são gates, de propósito:
+  • macro (juro 10y): foi verdadeiro em todos os relatórios revisados. Gate que
+    não varia entre ativos no mesmo dia não informa nada — só desloca o piso de
+    todo mundo igualmente. Continua na seção de contexto macro.
+  • técnico "fraco" genérico (MACD bearish, abaixo da SMA50): mesmo problema em
+    correção prolongada, e é exatamente o que o 🟡 de julgamento já cobre.
 
 Quantos gates, qual rótulo:
-  • ZERO gates ativos → 🟢 permitido (não obrigatório).
-  • UM gate ativo → 🟡. Não use 🔴 aqui.
-  • DOIS OU MAIS → 🔴.
+  • ZERO gates que contam → 🟢 permitido (não obrigatório).
+  • 🔴 exige deterioração COMBINADA: dois críticos, OU um crítico com pelo
+    menos um ativo, OU três ativos.
+  • Qualquer outro caso com pelo menos um gate → 🟡.
 Um gate só conta se a condição dele for REALMENTE verdadeira com os números
 que você tem. Se o seu receio sobre o ativo não corresponde a nenhum gate,
 escreva o receio no texto — não conte um gate que você mesmo acabou de

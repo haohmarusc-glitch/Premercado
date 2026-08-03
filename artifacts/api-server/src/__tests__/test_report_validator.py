@@ -127,7 +127,8 @@ def test_verde_com_tecnico_defasado_e_erro():
     assert "anterior ao pregão" in rep.summary()
 
 
-def test_dois_gates_pedem_vermelho():
+def test_critico_mais_ativo_pede_vermelho():
+    """earnings em 2 dias (crítico) + queda (ativo) = 🔴."""
     snap = new_snapshot()
     snap["quotes"]["ARM"] = {"change_pct": -0.8, "as_of": "2026-08-01"}
     snap["earnings"]["ARM"] = 2
@@ -171,7 +172,7 @@ def test_vermelho_com_um_gate_so_e_erro():
     rep = lint_report(_relatorio("ARM", "🔴"), snap)
     assert rep.has_errors
     assert "ROTULO_INFLADO" in rep.summary()
-    assert "apenas 1 gate" in rep.summary()
+    assert "só sustentam 🟡" in rep.summary()
 
 
 def test_vermelho_sem_gate_nenhum_e_erro():
@@ -278,3 +279,113 @@ def test_prompt_de_correcao_lista_os_tickers():
     prompt = correction_prompt(rep)
     assert "ARM" in prompt
     assert "não altere o resto da análise" in prompt
+
+
+# ----------------------------------------- gates novos e severidade ---
+#
+# G1 tier 6-14d, G5 extensão MM200, G9 manchete de risco e G4 short entram
+# aqui. A severidade existe porque contagem simples colapsa quando os gates
+# passam de meia dúzia: qualquer ativo em correção viraria 🔴 todo dia.
+
+
+def test_earnings_entre_6_e_14_dias_e_ativo_nao_critico():
+    """O caso SMCI de 02/08: 9 dias. Antes o modelo citava um gate "≤14d" que
+    a rubrica não tinha; agora existe, mas como ATIVO -- sozinho dá 🟡."""
+    snap = new_snapshot()
+    snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
+    snap["earnings"]["SMCI"] = 9
+    assert not lint_report(_relatorio("SMCI", "🟡"), snap).has_errors
+    rep = lint_report(_relatorio("SMCI", "🟢"), snap)
+    assert rep.has_errors
+    assert "deveria ser 🟡" in rep.summary()
+
+
+def test_earnings_acima_de_14_dias_nao_e_gate():
+    snap = new_snapshot()
+    snap["quotes"]["NVDA"] = {"change_pct": 2.9, "as_of": "2026-08-01"}
+    snap["earnings"]["NVDA"] = 24
+    assert not lint_report(_relatorio("NVDA", "🟢"), snap).has_errors
+
+
+def test_extensao_mm200_com_tecnico_fresco_e_gate():
+    snap = new_snapshot()
+    snap["quotes"]["ARM"] = {"change_pct": 1.0, "as_of": "2026-08-01"}
+    snap["technicals"]["ARM"] = {"rsi_date": "2026-08-01", "atr_pct": 3.0,
+                                  "pct_above_sma200": 26.2}
+    rep = lint_report(_relatorio("ARM", "🟢"), snap)
+    assert rep.has_errors
+    assert "acima da MM200" in rep.summary()
+
+
+def test_extensao_mm200_defasada_nao_e_gate():
+    """MRVL 02/08: "38,9% acima da MM200" era pico anterior. O relatório
+    descartou com razão; gate sobre dado defasado é pior que gate nenhum."""
+    snap = new_snapshot()
+    snap["quotes"]["MRVL"] = {"change_pct": 2.3, "as_of": "2026-08-01"}
+    snap["technicals"]["MRVL"] = {"rsi_date": "2026-07-30", "atr_pct": 3.0,
+                                   "pct_above_sma200": 38.9}
+    rep = lint_report(_relatorio("MRVL", "🟢"), snap)
+    # o gate de frescor dispara, mas o de extensão NÃO pode aparecer
+    assert "acima da MM200" not in rep.summary()
+    assert "bloco técnico" in rep.summary()
+
+
+def test_manchete_de_risco_binario_e_gate():
+    """SMCI + investigação ITC/Netlist, que apareceu em 31/07 e 02/08."""
+    snap = new_snapshot()
+    snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
+    snap["headlines"]["SMCI"] = [
+        "Super Micro enfrenta investigação de patente da ITC sobre memória Netlist",
+    ]
+    rep = lint_report(_relatorio("SMCI", "🟢"), snap)
+    assert rep.has_errors
+    assert "risco binário" in rep.summary()
+
+
+def test_manchete_neutra_nao_e_gate():
+    snap = new_snapshot()
+    snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
+    snap["headlines"]["SMCI"] = ["Super Micro anuncia novo rack NVIDIA para IA"]
+    assert not lint_report(_relatorio("SMCI", "🟢"), snap).has_errors
+
+
+def test_short_alto_nao_rebaixa_cor():
+    """G4 é "não perseguir", não gate de cor: a assimetria de squeeze corta
+    pros dois lados, e rebaixar por ela assumiria uma direção."""
+    snap = new_snapshot()
+    snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
+    snap["short"]["SMCI"] = {"short_pct_of_float": 19.6, "squeeze_risk": "moderado"}
+    assert not lint_report(_relatorio("SMCI", "🟢"), snap).has_errors
+
+
+def test_dois_ativos_sozinhos_nao_pedem_vermelho():
+    """A contagem simples anterior transformaria isto em 🔴. SMCI 02/08 com
+    earnings 9d + manchete ITC é 🟡 -- que é o que a leitura humana diz."""
+    snap = new_snapshot()
+    snap["quotes"]["SMCI"] = {"change_pct": 2.4, "as_of": "2026-08-01"}
+    snap["earnings"]["SMCI"] = 9
+    snap["headlines"]["SMCI"] = ["Investigação da ITC sobre patente"]
+    assert not lint_report(_relatorio("SMCI", "🟡"), snap).has_errors
+    rep = lint_report(_relatorio("SMCI", "🔴"), snap)
+    assert rep.has_errors
+    assert "ROTULO_INFLADO" in rep.summary()
+
+
+def test_tres_ativos_pedem_vermelho():
+    snap = new_snapshot()
+    snap["quotes"]["X"] = {"change_pct": -1.0, "as_of": "2026-08-01"}
+    snap["earnings"]["X"] = 9
+    snap["headlines"]["X"] = ["Downgrade do banco"]
+    assert not lint_report(_relatorio("X", "🔴"), snap).has_errors
+
+
+def test_stale_sozinho_fica_amarelo_nao_vermelho():
+    """NVDA 02/08: só técnico defasado. A tabela de referência diz 🟡."""
+    snap = new_snapshot()
+    snap["quotes"]["NVDA"] = {"change_pct": 2.9, "as_of": "2026-08-01"}
+    snap["technicals"]["NVDA"] = {"rsi_date": "2026-07-31", "atr_pct": 3.0,
+                                   "pct_above_sma200": 5.0}
+    assert not lint_report(_relatorio("NVDA", "🟡"), snap).has_errors
+    rep = lint_report(_relatorio("NVDA", "🔴"), snap)
+    assert rep.has_errors
+    assert "só sustentam 🟡" in rep.summary()

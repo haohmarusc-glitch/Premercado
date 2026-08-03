@@ -49,24 +49,54 @@ from .veredito_validator import ValidationReport, _parse_date
 # já é aproximação de ordem de grandeza -- suficiente para a única pergunta que o
 # gate faz: esta IV é de evento ou é a IV normal deste ativo?
 IV_EVENT_MULTIPLE_ATR = 32.0
-EARNINGS_GATE_DAYS = 5
+
+# Janela de earnings em DOIS níveis.
+#
+# ≤5 dias é crítico: o evento domina o setup do dia. 6-14 dias é ativo: ainda
+# no radar, mas a IV já cobra o prêmio e o dia não é sobre o evento.
+#
+# O tier de 6-14 existia só na cabeça do modelo e virava citação de gate
+# inexistente -- em 02/08 o relatório escreveu "Gate: earnings em 9 dias
+# (≤14d) → teto 🟡", inventando um limiar que a rubrica não tinha. Formalizar
+# resolve a ambiguidade em vez de proibir a leitura, que era razoável.
+EARNINGS_CRITICO_DIAS = 5
+EARNINGS_ATIVO_DIAS = 14
+
+# Extensão vs MM200: distância historicamente insustentável, risco de
+# mean-reversion. Só conta com bloco técnico FRESCO -- em 02/08 o MRVL trazia
+# "38,9% acima da MM200" de um pico anterior, e o próprio relatório descartou
+# o número com razão. Gate sobre dado defasado é pior que gate nenhum.
+EXTENSAO_SMA200_PCT = 25.0
+
+# Manchete com risco binário: processo/patente/antitruste ou rebaixamento não
+# confirmado. Caso real: SMCI + investigação ITC/Netlist, que apareceu em
+# 31/07 e 02/08 e nunca teve peso formal no rótulo.
+_HEADLINE_RISCO = re.compile(
+    r"\b(itc|antitrust|antitruste|patente|patent|"
+    r"investiga[çc][ãa]o|investigation|processo judicial|lawsuit|"
+    r"downgrade|rebaixa|sell rating)\b",
+    re.IGNORECASE,
+)
+
+# Short alto: gate de "não perseguir", não de cor. Assimetria de squeeze corta
+# para os dois lados -- pode subir no squeeze OU desabar no evento -- então
+# rebaixar o rótulo por ele seria assumir uma direção que o dado não dá.
+SHORT_ALTO_PCT = 15.0
+
+# Severidades. "info" aparece no texto do achado mas não entra na conta da cor.
+CRITICO, ATIVO, INFO = "critico", "ativo", "info"
 
 VERDE = "🟢"
 AMARELO = "🟡"
 VERMELHO = "🔴"
 LABELS = (VERDE, AMARELO, VERMELHO)
 
-# Quantos gates cada rótulo exige. 🟡 é o meio livre de propósito: ali cabe
-# julgamento que nenhum gate cobre (volume fraco, manchete ambígua), e engessar
-# isso tiraria do modelo a saída legítima para expressar receio.
-GATES_MIN_VERMELHO = 2
-
-
 # ------------------------------------------------ fase 1: coleta no loop ---
 
 
 def new_snapshot() -> dict[str, Any]:
-    return {"quotes": {}, "technicals": {}, "options": {}, "earnings": {}}
+    return {"quotes": {}, "technicals": {}, "options": {}, "earnings": {},
+            "short": {}, "headlines": {}}
 
 
 def _as_dict(resultado: str | dict) -> Any:
@@ -103,12 +133,30 @@ def collect_tool_result(
             snap["technicals"][ticker] = {
                 "rsi_date": dados.get("rsi_date"),
                 "atr_pct": dados.get("atr_pct"),
+                "pct_above_sma200": dados.get("pct_above_sma200"),
             }
 
     elif nome == "get_options_data" and isinstance(dados, dict):
         ticker = dados.get("ticker")
         if ticker and "error" not in dados:
             snap["options"][ticker] = {"atm_iv_pct": dados.get("atm_iv_pct")}
+
+    elif nome == "get_short_interest" and isinstance(dados, dict):
+        ticker = dados.get("ticker")
+        if ticker and "error" not in dados:
+            snap["short"][ticker] = {
+                "short_pct_of_float": dados.get("short_pct_of_float"),
+                "squeeze_risk": dados.get("squeeze_risk"),
+            }
+
+    elif nome == "get_news" and isinstance(dados, dict):
+        # get_news devolve {ticker: [item, ...]}; só o título interessa aqui.
+        for ticker, itens in dados.items():
+            if not isinstance(itens, list):
+                continue
+            titulos = [i.get("title", "") for i in itens if isinstance(i, dict)]
+            if titulos:
+                snap["headlines"].setdefault(ticker, []).extend(titulos)
 
     elif nome == "get_earnings_calendar" and isinstance(dados, list):
         for item in dados:
@@ -154,48 +202,123 @@ def _rotulo_da_secao(secao: str) -> str | None:
     return None
 
 
-def _gates_violados(ticker: str, snap: dict[str, Any]) -> list[str]:
-    """Gates ativos para o ticker — cada um é uma razão pela qual 🟢 é proibido."""
-    violados: list[str] = []
+def _gates_violados(ticker: str, snap: dict[str, Any]) -> list[tuple[str, str]]:
+    """Gates ativos do ticker como (severidade, descrição).
+
+    Severidade existe porque contar gates iguais não funciona quando eles
+    passam de meia dúzia: dado defasado e "earnings em 3 dias" não pesam o
+    mesmo que "manchete de processo". Com contagem simples, qualquer ativo em
+    correção acumula gates e vira 🔴 todo dia -- o rótulo para de discriminar,
+    que é o mesmo colapso do bug original, só que pelo lado vermelho.
+
+    Fora daqui de propósito:
+      • MACRO (10y ≥ 4,5%): foi verdadeiro nos 7 relatórios revisados. Gate que
+        nunca varia entre ativos no mesmo dia não carrega informação -- só
+        desloca o piso de todo mundo igualmente e ocupa vaga na conta do 🔴.
+        Segue como contexto na seção macro, não como gate.
+      • TÉCNICO FRACO (MACD bearish + abaixo da SMA50): mesmo problema num
+        mercado em correção prolongada, e já é o que o 🟡 de julgamento cobre.
+    """
+    gates: list[tuple[str, str]] = []
 
     quote = snap.get("quotes", {}).get(ticker) or {}
-    tech = snap.get("technicals", {}).get(ticker) or {}
+    tec = snap.get("technicals", {}).get(ticker) or {}
     opts = snap.get("options", {}).get(ticker) or {}
+    short = snap.get("short", {}).get(ticker) or {}
     dias = snap.get("earnings", {}).get(ticker)
 
-    change = quote.get("change_pct")
-    if isinstance(change, (int, float)) and change < 0:
-        violados.append(f"variação do dia é {change:+.2f}% (negativa)")
-
-    if isinstance(dias, (int, float)) and 0 <= dias <= EARNINGS_GATE_DAYS:
-        violados.append(f"earnings em {int(dias)} dias")
-
-    iv = opts.get("atm_iv_pct")
-    atr = tech.get("atr_pct")
-    if isinstance(iv, (int, float)) and isinstance(atr, (int, float)) and atr > 0:
-        limite = IV_EVENT_MULTIPLE_ATR * atr
-        if iv >= limite:
-            violados.append(
-                f"IV ATM {iv:.1f}% ≥ {limite:.1f}% "
-                f"(32 × atr_pct de {atr:.2f}%)"
-            )
-
-    rsi_date = tech.get("rsi_date")
+    # --- crítico: bloco técnico defasado -------------------------------------
+    rsi_date = tec.get("rsi_date")
     as_of = quote.get("as_of")
+    tecnico_fresco = True
     if rsi_date and as_of:
         try:
             if _parse_date(rsi_date) < _parse_date(as_of):
-                violados.append(
-                    f"bloco técnico é de {rsi_date}, anterior ao pregão da cotação ({as_of})"
-                )
+                tecnico_fresco = False
+                gates.append((CRITICO,
+                    f"bloco técnico é de {rsi_date}, anterior ao pregão da "
+                    f"cotação ({as_of})"))
         except Exception:
             pass
 
-    return violados
+    # --- crítico / ativo: janela de earnings ---------------------------------
+    if isinstance(dias, (int, float)):
+        if 0 <= dias <= EARNINGS_CRITICO_DIAS:
+            gates.append((CRITICO, f"earnings em {int(dias)} dias"))
+        elif dias <= EARNINGS_ATIVO_DIAS:
+            gates.append((ATIVO, f"earnings em {int(dias)} dias (≤{EARNINGS_ATIVO_DIAS})"))
+
+    # --- ativo: variação do dia negativa -------------------------------------
+    change = quote.get("change_pct")
+    if isinstance(change, (int, float)) and change < 0:
+        gates.append((ATIVO, f"variação do dia é {change:+.2f}% (negativa)"))
+
+    # --- ativo: IV de evento --------------------------------------------------
+    iv = opts.get("atm_iv_pct")
+    atr = tec.get("atr_pct")
+    if isinstance(iv, (int, float)) and isinstance(atr, (int, float)) and atr > 0:
+        limite = IV_EVENT_MULTIPLE_ATR * atr
+        if iv >= limite:
+            gates.append((ATIVO,
+                f"IV ATM {iv:.1f}% ≥ {limite:.1f}% (32 × atr_pct de {atr:.2f}%)"))
+
+    # --- ativo: extensão vs MM200 (só com técnico fresco) --------------------
+    ext = tec.get("pct_above_sma200")
+    if tecnico_fresco and isinstance(ext, (int, float)) and ext >= EXTENSAO_SMA200_PCT:
+        gates.append((ATIVO,
+            f"{ext:+.1f}% acima da MM200 (≥{EXTENSAO_SMA200_PCT:.0f}%), "
+            f"extensão historicamente insustentável"))
+
+    # --- ativo: manchete de risco binário ------------------------------------
+    for titulo in snap.get("headlines", {}).get(ticker, []) or []:
+        m = _HEADLINE_RISCO.search(titulo or "")
+        if m:
+            gates.append((ATIVO,
+                f"manchete de risco binário ({m.group(1).lower()}): "
+                f"\"{(titulo or '')[:80]}\""))
+            break
+
+    # --- info: short alto (não conta pra cor) --------------------------------
+    short_pct = short.get("short_pct_of_float")
+    if isinstance(short_pct, (int, float)) and short_pct >= SHORT_ALTO_PCT:
+        gates.append((INFO,
+            f"short {short_pct:.1f}% do float (≥{SHORT_ALTO_PCT:.0f}%) — "
+            f"assimetria de squeeze corta pros dois lados: não perseguir alta, "
+            f"mas não é motivo de rebaixar cor"))
+
+    return gates
+
+
+def _rotulo_esperado(gates: list[tuple[str, str]]) -> str:
+    """Cor máxima permitida pelos gates.
+
+    🔴 exige deterioração combinada, não acúmulo qualquer:
+      • dois críticos, OU
+      • um crítico acompanhado de pelo menos um ativo, OU
+      • três ativos.
+
+    Isso reproduz os casos reais melhor que a contagem simples anterior: HCC
+    (earnings 3d + queda) continua 🔴; NVDA só com técnico defasado fica 🟡, e
+    não 🔴; SMCI com earnings 9d + manchete ITC fica 🟡, que a contagem antiga
+    teria transformado em 🔴 por serem "dois gates".
+    """
+    criticos = sum(1 for sev, _ in gates if sev == CRITICO)
+    ativos = sum(1 for sev, _ in gates if sev == ATIVO)
+    if criticos >= 2 or (criticos >= 1 and ativos >= 1) or ativos >= 3:
+        return VERMELHO
+    if criticos or ativos:
+        return AMARELO
+    return VERDE
 
 
 def lint_report(texto: str, snap: dict[str, Any]) -> ValidationReport:
-    """Confere que nenhum ativo rotulado 🟢 tem gate ativo.
+    """Confere que o rótulo de cada ativo bate com os gates ativos.
+
+    Checa nos DOIS sentidos: 🟢 exige zero gates que contem pra cor, e 🔴 exige
+    a combinação de _rotulo_esperado. 🟡 continua livre -- ali cabe julgamento
+    que nenhum gate cobre (RVOL baixo, manchete ambígua), e engessar isso
+    tiraria a saída legítima pro receio, que foi o que levou o modelo a
+    inventar gate em 02/08.
 
     Só avalia ticker que aparece no snapshot E tem seção com rótulo no texto:
     ausência de dado nunca vira violação, e o Grupo B (sem IV/técnico) não é
@@ -212,32 +335,33 @@ def lint_report(texto: str, snap: dict[str, Any]) -> ValidationReport:
         if rotulo is None:
             continue
 
-        violados = _gates_violados(ticker, snap)
+        gates = _gates_violados(ticker, snap)
+        contam = [(sev, d) for sev, d in gates if sev != INFO]
+        esperado = _rotulo_esperado(gates)
+        detalhe = "; ".join(f"[{sev}] {d}" for sev, d in contam) or "nenhum"
 
-        if rotulo == VERDE and violados:
-            esperado = VERMELHO if len(violados) >= GATES_MIN_VERMELHO else AMARELO
+        if rotulo == VERDE and contam:
             rep.add(
                 "ERROR",
                 "GATE_ROTULO",
-                f"rotulado {VERDE} com {len(violados)} gate(s) ativo(s): "
-                f"{'; '.join(violados)}. Pela rubrica o rótulo deveria ser {esperado}.",
+                f"rotulado {VERDE} com {len(contam)} gate(s) ativo(s): "
+                f"{detalhe}. Pela rubrica o rótulo deveria ser {esperado}.",
                 ticker=ticker,
             )
 
-        elif rotulo == VERMELHO and len(violados) < GATES_MIN_VERMELHO:
+        elif rotulo == VERMELHO and esperado != VERMELHO:
             # O inverso do bug original: em vez de otimismo indevido, receio
             # indevido. Visto em produção (02/08) com ARM, que levou 🔴 alegando
             # dois gates enquanto o próprio texto dizia que a IV estava ABAIXO
-            # do limiar. Erra para o lado seguro, mas se "gate ativo" puder
+            # do limiar. Erra pro lado seguro, mas se "gate ativo" puder
             # significar "achei que sim", o rótulo perde significado de novo --
-            # só que puxando para o vermelho.
-            detalhe = "; ".join(violados) if violados else "nenhum"
+            # só que puxando pro vermelho.
             rep.add(
                 "ERROR",
                 "ROTULO_INFLADO",
-                f"rotulado {VERMELHO} com apenas {len(violados)} gate(s) ativo(s) "
-                f"({detalhe}); a rubrica exige {GATES_MIN_VERMELHO}. Use {AMARELO} e "
-                f"escreva o receio no texto, em vez de contar um gate não atendido.",
+                f"rotulado {VERMELHO}, mas os gates ativos ({detalhe}) só "
+                f"sustentam {esperado}. Use {esperado} e escreva o receio no "
+                f"texto, em vez de contar um gate não atendido.",
                 ticker=ticker,
             )
 
