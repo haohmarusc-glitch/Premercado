@@ -32,6 +32,7 @@ import html
 import os
 import re
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
@@ -88,7 +89,30 @@ class _FmpSemAcesso(RuntimeError):
 # stable. Cada run do agente é um processo novo, então isso zera sozinho -- uma
 # chave renovada (ou um plano atualizado) volta a valer na execução seguinte
 # sem precisar de restart.
+#
+# O lock existe porque as fontes de cada ticker são buscadas EM PARALELO
+# (ThreadPoolExecutor mais abaixo): `if not flag: ... flag = True` é
+# check-then-act, e várias threads passam pelo teste antes de a primeira
+# gravar. Visto em produção 03/08 -- o aviso de desativação saiu duas vezes
+# na mesma run, ou seja, duas chamadas condenadas em vez de uma. A garantia
+# que interessa não é o log limpo: é "no máximo uma chamada condenada por
+# execução", que era o ponto de existir a flag.
 _FMP_SEM_ACESSO = False
+_FMP_LOCK = threading.Lock()
+
+
+def _desligar_fmp(motivo: str) -> None:
+    """Marca a FMP como indisponível e avisa UMA vez, mesmo sob concorrência."""
+    global _FMP_SEM_ACESSO
+    with _FMP_LOCK:
+        if _FMP_SEM_ACESSO:
+            return
+        _FMP_SEM_ACESSO = True
+    print(
+        f"[news_sources] FMP desativada nesta execução: {motivo} na API stable.",
+        file=sys.stderr, flush=True,
+    )
+
 
 _HTTP_TIMEOUT = 10
 
@@ -317,8 +341,6 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
     pra quem já era assinante antes disso — então a ordem inversa faria a
     maioria das contas gastar um round-trip inútil antes de acertar.
     """
-    global _FMP_SEM_ACESSO
-
     api_key = os.environ.get("FMP_API_KEY", "").strip()
     if not api_key or _FMP_SEM_ACESSO:
         return []
@@ -358,11 +380,7 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
         # condenadas por run, dentro de um orçamento de notícias de 10s que
         # estourou e derrubou 6 pares (ticker, fonte) que teriam funcionado --
         # ou seja, a chave morta não tirava só a FMP, tirava notícia boa junto.
-        _FMP_SEM_ACESSO = True
-        print(
-            f"[news_sources] FMP desativada nesta execução: {e} na API stable.",
-            file=sys.stderr, flush=True,
-        )
+        _desligar_fmp(str(e))
         return []
     except Exception as e:
         falha_stable = f"{type(e).__name__}: {e}"
