@@ -57,6 +57,22 @@ _FMP_STABLE_NEWS = "https://financialmodelingprep.com/stable/news/stock"
 _FMP_LEGACY_NEWS = "https://financialmodelingprep.com/api/v3/stock_news"
 _FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
 
+
+class _FmpSemCredencial(RuntimeError):
+    """401/403 da FMP: chave inválida ou plano sem acesso ao endpoint.
+
+    Categoria à parte porque é PERMANENTE -- nenhuma espera resolve e nenhum
+    outro ticker vai se sair melhor. Herda de RuntimeError pra continuar sendo
+    pega pelos `except Exception` que já existem no caminho da API legada,
+    onde 403 é resposta esperada e não deve desligar nada.
+    """
+
+
+# Desliga a FMP pelo resto do processo depois de um 401/403 na API stable.
+# Cada run do agente é um processo novo, então isso zera sozinho -- e uma
+# chave renovada volta a valer na execução seguinte sem precisar de restart.
+_FMP_SEM_CREDENCIAL = False
+
 _HTTP_TIMEOUT = 10
 
 # Nome da empresa pra montar a query do Google News: buscar só "ALAB" traz
@@ -284,29 +300,79 @@ def _fetch_fmp(symbol: str, max_items: int) -> list[dict]:
     pra quem já era assinante antes disso — então a ordem inversa faria a
     maioria das contas gastar um round-trip inútil antes de acertar.
     """
+    global _FMP_SEM_CREDENCIAL
+
     api_key = os.environ.get("FMP_API_KEY", "").strip()
-    if not api_key:
+    if not api_key or _FMP_SEM_CREDENCIAL:
         return []
 
     def _rows(url, params):
         resp = SESSION.get(url, params=params, timeout=_HTTP_TIMEOUT)
+        # 401/403 é permanente: nenhuma espera conserta e nenhum outro ticker
+        # vai se sair melhor. Separar aqui é o que permite desistir da fonte
+        # em vez de repetir a mesma falha por ticker.
+        if getattr(resp, "status_code", 0) in (401, 403):
+            raise _FmpSemCredencial(f"HTTP {resp.status_code}")
         resp.raise_for_status()
         body = resp.json()
         return body if isinstance(body, list) else []
 
+    # A falha da chamada PRINCIPAL não pode ser engolida.
+    #
+    # Antes, o except da stable fazia `rows = []` em silêncio e só a legada
+    # podia levantar -- então o único erro que chegava ao log era o da fonte
+    # que já se espera falhar. Em produção 03/08 isso apareceu como
+    # "403 Forbidden" em /api/v3/stock_news para os 9 tickers, que lido de
+    # fora parece chave morta; mas 403 na legada é o comportamento NORMAL de
+    # conta posterior a 31/08/2025 (ver docstring). O que realmente aconteceu
+    # com a stable -- 401? 429 de cota? plano sem notícias? zero itens? --
+    # não foi registrado em lugar nenhum, e era a única informação útil.
     rows = []
+    falha_stable = None
     try:
         rows = _rows(
             _FMP_STABLE_NEWS,
             {"symbols": symbol, "limit": max_items, "apikey": api_key},
         )
-    except Exception:
-        rows = []
-    if not rows:
-        rows = _rows(
-            _FMP_LEGACY_NEWS,
-            {"tickers": symbol, "limit": max_items, "apikey": api_key},
+    except _FmpSemCredencial as e:
+        # A chave não serve. Desliga a fonte pelo resto do processo em vez de
+        # repetir a mesma falha em cada ticker: em 03/08 foram 9 chamadas
+        # condenadas por run, dentro de um orçamento de notícias de 10s que
+        # estourou e derrubou 6 pares (ticker, fonte) que teriam funcionado --
+        # ou seja, a chave morta não tirava só a FMP, tirava notícia boa junto.
+        _FMP_SEM_CREDENCIAL = True
+        print(
+            f"[news_sources] FMP desativada nesta execução: {e} na API stable "
+            "-- chave inválida ou sem acesso. Renove FMP_API_KEY.",
+            file=sys.stderr, flush=True,
         )
+        return []
+    except Exception as e:
+        falha_stable = f"{type(e).__name__}: {e}"
+        rows = []
+
+    if not rows:
+        motivo_stable = falha_stable or "respondeu sem itens"
+        try:
+            rows = _rows(
+                _FMP_LEGACY_NEWS,
+                {"tickers": symbol, "limit": max_items, "apikey": api_key},
+            )
+        except Exception as e:
+            # As DUAS pontas na mesma linha: sem isso o diagnóstico aponta
+            # para a fonte errada. O mascaramento da chave é aplicado por
+            # quem loga (ver o print de [news_sources] mais abaixo).
+            raise RuntimeError(
+                f"stable {motivo_stable} | legada {type(e).__name__}: {e}"
+            ) from e
+        if falha_stable:
+            # Legada salvou a jogada, mas a principal está quebrada e isso
+            # precisa aparecer -- senão só se descobre quando a legada morrer.
+            print(
+                f"[news_sources] fmp/{symbol}: stable falhou "
+                f"({mask_sensitive_data(motivo_stable)}), servido pela legada",
+                file=sys.stderr, flush=True,
+            )
 
     return [
         _item(

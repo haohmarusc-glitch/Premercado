@@ -401,3 +401,170 @@ def test_get_news_reporta_ticker_invalido_sem_derrubar_os_demais(monkeypatch):
 
     assert result["NVDA"][0]["title"] == "Manchete"
     assert "error" in result["!!!"][0]
+
+
+# ── Diagnóstico da FMP ────────────────────────────────────────────────────────
+#
+# O except da chamada stable fazia `rows = []` em silêncio, e só a legada podia
+# levantar exceção. Resultado: o único erro que chegava ao log vinha da fonte
+# que já se ESPERA falhar.
+#
+# Em produção 03/08 isso apareceu como "403 Forbidden" em /api/v3/stock_news
+# nos 9 tickers -- que lido de fora parece chave morta. Mas 403 na legada é o
+# comportamento normal de conta posterior a 31/08/2025. O que aconteceu com a
+# stable (401? 429 de cota? plano sem notícias?) não foi registrado em lugar
+# nenhum, e era a única informação que importava.
+
+
+def test_erro_da_stable_aparece_junto_com_o_da_legada(monkeypatch):
+    """As duas falham, e o log precisa citar as DUAS.
+
+    Stable em 500 (transitório) de propósito: 401/403 ali tem caminho próprio
+    -- desliga a fonte e nem tenta a legada. O que sobra pra esta mensagem
+    combinada é justamente a falha passageira da principal.
+    """
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(status=500)
+        return _FakeResponse(status=403)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with pytest.raises(Exception) as exc:
+        ns._fetch_fmp("NVDA", 3)
+
+    msg = str(exc.value)
+    assert "stable" in msg and "500" in msg, "erro da chamada principal sumiu"
+    assert "legada" in msg and "403" in msg
+
+
+def test_stable_vazia_e_legada_falhando_diz_que_a_stable_veio_vazia(monkeypatch):
+    """Distinguir "a stable ERROU" de "a stable respondeu sem itens" é o que
+    separa chave quebrada de simplesmente não haver notícia."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(payload=[])
+        return _FakeResponse(status=403)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with pytest.raises(Exception) as exc:
+        ns._fetch_fmp("NVDA", 3)
+
+    assert "sem itens" in str(exc.value)
+    assert "401" not in str(exc.value)
+
+
+def test_avisa_quando_a_legada_salva_uma_stable_quebrada(capsys, monkeypatch):
+    """Sem esse aviso, a stable quebrada fica invisível até a legada morrer
+    também -- e aí as notícias somem de uma vez, sem histórico do porquê."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(status=429)
+        return _FakeResponse(payload=[{
+            "title": "Nvidia sobe",
+            "publishedDate": "2026-08-03 12:00:00",
+            "text": "resumo",
+            "site": "reuters.com",
+        }])
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    items = ns._fetch_fmp("NVDA", 3)
+
+    assert items[0]["title"] == "Nvidia sobe"  # o usuário ainda recebe a notícia
+    err = capsys.readouterr().err
+    assert "stable falhou" in err
+    assert "429" in err
+
+
+def test_caminho_feliz_nao_gera_ruido(capsys, monkeypatch):
+    """Aviso que aparece sempre não é aviso."""
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+    monkeypatch.setattr(ns.SESSION, "get", lambda url, params=None, timeout=None: _FakeResponse(
+        payload=[{"title": "ok", "publishedDate": "2026-08-03 12:00:00",
+                  "text": "t", "site": "s"}]
+    ))
+
+    assert ns._fetch_fmp("NVDA", 3)[0]["title"] == "ok"
+    assert capsys.readouterr().err == ""
+
+
+# ── Chave morta: desistir da fonte em vez de repetir a falha ──────────────────
+#
+# Confirmado em 03/08: a API stable devolve 401 (chave inválida). Sem desligar
+# a fonte, cada run gastava 9 chamadas condenadas -- dentro de um orçamento de
+# notícias de 10s que estourou e derrubou 6 pares (ticker, fonte) que teriam
+# funcionado. Ou seja, a chave morta não tirava só a FMP: tirava notícia boa
+# junto, e isso é invisível no relatório final.
+
+
+@pytest.fixture(autouse=True)
+def _fmp_religada():
+    """A flag é global do processo -- religa entre casos pra não vazar."""
+    ns._FMP_SEM_CREDENCIAL = False
+    yield
+    ns._FMP_SEM_CREDENCIAL = False
+
+
+def test_401_na_stable_desliga_a_fmp_para_os_tickers_seguintes(capsys, monkeypatch):
+    monkeypatch.setenv("FMP_API_KEY", "chave-morta")
+    chamadas = []
+
+    def _fake_get(url, params=None, timeout=None):
+        chamadas.append(url)
+        return _FakeResponse(status=401)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    assert ns._fetch_fmp("NVDA", 3) == []
+    # A legada nem chega a ser tentada: 401 na principal já resolve a questão.
+    assert chamadas == [ns._FMP_STABLE_NEWS]
+
+    for ticker in ("SMCI", "ARM", "MU"):
+        assert ns._fetch_fmp(ticker, 3) == []
+    assert len(chamadas) == 1, "ticker seguinte repetiu a chamada condenada"
+
+    err = capsys.readouterr().err
+    assert "FMP desativada nesta execução" in err
+    assert err.count("FMP desativada") == 1, "aviso repetido por ticker"
+    assert "Renove FMP_API_KEY" in err
+
+
+def test_403_na_legada_nao_desliga_a_fonte(monkeypatch):
+    """403 na legada é resposta ESPERADA de conta pós-31/08/2025 -- desligar
+    a FMP por causa dela tiraria a fonte de quem está com tudo certo."""
+    monkeypatch.setenv("FMP_API_KEY", "chave-boa")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(payload=[])
+        return _FakeResponse(status=403)
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    with pytest.raises(Exception):
+        ns._fetch_fmp("NVDA", 3)
+    assert ns._FMP_SEM_CREDENCIAL is False
+
+
+def test_erro_transitorio_na_stable_nao_desliga_a_fonte(monkeypatch):
+    """500/timeout passa; só 401/403 é permanente."""
+    monkeypatch.setenv("FMP_API_KEY", "chave-boa")
+
+    def _fake_get(url, params=None, timeout=None):
+        if url == ns._FMP_STABLE_NEWS:
+            return _FakeResponse(status=500)
+        return _FakeResponse(payload=[{"title": "ok", "publishedDate": "2026-08-03 12:00:00",
+                                       "text": "t", "site": "s"}])
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    assert ns._fetch_fmp("NVDA", 3)[0]["title"] == "ok"
+    assert ns._FMP_SEM_CREDENCIAL is False

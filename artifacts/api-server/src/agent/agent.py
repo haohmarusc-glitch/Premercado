@@ -747,6 +747,41 @@ def _min_report_chars(min_observations: int) -> int:
     )
 
 
+# Motivos de parada que significam "eu cortei a resposta no meio", por
+# provedor. Anthropic: "max_tokens". Camada OpenAI-compat: "length".
+_MOTIVOS_DE_CORTE = {"max_tokens", "length"}
+
+
+def _avisar_truncamento(resp, tool_use_blocks: list, max_tokens: int, turn: int) -> None:
+    """Grita no stderr quando a resposta foi cortada por limite de tokens.
+
+    O corte é invisível por construção: provider.py achata o motivo de parada
+    pra "tool_use"/"end_turn", então "o modelo terminou" e "eu cortei no meio"
+    chegam aqui idênticos. Quando o corte pega o JSON de input de um tool_use,
+    o bloco chega com input {} e a ferramenta estoura TypeError de argumento
+    faltando -- a três camadas de distância da causa real.
+
+    Visto em produção 03/08: turnos emitindo 9 e 12 chamadas paralelas com
+    max_tokens em 4096, get_technical_indicators e get_short_interest falhando
+    por falta de `ticker`, e a run terminando com 0 de 8 observações. Nada nos
+    logs ligava uma coisa à outra.
+
+    Só diagnóstico: não altera o fluxo. O tratamento dos blocos órfãos já
+    existe logo abaixo.
+    """
+    if getattr(resp, "raw_stop_reason", "") not in _MOTIVOS_DE_CORTE:
+        return
+    sem_args = [b.name for b in tool_use_blocks if not b.input]
+    print(
+        f"[agent] turno {turn + 1}: resposta CORTADA por limite de tokens "
+        f"(max_tokens={max_tokens}, motivo={resp.raw_stop_reason}, "
+        f"{len(tool_use_blocks)} tool_use no turno)"
+        + (f" -- chamadas com input vazio, provavelmente truncadas: {sem_args}"
+           if sem_args else ""),
+        file=sys.stderr, flush=True,
+    )
+
+
 def _agent_loop(
     client,
     model: str,
@@ -824,6 +859,7 @@ def _agent_loop(
         messages.append({"role": "assistant", "content": _resp_to_history_content(resp)})
 
         tool_use_blocks = [b for b in resp.content if isinstance(b, ToolUseBlock)]
+        _avisar_truncamento(resp, tool_use_blocks, max_tokens, turn)
         if tool_use_blocks:
             # A Anthropic exige um tool_result pra CADA tool_use na mensagem
             # seguinte, mesmo quando o stop_reason normalizado não é

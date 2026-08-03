@@ -368,3 +368,95 @@ def test_nao_cobra_relatorio_de_quem_ainda_nao_registrou_observacao(monkeypatch)
     ])
     assert "registrar as observações pendentes" in texto
     assert len(client.calls) == 3
+
+
+# ── Diagnóstico de truncamento ────────────────────────────────────────────────
+#
+# provider.py achata o motivo de parada em "tool_use"/"end_turn", então "o
+# modelo terminou" e "eu cortei no meio por limite de tokens" chegavam ao loop
+# indistinguíveis. Quando o corte pega o JSON de input de um tool_use, o bloco
+# chega com input {} e a ferramenta estoura TypeError de argumento faltando --
+# a três camadas de distância da causa.
+#
+# Visto em produção 03/08: turnos com 9 e 12 tool_use, max_tokens em 4096,
+# get_technical_indicators e get_short_interest falhando por falta de `ticker`,
+# run terminando com 0 de 8 observações. Nada nos logs ligava uma coisa à outra.
+
+
+def _cortada(blocks, motivo="max_tokens"):
+    return NormalizedResponse(content=blocks, stop_reason="tool_use", raw_stop_reason=motivo)
+
+
+def test_avisa_quando_a_resposta_foi_cortada(monkeypatch, capsys):
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+    responses = [
+        _cortada([
+            ToolUseBlock(id="a", name="get_stock_data", input={"ticker": "NVDA"}),
+            ToolUseBlock(id="b", name="get_short_interest", input={}),  # truncado
+        ]),
+        _texto(_RELATORIO_OK),
+    ]
+    agent_module._agent_loop(
+        client=_FakeClient(responses), model="m", system="s", tools=[],
+        messages=[{"role": "user", "content": "start"}], max_turns=5, max_tokens=4096,
+    )
+    err = capsys.readouterr().err
+    assert "CORTADA por limite de tokens" in err
+    assert "max_tokens=4096" in err
+    # O ponto do aviso: nomear a chamada que provavelmente perdeu os argumentos.
+    assert "get_short_interest" in err
+    assert "get_stock_data" not in err.split("input vazio")[-1]
+
+
+def test_reconhece_o_motivo_da_camada_openai(monkeypatch, capsys):
+    """Anthropic diz "max_tokens"; a compat OpenAI diz "length"."""
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+    responses = [
+        _cortada([ToolUseBlock(id="a", name="get_stock_data", input={})], motivo="length"),
+        _texto(_RELATORIO_OK),
+    ]
+    agent_module._agent_loop(
+        client=_FakeClient(responses), model="m", system="s", tools=[],
+        messages=[{"role": "user", "content": "start"}], max_turns=5, max_tokens=100,
+    )
+    assert "CORTADA por limite de tokens" in capsys.readouterr().err
+
+
+def test_turno_normal_nao_gera_aviso(monkeypatch, capsys):
+    """O aviso precisa ser raro pra significar alguma coisa."""
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+    responses = [
+        NormalizedResponse(
+            content=[ToolUseBlock(id="a", name="get_stock_data", input={"ticker": "NVDA"})],
+            stop_reason="tool_use", raw_stop_reason="tool_use",
+        ),
+        _texto(_RELATORIO_OK),
+    ]
+    agent_module._agent_loop(
+        client=_FakeClient(responses), model="m", system="s", tools=[],
+        messages=[{"role": "user", "content": "start"}], max_turns=5, max_tokens=4096,
+    )
+    assert "CORTADA" not in capsys.readouterr().err
+
+
+def test_resposta_sem_raw_stop_reason_nao_quebra(monkeypatch, capsys):
+    """Campo tem default: cliente antigo/falso que não o preenche segue válido."""
+    monkeypatch.setattr(agent_module, "run_tool", lambda name, args: '{"ok": true}')
+    responses = [
+        NormalizedResponse(
+            content=[ToolUseBlock(id="a", name="get_stock_data", input={"ticker": "N"})],
+            stop_reason="tool_use",
+        ),
+        _texto(_RELATORIO_OK),
+    ]
+    agent_module._agent_loop(
+        client=_FakeClient(responses), model="m", system="s", tools=[],
+        messages=[{"role": "user", "content": "start"}], max_turns=5, max_tokens=4096,
+    )
+    assert "CORTADA" not in capsys.readouterr().err
+
+
+def test_max_tokens_do_diario_comporta_o_fan_out():
+    """4096 era o teto que cortava turnos de 9-12 chamadas em produção."""
+    from agent import config
+    assert config.MAX_TOKENS >= 8192
