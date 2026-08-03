@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.provider import (
+    MODEL_PRICING,
     NormalizedResponse,
     TextBlock,
     ToolUseBlock,
@@ -671,3 +672,30 @@ class TestDisjuntorDeProvedor:
         msg = str(exc.value)
         assert "condenados nesta run" in msg
         assert "gemini" in msg and "kimi" in msg
+
+
+class TestModelosConfiguradosTemPreco:
+    """Todo modelo apontado por um tier precisa estar no MODEL_PRICING.
+
+    Modelo sem preço reporta custo None, e custo None soma ZERO no teto diário
+    (ver lib/agent-budget.ts) -- ou seja, um provedor mal cadastrado gasta sem
+    aparecer no orçamento. É furo silencioso, do tipo que só se descobre pela
+    fatura.
+    """
+
+    @pytest.mark.parametrize("provedor", sorted(PROVIDERS))
+    def test_todos_os_tiers_tem_preco_conhecido(self, provedor):
+        sem_preco = [
+            m for m in PROVIDERS[provedor]["models"].values()
+            if m not in MODEL_PRICING
+        ]
+        assert not sem_preco, (
+            f"{provedor} aponta pra modelo sem preço: {sem_preco}. "
+            "Adicione em MODEL_PRICING, senão o custo vira None e soma zero no teto."
+        )
+
+    def test_gemini_nao_aponta_mais_pro_modelo_que_da_404(self):
+        """gemini-2.5-pro APARECE na listagem da API e responde 404 no uso
+        ('no longer available to new users'). Foi a razão de o probe medir
+        usando, em vez de ler a lista -- e este teste impede a volta."""
+        assert "gemini-2.5-pro" not in PROVIDERS["gemini"]["models"].values()

@@ -260,26 +260,43 @@ PROVIDERS = {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "api_key_env": "GEMINI_API_KEY",
         "models": {
-            # gemini-2.0-flash foi desativado pelo Google em 01/06/2026 (404
-            # em produção). O 2.5-flash (não-lite) foi tentado no tier "full"
-            # depois que o flash-lite abandonava o fluxo multi-turno no meio
-            # (visto em produção em 03/07 — parou no turno 7 sem
-            # save_observation) -- mas o 2.5-flash tem o MESMO problema em
-            # escala maior: visto em produção em 17/07 completando as 12
-            # rodadas do fluxo DAILY completo (17 ferramentas) sem nunca
-            # chamar save_observation, mesmo após duas cobranças, gerando
-            # relatório vazio ("análise incompleta", 0 observações) que ainda
-            # assim volta como run "success" pro runner.ts. O tier "full" só
-            # é usado quando o orçamento diário do Anthropic estoura e o
-            # sistema cai pro cheapProvider (ver runner.ts,
-            # getEffectiveAgentProvider) -- nesse fallback, ainda vale gastar
-            # mais por chamada pra ter uma chance real de completar o fluxo
-            # em vez de queimar a run inteira. Nota: o 2.5-flash tem
-            # desligamento anunciado para 16/10/2026 — checar nessa época se
-            # ainda for usado em algum tier.
-            "full": "gemini-2.5-pro",
-            "flash": "gemini-2.5-flash-lite",
-            "chat": "gemini-2.5-flash-lite",
+            # MEDIDO em 03/08 com probe_providers.py, contra a chave real:
+            # dos 41 candidatos servidos pela camada OpenAI-compat, UM só
+            # sustentou os dois turnos de tool calling -- o gemini-2.5-flash.
+            #
+            # Por que a família 3.x inteira reprovou, embora esteja listada:
+            #   "Function call is missing a thought_signature in functionCall
+            #    parts. This is required for tools to work correctly"
+            # O campo thought_signature é exigido pelos modelos novos e a
+            # camada OpenAI-compat não o transporta. Não é modelo ruim: é
+            # incompatibilidade do shim. Enquanto isso não mudar, 3.x não
+            # serve por este caminho, por melhor que seja.
+            #
+            # E o gemini-2.5-pro, que estava aqui no "full", RESPONDE na
+            # listagem e dá 404 no uso ("no longer available to new users").
+            # É a razão de o probe medir usando, não lendo a lista.
+            #
+            # Histórico que continua valendo como aviso: o 2.5-flash-lite
+            # abandonou o fluxo multi-turno em 03/07 (parou no turno 7 sem
+            # save_observation), e o próprio 2.5-flash fez o mesmo em 17/07 --
+            # completou as 12 rodadas do fluxo DAILY sem nunca chamar
+            # save_observation. Ou seja: o que está aqui é o MENOS RUIM
+            # medido, não um modelo confiável.
+            #
+            # Ainda assim é melhor que o 404: com 404 a run morre na hora; com
+            # o 2.5-flash existe chance de completar, e se ele repetir o vazio
+            # de julho o preflight BLOQUEIA o e-mail (report-preflight.ts,
+            # RELATORIO_VAZIO) em vez de entregar relatório oco -- proteção
+            # que não existia em julho.
+            #
+            # Os três tiers apontam pro mesmo modelo porque foi o único
+            # aprovado; o flash-lite reprovou no mesmo teste.
+            #
+            # Nota: o 2.5-flash tem desligamento anunciado para 16/10/2026 --
+            # rodar o probe de novo antes disso.
+            "full": "gemini-2.5-flash",
+            "flash": "gemini-2.5-flash",
+            "chat": "gemini-2.5-flash",
         },
     },
     "openrouter": {
