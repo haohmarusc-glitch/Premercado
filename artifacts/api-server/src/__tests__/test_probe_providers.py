@@ -267,3 +267,59 @@ class TestDiagnosticoDeAmbiente:
         assert "falha ao listar modelos" in err
         assert "As chaves existem" in err
         assert "nenhuma chave de provedor" not in err
+
+
+class TestRankingDeCapacidade:
+    """A primeira execução real sugeriu `gemini-2.5-flash` -- exatamente o
+    modelo que este repo documenta como tendo completado as 12 rodadas do
+    fluxo diário sem NUNCA chamar save_observation.
+
+    O motivo não foi medição: era o primeiro aprovado da lista, e a lista vem
+    em ordem ALFABÉTICA. "gemini-2.5-flash" ordena antes de
+    "gemini-3-pro-preview", e alfabeto não tem relação com qualidade.
+    """
+
+    def test_versao_maior_ganha(self):
+        assert pg._ranking("gemini-3-pro") < pg._ranking("gemini-2.5-pro")
+        assert pg._ranking("gemini-3.1-pro") < pg._ranking("gemini-3-pro")
+
+    def test_pro_ganha_de_flash_na_mesma_versao(self):
+        """O tier "full" é usado quando o teto de custo rebaixa a run -- ali
+        ainda vale gastar mais por chamada pra ter chance de completar o fluxo,
+        em vez de queimar a run inteira."""
+        assert pg._ranking("gemini-3-pro") < pg._ranking("gemini-3-flash")
+
+    def test_estavel_ganha_de_preview(self):
+        """Modelo preview é retirado sem aviso -- foi assim que o
+        gemini-2.5-pro virou 404 no meio do caminho."""
+        assert pg._ranking("gemini-3-pro") < pg._ranking("gemini-3-pro-preview")
+
+    def test_versao_pesa_mais_que_tier(self):
+        """Um 3-flash é preferível a um 2.5-pro: geração nova costuma render
+        mais que tier alto de geração velha."""
+        assert pg._ranking("gemini-3-flash") < pg._ranking("gemini-2.5-pro")
+
+    def test_o_caso_que_motivou_a_correcao(self):
+        candidatos = ["gemini-2.5-flash", "gemini-3-pro-preview", "gemini-3.1-pro-preview"]
+        assert sorted(candidatos, key=pg._ranking)[0] == "gemini-3.1-pro-preview"
+        # E o alfabético, que era o critério anterior, daria o pior dos três.
+        assert sorted(candidatos)[0] == "gemini-2.5-flash"
+
+    def test_modelo_sem_numero_nao_quebra(self):
+        assert isinstance(pg._ranking("nano-banana-pro"), tuple)
+
+    def test_saida_lista_todos_os_aprovados(self, capsys):
+        """Com mais de um aprovado, quem lê precisa ver as alternativas -- a
+        sugestão é heurística, não medição."""
+        def _r(model):
+            return {"provedor": "gemini", "model": model, "ok": True,
+                    "chamou_ferramenta": True, "vazou_como_texto": False,
+                    "fechou_com_texto": True, "tem_preco": True,
+                    "segundos": 1.0, "erro": None}
+
+        pg.imprimir([_r("gemini-2.5-flash"), _r("gemini-3-pro-preview")])
+        out = capsys.readouterr().out
+
+        assert "aprovados ->" in out
+        assert "gemini-2.5-flash" in out
+        assert "-> gemini-3-pro-preview" in out
