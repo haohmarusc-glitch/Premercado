@@ -32,12 +32,15 @@ const COOLDOWN_MS = 4 * 60 * 60_000; // 4 hours
 // Timeouts dos subprocessos Python. Cada um é usado em DOIS lugares (o
 // setTimeout que mata o processo e o deadline passado ao Python via env), por
 // isso vira constante nomeada em vez de literal repetido.
-const SPIKE_TIMEOUT_MS = 60_000;
-const BOUNCE_TIMEOUT_MS = 60_000;
-// check_squeeze_setup faz várias chamadas de rede por ticker (yfinance,
-// iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por 30min, o
-// primeiro poll depois de um restart pode ser lento com a watchlist inteira.
-const SQUEEZE_TIMEOUT_MS = 120_000;
+// Spike, bounce e squeeze rodam num processo só (run_checkers.py). Antes eram
+// três spawns de 60s + 60s + 120s = 240s de ocupação da fila no pior caso, cada
+// um pagando do zero o import de pandas+numpy+yfinance -- e, pior, subindo
+// quase juntos e disputando a CPU do container (medido: 8-46s só de startup,
+// contra ~1s a quente). Batelados, o import é pago uma vez e o teto cai.
+//
+// O Python divide este tempo entre os checks (fatia por peso, sobra
+// redistribuída) e trata SIGTERM entregando o parcial -- ver run_checkers.py.
+const CHECKERS_TIMEOUT_MS = 180_000;
 
 /**
  * Env do subprocesso Python com o deadline ABSOLUTO em que este lado desiste.
@@ -285,30 +288,62 @@ interface IntradaySpikeAlert {
   timestamp: string;
 }
 
-// get_intraday_spikes.py precisa rodar via `-m agent.xxx` (import absoluto
-// do pacote) -- market_alerts.py faz `from .cache import cached`, import
-// relativo que só resolve nesse contexto (mesmo motivo/padrão de
+interface LoteDeCheckers {
+  resultados: {
+    spike?: IntradaySpikeAlert[];
+    bounce?: IntradaySpikeAlert[];
+    squeeze?: SqueezeAlert[];
+  };
+  falhas: Record<string, string>;
+}
+
+// run_checkers.py precisa rodar via `-m agent.xxx` (import absoluto do pacote)
+// -- market_alerts.py faz `from .cache import cached`, import relativo que só
+// resolve nesse contexto (mesmo motivo/padrão de
 // routes/analysis.ts::runMarketAlertsSnapshot).
-function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[] | null> {
-  return runExclusiveFresh("get_intraday_spikes", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_intraday_spikes"], {
+//
+// Um spawn no lugar de três. O SIGTERM do timeout não é mais perda total: o
+// Python trata o sinal e entrega o que já calculou (ver run_checkers.py), então
+// o `close` abaixo tenta parsear a saída mesmo quando o processo foi morto.
+function fetchCheckers(tickers: string[]): Promise<LoteDeCheckers | null> {
+  return runExclusiveFresh("run_checkers", () => new Promise((resolve, reject) => {
+    const py = spawn(getPythonBin(), ["-m", "agent.run_checkers"], {
       cwd: agentDir,
-      env: pythonEnv(SPIKE_TIMEOUT_MS),
+      env: pythonEnv(CHECKERS_TIMEOUT_MS),
     });
-    py.stdin.write(JSON.stringify({ tickers }));
+    py.stdin.write(JSON.stringify({ tickers, checks: ["spike", "bounce", "squeeze"] }));
     py.stdin.end();
     let out = "";
     let err = "";
+    let matouPorTimeout = false;
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, SPIKE_TIMEOUT_MS)); }, SPIKE_TIMEOUT_MS);
+    const t = setTimeout(() => {
+      matouPorTimeout = true;
+      py.kill("SIGTERM");
+    }, CHECKERS_TIMEOUT_MS);
     py.on("close", (code) => {
       clearTimeout(t);
-      if (code !== 0) { reject(new Error(err || "get_intraday_spikes: script failed")); return; }
+      // Ordem importa: tenta o parse ANTES de decidir que foi falha. Um
+      // processo morto por SIGTERM sai com código != 0 mas pode ter escrito o
+      // parcial -- descartar isso jogaria fora justamente o que o handler de
+      // sinal existe pra salvar.
       try {
-        const parsed = JSON.parse(out) as { alerts?: IntradaySpikeAlert[] };
-        resolve(parsed.alerts ?? []);
-      } catch { reject(new Error(`Bad JSON: ${out}`)); }
+        const parsed = JSON.parse(out) as LoteDeCheckers;
+        if (parsed?.resultados) {
+          if (matouPorTimeout) {
+            logger.warn({ err: err.trim().slice(-2000) },
+              "run_checkers: timeout, seguindo com o resultado parcial");
+          }
+          resolve({ resultados: parsed.resultados, falhas: parsed.falhas ?? {} });
+          return;
+        }
+      } catch {
+        // Sem JSON utilizável -- cai nos erros abaixo, que dizem por quê.
+      }
+      if (matouPorTimeout) { reject(timeoutError("run_checkers timeout", err, CHECKERS_TIMEOUT_MS)); return; }
+      if (code !== 0) { reject(new Error(err || "run_checkers: script failed")); return; }
+      reject(new Error(`Bad JSON: ${out}`));
     });
   }), CHECK_INTERVAL_MS);
 }
@@ -318,26 +353,8 @@ function fetchIntradaySpikes(tickers: string[]): Promise<IntradaySpikeAlert[] | 
 // aconteceu no minuto X só apareceria se o usuário estivesse com a página
 // aberta bem naquele momento. Dedup por (ticker, title) dentro do cooldown
 // evita repetir a mesma linha a cada 5min enquanto a condição persistir.
-async function checkIntradaySpikes(): Promise<void> {
-  // Mesmo motivo do checkAlerts acima -- evita competir por CPU/rede com o
-  // agente diário e estourar o timeout do subprocesso get_intraday_spikes.
-  if (agentState.running) {
-    logger.info("Intraday spike checker: pulando ciclo -- agente diário em execução");
-    return;
-  }
-
-  const settings = await getOrCreateSettings();
-  if (!settings.tickers.length) return;
-
-  let spikes: IntradaySpikeAlert[] | null = [];
-  try {
-    spikes = await fetchIntradaySpikes(settings.tickers);
-  } catch (err) {
-    logger.warn({ err }, "Intraday spike checker: failed to fetch spikes");
-    return;
-  }
-  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
-  if (!spikes?.length) return;
+async function processarIntradaySpikes(spikes: IntradaySpikeAlert[]): Promise<void> {
+  if (!spikes.length) return;
 
   const now = new Date();
   const cooldownSince = new Date(now.getTime() - INTRADAY_SPIKE_COOLDOWN_MS);
@@ -367,58 +384,19 @@ async function checkIntradaySpikes(): Promise<void> {
   }
 }
 
-// get_bounce_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
-// pacote) -- mesmo motivo de fetchIntradaySpikes acima.
-function fetchBounceAlerts(tickers: string[]): Promise<IntradaySpikeAlert[] | null> {
-  return runExclusiveFresh("get_bounce_alerts", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_bounce_alerts"], {
-      cwd: agentDir,
-      env: pythonEnv(BOUNCE_TIMEOUT_MS),
-    });
-    py.stdin.write(JSON.stringify({ tickers }));
-    py.stdin.end();
-    let out = "";
-    let err = "";
-    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, BOUNCE_TIMEOUT_MS)); }, BOUNCE_TIMEOUT_MS);
-    py.on("close", (code) => {
-      clearTimeout(t);
-      if (code !== 0) { reject(new Error(err || "get_bounce_alerts: script failed")); return; }
-      try {
-        const parsed = JSON.parse(out) as { alerts?: IntradaySpikeAlert[] };
-        resolve(parsed.alerts ?? []);
-      } catch { reject(new Error(`Bad JSON: ${out}`)); }
-    });
-  }), CHECK_INTERVAL_MS);
-}
-
 // Notifica por e-mail quando market_alerts.py::check_dead_cat_bounce detecta
 // um "repique" (recuperação técnica dentro de queda maior, ou o espelho --
-// realização de lucro dentro de alta maior). Diferente de checkIntradaySpikes
+// realização de lucro dentro de alta maior). Diferente de processarIntradaySpikes
 // (persiste pro card, sem e-mail): esse sinal é baseado em fechamento diário
 // (hoje vs. mesmo dia da semana passada), então dedup por dia BRT em vez de um
 // cooldown corrido -- evita reenviar e-mail a cada poll de 5min enquanto o
 // preço intradiário oscila em torno do limiar dentro do mesmo pregão, mas
 // permite um novo e-mail se a direção do sinal virar no mesmo dia.
-async function checkBounceAlerts(): Promise<void> {
-  if (agentState.running) {
-    logger.info("Bounce alert checker: pulando ciclo -- agente diário em execução");
-    return;
-  }
-
-  const settings = await getOrCreateSettings();
-  if (!settings.tickers.length) return;
-
-  let alerts: IntradaySpikeAlert[] | null = [];
-  try {
-    alerts = await fetchBounceAlerts(settings.tickers);
-  } catch (err) {
-    logger.warn({ err }, "Bounce alert checker: failed to fetch bounce alerts");
-    return;
-  }
-  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
-  if (!alerts?.length) return;
+async function processarBounceAlerts(
+  alerts: IntradaySpikeAlert[],
+  settings: { notifyEmail: string },
+): Promise<void> {
+  if (!alerts.length) return;
 
   const today = todayBRTDateString();
 
@@ -469,36 +447,6 @@ interface SqueezeAlert {
   totalMissing: number;
 }
 
-// get_squeeze_alerts.py precisa rodar via `-m agent.xxx` (import absoluto do
-// pacote) -- mesmo motivo de fetchIntradaySpikes/fetchBounceAlerts acima.
-function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[] | null> {
-  return runExclusiveFresh("get_squeeze_alerts", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_squeeze_alerts"], {
-      cwd: agentDir,
-      env: pythonEnv(SQUEEZE_TIMEOUT_MS),
-    });
-    py.stdin.write(JSON.stringify({ tickers }));
-    py.stdin.end();
-    let out = "";
-    let err = "";
-    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    // check_squeeze_setup faz várias chamadas de rede por ticker (yfinance,
-    // iBorrowDesk, FINRA, Unusual Whales opcional) -- mesmo cacheado por
-    // 30min, o primeiro poll depois de um restart pode ser lento com a
-    // watchlist inteira. Timeout mais generoso que os demais checkers.
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(timeoutError("timeout", err, SQUEEZE_TIMEOUT_MS)); }, SQUEEZE_TIMEOUT_MS);
-    py.on("close", (code) => {
-      clearTimeout(t);
-      if (code !== 0) { reject(new Error(err || "get_squeeze_alerts: script failed")); return; }
-      try {
-        const parsed = JSON.parse(out) as { alerts?: SqueezeAlert[] };
-        resolve(parsed.alerts ?? []);
-      } catch { reject(new Error(`Bad JSON: ${out}`)); }
-    });
-  }), CHECK_INTERVAL_MS);
-}
-
 // Notifica por e-mail o progresso de um setup de squeeze (tools.py::
 // check_squeeze_setup) em dois níveis: "near" (falta só 1-2 dos 4
 // requisitos -- risco de squeeze alto exige 2+ sinais perigosos, reversão
@@ -506,24 +454,11 @@ function fetchSqueezeAlerts(tickers: string[]): Promise<SqueezeAlert[] | null> {
 // (os 4 batidos). Dedup por (ticker, tier, dia BRT): evita reenviar e-mail
 // a cada poll de 5min enquanto o nível não muda, mas dispara de novo assim
 // que "near" vira "confirmed" (chave diferente) mesmo no mesmo dia.
-async function checkSqueezeAlerts(): Promise<void> {
-  if (agentState.running) {
-    logger.info("Squeeze alert checker: pulando ciclo -- agente diário em execução");
-    return;
-  }
-
-  const settings = await getOrCreateSettings();
-  if (!settings.tickers.length) return;
-
-  let alerts: SqueezeAlert[] | null = [];
-  try {
-    alerts = await fetchSqueezeAlerts(settings.tickers);
-  } catch (err) {
-    logger.warn({ err }, "Squeeze alert checker: failed to fetch squeeze alerts");
-    return;
-  }
-  // null = ciclo descartado pela fila; trata igual a "nada a fazer agora".
-  if (!alerts?.length) return;
+async function processarSqueezeAlerts(
+  alerts: SqueezeAlert[],
+  settings: { notifyEmail: string },
+): Promise<void> {
+  if (!alerts.length) return;
 
   const today = todayBRTDateString();
 
@@ -562,13 +497,65 @@ async function checkSqueezeAlerts(): Promise<void> {
   }
 }
 
+/**
+ * Um spawn de Python pros três checkers de mercado, e o pós-processamento de
+ * cada um em cima do lote.
+ *
+ * Os três liam a MESMA lista (settings.tickers) e cada um pagava o próprio
+ * import + as próprias chamadas de rede. Agora é uma consulta de settings, um
+ * processo, e o cache de histórico do Python é compartilhado entre eles.
+ *
+ * Uma falha isolada não derruba as outras: o Python devolve `falhas` por check
+ * e os resultados de quem terminou continuam valendo.
+ */
+async function rodarCheckersDeMercado(): Promise<void> {
+  // Mesmo motivo do checkAlerts -- evita competir por CPU/rede com o agente
+  // diário, que sozinho já satura o container.
+  if (agentState.running) {
+    logger.info("Checkers de mercado: pulando ciclo -- agente diário em execução");
+    return;
+  }
+
+  const settings = await getOrCreateSettings();
+  if (!settings.tickers.length) return;
+
+  let lote: LoteDeCheckers | null = null;
+  try {
+    lote = await fetchCheckers(settings.tickers);
+  } catch (err) {
+    logger.warn({ err }, "Checkers de mercado: falha ao rodar o lote");
+    return;
+  }
+  // null = ciclo descartado pela fila por obsolescência (já logado lá).
+  if (!lote) return;
+
+  for (const [check, motivo] of Object.entries(lote.falhas)) {
+    logger.warn({ check, motivo }, "Checkers de mercado: um check falhou, os demais seguem");
+  }
+
+  // Em série: são gravações no Postgres e envios de e-mail, não trabalho de
+  // CPU -- paralelizar aqui só reintroduziria a contenção que o lote resolveu.
+  // Cada um no seu try pelo mesmo motivo do `falhas` acima: uma falha de e-mail
+  // do bounce não pode impedir o squeeze de ser processado.
+  const etapas: [string, () => Promise<void>][] = [
+    ["spike", () => processarIntradaySpikes(lote.resultados.spike ?? [])],
+    ["bounce", () => processarBounceAlerts(lote.resultados.bounce ?? [], settings)],
+    ["squeeze", () => processarSqueezeAlerts(lote.resultados.squeeze ?? [], settings)],
+  ];
+  for (const [nome, etapa] of etapas) {
+    try {
+      await etapa();
+    } catch (err) {
+      logger.error({ err, check: nome }, "Checkers de mercado: falha ao processar o resultado");
+    }
+  }
+}
+
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 const CICLO: { nome: string; run: () => Promise<void> }[] = [
   { nome: "Alert check", run: checkAlerts },
-  { nome: "Intraday spike check", run: checkIntradaySpikes },
-  { nome: "Bounce alert check", run: checkBounceAlerts },
-  { nome: "Squeeze alert check", run: checkSqueezeAlerts },
+  { nome: "Market checkers", run: rodarCheckersDeMercado },
 ];
 
 let inicioDoCiclo = 0;

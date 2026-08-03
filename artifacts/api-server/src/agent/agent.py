@@ -796,11 +796,41 @@ def _agent_loop(
     min_observations: int = 1,
     deadline_ts: float | None = None,
     report_snapshot: dict | None = None,
+    required_tickers: list[str] | None = None,
 ) -> str:
     from .provider import TextBlock, ToolUseBlock
 
     final_text = ""
     observations_saved = 0
+    # Identidade, não contagem. O prompt exige save_observation de CADA posição
+    # da carteira ("NUNCA pule o save_observation de uma posição da carteira",
+    # FASE 2), e `observations_saved >= min_observations` só aproxima isso por
+    # dois lados: não diz QUAL ativo faltou, e deixa passar uma run que salvou o
+    # número certo de observações cobrindo o conjunto errado (um líder de
+    # contágio de fora da carteira no lugar de uma posição).
+    #
+    # Visto em produção 03/08: a run salvou 7 observações (6 posições + HCC, um
+    # líder de contágio), a cobrança disse "chame save_observation para os
+    # ativos que faltam" sem nomear nenhum, o modelo não adivinhou quais eram, e
+    # a run inteira -- já paga, com todos os dados coletados -- virou "Análise
+    # incompleta". Nomear os pendentes transforma um pedido indecifrável num
+    # pedido mecânico.
+    requeridos = [tk.strip().upper() for tk in (required_tickers or []) if tk.strip()]
+    if requeridos:
+        # Com lista de ativos, ela É o piso -- evita que caller e piso divirjam.
+        min_observations = len(requeridos)
+    observed_tickers: set[str] = set()
+
+    def _pendentes() -> list[str]:
+        return [tk for tk in requeridos if tk not in observed_tickers]
+
+    def _faltando() -> int:
+        if requeridos:
+            return len(_pendentes())
+        # Sem lista de ativos (runs de tema livre, sem cesta fixa) não há
+        # identidade a conferir -- o piso segue sendo a contagem.
+        return max(0, min_observations - observations_saved)
+
     # DOIS orçamentos separados, não um só. Eles cobram falhas diferentes --
     # "não registrou as observações" e "não escreveu o relatório" -- e um
     # contador único deixa a primeira faminta a segunda.
@@ -900,6 +930,9 @@ def _agent_loop(
                         pass
                     if saved_ok:
                         observations_saved += 1
+                        tk_salvo = str(block.input.get("ticker") or "").strip().upper()
+                        if tk_salvo:
+                            observed_tickers.add(tk_salvo)
                     else:
                         print(f"[agent] save_observation falhou: {result}", flush=True)
                 if report_snapshot is not None:
@@ -941,17 +974,28 @@ def _agent_loop(
             # (não só "== 0"): um modelo que salva 1 de 5 tickers e para também
             # deixa a análise incompleta — checar só "zero" deixava esse caso
             # passar em silêncio (bug visto em produção em runs de carteira).
-            missing = min_observations - observations_saved
+            missing = _faltando()
             if require_observations and missing > 0 and nudges_obs_left > 0:
                 nudges_obs_left -= 1
                 if progress_callback:
                     progress_callback(f"{step_prefix}Cobrando save_observation pendente...")
+                pendentes = _pendentes()
+                if pendentes:
+                    cobranca = (
+                        f"Faltam as observações destes ativos: {', '.join(pendentes)}. "
+                        "Chame save_observation AGORA para CADA um deles (resumo "
+                        "curto + sentimento) e só então escreva o relatório final."
+                    )
+                else:
+                    cobranca = (
+                        f"Você encerrou COM APENAS {observations_saved} de pelo menos "
+                        f"{min_observations} save_observation esperadas. Chame "
+                        "save_observation AGORA para os ativos que faltam (resumo "
+                        "curto + sentimento) e só então escreva o relatório final."
+                    )
                 messages.append({"role": "user", "content": (
-                    f"Você encerrou COM APENAS {observations_saved} de pelo menos "
-                    f"{min_observations} save_observation esperadas. A análise só é "
-                    "válida após registrar a observação de CADA ativo restante. "
-                    "Chame save_observation AGORA para os ativos que faltam "
-                    "(resumo curto + sentimento) e só então escreva o relatório final."
+                    "A análise só é válida após registrar a observação de CADA "
+                    "ativo exigido. " + cobranca
                 )})
                 continue
 
@@ -999,10 +1043,18 @@ def _agent_loop(
                 # verdade. Bug visto em produção: esse texto estava sendo
                 # salvo/exibido como se fosse o relatório final. Descarta e
                 # substitui por uma mensagem de diagnóstico clara.
+                pendentes = _pendentes()
+                # Nomear os ativos aqui também: esta é a mensagem que o usuário
+                # lê no lugar do relatório, e "as observações pendentes" não diz
+                # a ele (nem a quem for depurar) o que exatamente faltou.
+                detalhe = (
+                    f" Ficaram sem observação: {', '.join(pendentes)}."
+                    if pendentes else ""
+                )
                 final_text = (
                     "Análise incompleta nesta execução: o modelo não conseguiu "
                     "registrar as observações pendentes mesmo após ser cobrado, "
-                    "e não produziu um relatório final confiável."
+                    "e não produziu um relatório final confiável." + detalhe
                 )
             elif require_observations and not looks_like_report:
                 # Cobranças esgotadas e o texto final continua curto demais
@@ -1017,10 +1069,13 @@ def _agent_loop(
     else:
         final_text += "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
 
-    if require_observations and observations_saved < min_observations:
+    if require_observations and _faltando() > 0:
+        pendentes = _pendentes()
+        detalhe = f" Sem observação: {', '.join(pendentes)}." if pendentes else ""
         final_text += (
             f"\n\n[Aviso: apenas {observations_saved} de pelo menos "
-            f"{min_observations} observações esperadas foram salvas nesta execução.]"
+            f"{min_observations} observações esperadas foram salvas nesta "
+            f"execução.{detalhe}]"
         )
     return final_text
 
@@ -1110,6 +1165,9 @@ def run(progress_callback=None) -> str:
         # contágio fora da carteira somam mais chamadas, mas sua contagem
         # exata só é conhecida em runtime, então não entram no piso.
         min_observations=len(config.PORTFOLIO_TICKERS),
+        # A mesma lista, agora por identidade: a cobrança nomeia quem faltou em
+        # vez de só contar (ver o bloco de `requeridos` em _agent_loop).
+        required_tickers=config.PORTFOLIO_TICKERS,
         deadline_ts=config.SOFT_DEADLINE_TS,
         report_snapshot=snapshot,
     )
@@ -1173,6 +1231,7 @@ def run_portfolio(progress_callback=None, mode: str = "portfolio") -> str:
         step_prefix=f"[{cfg['title']}] ",
         require_observations=True,
         min_observations=n,
+        required_tickers=tickers,
         deadline_ts=config.SOFT_DEADLINE_TS,
     )
 

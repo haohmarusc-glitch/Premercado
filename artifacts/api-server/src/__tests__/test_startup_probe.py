@@ -61,8 +61,46 @@ def test_marcas_vao_para_stderr_e_nao_para_stdout():
 def test_marca_nao_quebra_sem_proc(monkeypatch, capsys):
     """Sem /proc (outro SO), a medida some mas nada levanta."""
     monkeypatch.setattr(startup_probe, "_INICIO_PROCESSO", None)
+    # Zera a guarda de "uma vez por processo": sem isso este teste passaria
+    # mesmo que boot() estivesse mudo pelo motivo errado.
+    monkeypatch.setattr(startup_probe, "_ja_marcou", set())
     startup_probe.boot()
     assert capsys.readouterr().err == ""
+
+
+def test_boot_marca_uma_vez_so_por_processo(monkeypatch, capsys):
+    """run_checkers.py importa três módulos de check sob demanda, e cada um chama
+    boot() no topo. As marcas são medidas DESDE O EXEC(), então repeti-las
+    imprimia três "[probe] boot +1.72s" no mesmo processo -- número certo, leitura
+    errada (parece três boots de 1,72s cada). Um processo, um boot."""
+    monkeypatch.setattr(startup_probe, "_ja_marcou", set())
+    startup_probe.boot()
+    primeira = capsys.readouterr().err
+    assert "[probe] boot" in primeira
+
+    startup_probe.boot()
+    startup_probe.boot()
+    assert capsys.readouterr().err == ""
+
+
+def test_imports_prontos_tambem_marca_uma_vez_so(monkeypatch, capsys):
+    monkeypatch.setattr(startup_probe, "_ja_marcou", set())
+    startup_probe.imports_prontos()
+    primeira = capsys.readouterr().err
+    assert "[probe] imports" in primeira
+    assert "[probe] total_ate_imports" in primeira
+
+    startup_probe.imports_prontos()
+    assert capsys.readouterr().err == ""
+
+
+def test_guarda_de_boot_nao_silencia_imports(monkeypatch, capsys):
+    """As duas marcas são independentes -- silenciar uma não pode calar a outra."""
+    monkeypatch.setattr(startup_probe, "_ja_marcou", set())
+    startup_probe.boot()
+    capsys.readouterr()
+    startup_probe.imports_prontos()
+    assert "[probe] imports" in capsys.readouterr().err
 
 
 def _src_dir() -> str:
