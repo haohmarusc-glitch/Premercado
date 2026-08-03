@@ -11,6 +11,7 @@ import { logger } from "./logger";
 import { sendReportEmail } from "./mailer";
 import { bannerDeAvisos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
+import { decideProvider } from "./agent-budget";
 import { isPositionActiveFromLots } from "./portfolio-math";
 
 const DEFAULT_TICKERS = [
@@ -35,33 +36,56 @@ async function getMonitoredTickers(): Promise<string[]> {
 // Provedor manual configurado pelo usuário (ou undefined = ordem padrão do
 // provider.py, anthropic primeiro), rebaixado para o provedor barato quando o
 // gasto de hoje (horário de Brasília) no provedor primário atinge o teto diário.
-async function getEffectiveAgentProvider(): Promise<string | undefined> {
+//
+// Devolve TAMBÉM a ordem de fallback: rebaixar só o primeiro da fila não
+// segurava gasto nenhum, porque o provedor estourado continuava logo atrás na
+// cadeia e recebia a chamada assim que o barato falhasse (ver agent-budget.ts).
+async function getEffectiveAgentProvider(): Promise<{ provider?: string; order?: string }> {
   try {
     const [settings] = await db.select().from(settingsTable).limit(1);
-    if (!settings || settings.dailyBudgetUsd == null) return settings?.agentProvider ?? undefined;
+    if (!settings) return {};
 
-    const primary = settings.agentProvider || "anthropic";
-    const runs = await db
+    const runsToday = await db
       .select({ costUsd: agentRunsTable.costUsd, llmProvider: agentRunsTable.llmProvider })
       .from(agentRunsTable)
       .where(gte(agentRunsTable.startedAt, startOfTodayBRT()));
-    // O driver pg devolve `numeric` como string — converter antes de somar.
-    const spentToday = runs
-      .filter((r) => (r.llmProvider ?? "").split(",").includes(primary))
-      .reduce((sum, r) => sum + (r.costUsd === null ? 0 : Number(r.costUsd)), 0);
-    const dailyBudgetUsd = Number(settings.dailyBudgetUsd);
 
-    if (spentToday >= dailyBudgetUsd) {
+    const decisao = decideProvider({
+      agentProvider: settings.agentProvider,
+      dailyBudgetUsd: settings.dailyBudgetUsd,
+      cheapProvider: settings.cheapProvider,
+      runsToday,
+    });
+
+    if (decisao.unpricedRuns > 0) {
+      // Run com modelo fora do MODEL_PRICING reporta custo null e soma ZERO no
+      // teto -- furo real, e silencioso se não avisar aqui.
       logger.warn(
-        { primary, spentToday, dailyBudgetUsd, cheapProvider: settings.cheapProvider },
-        "Daily budget exceeded for primary provider — switching to cheap provider for the rest of the day",
+        { unpricedRuns: decisao.unpricedRuns, spentToday: decisao.spentToday },
+        "Runs de hoje com custo desconhecido não somam no teto diário — adicionar o modelo em MODEL_PRICING (provider.py)",
       );
-      return settings.cheapProvider;
     }
-    return settings.agentProvider ?? undefined;
+    if (decisao.exceeded) {
+      logger.warn(
+        {
+          spentToday: decisao.spentToday,
+          budget: decisao.budget,
+          provider: decisao.provider,
+          order: decisao.order,
+        },
+        "Teto diário estourado — rebaixando para o provedor barato pelo resto do dia",
+      );
+    }
+    if (decisao.downgradeIneffective) {
+      logger.error(
+        { provider: decisao.provider },
+        "Teto diário estourado mas cheapProvider == provedor primário: o teto não economiza nada. Configure um provedor barato diferente.",
+      );
+    }
+    return { provider: decisao.provider, order: decisao.order };
   } catch (err) {
     logger.error({ err }, "Failed to compute effective agent provider; using default order");
-    return undefined;
+    return {};
   }
 }
 
@@ -195,7 +219,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   }
 
   const apiUrl = `http://localhost:${process.env.PORT ?? 5000}`;
-  const effectiveProvider = await getEffectiveAgentProvider();
+  const { provider: effectiveProvider, order: providerOrder } = await getEffectiveAgentProvider();
 
   // Default subiu de 10 -> 18 -> 30 min. O gargalo já não é mais a lentidão
   // pontual do yfinance (10 -> 18min, resolvido por ferramentas mais rápidas
@@ -236,6 +260,10 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
       ...(effectiveProvider ? { AGENT_PROVIDER: effectiveProvider } : {}),
+      // Só vem preenchido no rebaixamento por orçamento, e aí serve pra TIRAR
+      // o provedor estourado da cadeia -- sem isso o fallback devolvia a run
+      // pra ele e o teto virava decoração (ver agent-budget.ts).
+      ...(providerOrder ? { AGENT_PROVIDER_ORDER: providerOrder } : {}),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
     },
   });
