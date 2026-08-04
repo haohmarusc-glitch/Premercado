@@ -40,10 +40,23 @@ export const TAREFAS_POR_CICLO = 3;
  * já esperou o prazo inteiro quando é descartada, e nesse meio tempo ocupou
  * lugar na frente das outras. Este é o freio na ENTRADA, e custa zero.
  *
- * Ele é necessário porque a fila está no limite por construção: get_quotes
- * (60s) + get_technicals (60s) + run_checkers (180s) = 300s de trabalho por
- * ciclo de 300s. Zero folga -- qualquer atraso vira dívida que o ciclo seguinte
- * herda, e empilhar mais um lote em cima só empurra a espera pra frente.
+ * Ele é necessário porque a fila está no limite por construção -- e desde que
+ * o get_quotes subiu de 60s para 120s (ver alert-checker.ts, onde está a
+ * medição que justifica), o limite virou ESTOURO: get_quotes (120s) +
+ * get_technicals (60s) + run_checkers (180s) = 360s de trabalho por ciclo de
+ * 300s. Folga negativa, de propósito.
+ *
+ * O teto antigo era folga zero na aritmética e 100% de falha na prática: em
+ * 04/08 os 8 estouros de get_quotes aconteceram todos antes de o Python
+ * terminar de importar. Uma tarefa que cabe no ciclo e nunca entrega é pior
+ * que uma que estica o ciclo e entrega.
+ *
+ * O que segura o estouro é este guard: com folga negativa o ciclo às vezes é
+ * pulado e o período efetivo estica de 5 para ~6 minutos, mas a fila NÃO
+ * cresce. E o descarte por idade continua valendo como último freio -- a
+ * última tarefa de uma volta pode passar dos 300s de TTL e ser descartada, que
+ * é exatamente o que se quer para uma cotação velha.
+ *
  * Produção 04/08: esperas de 211s e 208s com 5 e 6 tarefas pendentes.
  *
  * Pular não perde informação: o ciclo seguinte vem 5 minutos depois e roda com

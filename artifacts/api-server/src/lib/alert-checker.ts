@@ -89,7 +89,21 @@ interface Quote {
   price: number | null;
 }
 
-const QUOTES_TIMEOUT_MS = 60_000;
+// 120s, não 60s: um timeout ABAIXO do tempo de partida medido não é proteção,
+// é falha garantida -- e ainda gasta um lugar na fila para não entregar nada.
+//
+// Medido em produção em 04/08, no mesmo deployment, só nos imports do Python:
+// numpy variando de 0.23s a 63.01s, pandas de 43s a 60s, yfinance de 17s a
+// 45s; o total até os imports terminarem ficou entre 69.9s e 120.8s. Com o
+// teto em 60s, os 8 estouros de get_quotes daquela janela aconteceram todos
+// antes de o processo chegar a consultar cotação nenhuma -- os stderr mostram
+// só "[probe] boot", nunca uma linha de dado.
+//
+// Isto NÃO conserta a causa (o container fica sem CPU; ver
+// docs/deploy-fora-do-replit.md). Só para de descartar trabalho que ia dar
+// certo. pythonEnv() deriva o AGENT_DEADLINE_TS deste valor, então o orçamento
+// interno do bounded_parallel_map sobe junto e não fica adivinhando.
+const QUOTES_TIMEOUT_MS = 120_000;
 
 function fetchQuotes(tickers: string[]): Promise<Quote[] | null> {
   return runExclusiveFresh("get_quotes", () => new Promise((resolve, reject) => {

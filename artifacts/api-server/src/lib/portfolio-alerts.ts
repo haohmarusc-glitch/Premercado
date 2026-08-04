@@ -26,7 +26,15 @@ interface PriceQuote {
   error: string | null;
 }
 
-const FETCH_TIMEOUT_MS = 30_000; // 30 s — se o Python travar, rejeita
+// 120s. Era 30s, e este era o teto mais apertado de todos: em 04/08 ele
+// estourou com o stderr mostrando apenas "[probe] boot +2.71s" e
+// "+11.10s" -- ou seja, o processo ainda estava SUBINDO quando foi morto, sem
+// ter chegado nem aos imports (que sozinhos levaram de 60s a 110s naquela
+// janela). Ver o comentário do QUOTES_TIMEOUT_MS em alert-checker.ts.
+//
+// Cabe folgado no ciclo: o loop daqui só reagenda depois de terminar, com
+// CHECK_INTERVAL_MS de 15 min.
+const FETCH_TIMEOUT_MS = 120_000; // 2 min — se o Python travar, rejeita
 
 // Sem prazo de validade (runExclusive, não runExclusiveFresh) de propósito: o
 // loop daqui só reagenda DEPOIS de terminar (setTimeout no fim, não
