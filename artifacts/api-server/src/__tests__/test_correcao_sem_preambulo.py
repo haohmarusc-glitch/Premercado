@@ -101,3 +101,55 @@ def test_primeira_linha_util_pula_linhas_curtas(ancora):
 
 def test_primeira_linha_util_sem_candidata():
     assert agent_module._primeira_linha_util("a\n\nbb\n") == ""
+
+
+# ── Avisos do sistema sobrevivem à reescrita ─────────────────────────────────
+#
+# Produção 04/08: o deadline forçou o turno final sem ferramentas, a run acabou
+# sem gravar observação nenhuma (elas viraram texto DENTRO do relatório), o loop
+# anexou o aviso -- e o validador de rótulo disparou por causa do HCC. O modelo
+# reescreveu o relatório sem o aviso, porque o aviso nunca foi texto dele.
+#
+# O usuário recebeu um relatório de aparência perfeita, sem nenhuma indicação de
+# que a memória do dia não tinha sido salva.
+
+_COM_AVISO = _ORIGINAL + "\n\n[Aviso: 3 ativo(s) exigido(s) ficaram sem observação nesta execução: AVGO, MRVL, SKHY. (0 observações foram salvas no total.)]"
+
+
+def test_aviso_apagado_pela_reescrita_e_reanexado():
+    corrigido = _ORIGINAL.replace("🔴", "🟡")  # o modelo devolve SEM o aviso
+    saida = agent_module._texto_da_correcao(_resp(corrigido), _COM_AVISO)
+    assert "🟡" in saida
+    assert "ficaram sem observação" in saida
+    assert "AVGO, MRVL, SKHY" in saida
+
+
+def test_aviso_nao_e_duplicado_quando_o_modelo_o_mantem():
+    corrigido = _COM_AVISO.replace("🔴", "🟡")
+    saida = agent_module._texto_da_correcao(_resp(corrigido), _COM_AVISO)
+    assert saida.count("ficaram sem observação") == 1
+
+
+def test_varios_avisos_sao_todos_preservados():
+    original = _ORIGINAL + (
+        "\n\n[Aviso: limite de turnos atingido — análise pode estar incompleta.]"
+        "\n\n[Aviso: 1 ativo(s) exigido(s) ficaram sem observação nesta execução: HCC.]"
+    )
+    saida = agent_module._texto_da_correcao(_resp(_ORIGINAL.replace("🔴", "🟡")), original)
+    assert "limite de turnos atingido" in saida
+    assert "ficaram sem observação" in saida
+
+
+def test_relatorio_sem_aviso_nenhum_nao_ganha_nada():
+    corrigido = _ORIGINAL.replace("🔴", "🟡")
+    saida = agent_module._texto_da_correcao(_resp(corrigido), _ORIGINAL)
+    assert "[Aviso:" not in saida
+
+
+def test_preambulo_e_aviso_sao_tratados_na_mesma_passada():
+    """O caso real de produção tinha os dois: o modelo põe conversa na frente e
+    perde o aviso no fim."""
+    corrigido = _PREAMBULO + "\n\n" + _ORIGINAL.replace("🔴", "🟡")
+    saida = agent_module._texto_da_correcao(_resp(corrigido), _COM_AVISO)
+    assert not saida.startswith("Compreendido")
+    assert "ficaram sem observação" in saida
