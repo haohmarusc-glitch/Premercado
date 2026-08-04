@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
+import { spawnPython } from "../lib/python-spawn";
 import { eq } from "drizzle-orm";
 import { db, portfolioPositionsTable } from "@workspace/db";
 import { agentDir, getPythonBin } from "../lib/runner";
@@ -23,7 +23,7 @@ const CACHE_TTL_MS = 60_000;
 
 function fetchQuotes(tickers: string[]): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
-    const py = spawn(
+    const py = spawnPython(
       getPythonBin(),
       ["-m", "agent.get_quotes", ...tickers],
       {
