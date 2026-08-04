@@ -1071,12 +1071,24 @@ def _agent_loop(
 
     if require_observations and _faltando() > 0:
         pendentes = _pendentes()
-        detalhe = f" Sem observação: {', '.join(pendentes)}." if pendentes else ""
-        final_text += (
-            f"\n\n[Aviso: apenas {observations_saved} de pelo menos "
-            f"{min_observations} observações esperadas foram salvas nesta "
-            f"execução.{detalhe}]"
-        )
+        if pendentes:
+            # Com lista exigida o aviso é sobre IDENTIDADE, e só. Misturar com a
+            # contagem produzia frase incoerente -- visto em produção 04/08:
+            # "apenas 11 de pelo menos 8 observações esperadas foram salvas.
+            # Sem observação: AVGO, MRVL, SKHY." Onze é mais que oito; quem lê
+            # não tem como saber que 11 e 8 falam de conjuntos diferentes (o
+            # total salvo inclui ativos de fora da carteira).
+            final_text += (
+                f"\n\n[Aviso: {len(pendentes)} ativo(s) exigido(s) ficaram sem "
+                f"observação nesta execução: {', '.join(pendentes)}. "
+                f"({observations_saved} observações foram salvas no total.)]"
+            )
+        else:
+            final_text += (
+                f"\n\n[Aviso: apenas {observations_saved} de pelo menos "
+                f"{min_observations} observações esperadas foram salvas nesta "
+                f"execução.]"
+            )
     return final_text
 
 
@@ -1184,17 +1196,46 @@ def _texto_da_correcao(fix_resp, original: str) -> str | None:
     return None
 
 
+# ── Teto de turnos ────────────────────────────────────────────────────────────
+#
+# O teto existe pra parar loop desgovernado, NÃO pra conter custo nem tempo --
+# esses dois já têm freio próprio (o teto diário de gasto em agent-budget.ts e o
+# SOFT_DEADLINE_TS). Um teto apertado não economiza: ele mata a run já paga
+# pouco antes da linha de chegada, que é o pior desfecho possível.
+#
+# Produção 04/08: o teto era `len(PORTFOLIO_TICKERS) * 2 + 6` = 22, derivado da
+# carteira (8 ativos). Só que a análise diária cobre config.TICKERS, e naquele
+# dia eram 28 -- get_stock_data em 28, técnicos em 24, candles em 20, short em
+# 20, analistas em 19, opções em 19. A run bateu os 22 turnos exatos, custou
+# US$ 0,96 e o preflight bloqueou o e-mail por relatório vazio. O teto foi
+# calculado sobre um conjunto que não é o que a run percorre.
+#
+# O que consome turno, no pior caso realista:
+#   - FASE 1 (contexto de mercado), em lote                     ~2
+#   - as ~8 categorias de dado, uma resposta em lote cada       ~8
+#   - save_observation: 1 por ativo quando o modelo NÃO agrupa  ~N
+#     (o prompt pede lote, e modelos fracos ignoram -- visto
+#      nesta mesma run: 10 turnos seguidos de uma observação)
+#   - relatório final + retry de correção da rubrica            ~2
+#   - margem pra troca de provider e cobranças                  ~4
+TURNOS_FIXOS = 16
+
+
+def _turnos_para_cobertura() -> int:
+    """Piso de turnos para a cobertura REAL da run diária.
+
+    config.TICKERS (não PORTFOLIO_TICKERS): o Grupo A é a carteira MAIS os
+    líderes de contágio, e todos saem da lista de cobertura -- ela é o limite
+    superior de quantos ativos podem exigir turno próprio.
+    """
+    return len(config.TICKERS) + TURNOS_FIXOS
+
+
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
 def run(progress_callback=None) -> str:
     client = _get_client()
-    # Escala o teto de turnos com o tamanho da carteira coberta, seguindo o
-    # mesmo padrao de run_portfolio(). O Grupo A (FASE 1) so e' conhecido em
-    # tempo de execucao (depende do detect_sector_contagion), entao usamos o
-    # tamanho da carteira fixa como piso minimo + margem para os candidatos
-    # de catch_up que costumam entrar no Grupo A.
-    n_min = len(config.PORTFOLIO_TICKERS)
-    max_turns = max(config.MAX_AGENT_TURNS, n_min * 2 + 6)
+    max_turns = max(config.MAX_AGENT_TURNS, _turnos_para_cobertura())
     model = client.models["full"]
     system = build_system_prompt_blocks()
     user_msg = (

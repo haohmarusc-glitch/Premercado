@@ -58,6 +58,41 @@ from agent.bounded_parallel import (
     exit_now,
 )
 
+# ── Handler de SIGTERM ANTES dos imports pesados ──────────────────────────────
+#
+# O acumulador e o handler precisam existir antes do primeiro import caro, não
+# no começo de main(). Com o registro dentro de main(), um SIGTERM que chega
+# DURANTE os imports encontra o handler padrão: o processo morre na hora, sem
+# escrever nada, e o lado Node recebe stdout vazio.
+#
+# Produção 04/08, depois de mover os imports pro topo: o timeout de 180s
+# disparou e o stderr inteiro do processo era `[probe] boot +12.60s`. Nem a
+# linha de imports, nem JSON -- ele nunca saiu da fase de import, e a entrega
+# parcial que existe justamente pra esse caso não teve como acontecer.
+#
+# Aqui embaixo, o pior caso vira "JSON vazio mas válido", que o Node parseia e
+# trata como ciclo sem alertas, em vez de um erro sem informação.
+_resultados: dict[str, list] = {}
+_falhas: dict[str, str] = {}
+
+
+def _payload() -> str:
+    return json.dumps(
+        {"resultados": _resultados, "falhas": _falhas}, ensure_ascii=False
+    ) + "\n"
+
+
+def _ao_receber_sigterm(_signum, _frame) -> None:
+    print(
+        f"[run_checkers] SIGTERM recebido; entregando o parcial "
+        f"({len(_resultados)} check(s) prontos)",
+        file=sys.stderr,
+    )
+    exit_now(_payload())
+
+
+signal.signal(signal.SIGTERM, _ao_receber_sigterm)
+
 # Os módulos de check entram AQUI, não sob demanda dentro de cada _roda_*.
 #
 # A primeira versão importava cada um dentro da função, pra um check não pago
@@ -97,25 +132,6 @@ PESOS = {"spike": 1.0, "bounce": 1.0, "squeeze": 2.0}
 # lado do Python (@cached em check_squeeze_setup), então perdê-lo num ciclo
 # custa menos que perder spike/bounce, que são de janela curta.
 ORDEM = ["spike", "bounce", "squeeze"]
-
-# Preenchido conforme os checks terminam; lido pelo handler de SIGTERM.
-_resultados: dict[str, list] = {}
-_falhas: dict[str, str] = {}
-
-
-def _payload() -> str:
-    return json.dumps(
-        {"resultados": _resultados, "falhas": _falhas}, ensure_ascii=False
-    ) + "\n"
-
-
-def _ao_receber_sigterm(_signum, _frame) -> None:
-    print(
-        f"[run_checkers] SIGTERM recebido; entregando o parcial "
-        f"({len(_resultados)} check(s) prontos)",
-        file=sys.stderr,
-    )
-    exit_now(_payload())
 
 
 def _fatia(restante_s: float, check: str, pendentes: list[str]) -> float:
@@ -159,8 +175,8 @@ RUNNERS = {"spike": _roda_spike, "bounce": _roda_bounce, "squeeze": _roda_squeez
 
 
 def main() -> None:
-    signal.signal(signal.SIGTERM, _ao_receber_sigterm)
-
+    # O handler de SIGTERM já foi registrado lá em cima, antes dos imports
+    # pesados -- é o único jeito de cobrir a morte durante o import.
     try:
         args = json.loads(sys.stdin.read() or "{}")
     except Exception:

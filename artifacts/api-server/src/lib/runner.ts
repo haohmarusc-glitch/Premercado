@@ -12,7 +12,7 @@ import { sendReportEmail } from "./mailer";
 import { bannerDeAvisos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
 import { decideProvider } from "./agent-budget";
-import { isPositionActiveFromLots } from "./portfolio-math";
+import { isPositionActiveFromLots, carteiraParaOAgente } from "./portfolio-math";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -93,12 +93,25 @@ async function getEffectiveAgentProvider(): Promise<{ provider?: string; order?:
 // nenhum, ou seja, misturava as posições de TODOS os usuários numa run só
 // (e o relatório resultante, salvo numa tabela global, aparecia igual pra
 // todo mundo). Ver reportsTable.userId e routes/reports.ts.
-export async function getPortfolioTickers(userId: number): Promise<string[]> {
+/**
+ * Tickers da carteira REAL, do banco.
+ *
+ * `userId` opcional: sem ele, cobre as posições de todos os usuários. É o que
+ * os fluxos disparados por agendamento precisam -- não existe "usuário da
+ * requisição" num cron -- e segue o mesmo modelo dos demais jobs de fundo, que
+ * já rodam sobre a tabela inteira (ver o NOTE no topo de alert-checker.ts).
+ *
+ * Uma função só, com escopo opcional, em vez de duas: a regra de "posição
+ * ativa" é decidida pelos LOTES, não pelo campo `quantity` armazenado, e cada
+ * cópia dessa regra é uma chance de ela divergir (aconteceu com MU, que ficou
+ * aparecendo como ativa em quatro lugares depois de totalmente vendida).
+ */
+export async function getPortfolioTickers(userId?: number): Promise<string[]> {
   try {
     const rows = await db
       .select({ id: portfolioPositionsTable.id, ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
       .from(portfolioPositionsTable)
-      .where(eq(portfolioPositionsTable.userId, userId))
+      .where(userId != null ? eq(portfolioPositionsTable.userId, userId) : undefined)
       .orderBy(asc(portfolioPositionsTable.createdAt));
 
     const nonEtf = rows.filter((r) => !r.isEtf);
@@ -121,7 +134,8 @@ export async function getPortfolioTickers(userId: number): Promise<string[]> {
     }
 
     const stocks = nonEtf.filter((r) => isPositionActiveFromLots(r.quantity, lotsByPosition.get(r.id) ?? []));
-    return stocks.map((r) => r.ticker);
+    // Set: sem userId, dois usuários com a mesma posição repetiriam o ticker.
+    return [...new Set(stocks.map((r) => r.ticker))];
   } catch (err) {
     logger.error({ err, userId }, "Failed to read portfolio tickers for user");
     // Vazio, NUNCA um fallback fixo -- um fallback compartilhado aqui
@@ -200,12 +214,24 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   void (async () => {
   try {
   const tickers = trigger === "portfolio" || trigger === "veredito"
-    ? (userId != null ? await getPortfolioTickers(userId) : [])
+    // Sem userId (run agendada) a carteira agora vem global em vez de vazia --
+    // antes, um veredito agendado caía na lista fixa do config.py.
+    ? await getPortfolioTickers(userId)
     : trigger === "coal"
     ? COAL_TICKERS
     : trigger === "ai"
     ? AI_TICKERS
     : await getMonitoredTickers();
+
+  // A carteira que o modo diário EXIGE observação de sai do banco, igual à
+  // cobertura sai de Settings. Antes ela vinha de AGENT_PORTFOLIO_TICKERS e,
+  // sem essa env var, o Python caía numa lista fixa no código -- que continuava
+  // exigindo observação de GOOGL e TSLA depois de eles saírem da carteira, e de
+  // qualquer posição nova nunca ser exigida. Duas listas para a mesma pergunta,
+  // e a que mandava não era a que o usuário edita.
+  const carteira = trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito"
+    ? tickers
+    : await getPortfolioTickers(userId);
 
   // Insert run record (awaited so runId is set deterministically before the process can close)
   try {
@@ -255,7 +281,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
-      AGENT_PORTFOLIO_TICKERS: (trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito") ? tickers.join(",") : (process.env.AGENT_PORTFOLIO_TICKERS ?? ""),
+      AGENT_PORTFOLIO_TICKERS: carteiraParaOAgente(carteira, process.env.AGENT_PORTFOLIO_TICKERS),
       AGENT_MODE: mode,
       AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
