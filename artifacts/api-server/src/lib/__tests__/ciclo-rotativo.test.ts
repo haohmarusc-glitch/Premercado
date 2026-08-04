@@ -8,7 +8,7 @@
  * deixando de disparar alertas.
  */
 import { describe, it, expect } from "vitest";
-import { ordemRotacionada } from "../ciclo-rotativo";
+import { ordemRotacionada, deveDispararCiclo, TAREFAS_POR_CICLO } from "../ciclo-rotativo";
 
 const LOTE = ["alertas", "spike", "bounce", "squeeze"];
 
@@ -56,5 +56,34 @@ describe("ordemRotacionada", () => {
 
   it("lista vazia não quebra", () => {
     expect(ordemRotacionada([], 3)).toEqual([]);
+  });
+});
+
+describe("deveDispararCiclo", () => {
+  it("dispara com a fila vazia", () => {
+    expect(deveDispararCiclo(0)).toBe(true);
+  });
+
+  it("dispara enquanto a fila não acumulou uma volta inteira", () => {
+    expect(deveDispararCiclo(1)).toBe(true);
+    expect(deveDispararCiclo(TAREFAS_POR_CICLO - 1)).toBe(true);
+  });
+
+  it("para quando a volta anterior ainda não drenou", () => {
+    // O caso de produção: get_quotes(60s) + get_technicals(60s) +
+    // run_checkers(180s) = 300s de trabalho por ciclo de 300s. Sem folga,
+    // qualquer atraso vira dívida, e empilhar mais um lote só empurra a espera.
+    expect(deveDispararCiclo(TAREFAS_POR_CICLO)).toBe(false);
+  });
+
+  it("continua parado enquanto a fila estiver funda", () => {
+    // Produção 04/08: esperas de 211s e 208s com 5 e 6 pendentes.
+    expect(deveDispararCiclo(5)).toBe(false);
+    expect(deveDispararCiclo(6)).toBe(false);
+  });
+
+  it("aceita limite explícito para quem quiser outra política", () => {
+    expect(deveDispararCiclo(2, 10)).toBe(true);
+    expect(deveDispararCiclo(10, 10)).toBe(false);
   });
 });
