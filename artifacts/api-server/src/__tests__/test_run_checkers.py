@@ -207,3 +207,56 @@ def test_sigterm_entrega_o_que_ja_foi_calculado(monkeypatch):
 
     saida = json.loads(capturado["payload"])
     assert saida["resultados"]["spike"] == [{"ticker": "NVDA"}]
+
+
+# ── SIGTERM tem que estar armado ANTES do import pesado ───────────────────────
+#
+# Produção 04/08, depois de mover os imports pro topo: o timeout de 180s
+# disparou e o stderr inteiro era `[probe] boot +12.60s`. Nem a linha de
+# imports, nem JSON -- o processo nunca saiu da fase de import, e a entrega
+# parcial que existe justamente pra esse caso não teve como acontecer, porque o
+# handler só era registrado no começo de main().
+
+
+def test_sigterm_ja_esta_armado_ao_importar_o_modulo():
+    """Registrar em main() é tarde: main() só roda depois dos imports."""
+    import signal as _signal
+
+    assert _signal.getsignal(_signal.SIGTERM) is rc._ao_receber_sigterm
+
+
+def test_handler_e_registrado_antes_dos_imports_pesados():
+    """Ordem no arquivo, não só o fato de existir.
+
+    O runtime check acima passa mesmo se o registro estiver DEPOIS dos imports
+    -- ele só observa o estado final. O que protege contra a regressão é a
+    posição, e é ela que este teste trava.
+    """
+    import pathlib
+
+    fonte = pathlib.Path(rc.__file__).read_text(encoding="utf-8")
+    pos_registro = fonte.index("signal.signal(signal.SIGTERM")
+    for pesado in (
+        "from agent.get_intraday_spikes import",
+        "from agent.get_bounce_alerts import",
+        "from agent.get_squeeze_alerts import",
+        "from agent.market_alerts import",
+    ):
+        assert pos_registro < fonte.index(pesado), (
+            f"handler de SIGTERM registrado depois de `{pesado}` -- "
+            "um SIGTERM durante esse import mata o processo sem entregar nada"
+        )
+
+
+def test_payload_do_sigterm_e_json_valido_mesmo_sem_nenhum_check_pronto(monkeypatch):
+    """O pior caso vira 'vazio mas parseável', que o Node trata como ciclo sem
+    alertas -- em vez de stdout vazio, que vira erro sem informação."""
+    monkeypatch.setattr(rc, "_resultados", {})
+    monkeypatch.setattr(rc, "_falhas", {})
+    capturado = {}
+    monkeypatch.setattr(rc, "exit_now", lambda p, code=0: capturado.setdefault("payload", p))
+
+    rc._ao_receber_sigterm(15, None)
+
+    saida = json.loads(capturado["payload"])
+    assert saida == {"resultados": {}, "falhas": {}}
