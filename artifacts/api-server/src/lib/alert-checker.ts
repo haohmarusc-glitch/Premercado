@@ -305,6 +305,27 @@ interface LoteDeCheckers {
 // Um spawn no lugar de três. O SIGTERM do timeout não é mais perda total: o
 // Python trata o sinal e entrega o que já calculou (ver run_checkers.py), então
 // o `close` abaixo tenta parsear a saída mesmo quando o processo foi morto.
+/** Linhas que o run_checkers imprime de propósito (probe e duração por check). */
+const LINHA_DIAGNOSTICA = /^\[(probe|run_checkers)/;
+/**
+ * Assinatura do yfinance devolvendo resposta vazia. A mensagem fala em
+ * deslistagem, mas aparece para NVDA, AVGO e MRVL -- ou seja, é bloqueio/limite
+ * do Yahoo, não deslistagem. Contar em vez de repetir cada linha: o que importa
+ * é quantos tickers vieram vazios, não o texto sete vezes.
+ */
+const SEM_DADO_YAHOO = /possibly delisted/i;
+
+function registrarDiagnostico(stderr: string): void {
+  const linhas = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const diagnostico = linhas.filter((l) => LINHA_DIAGNOSTICA.test(l));
+  const semDado = linhas.filter((l) => SEM_DADO_YAHOO.test(l)).length;
+  if (!diagnostico.length && !semDado) return;
+  logger.info(
+    { diagnostico, tickersSemDadoNoYahoo: semDado },
+    "run_checkers: ciclo concluído",
+  );
+}
+
 function fetchCheckers(tickers: string[]): Promise<LoteDeCheckers | null> {
   return runExclusiveFresh("run_checkers", () => new Promise((resolve, reject) => {
     const py = spawnPython(getPythonBin(), ["-m", "agent.run_checkers"], {
@@ -334,6 +355,18 @@ function fetchCheckers(tickers: string[]): Promise<LoteDeCheckers | null> {
           if (matouPorTimeout) {
             logger.warn({ err: err.trim().slice(-2000) },
               "run_checkers: timeout, seguindo com o resultado parcial");
+          } else {
+            // O stderr do ciclo BEM-SUCEDIDO também precisa aparecer.
+            //
+            // Antes ele só era logado nos caminhos de erro, e o efeito é
+            // perverso: a medição de startup e a duração por check -- as duas
+            // coisas que dizem se o ciclo está saudável -- só ficavam visíveis
+            // quando o ciclo falhava. Passamos vários logs esperando as linhas
+            // `[probe] import` aparecerem sem perceber que só um timeout as
+            // revelaria.
+            //
+            // Diagnóstico não pode depender de fracasso pra existir.
+            registrarDiagnostico(err);
           }
           resolve({ resultados: parsed.resultados, falhas: parsed.falhas ?? {} });
           return;
