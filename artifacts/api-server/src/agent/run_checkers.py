@@ -40,6 +40,7 @@ funcionando -- este módulo importa as funções POR TICKER deles em vez de
 reimplementar, então não há uma segunda cópia da lógica pra sair de sincronia.
 """
 import json
+import os
 import signal
 import sys
 import time
@@ -83,12 +84,37 @@ def _payload() -> str:
 
 
 def _ao_receber_sigterm(_signum, _frame) -> None:
-    print(
+    # os.write direto nos descritores, NUNCA print/sys.stdout aqui.
+    #
+    # Um handler de sinal roda no meio de qualquer bytecode -- inclusive dentro
+    # de um write bufferizado que ainda não terminou. Reentrar no mesmo
+    # BufferedWriter levanta "RuntimeError: reentrant call inside
+    # <_io.BufferedWriter name='<stderr>'>".
+    #
+    # Produção 04/08: `[run_checkers] squeeze falhou: reentrant call inside
+    # <_io.BufferedWriter name='<stderr>'>`. Repare ONDE o erro estourou -- a
+    # exceção sobe no frame que estava executando, então o check em andamento
+    # levou a culpa por um problema do handler, E a entrega parcial que o
+    # handler existe pra fazer não aconteceu. Os dois efeitos que a instrumen-
+    # tação devia evitar, causados pela própria instrumentação.
+    _entregar_e_sair(
         f"[run_checkers] SIGTERM recebido; entregando o parcial "
-        f"({len(_resultados)} check(s) prontos)",
-        file=sys.stderr,
+        f"({len(_resultados)} check(s) prontos)\n",
+        _payload(),
     )
-    exit_now(_payload())
+
+
+def _entregar_e_sair(aviso: str, payload: str) -> None:
+    """Escrita crua nos fds e saída imediata. Separado do handler só pra o teste
+    poder substituir -- os._exit dentro do handler mataria o próprio pytest."""
+    for fd, texto in ((2, aviso), (1, payload)):
+        try:
+            os.write(fd, texto.encode("utf-8", "replace"))
+        except Exception:
+            # Sem o que fazer com um erro aqui, e levantar mataria o parcial do
+            # outro descritor.
+            pass
+    os._exit(0)
 
 
 signal.signal(signal.SIGTERM, _ao_receber_sigterm)
@@ -110,10 +136,42 @@ signal.signal(signal.SIGTERM, _ao_receber_sigterm)
 # Importar aqui devolve o custo pra dentro da janela do probe, onde ele é
 # medido e onde o orçamento seguinte já o desconta. O isolamento de falha
 # continua existindo -- é o try/except por check no main(), não o import.
-from agent.get_bounce_alerts import _bounce_for
-from agent.get_intraday_spikes import _spikes_for
-from agent.get_squeeze_alerts import _progress_for
-from agent.market_alerts import Severity
+# Import CRONOMETRADO um a um, não em bloco.
+#
+# `[probe] imports` mede o conjunto, e em produção ele deu 69-85s contra 5,7s
+# medidos no container ocioso -- 13x, com picoNaJanela=2 e 1 tarefa na fila. A
+# concorrência deixou de explicar, e um número agregado não diz o que fazer:
+# 75s pode ser pandas compilando, pode ser yfinance abrindo sessão de rede
+# (relevante quando o Yahoo está bloqueando a gente -- ver os "possibly
+# delisted" do mesmo log), pode ser nosso próprio código.
+#
+# São três consertos completamente diferentes, e sem separar o número não dá
+# pra escolher.
+_ultimo_marco = time.time()
+
+
+def _marco(nome: str) -> None:
+    global _ultimo_marco
+    agora = time.time()
+    print(f"[probe] import {nome} +{agora - _ultimo_marco:.2f}s",
+          file=sys.stderr, flush=True)
+    _ultimo_marco = agora
+
+
+import numpy  # noqa: F401,E402
+_marco("numpy")
+import pandas  # noqa: F401,E402
+_marco("pandas")
+import yfinance  # noqa: F401,E402
+_marco("yfinance")
+
+from agent.market_alerts import Severity  # noqa: E402
+_marco("market_alerts")
+from agent.get_bounce_alerts import _bounce_for  # noqa: E402
+from agent.get_intraday_spikes import _spikes_for  # noqa: E402
+_marco("spike+bounce")
+from agent.get_squeeze_alerts import _progress_for  # noqa: E402
+_marco("squeeze(tools)")
 
 _probe_imports()
 
