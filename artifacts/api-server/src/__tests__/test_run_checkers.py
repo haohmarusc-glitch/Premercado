@@ -201,12 +201,39 @@ def test_sigterm_entrega_o_que_ja_foi_calculado(monkeypatch):
     monkeypatch.setattr(rc, "_resultados", {"spike": [{"ticker": "NVDA"}]})
     monkeypatch.setattr(rc, "_falhas", {})
     capturado = {}
-    monkeypatch.setattr(rc, "exit_now", lambda p, code=0: capturado.setdefault("payload", p))
+    monkeypatch.setattr(
+        rc, "_entregar_e_sair",
+        lambda aviso, payload: capturado.update(aviso=aviso, payload=payload),
+    )
 
     rc._ao_receber_sigterm(15, None)
 
     saida = json.loads(capturado["payload"])
     assert saida["resultados"]["spike"] == [{"ticker": "NVDA"}]
+    assert "1 check(s) prontos" in capturado["aviso"]
+
+
+def test_handler_nao_usa_print_nem_stdout_bufferizado():
+    """Um handler de sinal roda no meio de qualquer bytecode, inclusive dentro
+    de um write bufferizado. print() ali levanta "reentrant call inside
+    <_io.BufferedWriter>" -- e o pior é onde estoura: a exceção sobe no frame
+    que estava executando, então o check em andamento leva a culpa E a entrega
+    parcial não acontece.
+
+    Produção 04/08: `[run_checkers] squeeze falhou: reentrant call inside
+    <_io.BufferedWriter name='<stderr>'>`.
+    """
+    import inspect
+
+    fonte = inspect.getsource(rc._ao_receber_sigterm) + inspect.getsource(rc._entregar_e_sair)
+    corpo = "\n".join(
+        linha for linha in fonte.splitlines()
+        if not linha.lstrip().startswith("#")
+    )
+    assert "print(" not in corpo
+    assert "sys.stdout" not in corpo
+    assert "sys.stderr" not in corpo
+    assert "os.write(" in corpo
 
 
 # ── SIGTERM tem que estar armado ANTES do import pesado ───────────────────────
@@ -254,7 +281,10 @@ def test_payload_do_sigterm_e_json_valido_mesmo_sem_nenhum_check_pronto(monkeypa
     monkeypatch.setattr(rc, "_resultados", {})
     monkeypatch.setattr(rc, "_falhas", {})
     capturado = {}
-    monkeypatch.setattr(rc, "exit_now", lambda p, code=0: capturado.setdefault("payload", p))
+    monkeypatch.setattr(
+        rc, "_entregar_e_sair",
+        lambda aviso, payload: capturado.setdefault("payload", payload),
+    )
 
     rc._ao_receber_sigterm(15, None)
 

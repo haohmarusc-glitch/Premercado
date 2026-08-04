@@ -6,6 +6,7 @@ Configurado via variável AGENT_PROVIDER (padrão: anthropic).
 import datetime
 import json as _json
 import os
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1186,13 +1187,37 @@ def _sem_preambulo(corrigido: str, original: str) -> str:
     return corrigido[idx:].lstrip() if idx > 0 else corrigido
 
 
+# Avisos que o LOOP anexa ao final do texto -- observação faltando, limite de
+# turnos. Não são texto do modelo, e o modelo não os reproduz quando reescreve.
+_AVISO_RE = re.compile(r"\[Aviso:[^\]]*\]")
+
+
+def _preservar_avisos(corrigido: str, original: str) -> str:
+    """Reanexa os avisos do sistema que o retry de correção apagou.
+
+    O retry pede o relatório reescrito, e o modelo reescreve o que ele considera
+    SEU. Os blocos [Aviso: ...] foram anexados pelo loop depois que ele
+    terminou, então não estão no texto dele e somem na reescrita -- levando
+    junto a única sinalização de que algo saiu errado.
+
+    Visto em produção 04/08: o deadline forçou o turno final sem ferramentas, a
+    run acabou sem gravar observação nenhuma (elas viraram texto dentro do
+    relatório), o loop anexou o aviso, o validador de rótulo disparou por causa
+    do HCC -- e o relatório chegou ao usuário sem nenhuma menção de que a
+    memória do dia não tinha sido salva.
+    """
+    faltando = [a for a in _AVISO_RE.findall(original) if a not in corrigido]
+    return corrigido + "".join(f"\n\n{aviso}" for aviso in faltando)
+
+
 def _texto_da_correcao(fix_resp, original: str) -> str | None:
-    """Primeiro bloco de texto do retry, já sem o preâmbulo. None se não veio
-    texto nenhum -- aí o chamador fica com o original."""
+    """Primeiro bloco de texto do retry, sem o preâmbulo e com os avisos do
+    sistema preservados. None se não veio texto nenhum -- aí o chamador fica
+    com o original."""
     from .provider import TextBlock
     for block in fix_resp.content:
         if isinstance(block, TextBlock) and block.text.strip():
-            return _sem_preambulo(block.text, original)
+            return _preservar_avisos(_sem_preambulo(block.text, original), original)
     return None
 
 
