@@ -31,7 +31,7 @@ from agent.provider import (
     FallbackClient,
     _provider_order,
     _resolve_tier,
-    _truncate_history_for_fallback,
+    _condense_history_for_fallback,
     _try_recover_tool_use_failed,
     PROVIDERS,
 )
@@ -446,31 +446,120 @@ class TestIsQuotaError:
         assert _is_quota_error(Exception("connection reset by peer")) is False
 
 
-class TestTruncateHistoryForFallback:
-    def test_keeps_only_first_message(self):
-        messages = [
+class TestCondenseHistoryForFallback:
+    """Trocar de provider não pode custar o trabalho já pago.
+
+    Produção 04/08: a anthropic deu timeout no turno 11, o histórico foi de 21
+    mensagens para 1, e o gemini reexecutou a FASE 1 inteira -- os mesmos 7
+    tools do turno 1. US$ 0,74 de coleta no lixo, e os turnos restantes não
+    deram pra terminar: a run acabou em 188 caracteres, bloqueada pelo
+    preflight.
+
+    O problema nunca foi o formato do histórico -- é que jogar o formato fora
+    levava o CONTEÚDO junto. Aqui ele vira texto e sobrevive.
+    """
+
+    def _sessao(self):
+        return [
             {"role": "user", "content": "primeira pergunta"},
             {
                 "role": "assistant",
-                "content": [{"type": "tool_use", "id": "1", "name": "x", "input": {}}],
+                "content": [
+                    {"type": "tool_use", "id": "1", "name": "get_stock_data",
+                     "input": {"ticker": "NVDA"}},
+                ],
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "tool_result", "tool_use_id": "1", "content": "ok"}
+                    {"type": "tool_result", "tool_use_id": "1",
+                     "content": '{"price": 206.64, "changePct": 2.93}'},
                 ],
             },
         ]
-        result = _truncate_history_for_fallback(messages)
+
+    def test_preserva_a_pergunta_original(self):
+        result = _condense_history_for_fallback(self._sessao())
         assert len(result) == 1
-        assert result[0]["content"] == "primeira pergunta"
+        assert "primeira pergunta" in result[0]["content"]
+
+    def test_preserva_o_que_as_ferramentas_devolveram(self):
+        """O ponto todo: o novo provider recebe o DADO, não só o aviso de que
+        alguém já buscou. Sem isso ele buscaria de novo."""
+        result = _condense_history_for_fallback(self._sessao())
+        texto = result[0]["content"]
+        assert "get_stock_data" in texto
+        assert "NVDA" in texto
+        assert "206.64" in texto
+
+    def test_manda_nao_repetir(self):
+        texto = _condense_history_for_fallback(self._sessao())[0]["content"]
+        assert "JÁ FORAM EXECUTADAS" in texto
+        assert "NÃO chame" in texto
+
+    def test_resultado_gigante_e_cortado_por_chamada(self):
+        """Cadeia de opções e série de preços passam de 100k chars sozinhas."""
+        messages = self._sessao()
+        messages[2]["content"][0]["content"] = "x" * 500_000
+        texto = _condense_history_for_fallback(messages)[0]["content"]
+        assert "...(cortado)" in texto
+        assert len(texto) < 100_000
+
+    def test_sessao_longa_respeita_o_teto_total(self):
+        """O provider de fallback costuma ser o mais fraco da cadeia."""
+        messages = [{"role": "user", "content": "pergunta"}]
+        for i in range(500):
+            messages.append({
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": str(i), "name": "get_news",
+                             "input": {"ticker": f"T{i}"}}],
+            })
+            messages.append({
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": str(i),
+                             "content": "y" * 2000}],
+            })
+        texto = _condense_history_for_fallback(messages)[0]["content"]
+        assert "limite de tamanho" in texto
+        assert len(texto) < 200_000
+
+    def test_sem_ferramentas_executadas_volta_ao_comportamento_antigo(self):
+        """Nada foi coletado ainda -- não há trabalho a preservar."""
+        messages = [
+            {"role": "user", "content": "oi"},
+            {"role": "assistant", "content": [{"type": "text", "text": "olá"}]},
+        ]
+        result = _condense_history_for_fallback(messages)
+        assert result == [{"role": "user", "content": "oi"}]
+
+    def test_chamada_sem_resultado_aparece_como_tal(self):
+        """Turno cortado no meio: o tool_use existe e o tool_result não. Dizer
+        isso é melhor que omitir a chamada e o novo provider achar que nunca
+        aconteceu."""
+        messages = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "9", "name": "get_news", "input": {}}]},
+        ]
+        texto = _condense_history_for_fallback(messages)[0]["content"]
+        assert "get_news" in texto
+        assert "sem resultado registrado" in texto
+
+    def test_conteudo_em_blocos_nao_vira_string(self):
+        """A primeira mensagem pode ser lista de blocos (prompt com cache)."""
+        messages = self._sessao()
+        messages[0] = {"role": "user", "content": [{"type": "text", "text": "pergunta"}]}
+        result = _condense_history_for_fallback(messages)
+        assert isinstance(result[0]["content"], list)
+        assert result[0]["content"][0]["text"] == "pergunta"
+        assert "get_stock_data" in result[0]["content"][-1]["text"]
 
     def test_empty_list_stays_empty(self):
-        assert _truncate_history_for_fallback([]) == []
+        assert _condense_history_for_fallback([]) == []
 
     def test_single_message_unchanged(self):
         messages = [{"role": "user", "content": "oi"}]
-        assert _truncate_history_for_fallback(messages) == messages
+        assert _condense_history_for_fallback(messages) == messages
 
 
 class TestResolveTier:

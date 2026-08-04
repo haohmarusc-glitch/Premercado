@@ -14,9 +14,9 @@ import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFir
 import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
-import { runExclusiveFresh } from "./python-queue";
+import { runExclusiveFresh, filaPendentes } from "./python-queue";
 import { spawnPython } from "./python-spawn";
-import { ordemRotacionada } from "./ciclo-rotativo";
+import { ordemRotacionada, deveDispararCiclo, TAREFAS_POR_CICLO } from "./ciclo-rotativo";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
 import { todayBRTDateString } from "./timezone";
@@ -570,6 +570,16 @@ let inicioDoCiclo = 0;
  * Ver ciclo-rotativo.ts.
  */
 function dispararCiclo(): void {
+  const pendentes = filaPendentes();
+  if (!deveDispararCiclo(pendentes)) {
+    // Não avança inicioDoCiclo: a rotação existe pra distribuir o descarte
+    // entre os checkers, e num ciclo que não rodou não houve o que distribuir.
+    logger.warn(
+      { pendentes, limite: TAREFAS_POR_CICLO },
+      "Ciclo de checkers pulado -- a fila ainda não drenou a volta anterior",
+    );
+    return;
+  }
   for (const { nome, run } of ordemRotacionada(CICLO, inicioDoCiclo)) {
     run().catch((e) => logger.error({ e }, `${nome} error`));
   }
