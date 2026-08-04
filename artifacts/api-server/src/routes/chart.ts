@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import { agentDir, getPythonBin } from "../lib/runner";
 import { GetTickerChartQueryParams, GetTickerChartResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -22,7 +22,7 @@ const TTL: Record<string, number> = {
 function fetchChart(symbol: string, period: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const sym = symbol, per = period;
-    const py = spawn(getPythonBin(), ["-m", "agent.get_chart", sym, per], {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.get_chart", sym, per], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
     });

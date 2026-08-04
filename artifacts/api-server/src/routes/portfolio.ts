@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { and, asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, usersTable } from "@workspace/db";
@@ -18,6 +17,7 @@ import {
   UpdatePortfolioPurchaseParams as PortfolioPurchaseParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -29,7 +29,7 @@ type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<string, number>> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_historical_price.py");
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ ticker, dates }));
     py.stdin.end();
     let out = "";

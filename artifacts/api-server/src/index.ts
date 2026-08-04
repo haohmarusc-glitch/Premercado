@@ -8,6 +8,7 @@ import { startScenarioParamsChecker } from "./lib/scenario-params-checker";
 import { ensureSchema } from "./lib/ensure-schema";
 import { claimSeedAccountBootstrap } from "./lib/claim-seed-account";
 import { shouldRunBackgroundCheckers } from "./lib/background-checkers";
+import { iniciarRelatoPython } from "./lib/python-spawn";
 
 const rawPort = process.env["PORT"];
 
@@ -29,6 +30,9 @@ app.listen(port, async (err) => {
   await ensureSchema();
   await claimSeedAccountBootstrap();
   await startScheduler();
+  // Fora do if: as rotas HTTP spawnam Python mesmo com os checkers de fundo
+  // desligados, e são elas a principal suspeita da contenção.
+  iniciarRelatoPython();
   if (shouldRunBackgroundCheckers()) {
     startAlertChecker();
     startPortfolioAlertChecker();

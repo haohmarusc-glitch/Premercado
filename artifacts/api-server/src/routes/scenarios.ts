@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { eq, inArray } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable, sectorMomentumTable } from "@workspace/db";
@@ -8,6 +7,7 @@ import { getPythonBin, agentDir } from "../lib/runner";
 import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
 import { logger } from "../lib/logger";
 import { runExclusive } from "../lib/python-queue";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -34,7 +34,7 @@ function scriptEnv(timeoutMs: number): NodeJS.ProcessEnv {
 export function runScript(scriptName: string, args: string[]): Promise<string> {
   return runExclusive(scriptName, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
-    const py = spawn(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
+    const py = spawnPython(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
     let out = "";
     let err = "";
     const timer = setTimeout(() => {
@@ -59,7 +59,7 @@ export function runScript(scriptName: string, args: string[]): Promise<string> {
 function runStdinScript(scriptName: string, payload: object, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<string> {
   return runExclusive(scriptName, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
-    const py = spawn(getPythonBin(), [scriptPath], { env: scriptEnv(timeoutMs) });
+    const py = spawnPython(getPythonBin(), [scriptPath], { env: scriptEnv(timeoutMs) });
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

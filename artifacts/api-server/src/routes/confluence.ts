@@ -1,14 +1,14 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
 function runConfluence(payload: object): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "confluence_engine.py");
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

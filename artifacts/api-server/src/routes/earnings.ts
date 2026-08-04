@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { db, settingsTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -23,7 +23,7 @@ router.get("/earnings", async (req, res): Promise<void> => {
   }
 
   const scriptPath = path.join(agentDir, "agent", "get_earnings.py");
-  const py = spawn(getPythonBin(), [scriptPath, tickers.join(",")]);
+  const py = spawnPython(getPythonBin(), [scriptPath, tickers.join(",")]);
 
   let out = "";
   let err = "";
