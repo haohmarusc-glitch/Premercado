@@ -1130,6 +1130,60 @@ def get_last_iv_snapshot() -> dict:
     return dict(_ULTIMA_IV)
 
 
+# ── Retry de correção: pegar o texto sem a fala que vem junto ─────────────────
+#
+# Os dois validadores (relatório diário e Veredito) mandam um retry pedindo o
+# texto reescrito já corrigido. Os dois prompts já dizem "reescreva o relatório
+# completo", e o modelo obedece -- e ainda assim põe um "Compreendido. Segue o
+# relatório corrigido apenas no rótulo e justificativa de SKHY, mantendo o
+# restante da análise e formato original." na frente.
+#
+# Visto em produção 03/08: essa frase virou a PRIMEIRA LINHA do relatório
+# diário que o usuário lê, com direito a citar o ticker corrigido e expor o
+# mecanismo interno de validação a quem só queria a análise do dia.
+#
+# Mesma divisão de trabalho de sempre: o prompt pede, o código garante.
+
+# Âncora curta demais casa por acaso dentro do próprio preâmbulo (que costuma
+# conter "o relatório", "a análise"), então só serve de referência uma linha
+# com corpo.
+_ANCORA_MIN_CHARS = 20
+
+
+def _primeira_linha_util(texto: str) -> str:
+    for linha in texto.splitlines():
+        limpa = linha.strip()
+        if len(limpa) >= _ANCORA_MIN_CHARS:
+            return limpa
+    return ""
+
+
+def _sem_preambulo(corrigido: str, original: str) -> str:
+    """Corta a fala de acompanhamento antes do texto reescrito.
+
+    A âncora é a abertura do texto ORIGINAL: o retry só troca rótulo e
+    justificativa, então o começo tem que reaparecer igual. Quando não
+    reaparece (o modelo reescreveu o título), devolve intacto -- errar pra menos
+    aqui só mantém o comportamento de antes, enquanto errar pra mais
+    decapitaria um relatório legítimo.
+    """
+    ancora = _primeira_linha_util(original)
+    if not ancora:
+        return corrigido
+    idx = corrigido.find(ancora)
+    return corrigido[idx:].lstrip() if idx > 0 else corrigido
+
+
+def _texto_da_correcao(fix_resp, original: str) -> str | None:
+    """Primeiro bloco de texto do retry, já sem o preâmbulo. None se não veio
+    texto nenhum -- aí o chamador fica com o original."""
+    from .provider import TextBlock
+    for block in fix_resp.content:
+        if isinstance(block, TextBlock) and block.text.strip():
+            return _sem_preambulo(block.text, original)
+    return None
+
+
 # ── Run modes ─────────────────────────────────────────────────────────────────
 
 def run(progress_callback=None) -> str:
@@ -1195,11 +1249,9 @@ def run(progress_callback=None) -> str:
                     {"role": "user", "content": correction_prompt(lrep)},
                 ],
             )
-            from .provider import TextBlock
-            for block in fix_resp.content:
-                if isinstance(block, TextBlock) and block.text.strip():
-                    final_text = block.text
-                    break
+            corrigido = _texto_da_correcao(fix_resp, final_text)
+            if corrigido:
+                final_text = corrigido
         except Exception as e:
             # Igual ao veredito: falha no retry não derruba o relatório inteiro
             # -- fica o texto original, com as violações já logadas acima.
@@ -1430,15 +1482,15 @@ def run_veredito(progress_callback=None) -> str:
                     {"role": "user", "content": (
                         "CORRIJA os seguintes erros factuais e reescreva o "
                         "veredito completo já corrigido (mesmo formato de "
-                        "antes, não apenas as partes erradas):\n" + lrep.summary()
+                        "antes, não apenas as partes erradas). Comece direto "
+                        "pelo veredito, sem nenhuma frase de introdução:\n"
+                        + lrep.summary()
                     )},
                 ],
             )
-            from .provider import TextBlock
-            for block in fix_resp.content:
-                if isinstance(block, TextBlock) and block.text.strip():
-                    final_text = block.text
-                    break
+            corrigido = _texto_da_correcao(fix_resp, final_text)
+            if corrigido:
+                final_text = corrigido
         except Exception as e:
             # Falha no retry não pode derrubar o veredito inteiro -- fica
             # com o texto original (com os erros já logados acima pro

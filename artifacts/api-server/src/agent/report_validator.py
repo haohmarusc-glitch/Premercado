@@ -387,6 +387,9 @@ def correction_prompt(rep: ValidationReport) -> str:
     ]
     linhas += [f"- {i}" for i in rep.issues]
     linhas.append(
-        "Reescreva o relatório completo já corrigido, no mesmo formato."
+        "Reescreva o relatório completo já corrigido, no mesmo formato. "
+        "Comece direto pelo relatório, sem nenhuma frase de introdução "
+        "(nada de \"Compreendido\", \"Segue o relatório corrigido\" etc.) -- "
+        "o texto vai inteiro pro usuário, do jeito que você escrever."
     )
     return "\n".join(linhas)

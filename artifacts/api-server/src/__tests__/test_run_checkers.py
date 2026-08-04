@@ -6,11 +6,48 @@ todo teste aqui existe pra provar que isso NÃO acontece.
 """
 import io
 import json
+import sys
 
 import pytest
 
 from agent import run_checkers as rc
 from agent.bounded_parallel import MIN_BUDGET_S
+
+
+# ── Import pesado dentro da janela medida ─────────────────────────────────────
+
+
+def test_modulos_de_check_sao_importados_no_topo():
+    """Import sob demanda dentro de cada check reintroduz o bug do orçamento.
+
+    budget_from_deadline() calcula a fatia a partir do relógio no momento da
+    chamada, então tudo que é caro precisa ter acontecido ANTES. Com os imports
+    lazy, o pandas+numpy+yfinance subia depois da fatia já calculada e o tempo
+    dele não entrava em orçamento nenhum.
+
+    Produção 04/08: `[run_checkers] spike: 121.9s (fatia de 40.0s)` -- o
+    bounded_parallel_map respeitou os 40s ("orçamento esgotado com 6
+    pendentes"); os ~80s restantes eram o import escondido dentro da medição.
+    """
+    for modulo in (
+        "agent.market_alerts",
+        "agent.get_intraday_spikes",
+        "agent.get_bounce_alerts",
+        "agent.get_squeeze_alerts",
+    ):
+        assert modulo in sys.modules, f"{modulo} precisa entrar antes do primeiro budget"
+
+
+def test_funcoes_por_ticker_vem_dos_scripts_standalone():
+    """Reaproveitadas, não reimplementadas -- senão viram uma segunda cópia da
+    lógica, livre pra sair de sincronia com o script original."""
+    from agent.get_bounce_alerts import _bounce_for
+    from agent.get_intraday_spikes import _spikes_for
+    from agent.get_squeeze_alerts import _progress_for
+
+    assert rc._spikes_for is _spikes_for
+    assert rc._bounce_for is _bounce_for
+    assert rc._progress_for is _progress_for
 
 
 # ── Divisão do orçamento ──────────────────────────────────────────────────────
