@@ -614,7 +614,13 @@ function dispararCiclo(): void {
     return;
   }
   for (const { nome, run } of ordemRotacionada(CICLO, inicioDoCiclo)) {
-    run().catch((e) => logger.error({ e }, `${nome} error`));
+    // Chave `err`, NUNCA `e`: o serializador de erro do pino só é aplicado à
+    // chave "err". Sob "e" o Error vira JSON.stringify comum, e message e
+    // stack são propriedades NÃO enumeráveis -- somem. Foi assim que os
+    // "Alert check error" / "Market checkers error" de 04/08 chegaram ao log
+    // como {"query":...,"params":[true],"cause":{}}: a causa raiz existia, só
+    // não era impressa. Cinco ocorrências ficaram sem diagnóstico por isso.
+    run().catch((err) => logger.error({ err }, `${nome} error`));
   }
   inicioDoCiclo += 1;
 }
