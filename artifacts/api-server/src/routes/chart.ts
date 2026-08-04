@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { coalescer } from "../lib/em-voo";
 import { agentDir, getPythonBin } from "../lib/runner";
 import { GetTickerChartQueryParams, GetTickerChartResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
@@ -20,7 +21,7 @@ const TTL: Record<string, number> = {
 };
 
 function fetchChart(symbol: string, period: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  return coalescer(`chart:${symbol}:${period}`, () => new Promise((resolve, reject) => {
     const sym = symbol, per = period;
     const py = spawnPython(getPythonBin(), ["-m", "agent.get_chart", sym, per], {
       cwd: agentDir,
@@ -39,7 +40,7 @@ function fetchChart(symbol: string, period: string): Promise<unknown> {
       if (code !== 0) { reject(new Error(`get_chart exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  });
+  }));
 }
 
 router.get("/tickers/chart", async (req, res): Promise<void> => {
