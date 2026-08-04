@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { coalescer } from "../lib/em-voo";
 import path from "path";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
@@ -12,7 +13,7 @@ let cache: Cache | null = null;
 const CACHE_TTL_MS = 60_000;
 
 function fetchTechnicals(tickers: string[]): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  return coalescer(`technicals:${tickers.join(",")}`, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ tickers }));
@@ -27,7 +28,7 @@ function fetchTechnicals(tickers: string[]): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 router.get("/technicals", async (req, res): Promise<void> => {

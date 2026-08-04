@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { coalescer } from "../lib/em-voo";
 import path from "path";
 import { desc, gte } from "drizzle-orm";
 import { db, intradaySpikesTable, type IntradaySpike } from "@workspace/db";
@@ -9,8 +10,10 @@ import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
+// Coalescido no ponto do spawn, não em cada rota: assim toda rota que usa
+// runPython herda a proteção, inclusive as que forem adicionadas depois.
 function runPython(script: string, payload: object): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  return coalescer(`${script}:${JSON.stringify(payload)}`, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", script);
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -25,7 +28,7 @@ function runPython(script: string, payload: object): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 // get_market_alerts_snapshot.py precisa rodar via `-m agent.xxx` (import
@@ -34,7 +37,9 @@ function runPython(script: string, payload: object): Promise<unknown> {
 // relativo que só resolve nesse contexto de pacote. Mesmo padrão de
 // routes/quotes.ts (get_quotes.py) e routes/chart.ts (get_chart.py).
 function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  // Foi ESTE que apareceu duplicado no log de 04/08: dois GET /api/market-alerts
+  // idênticos em voo (ids 72 e 78), 9s cada, dois interpretadores.
+  return coalescer(`market_alerts:${JSON.stringify(payload)}`, () => new Promise((resolve, reject) => {
     const py = spawnPython(getPythonBin(), ["-m", "agent.get_market_alerts_snapshot"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
@@ -55,7 +60,7 @@ function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 async function resolveTickers(raw: string): Promise<string[]> {
