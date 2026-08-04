@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { coalescer } from "../lib/em-voo";
 import { spawnPython } from "../lib/python-spawn";
 import { eq } from "drizzle-orm";
 import { db, portfolioPositionsTable } from "@workspace/db";
@@ -22,7 +23,10 @@ const cacheByUser = new Map<number, QuoteCache>();
 const CACHE_TTL_MS = 60_000;
 
 function fetchQuotes(tickers: string[]): Promise<unknown[]> {
-  return new Promise((resolve, reject) => {
+  // O cache é POR USUÁRIO (cacheByUser) mas a busca não depende do usuário --
+  // dois usuários com a mesma lista abriam dois processos para o mesmo dado.
+  // A chave aqui é a lista, então eles se juntam.
+  return coalescer(`quotes:${tickers.join(",")}`, () => new Promise((resolve, reject) => {
     const py = spawnPython(
       getPythonBin(),
       ["-m", "agent.get_quotes", ...tickers],
@@ -52,7 +56,7 @@ function fetchQuotes(tickers: string[]): Promise<unknown[]> {
         reject(new Error(`Failed to parse quotes JSON: ${stdout}`));
       }
     });
-  });
+  }));
 }
 
 // GET /fx/usdbrl — cotação USD→BRL (via Yahoo "BRL=X") para converter
