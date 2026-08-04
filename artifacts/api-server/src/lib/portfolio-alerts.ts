@@ -254,8 +254,9 @@ export function startPortfolioAlertChecker(): void {
   async function loop(): Promise<void> {
     try {
       await checkPortfolioAlerts();
-    } catch (e) {
-      logger.error({ e }, "Portfolio alert check error");
+    } catch (err) {
+      // `err`, não `e` -- ver comentário em alert-checker.ts::dispararCiclo.
+      logger.error({ err }, "Portfolio alert check error");
     }
     setTimeout(loop, CHECK_INTERVAL_MS);
   }

@@ -1,0 +1,61 @@
+# Contexto enviado ao daemon do Docker. Tudo que fica de fora aqui também fica
+# de fora da imagem final, porque o estágio de runtime copia o /app inteiro do
+# estágio de build (ver Dockerfile).
+
+# node_modules: o build faz `pnpm install --frozen-lockfile` dentro da imagem.
+# Copiar os do host além de inflar o contexto em ~1 GB traria binários nativos
+# compilados para OUTRA plataforma, que falham em runtime de um jeito confuso.
+node_modules
+**/node_modules
+
+# Saída de build: reconstruída dentro da imagem. Copiar a do host arrisca subir
+# um dist antigo caso o build falhe e o COPY anterior sobreviva.
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+.git
+.github
+.gitignore
+
+# Específicos do Replit -- não têm sentido na imagem e mudam com frequência,
+# invalidando cache de camada à toa.
+.replit
+.replitignore
+replit.nix
+.local
+.upm
+.cache
+.config
+
+# Caches de ferramenta
+.pytest_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.pyc
+.venv
+**/.venv
+
+# Editor / SO
+.idea
+.vscode
+.DS_Store
+
+# Lixo de depuração que já esteve versionado (ver commit "Parar de versionar
+# screenshots e saída de depuração")
+*.patch
+patch_log*.txt
+PR_DESCRIPTION.md
+
+# ~3,6 MB de screenshots colados no chat do Replit. O alias @assets do Vite
+# aponta pra cá, mas nenhum arquivo do frontend importa de lá -- conferido
+# antes de excluir.
+attached_assets
+
+# O .env real nunca entra na imagem: quem injeta as variáveis é o
+# `env_file:` do compose, em runtime. Copiar segredo para dentro de camada de
+# imagem os deixa legíveis por qualquer um que tenha a imagem.
+.env
+.env.*

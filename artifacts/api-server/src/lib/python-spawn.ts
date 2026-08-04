@@ -141,7 +141,14 @@ export function iniciarRelatoPython(): void {
     if (pico <= 1) return;
     logger.info(
       { picoNaJanela: pico, vivosAgora: vivos, janelaMs: RELATO_INTERVALO_MS },
-      "Python: pico de subprocessos simultâneos na janela",
+      // "neste processo" não é detalhe: o contador é uma variável de módulo, e
+      // no Autoscale mais de uma instância roda o conjunto completo de
+      // checkers ao mesmo tempo (04/08: dois pids logando "Ciclo de checkers
+      // pulado" com filas independentes, com 3s de diferença). O total real da
+      // máquina é a SOMA dos pids, e nenhum processo consegue medi-lo. A
+      // mensagem antiga lia-se como número global e levou a concluir que não
+      // havia contenção quando havia.
+      "Python: pico de subprocessos simultâneos neste processo (por pid, não da máquina)",
     );
   }, RELATO_INTERVALO_MS);
   // Não segura o event loop aberto no shutdown.

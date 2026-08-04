@@ -192,8 +192,9 @@ export function startScenarioAlertChecker(): void {
   async function loop(): Promise<void> {
     try {
       await checkScenarioAlerts();
-    } catch (e) {
-      logger.error({ e }, "Scenario alert check error");
+    } catch (err) {
+      // `err`, não `e` -- ver comentário em alert-checker.ts::dispararCiclo.
+      logger.error({ err }, "Scenario alert check error");
     }
     setTimeout(loop, CHECK_INTERVAL_MS);
   }
