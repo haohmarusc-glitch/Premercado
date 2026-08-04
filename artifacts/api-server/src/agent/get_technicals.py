@@ -23,6 +23,7 @@ logging.disable(logging.CRITICAL)
 import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker, friendly_error
+import hist_cache
 
 def technicals(ticker: str, period: str = "6mo") -> dict:
     try:
@@ -30,7 +31,14 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
     except ValueError as e:
         return {"ticker": str(ticker), "error": str(e)}
     try:
-        hist = yf.Ticker(ticker).history(period=period, auto_adjust=True)
+        # Mesmo cache em disco do market_alerts._history: este script roda num
+        # PROCESSO À PARTE e baixava o mesmo 6mo dos mesmos tickers que o
+        # run_checkers acabara de baixar, a cada 5 minutos. auto_adjust=True
+        # aqui (contra False lá) faz parte da chave -- as séries diferem.
+        hist = hist_cache.carregar(ticker, period, auto_adjust=True)
+        if hist is None:
+            hist = yf.Ticker(ticker).history(period=period, auto_adjust=True)
+            hist_cache.guardar(ticker, period, hist, auto_adjust=True)
         if hist.empty or len(hist) < 30:
             return {"ticker": ticker, "error": "Dados insuficientes"}
         if hasattr(hist.columns, "levels"):

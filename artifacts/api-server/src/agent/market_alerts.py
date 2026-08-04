@@ -26,6 +26,7 @@ import pandas as pd
 import yfinance as yf
 
 from .cache import cached
+from . import hist_cache
 
 
 # =============================================================================
@@ -350,14 +351,31 @@ def _intraday_1m(ticker: str) -> Optional[pd.DataFrame]:
 
 
 def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
+    """Histórico diário, com dois níveis de cache.
+
+    _HIST_CACHE (memória) resolve o mesmo ticker pedido várias vezes DENTRO do
+    processo. Ele não ajuda entre processos, e é aí que estava o desperdício:
+    get_technicals baixa o mesmo 6mo dos mesmos tickers num processo separado,
+    e o ciclo seguinte recomeça do zero 5 minutos depois.
+
+    hist_cache (disco) cobre esse vão -- e só pra período longo, onde o candle
+    de hoje não domina o indicador. Ver a docstring de hist_cache.py.
+    """
     key = f"{ticker}:{period}"
     if key in _HIST_CACHE:
         return _HIST_CACHE[key]
+
+    do_disco = hist_cache.carregar(ticker, period, auto_adjust=False)
+    if do_disco is not None:
+        _HIST_CACHE[key] = do_disco
+        return do_disco
+
     try:
         df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
         if df is None or df.empty:
             return None
         _HIST_CACHE[key] = df
+        hist_cache.guardar(ticker, period, df, auto_adjust=False)
         return df
     except Exception as e:
         print(f"[market_alerts] erro ao baixar {ticker}: {e}", file=sys.stderr)
