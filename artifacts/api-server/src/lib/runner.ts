@@ -399,14 +399,16 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     // Save report to DB -- userId só pros modos derivados da carteira de
     // quem disparou a run (ver comentário em reportsTable.userId); os demais
     // ficam null, mantendo o comportamento de sempre (relatório compartilhado).
+    let reportIdAtual: number | undefined;
     try {
-      await db.insert(reportsTable).values({
+      const [linha] = await db.insert(reportsTable).values({
         date: today,
         content,
         tickers,
         mode,
         userId: (trigger === "portfolio" || trigger === "veredito") ? userId ?? null : null,
-      });
+      }).returning({ id: reportsTable.id });
+      reportIdAtual = linha?.id;
       logger.info("Report saved to database");
     } catch (err) {
       logger.error({ err }, "Failed to save report to database");
@@ -463,7 +465,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     // aviso no topo do e-mail (ver report-preflight.ts).
     let corpoEmail = content;
     try {
-      const pre = await preflightRelatorio({ content, date: today, mode, tickers });
+      const pre = await preflightRelatorio({ content, date: today, mode, tickers, reportIdAtual });
       if (pre.achados.length) {
         logger.warn(
           { mode, achados: pre.achados, bloqueado: pre.bloqueado },
