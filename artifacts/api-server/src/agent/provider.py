@@ -824,15 +824,96 @@ def _is_falha_permanente(exc: Exception) -> bool:
     return any(k in msg for k in _SEM_SALDO)
 
 
-def _truncate_history_for_fallback(messages: list) -> list:
+# Teto por resultado no resumo do fallback. Resultado de ferramenta aqui é JSON
+# de cadeia de opções, série de preços, lista de manchetes -- alguns passam de
+# 100k caracteres sozinhos. O corte guarda o começo, que é onde ficam os campos
+# resumidos que o modelo de fato cita no relatório.
+_FALLBACK_RESULTADO_MAX_CHARS = 3000
+# Teto do resumo inteiro. O provider de fallback costuma ser o mais fraco da
+# cadeia, e um resumo sem limite viraria um contexto que ele não aguenta.
+_FALLBACK_RESUMO_MAX_CHARS = 120_000
+
+
+def _blocos_de(msg) -> list:
+    conteudo = msg.get("content") if isinstance(msg, dict) else None
+    return conteudo if isinstance(conteudo, list) else []
+
+
+def _resumo_do_trabalho_ja_feito(messages: list) -> str:
+    """Ferramentas já executadas e o que devolveram, na ordem em que rodaram."""
+    resultados: dict[str, str] = {}
+    for msg in messages:
+        for bloco in _blocos_de(msg):
+            if not (isinstance(bloco, dict) and bloco.get("type") == "tool_result"):
+                continue
+            conteudo = bloco.get("content")
+            if not isinstance(conteudo, str):
+                conteudo = json.dumps(conteudo, ensure_ascii=False, default=str)
+            resultados[bloco.get("tool_use_id")] = conteudo
+
+    partes: list[str] = []
+    total = 0
+    for msg in messages:
+        for bloco in _blocos_de(msg):
+            if not (isinstance(bloco, dict) and bloco.get("type") == "tool_use"):
+                continue
+            entrada = json.dumps(bloco.get("input") or {}, ensure_ascii=False, default=str)
+            saida = resultados.get(bloco.get("id"), "(chamada sem resultado registrado)")
+            if len(saida) > _FALLBACK_RESULTADO_MAX_CHARS:
+                saida = saida[:_FALLBACK_RESULTADO_MAX_CHARS] + " ...(cortado)"
+            trecho = f"### {bloco.get('name')}({entrada})\n{saida}"
+            if total + len(trecho) > _FALLBACK_RESUMO_MAX_CHARS:
+                partes.append("(resumo cortado aqui -- limite de tamanho atingido)")
+                return "\n\n".join(partes)
+            partes.append(trecho)
+            total += len(trecho)
+    return "\n\n".join(partes)
+
+
+def _condense_history_for_fallback(messages: list) -> list:
     """
-    Ao trocar para um provider diferente do que iniciou esta chamada, o
-    histórico de tool_use/tool_result acumulado no provider original não faz
-    sentido para o novo assumir de onde parou — mantemos só a primeira
-    mensagem (a instrução original do usuário) e o novo provider recomeça o
-    fluxo de ferramentas do zero.
+    Histórico CONDENSADO ao trocar de provider no meio da chamada.
+
+    O formato de tool_use/tool_result do provider original não é aproveitável
+    direto pelo novo -- daí a versão anterior mandar só a primeira mensagem e
+    deixar o novo recomeçar. O custo disso não é o formato, é o TRABALHO: as
+    chamadas de rede já feitas, já pagas, e que o novo provider ia refazer.
+
+    Produção 04/08: a anthropic deu timeout no turno 11, o histórico foi de 21
+    mensagens para 1, e o gemini reexecutou a FASE 1 inteira -- exatamente os
+    mesmos 7 tools do turno 1. Foram US$ 0,74 de coleta jogados fora, e os
+    turnos restantes não deram pra terminar: a run acabou em 188 caracteres.
+
+    Aqui o histórico vira TEXTO: uma mensagem só, com as ferramentas que já
+    rodaram e o que elas devolveram. Some o problema de formato (é prosa, não
+    protocolo) e o novo provider continua de onde parou em vez de recomeçar.
     """
-    return messages[:1] if messages else messages
+    if len(messages) <= 1:
+        return messages
+
+    resumo = _resumo_do_trabalho_ja_feito(messages)
+    if not resumo:
+        # Nenhuma ferramenta rodou ainda -- não há trabalho a preservar, e o
+        # comportamento antigo já era o certo.
+        return messages[:1]
+
+    aviso = (
+        "CONTEXTO: esta sessão já estava em andamento com outro modelo, que "
+        "ficou indisponível. As ferramentas abaixo JÁ FORAM EXECUTADAS e os "
+        "resultados continuam válidos -- NÃO chame nenhuma delas de novo com "
+        "os mesmos argumentos. Continue de onde a sessão parou.\n\n"
+        + resumo
+    )
+
+    primeira = messages[0]
+    papel = primeira.get("role", "user") if isinstance(primeira, dict) else "user"
+    conteudo = primeira.get("content") if isinstance(primeira, dict) else None
+    if isinstance(conteudo, str):
+        return [{"role": papel, "content": conteudo + "\n\n" + aviso}]
+    return [{
+        "role": papel,
+        "content": list(conteudo or []) + [{"type": "text", "text": aviso}],
+    }]
 
 
 class FallbackClient:
@@ -916,15 +997,20 @@ class FallbackClient:
             resolved_tools = tools_fn(name) if tools_fn else tools
 
             if name != primary_name:
-                # Trocando de provider no meio desta chamada: o histórico de
-                # tool_use/tool_result acumulado no provider original não faz
-                # sentido para o novo assumir de onde parou — ele recomeça o
-                # fluxo de ferramentas do zero.
-                resolved_messages = _truncate_history_for_fallback(messages)
+                # Trocando de provider no meio desta chamada: o histórico em
+                # formato de tool_use/tool_result não é aproveitável direto pelo
+                # novo, então vira TEXTO -- preservando o trabalho já pago em
+                # vez de mandar o novo recomeçar (ver _condense_history_for_fallback).
+                resolved_messages = _condense_history_for_fallback(messages)
                 if len(messages) > 1:
+                    chars = sum(
+                        len(m.get("content", "")) if isinstance(m.get("content"), str) else 0
+                        for m in resolved_messages
+                    )
                     print(
-                        f"[provider] histórico truncado para {name} "
-                        f"({len(messages)} -> {len(resolved_messages)} mensagem(ns))",
+                        f"[provider] histórico condensado para {name} "
+                        f"({len(messages)} mensagens -> 1 de {chars} chars, "
+                        f"com o trabalho já feito)",
                         flush=True,
                     )
             else:
