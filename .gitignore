@@ -54,3 +54,13 @@ __pycache__/
 *.pyo
 .venv/
 *.egg-info/
+
+# Anexos da UI do Replit -- screenshots colados no chat viram commit a cada
+# publish. Já eram ~3,6MB quando isso foi notado, e não têm relação nenhuma com
+# o build. O que já está versionado fica (remover não recupera espaço do
+# histórico), mas os próximos não entram.
+attached_assets/
+
+# Saída de depuração do get_earnings, gravada durante execução manual. Não é
+# lida por nenhum código -- só aparecia no diff atrapalhando a leitura.
+artifacts/api-server/src/earnings_output.txt
