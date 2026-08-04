@@ -1,0 +1,22 @@
+# TLS é automático: o Caddy pede e renova o certificado da Let's Encrypt
+# sozinho, desde que o DNS de {$DOMINIO} já aponte para o IP desta máquina e as
+# portas 80/443 estejam abertas. Se o DNS ainda não propagou, o Caddy sobe
+# assim mesmo e continua tentando -- o sintoma é HTTPS falhando, não o
+# container morrendo.
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	reverse_proxy app:8080 {
+		# Sem timeout de resposta de propósito. O /api/reports/generate pode
+		# levar minutos (o agente roda dezenas de turnos com chamadas de LLM), e
+		# um timeout de proxy aqui cortaria a conexão no meio de uma run que já
+		# gastou dinheiro de API -- o pior momento possível para desistir.
+		flush_interval -1
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

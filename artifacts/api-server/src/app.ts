@@ -11,6 +11,7 @@ import {
   marcarEntradaNoRouter,
   marcarOrigemErrorHandler,
 } from "./middleware/observar-5xx";
+import { montarEstatico, servirEstaticoLigado } from "./lib/servir-estatico";
 
 const app: Express = express();
 
@@ -36,7 +37,52 @@ app.set("trust proxy", 1);
 // diferente do backend (exatamente o caso que o cors() abaixo ja permite
 // explicitamente via ALLOWED_ORIGINS); sem isso o helmet quebraria requests
 // que o CORS deveria continuar liberando.
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+//
+// A CSP só entra quando ESTE processo serve o HTML. No Replit o documento vem
+// do roteador da borda, então a CSP do helmet nunca se aplicou a ele -- e
+// ligá-la agora, sem necessidade, mudaria o comportamento de produção antes da
+// migração. Quando o Express passa a servir o frontend a situação inverte: sem
+// CSP nenhuma o documento fica sem nenhuma restrição de origem.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: servirEstaticoLigado()
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            // 'unsafe-inline' é uma concessão real e vale nomear: o
+            // vite-plugin-pwa injeta o registro do service worker inline no
+            // index.html, e o embed da TradingView passa a config no TEXTO da
+            // tag <script>. Sem isso o gráfico e o PWA quebram. O que a
+            // diretiva ainda garante é o que mais importa aqui: script de
+            // host externo só da TradingView, de mais ninguém.
+            scriptSrc: [
+              "'self'",
+              "'unsafe-inline'",
+              "https://s3.tradingview.com",
+            ],
+            scriptSrcElem: [
+              "'self'",
+              "'unsafe-inline'",
+              "https://s3.tradingview.com",
+            ],
+            // Google Fonts: <link rel=stylesheet> do index.html (styleSrc) que
+            // por sua vez baixa os .woff2 de fonts.gstatic.com (fontSrc).
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "blob:", "https:"],
+            connectSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
+            // O widget da TradingView roda dentro de um iframe no domínio deles.
+            frameSrc: ["'self'", "https://www.tradingview.com", "https://s.tradingview.com"],
+            workerSrc: ["'self'", "blob:"],
+            objectSrc: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+          },
+        }
+      : undefined,
+  }),
+);
 
 // Configurar origens permitidas do CORS -- sempre array, mesmo no fallback,
 // pra nao misturar string/array na mesma variavel (cors() aceita os dois,
@@ -95,6 +141,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 app.use("/api", marcarEntradaNoRouter, router);
+
+// Depois do /api, de propósito: assim nenhuma rota da API pode ser sombreada
+// por um arquivo de mesmo nome no build do frontend.
+if (servirEstaticoLigado()) {
+  montarEstatico(app);
+}
 
 // Handler de erro global -- rotas devem chamar next(e) no catch em vez de
 // responder o erro cru (String(e) vazava mensagem/stack interno pro

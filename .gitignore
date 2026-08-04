@@ -64,3 +64,9 @@ attached_assets/
 # Saída de depuração do get_earnings, gravada durante execução manual. Não é
 # lida por nenhum código -- só aparecia no diff atrapalhando a leitura.
 artifacts/api-server/src/earnings_output.txt
+
+# Segredos do deploy fora do Replit (docker compose lê o .env da raiz). O
+# .env.example fica versionado; o .env real, nunca.
+.env
+.env.*
+!.env.example
