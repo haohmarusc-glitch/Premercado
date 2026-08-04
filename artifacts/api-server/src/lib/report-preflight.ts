@@ -18,7 +18,7 @@
  * viram aviso no topo do e-mail: um falso positivo que engole o relatório do
  * dia seria pior que o defeito que ele denuncia.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db, reportsTable } from "@workspace/db";
 import { logger } from "./logger";
 
@@ -70,8 +70,10 @@ export async function preflightRelatorio(opts: {
   mode: string;
   tickers: string[];
   agora?: Date;
+  /** Id do relatório recém-gravado, para não compará-lo consigo mesmo. */
+  reportIdAtual?: number;
 }): Promise<PreflightResult> {
-  const { content, date, mode, tickers } = opts;
+  const { content, date, mode, tickers, reportIdAtual } = opts;
   const agora = opts.agora ?? new Date();
   const achados: Achado[] = [];
   const texto = content;
@@ -127,12 +129,29 @@ export async function preflightRelatorio(opts: {
 
   // 5. Preços idênticos ao relatório anterior num dia útil. Em fim de semana
   //    isso é o correto (mercado fechado) e a checagem 3 já cobre.
+  //
+  //    `reportIdAtual` NÃO é opcional por preguiça: runner.ts grava o relatório
+  //    ANTES de chamar o preflight, então "o mais recente do mesmo modo" é o
+  //    próprio relatório sendo checado. Sem excluí-lo, a comparação é do texto
+  //    contra ele mesmo e o alerta dispara sempre.
+  //
+  //    Produção 04/08: "Todos os 25 preços citados são idênticos aos do
+  //    relatório anterior" numa run em que SMCI foi de 29,72 pra 30,05, ARM de
+  //    250,50 pra 270,00 e HCC de 76,84 pra 82,16. Um alerta que grita em toda
+  //    run ensina a ignorar alertas -- custa mais que não existir.
+  //
+  //    A checagem 2 (SEGUNDO_EMAIL_HOJE) usa `n > 1` justamente porque conta
+  //    com o recém-inserido; por isso a exclusão é só aqui.
   if (!fimDeSemana) {
     try {
       const [anterior] = await db
         .select({ content: reportsTable.content })
         .from(reportsTable)
-        .where(eq(reportsTable.mode, mode))
+        .where(
+          reportIdAtual != null
+            ? and(eq(reportsTable.mode, mode), ne(reportsTable.id, reportIdAtual))
+            : eq(reportsTable.mode, mode),
+        )
         .orderBy(desc(reportsTable.id))
         .limit(1);
       if (anterior?.content) {
