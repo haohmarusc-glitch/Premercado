@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db, chatSessionsTable, chatMessagesTable } from "@workspace/db";
 import {
@@ -10,6 +9,7 @@ import {
 } from "@workspace/api-zod";
 import { agentDir, getPythonBin, getPortfolioTickers } from "../lib/runner";
 import { logger } from "../lib/logger";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -156,7 +156,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
   // anteriores (setores/cestas fixas) — bug reportado pelo usuário 01/08.
   const portfolioTickers = await getPortfolioTickers(req.userId!);
 
-  const py = spawn(getPythonBin(), ["-m", "agent.run_chat"], {
+  const py = spawnPython(getPythonBin(), ["-m", "agent.run_chat"], {
     cwd: agentDir,
     env: {
       ...process.env,

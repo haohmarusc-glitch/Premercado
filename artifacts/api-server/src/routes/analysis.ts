@@ -1,18 +1,18 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { desc, gte } from "drizzle-orm";
 import { db, intradaySpikesTable, type IntradaySpike } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
 function runPython(script: string, payload: object): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", script);
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";
@@ -35,7 +35,7 @@ function runPython(script: string, payload: object): Promise<unknown> {
 // routes/quotes.ts (get_quotes.py) e routes/chart.ts (get_chart.py).
 function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_market_alerts_snapshot"], {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.get_market_alerts_snapshot"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
     });

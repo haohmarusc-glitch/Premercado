@@ -8,7 +8,6 @@
  * varredura só) -- mas cada e-mail vai pro notify_email salvo NO PRÓPRIO
  * alerta (definido na criação), não mais pra um endereço único compartilhado.
  */
-import { spawn } from "child_process";
 import path from "path";
 import { and, eq, gte } from "drizzle-orm";
 import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFiringsTable, squeezeAlertFiringsTable, type Alert } from "@workspace/db";
@@ -16,6 +15,7 @@ import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
 import { runExclusiveFresh } from "./python-queue";
+import { spawnPython } from "./python-spawn";
 import { ordemRotacionada } from "./ciclo-rotativo";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import { getOrCreateSettings } from "../routes/settings";
@@ -93,7 +93,7 @@ const QUOTES_TIMEOUT_MS = 60_000;
 
 function fetchQuotes(tickers: string[]): Promise<Quote[] | null> {
   return runExclusiveFresh("get_quotes", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
       env: pythonEnv(QUOTES_TIMEOUT_MS),
     });
@@ -115,7 +115,7 @@ function fetchQuotes(tickers: string[]): Promise<Quote[] | null> {
 function fetchTechnicals(tickers: string[]): Promise<Technicals[] | null> {
   return runExclusiveFresh("get_technicals", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
     let out = "";
@@ -307,7 +307,7 @@ interface LoteDeCheckers {
 // o `close` abaixo tenta parsear a saída mesmo quando o processo foi morto.
 function fetchCheckers(tickers: string[]): Promise<LoteDeCheckers | null> {
   return runExclusiveFresh("run_checkers", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.run_checkers"], {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.run_checkers"], {
       cwd: agentDir,
       env: pythonEnv(CHECKERS_TIMEOUT_MS),
     });

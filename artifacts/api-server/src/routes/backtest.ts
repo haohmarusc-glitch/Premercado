@@ -1,16 +1,16 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { clamp, optionalPct } from "../lib/backtest-params";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
 function runBacktestScript(payload: object, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "backtest.py");
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

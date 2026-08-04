@@ -2,12 +2,12 @@
  * Shared agent runner — used by both the HTTP route and the scheduler.
  * Spawns the Python subprocess, records the run in DB, saves the report, and sends e-mail.
  */
-import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
 import { asc, eq, inArray, gte, sql } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { logger } from "./logger";
+import { spawnPython } from "./python-spawn";
 import { sendReportEmail } from "./mailer";
 import { bannerDeAvisos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
@@ -248,7 +248,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     : 240 * 1000;
   const softDeadlineMs = Date.now() + TIMEOUT_MS - SOFT_DEADLINE_BUFFER_MS;
 
-  const py = spawn(getPythonBin(), ["-m", "agent.run_agent"], {
+  const py = spawnPython(getPythonBin(), ["-m", "agent.run_agent"], {
     cwd: agentDir,
     env: {
       ...process.env,

@@ -1,16 +1,16 @@
 import { Router, type IRouter } from "express";
-import { spawn } from "child_process";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { db, portfolioPositionsTable } from "@workspace/db";
+import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
 function runPython(payload: object): Promise<object> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "risk_manager.py");
-    const py = spawn(getPythonBin(), [scriptPath]);
+    const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

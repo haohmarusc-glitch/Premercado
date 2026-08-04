@@ -8,13 +8,13 @@
  * mas cada e-mail vai pro notify_email salvo NA PRÓPRIA posição (definido na
  * criação), não mais pra um endereço único compartilhado.
  */
-import { spawn } from "child_process";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { agentDir, getPythonBin, state as agentState } from "./runner";
 import { sendAlertEmail, sendPortfolioHoldingEmail, sendRecompraEmail } from "./mailer";
 import { logger } from "./logger";
 import { runExclusive } from "./python-queue";
+import { spawnPython } from "./python-spawn";
 
 const CHECK_INTERVAL_MS = 15 * 60_000; // 15 min
 
@@ -35,7 +35,7 @@ const FETCH_TIMEOUT_MS = 30_000; // 30 s — se o Python travar, rejeita
 // enfileira por setInterval independentemente de o ciclo anterior ter drenado.
 function fetchPrices(tickers: string[]): Promise<PriceQuote[]> {
   return runExclusive("get_quotes", () => new Promise((resolve, reject) => {
-    const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
       cwd: agentDir,
       // AGENT_DEADLINE_TS: o Python deriva o orçamento do bounded_parallel_map
       // do tempo que realmente resta até FETCH_TIMEOUT_MS, em vez de usar uma
