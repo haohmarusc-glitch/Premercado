@@ -590,3 +590,57 @@ def test_max_tokens_do_diario_comporta_o_fan_out():
     """4096 era o teto que cortava turnos de 9-12 chamadas em produção."""
     from agent import config
     assert config.MAX_TOKENS >= 8192
+
+
+# ── Teto de turnos vs. cobertura real ─────────────────────────────────────────
+#
+# Produção 04/08: o teto era len(PORTFOLIO_TICKERS)*2+6 = 22, derivado da
+# carteira (8 ativos). A análise diária cobre config.TICKERS, e naquele dia eram
+# 28 -- get_stock_data em 28, técnicos em 24, candles em 20, analistas em 19. A
+# run bateu os 22 turnos exatos, custou US$ 0,96 e o preflight bloqueou o e-mail
+# por relatório vazio. O teto foi calculado sobre um conjunto que a run não
+# percorre.
+
+
+def test_teto_de_turnos_acompanha_a_cobertura_nao_a_carteira(monkeypatch):
+    from agent import config as config_module
+
+    monkeypatch.setattr(config_module, "TICKERS", ["T%d" % i for i in range(28)])
+    monkeypatch.setattr(config_module, "PORTFOLIO_TICKERS", ["A", "B", "C"])
+
+    # 28 ativos precisam de mais que os 22 que a fórmula antiga dava.
+    assert agent_module._turnos_para_cobertura() > 22
+
+
+def test_teto_cobre_uma_observacao_por_ativo_sem_agrupar(monkeypatch):
+    """O prompt pede save_observation em lote; modelo fraco ignora -- nesta run
+    foram 10 turnos seguidos de uma observação cada. O piso tem que sobreviver a
+    isso, senão o teto mata a run já paga a poucos turnos do fim."""
+    from agent import config as config_module
+
+    for n in (8, 28, 60):
+        monkeypatch.setattr(config_module, "TICKERS", ["T%d" % i for i in range(n)])
+        # n turnos de observação + o resto do fluxo ainda cabem.
+        assert agent_module._turnos_para_cobertura() >= n + 10
+
+
+def test_aviso_final_com_lista_exigida_nao_mistura_contagem_com_identidade(monkeypatch):
+    """Visto em produção: "apenas 11 de pelo menos 8 observações esperadas...
+    Sem observação: AVGO, MRVL, SKHY." Onze é mais que oito -- quem lê não tem
+    como saber que os dois números falam de conjuntos diferentes."""
+    texto, _ = _rodar(
+        monkeypatch,
+        [
+            # Salva 4, mas só 1 é da lista exigida -- contagem alta, identidade
+            # incompleta, exatamente o caso da produção.
+            _obs_tickers("NVDA", "HCC", "AMR", "BTU"),
+            _texto("Terminei."),
+            _texto("Certo."),
+            _texto("Certo."),
+        ],
+        required_tickers=["NVDA", "AVGO", "MRVL"],
+    )
+    assert "AVGO" in texto and "MRVL" in texto
+    assert "apenas 4 de pelo menos" not in texto
+    # O total continua disponível, mas como contexto, não como o número principal.
+    assert "4 observações foram salvas no total" in texto
