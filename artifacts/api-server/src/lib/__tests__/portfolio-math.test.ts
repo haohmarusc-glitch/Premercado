@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeOpenLotTotals, isActivePosition, isPositionActiveFromLots } from "../portfolio-math";
+import { computeOpenLotTotals, isActivePosition, isPositionActiveFromLots, carteiraParaOAgente } from "../portfolio-math";
 
 describe("computeOpenLotTotals", () => {
   it("returns zeroed totals for no open lots", () => {
@@ -106,5 +106,25 @@ describe("isPositionActiveFromLots", () => {
     // fonte de verdade disponível é o campo armazenado.
     expect(isPositionActiveFromLots(3, [])).toBe(true);
     expect(isPositionActiveFromLots(0, [])).toBe(false);
+  });
+});
+
+describe("carteiraParaOAgente", () => {
+  it("o banco manda quando tem posição", () => {
+    expect(carteiraParaOAgente(["NVDA", "HCC"], "GOOGL,TSLA")).toBe("NVDA,HCC");
+  });
+
+  it("carteira vazia cai na env var (escape hatch de carteira hipotética)", () => {
+    expect(carteiraParaOAgente([], "GOOGL,TSLA")).toBe("GOOGL,TSLA");
+  });
+
+  it("sem banco e sem env, devolve vazio pro Python usar o default dele", () => {
+    expect(carteiraParaOAgente([], undefined)).toBe("");
+    expect(carteiraParaOAgente([], "")).toBe("");
+  });
+
+  it("uma posição só continua sendo a carteira, não cai no fallback", () => {
+    // O bug de origem era justamente a lista do código vencer a realidade.
+    expect(carteiraParaOAgente(["HCC"], "NVDA,SMCI,GOOGL,ARM,AVGO,MRVL,SKHY,TSLA")).toBe("HCC");
   });
 });

@@ -74,3 +74,27 @@ export function isPositionActiveFromLots<T extends LotSaleInfo>(
   if (lots.length === 0) return isActivePosition(storedQuantity);
   return lots.some((l) => !(l.saleDate && l.salePrice));
 }
+
+/**
+ * Qual lista de "carteira" o subprocesso do agente recebe.
+ *
+ * Precedência: banco > env var > default do config.py (string vazia = deixa o
+ * Python cair no default dele).
+ *
+ * Existia UMA fonte para isto e era a errada: `AGENT_PORTFOLIO_TICKERS`. Sem a
+ * env var setada, o Python caía numa lista fixa no código -- que continuava
+ * exigindo observação de ativos já vendidos e nunca exigia de uma posição nova.
+ * Duas listas respondendo a mesma pergunta, e a que mandava não era a que o
+ * usuário edita.
+ *
+ * A env var fica como escape hatch (rodar contra uma carteira hipotética sem
+ * mexer no banco), nunca mais como fonte principal: ela não sabe quando você
+ * compra ou vende.
+ */
+export function carteiraParaOAgente(
+  doBanco: readonly string[],
+  doEnv: string | undefined,
+): string {
+  if (doBanco.length) return doBanco.join(",");
+  return doEnv ?? "";
+}
