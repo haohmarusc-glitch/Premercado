@@ -1,0 +1,99 @@
+2026-08-04T12:01:42.692Z {"level":30,"time":1785844902692,"pid":18,"hostname":"localhost","req":{"id":49,"method":"GET","url":"/api/market-alerts"},"res":{"statusCode":200},"responseTime":3421,"msg":"request completed"}
+2026-08-04T12:01:43.039Z {"level":30,"time":1785844903038,"pid":18,"hostname":"localhost","req":{"id":53,"method":"GET","url":"/api/tickers/chart"},"res":{"statusCode":304},"responseTime":2544,"msg":"request completed"}
+2026-08-04T12:01:43.083Z {"level":30,"time":1785844903083,"pid":18,"hostname":"localhost","req":{"id":50,"method":"GET","url":"/api/market-alerts"},"res":{"statusCode":200},"responseTime":3691,"msg":"request completed"}
+2026-08-04T12:01:45.154Z {"level":30,"time":1785844905154,"pid":18,"hostname":"localhost","req":{"id":55,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-08-04T12:01:45.670Z {"level":30,"time":1785844905670,"pid":18,"hostname":"localhost","req":{"id":54,"method":"GET","url":"/api/tickers/quotes"},"res":{"statusCode":200},"responseTime":2559,"msg":"request completed"}
+2026-08-04T12:01:50.312Z {"level":30,"time":1785844910312,"pid":18,"hostname":"localhost","req":{"id":56,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-08-04T12:01:55.481Z {"level":30,"time":1785844915481,"pid":18,"hostname":"localhost","req":{"id":57,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-08-04T12:02:00.587Z {"level":30,"time":1785844920587,"pid":18,"hostname":"localhost","req":{"id":58,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":111,"msg":"request completed"}
+2026-08-04T12:02:00.645Z {"level":30,"time":1785844920645,"pid":18,"hostname":"localhost","req":{"id":59,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-08-04T12:02:05.802Z {"level":30,"time":1785844925802,"pid":18,"hostname":"localhost","req":{"id":60,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":2,"msg":"request completed"}
+2026-08-04T12:02:10.962Z {"level":30,"time":1785844930962,"pid":18,"hostname":"localhost","req":{"id":61,"method":"GET","url":"/api/agent/status"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-08-04T12:02:12.527Z starting up user application
+2026-08-04T12:02:12.527Z artifact mode enabled static=1 runnable=1
+2026-08-04T12:02:12.528Z metasidecar: loaded enterprise status from environment is_enterprise=false
+2026-08-04T12:02:12.528Z starting artifact processes for monorepo deployment
+2026-08-04T12:02:12.529Z registered static handler for artifact publicDir=artifacts/premarket/dist/public path=/
+2026-08-04T12:02:12.529Z forwarding local port 0 to external port 80 (mapped as 1104)
+2026-08-04T12:02:12.529Z waiting for runnable artifact ports ports=[8080]
+2026-08-04T12:02:12.530Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.533Z baseline ports snapshot before artifact start ports=[1105 1106 1104]
+2026-08-04T12:02:12.541Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.542Z starting artifact processes count=1
+2026-08-04T12:02:12.543Z starting artifact process args=[node --enable-source-maps artifacts/api-server/dist/index.mjs] port=8080 artifact=artifacts/api-server
+2026-08-04T12:02:12.560Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.564Z artifact process started artifact=artifacts/api-server pid=19
+2026-08-04T12:02:12.578Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.618Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.712Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.884Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:12.964Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:02:13.697Z artifact port detected port=8080 detected=1 expected=1
+2026-08-04T12:02:15.991Z {"level":30,"time":1785844935811,"pid":18,"hostname":"localhost","line":"STEP:Executando ferramenta: get_news","msg":"Agent stdout"}
+2026-08-04T12:02:21.497Z {"level":30,"time":1785844941497,"pid":19,"hostname":"localhost","req":{"id":6,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":24,"msg":"request completed"}
+2026-08-04T12:02:27.591Z {"level":40,"time":1785844947391,"pid":18,"hostname":"localhost","stderr":"[news_sources] FMP desativada nesta execução: HTTP 402 (plano não cobre este endpoint, ou o limite da conta estourou -- a chave é válida, o acesso é que não vem junto) na API stable.\n","msg":"Agent stderr"}
+2026-08-04T12:02:28.130Z {"level":30,"time":1785844948130,"pid":19,"hostname":"localhost","req":{"id":7,"method":"GET","url":"/api/auth/me"},"res":{"statusCode":200},"responseTime":2,"msg":"request completed"}
+2026-08-04T12:02:32.429Z sending SIGTERM to artifact process artifact=artifacts/api-server
+2026-08-04T12:02:32.429Z received signal, shutting down artifact processes signal=terminated
+2026-08-04T12:02:32.453Z all artifact processes stopped
+2026-08-04T12:02:32.453Z artifact process exited with error artifact=artifacts/api-server error=signal: terminated
+2026-08-04T12:02:32.453Z main done, exiting
+2026-08-04T12:02:41.606Z {"level":30,"time":1785844961606,"pid":19,"hostname":"localhost","req":{"id":8,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":110,"msg":"request completed"}
+2026-08-04T12:03:01.601Z {"level":30,"time":1785844981600,"pid":19,"hostname":"localhost","req":{"id":9,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":118,"msg":"request completed"}
+2026-08-04T12:03:47.808Z {"level":30,"time":1785845027210,"pid":19,"hostname":"localhost","label":"run_checkers","esperouMs":58001,"pendentes":2,"msg":"Fila Python: tarefa esperou antes de rodar"}
+2026-08-04T12:03:49.608Z {"level":40,"time":1785845028711,"pid":19,"hostname":"localhost","err":{"type":"Error","message":"get_quotes timeout (60000ms). stderr: [probe] boot +10.49s","stack":"Error: get_quotes timeout (60000ms). stderr: [probe] boot +10.49s\n    at timeoutError (/home/runner/workspace/artifacts/api-server/src/lib/alert-checker.ts:79:10)\n    at Timeout._onTimeout (/home/runner/workspace/artifacts/api-server/src/lib/alert-checker.ts:106:61)\n    at listOnTimeout (node:internal/timers:605:17)\n    at process.processTimers (node:internal/timers:541:7)"},"msg":"Alert checker: failed to fetch quotes"}
+2026-08-04T12:04:03.590Z {"level":30,"time":1785845043590,"pid":19,"hostname":"localhost","req":{"id":10,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":18,"msg":"request completed"}
+2026-08-04T12:05:14.656Z {"level":30,"time":1785845114656,"pid":19,"hostname":"localhost","req":{"id":11,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":115,"msg":"request completed"}
+2026-08-04T12:06:13.873Z {"level":30,"time":1785845173873,"pid":19,"hostname":"localhost","req":{"id":12,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":132,"msg":"request completed"}
+2026-08-04T12:06:50.608Z {"level":30,"time":1785845210509,"pid":19,"hostname":"localhost","label":"get_quotes","esperouMs":211700,"pendentes":5,"msg":"Fila Python: tarefa esperou antes de rodar"}
+2026-08-04T12:06:51.408Z {"level":40,"time":1785845211110,"pid":19,"hostname":"localhost","err":{"type":"Error","message":"run_checkers timeout (180000ms). stderr: [probe] boot +12.60s","stack":"Error: run_checkers timeout (180000ms). stderr: [probe] boot +12.60s\n    at timeoutError (/home/runner/workspace/artifacts/api-server/src/lib/alert-checker.ts:79:10)\n    at ChildProcess.<anonymous> (/home/runner/workspace/artifacts/api-server/src/lib/alert-checker.ts:344:37)\n    at ChildProcess.emit (node:events:520:35)\n    at maybeClose (node:internal/child_process:1101:16)\n    at ChildProcess._handle.onexit (node:internal/child_process:305:5)"},"msg":"Checkers de mercado: falha ao rodar o lote"}
+2026-08-04T12:07:13.779Z {"level":30,"time":1785845233779,"pid":19,"hostname":"localhost","req":{"id":13,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":116,"msg":"request completed"}
+2026-08-04T12:07:16.408Z {"level":30,"time":1785845236270,"pid":19,"hostname":"localhost","picoNaJanela":2,"vivosAgora":1,"janelaMs":300000,"msg":"Python: pico de subprocessos simultâneos na janela"}
+2026-08-04T12:07:21.308Z {"level":40,"time":1785845241110,"pid":19,"hostname":"localhost","err":{"type":"Error","message":"get_quotes timeout (30000ms). stderr: [probe] boot +7.19s","stack":"Error: get_quotes timeout (30000ms). stderr: [probe] boot +7.19s\n    at Timeout._onTimeout (/home/runner/workspace/artifacts/api-server/src/lib/portfolio-alerts.ts:58:14)\n    at listOnTimeout (node:internal/timers:605:17)\n    at process.processTimers (node:internal/timers:541:7)"},"msg":"Portfolio alert checker: failed to fetch prices"}
+2026-08-04T12:07:22.311Z {"level":30,"time":1785845241111,"pid":19,"hostname":"localhost","label":"get_performance.py","esperouMs":208101,"pendentes":6,"msg":"Fila Python: tarefa esperou antes de rodar"}
+2026-08-04T12:07:44.356Z artifact mode enabled runnable=1 static=1
+2026-08-04T12:07:44.357Z metasidecar: loaded enterprise status from environment is_enterprise=false
+2026-08-04T12:07:44.357Z starting artifact processes for monorepo deployment
+2026-08-04T12:07:44.357Z forwarding local port 0 to external port 80 (mapped as 1104)
+2026-08-04T12:07:44.357Z starting up user application
+2026-08-04T12:07:44.357Z waiting for runnable artifact ports ports=[8080]
+2026-08-04T12:07:44.357Z registered static handler for artifact path=/ publicDir=artifacts/premarket/dist/public
+2026-08-04T12:07:44.362Z starting artifact processes count=1
+2026-08-04T12:07:44.362Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.362Z baseline ports snapshot before artifact start ports=[1104]
+2026-08-04T12:07:44.363Z starting artifact process port=8080 artifact=artifacts/api-server args=[node --enable-source-maps artifacts/api-server/dist/index.mjs]
+2026-08-04T12:07:44.371Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.372Z artifact process started artifact=artifacts/api-server pid=19
+2026-08-04T12:07:44.382Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.402Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.460Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.609Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.611Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.675Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:44.841Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:52.014Z received signal, shutting down artifact processes signal=terminated
+2026-08-04T12:07:52.014Z sending SIGTERM to artifact process artifact=artifacts/api-server
+2026-08-04T12:07:52.035Z artifact process exited with error error=signal: terminated artifact=artifacts/api-server
+2026-08-04T12:07:52.035Z main done, exiting
+2026-08-04T12:07:52.035Z all artifact processes stopped
+2026-08-04T12:07:52.673Z artifact mode enabled runnable=1 static=1
+2026-08-04T12:07:52.673Z starting up user application
+2026-08-04T12:07:52.678Z waiting for runnable artifact ports ports=[8080]
+2026-08-04T12:07:52.684Z starting artifact processes count=1
+2026-08-04T12:07:52.685Z starting artifact process port=8080 artifact=artifacts/api-server args=[node --enable-source-maps artifacts/api-server/dist/index.mjs]
+2026-08-04T12:07:52.695Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:52.701Z artifact process started pid=19 artifact=artifacts/api-server
+2026-08-04T12:07:52.713Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:52.763Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:52.784Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:53.087Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:53.118Z healthcheck failed error=healthcheck /api returned status 500
+2026-08-04T12:07:53.659Z artifact processes running, waiting for signal or process exit
+2026-08-04T12:07:53.659Z all artifact ports detected
+2026-08-04T12:07:53.659Z artifact port detected detected=1 expected=1 port=8080
+2026-08-04T12:07:53.660Z {"level":30,"time":1785845273659,"pid":19,"hostname":"localhost","port":8080,"msg":"Server listening"}
+2026-08-04T12:07:53.678Z To prepare for this change:
+2026-08-04T12:07:53.678Z In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+2026-08-04T12:07:53.678Z (node:19) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+2026-08-04T12:07:59.036Z {"level":30,"time":1785845279035,"pid":19,"hostname":"localhost","req":{"id":2,"method":"GET","url":"/api/auth/me"},"res":{"statusCode":200},"responseTime":3,"msg":"request completed"}
+2026-08-04T12:08:13.850Z {"level":30,"time":1785845293850,"pid":19,"hostname":"localhost","req":{"id":3,"method":"POST","url":"/api/activity/heartbeat"},"res":{"statusCode":204},"responseTime":134,"msg":"request completed"}
