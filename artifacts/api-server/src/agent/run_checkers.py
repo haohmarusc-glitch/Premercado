@@ -58,6 +58,28 @@ from agent.bounded_parallel import (
     exit_now,
 )
 
+# Os módulos de check entram AQUI, não sob demanda dentro de cada _roda_*.
+#
+# A primeira versão importava cada um dentro da função, pra um check não pago
+# não custar o import e pra um ImportError derrubar só o seu check. Custou caro:
+# o import pesado (pandas+numpy+yfinance, via market_alerts/tools) passou a
+# acontecer DEPOIS de budget_from_deadline() ter calculado a fatia, então o
+# tempo dele não entrava em orçamento nenhum.
+#
+# Produção 04/08: `[run_checkers] spike: 121.9s (fatia de 40.0s)` -- o
+# bounded_parallel_map respeitou os 40s dele certinho ("orçamento esgotado com
+# 6 pendentes"), e os outros ~80s foram o import escondido dentro da medição do
+# check. É exatamente o bug que budget_from_deadline existe pra impedir
+# (ver a docstring dele), reintroduzido por uma otimização de import.
+#
+# Importar aqui devolve o custo pra dentro da janela do probe, onde ele é
+# medido e onde o orçamento seguinte já o desconta. O isolamento de falha
+# continua existindo -- é o try/except por check no main(), não o import.
+from agent.get_bounce_alerts import _bounce_for
+from agent.get_intraday_spikes import _spikes_for
+from agent.get_squeeze_alerts import _progress_for
+from agent.market_alerts import Severity
+
 _probe_imports()
 
 # Fallback de orçamento quando o processo roda sem AGENT_DEADLINE_TS (execução
@@ -107,9 +129,6 @@ def _fatia(restante_s: float, check: str, pendentes: list[str]) -> float:
 
 
 def _roda_spike(tickers: list[str], budget_s: float) -> list:
-    from agent.get_intraday_spikes import _spikes_for
-    from agent.market_alerts import Severity
-
     resultados = bounded_parallel_map(
         _spikes_for, tickers, budget_s=budget_s, label="run_checkers/spike"
     )
@@ -120,8 +139,6 @@ def _roda_spike(tickers: list[str], budget_s: float) -> list:
 
 
 def _roda_bounce(tickers: list[str], budget_s: float) -> list:
-    from agent.get_bounce_alerts import _bounce_for
-
     resultados = bounded_parallel_map(
         _bounce_for, tickers, budget_s=budget_s, label="run_checkers/bounce"
     )
@@ -129,8 +146,6 @@ def _roda_bounce(tickers: list[str], budget_s: float) -> list:
 
 
 def _roda_squeeze(tickers: list[str], budget_s: float) -> list:
-    from agent.get_squeeze_alerts import _progress_for
-
     resultados = bounded_parallel_map(
         _progress_for, tickers, budget_s=budget_s, label="run_checkers/squeeze"
     )
@@ -140,9 +155,6 @@ def _roda_squeeze(tickers: list[str], budget_s: float) -> list:
     return alertas
 
 
-# Import dos módulos de check é LAZY (dentro de cada _roda_*): um check que não
-# foi pedido não paga o import dele, e um ImportError em tools.py derruba só o
-# squeeze em vez do lote inteiro.
 RUNNERS = {"spike": _roda_spike, "bounce": _roda_bounce, "squeeze": _roda_squeeze}
 
 
