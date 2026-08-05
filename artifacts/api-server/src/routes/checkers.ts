@@ -1,0 +1,175 @@
+/**
+ * POST /checkers/run -- executa o ciclo de checkers DENTRO de um request HTTP.
+ *
+ * Por que existe: no Autoscale, CPU só é garantida durante um request. Os
+ * timers internos (setInterval) rodavam com o container estrangulado -- boot
+ * de Python de 8-11s e imports de até 156s, estourando qualquer timeout
+ * (medido em 04-05/08). Dentro de um request, o mesmo boot leva ~0,05s.
+ *
+ * Quem chama: um Scheduled Deployment a cada 5 min (scripts/trigger-checkers.sh),
+ * autenticado com Bearer OPERATOR_API_KEY. A autorização aqui é ESTRITA:
+ * requireAuth (routes/index.ts) aceita cookie de sessão OU a chave, mas esta
+ * rota dispara trabalho caro sobre TODOS os usuários (subprocessos Python,
+ * e-mails) -- um usuário logado comum não pode acioná-la, só o operador.
+ *
+ * Coordenação entre instâncias: o guard de sobreposição e a cadência das
+ * etapas vivem numa linha única do Postgres (checker_lease), não em memória --
+ * o Autoscale pode servir cada chamada numa instância diferente (inclusive
+ * fantasmas de versões antigas durante trocas), e um estado in-process não as
+ * enxergaria. A claim é um UPDATE atômico com prazo de expiração, então um
+ * processo que morrer no meio do ciclo não deixa a trava presa pra sempre.
+ *
+ * Cadência: nem toda etapa roda a cada chamada -- cada uma tem seu intervalo
+ * mínimo (os mesmos dos timers antigos: 5min/15min/1h/24h), persistido no
+ * jsonb da mesma linha. Toda deduplicação de disparo (cooldowns, alertKeys)
+ * continua nas tabelas próprias, então uma etapa rodar "cedo demais" é
+ * inofensivo.
+ */
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { sql } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { checkAlerts, rodarCheckersDeMercado } from "../lib/alert-checker";
+import { checkPortfolioAlerts } from "../lib/portfolio-alerts";
+import { checkScenarioAlerts } from "../lib/scenario-alert-checker";
+import { refreshScenarioParams } from "../lib/scenario-params-checker";
+import { state as agentState } from "../lib/runner";
+import { logger } from "../lib/logger";
+
+const MIN = 60_000;
+
+// Teto do request inteiro: nenhuma etapa NOVA começa depois disto. As etapas
+// têm timeouts internos próprios (120s/180s), então o pior caso real fica
+// abaixo do --max-time 280s do script e de limites de proxy. Um ciclo
+// saudável dentro de request leva ~50s (medido); este teto só protege o
+// caso degenerado de várias etapas lentas se acumularem numa chamada.
+const ORCAMENTO_DO_CICLO_MS = 240_000;
+
+// A trava expira sozinha: cobre o orçamento acima + a etapa mais lenta que
+// pode ter começado no limite (180s) + folga. Se o processo morrer no meio,
+// a próxima chamada depois da expiração assume normalmente.
+const VALIDADE_DA_TRAVA = "8 minutes";
+
+// Margem subtraída do intervalo de cadência: o agendador externo não é
+// pontual ao segundo, e sem folga uma chamada às 14:59:58 pularia a etapa de
+// 15min que "venceria" às 15:00:00 -- ela só rodaria 5min depois, toda vez.
+const MARGEM_MS = 90_000;
+
+interface Etapa {
+  nome: string;
+  intervaloMs: number;
+  run: () => Promise<void>;
+}
+
+const ETAPAS: Etapa[] = [
+  { nome: "alerts", intervaloMs: 0, run: checkAlerts },
+  { nome: "market", intervaloMs: 0, run: rodarCheckersDeMercado },
+  { nome: "portfolio", intervaloMs: 15 * MIN, run: checkPortfolioAlerts },
+  { nome: "scenario_alerts", intervaloMs: 60 * MIN, run: checkScenarioAlerts },
+  { nome: "scenario_params", intervaloMs: 24 * 60 * MIN, run: refreshScenarioParams },
+];
+
+type Cadencia = Record<string, number>;
+
+/**
+ * Tenta assumir a trava. UPDATE atômico: só UMA instância consegue por vez,
+ * qualquer que seja o processo. Retorna a cadência persistida, ou null se
+ * outra instância está com o ciclo em andamento.
+ */
+async function assumirTrava(): Promise<Cadencia | null> {
+  const result = await db.execute(sql`
+    UPDATE checker_lease
+    SET locked_until = now() + interval '8 minutes'
+    WHERE id = 1 AND locked_until < now()
+    RETURNING cadence
+  `);
+  const row = result.rows[0] as { cadence: Cadencia } | undefined;
+  if (!row) return null;
+  return row.cadence ?? {};
+}
+
+async function soltarTrava(cadencia: Cadencia): Promise<void> {
+  await db.execute(sql`
+    UPDATE checker_lease
+    SET locked_until = now(), cadence = ${JSON.stringify(cadencia)}::jsonb
+    WHERE id = 1
+  `);
+}
+
+// Só o operador. requireAuth (mais acima na cadeia) também aceita cookie de
+// sessão, o que serve pras rotas normais -- mas disparar o ciclo inteiro não
+// é uma ação de usuário.
+function requireOperatorKey(req: Request, res: Response, next: NextFunction): void {
+  const key = process.env["OPERATOR_API_KEY"];
+  if (!key || req.headers.authorization !== `Bearer ${key}`) {
+    res.status(403).json({ error: "Esta rota exige a chave de operador" });
+    return;
+  }
+  next();
+}
+
+const router: IRouter = Router();
+
+router.post("/checkers/run", requireOperatorKey, async (_req, res) => {
+  // Mesmo motivo dos guards internos dos checkers: o agente diário sozinho já
+  // satura CPU/rede do container; rodar por cima só faria os dois falharem.
+  if (agentState.running) {
+    res.status(409).json({ error: "Agente diário em execução -- ciclo pulado" });
+    return;
+  }
+
+  const cadencia = await assumirTrava();
+  if (cadencia === null) {
+    res.status(409).json({ error: "Ciclo de checkers já em andamento em outra instância" });
+    return;
+  }
+
+  const inicio = Date.now();
+  const executados: { nome: string; ok: boolean; duracaoMs: number; erro?: string }[] = [];
+  const pulados: string[] = [];
+  const adiados: string[] = [];
+  try {
+    for (const etapa of ETAPAS) {
+      if (Date.now() - inicio > ORCAMENTO_DO_CICLO_MS) {
+        // Sem punição: a cadência não avança, então a etapa adiada é a
+        // primeira candidata da próxima chamada (5 min depois).
+        adiados.push(etapa.nome);
+        continue;
+      }
+      const ultima = cadencia[etapa.nome] ?? 0;
+      if (etapa.intervaloMs > 0 && Date.now() - ultima < etapa.intervaloMs - MARGEM_MS) {
+        pulados.push(etapa.nome);
+        continue;
+      }
+      const t0 = Date.now();
+      try {
+        await etapa.run();
+        cadencia[etapa.nome] = Date.now();
+        executados.push({ nome: etapa.nome, ok: true, duracaoMs: Date.now() - t0 });
+      } catch (err) {
+        // Avança a cadência MESMO em falha: reexecutar a cada 5min uma etapa
+        // de 24h que está quebrada não conserta nada, só gasta ciclo.
+        cadencia[etapa.nome] = Date.now();
+        executados.push({
+          nome: etapa.nome,
+          ok: false,
+          duracaoMs: Date.now() - t0,
+          erro: err instanceof Error ? err.message : String(err),
+        });
+        logger.error({ err, etapa: etapa.nome }, "Checkers via request: etapa falhou, as demais seguem");
+      }
+    }
+  } finally {
+    try {
+      await soltarTrava(cadencia);
+    } catch (err) {
+      // Não fatal: a trava expira sozinha em VALIDADE_DA_TRAVA.
+      logger.error({ err, validade: VALIDADE_DA_TRAVA }, "Checkers via request: falha ao soltar a trava (expira sozinha)");
+    }
+  }
+
+  const duracaoMs = Date.now() - inicio;
+  logger.info({ executados, pulados, adiados, duracaoMs }, "Checkers via request: ciclo concluído");
+  res.json({ ok: executados.every((e) => e.ok), duracaoMs, executados, pulados, adiados });
+});
+
+export default router;

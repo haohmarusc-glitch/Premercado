@@ -30,6 +30,7 @@ import adminUsersRouter from "./admin-users";
 import aiSpendRouter from "./ai-spend";
 import scenariosRouter from "./scenarios";
 import scenarioAlertsRouter from "./scenario-alerts";
+import checkersRouter from "./checkers";
 
 const router: IRouter = Router();
 
@@ -75,5 +76,6 @@ router.use(adminUsersRouter);
 router.use(aiSpendRouter);
 router.use(scenariosRouter);
 router.use(scenarioAlertsRouter);
+router.use(checkersRouter); // ciclo de checkers via request (Scheduled Deployment)
 
 export default router;

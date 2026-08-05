@@ -41,7 +41,7 @@ app.listen(port, async (err) => {
   } else {
     logger.info(
       { nodeEnv: process.env["NODE_ENV"] },
-      "Checkers de fundo desligados (RUN_BACKGROUND_CHECKERS=1 para ligar)",
+      "Timers de checkers desligados -- ciclos rodam via POST /api/checkers/run (RUN_BACKGROUND_CHECKERS=1 força os timers)",
     );
   }
 });

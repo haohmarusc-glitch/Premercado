@@ -1,22 +1,19 @@
 /**
- * Decide se ESTE processo deve rodar os checkers de fundo (preço, carteira,
- * cenário, params).
+ * Decide se ESTE processo deve rodar os checkers de fundo por TIMER (preço,
+ * carteira, cenário, params).
  *
- * Eles rodam num timer próprio e spawnam subprocessos Python que batem no
- * yfinance, e não têm coordenação entre processos: o guard `agentState.running`
- * do alert-checker é in-process, então duas instâncias do api-server não se
- * enxergam e cada uma roda o conjunto completo.
+ * Padrão atual: DESLIGADO em qualquer ambiente. Os ciclos rodam via
+ * `POST /api/checkers/run` (routes/checkers.ts), disparado por um Scheduled
+ * Deployment -- porque no Autoscale a CPU só é garantida DURANTE um request.
+ * Medido em produção (04-05/08): por timer, boot de Python de 8-11s e imports
+ * de até 156s (pandas), estourando timeouts de 120s; dentro de um request, o
+ * mesmo boot leva ~0,05s. Além disso, o Autoscale mantém instâncias antigas
+ * vivas nas trocas de versão, cada uma com seu próprio timer -- a instância
+ * sem tráfego falhava o conjunto inteiro em todo ciclo. Sem timer, a
+ * instância fantasma fica inofensiva.
  *
- * Visto em produção (02/08): com um `pnpm run dev` no mesmo container do app
- * deployado, os dois conjuntos competiam por CPU e rede, e todo subprocesso
- * Python do lado deployado estourava seu timeout -- inclusive os de janela
- * generosa. A prova de que não era a rede: `get_scenario_params.py` estourou
- * 60s no processo deployado às 19:34:52 e completou os 8 tickers no processo
- * de dev às 19:37:31, na mesma máquina.
- *
- * Daí o padrão: LIGADO em produção, DESLIGADO em development. A env força
- * explicitamente, para testar um checker localmente ou rodar um worker
- * dedicado que não serve HTTP.
+ * A env RUN_BACKGROUND_CHECKERS=1 força os timers ligados -- útil pra testar
+ * um checker localmente ou rodar um worker dedicado fora do Autoscale.
  */
 export function shouldRunBackgroundCheckers(
   env: NodeJS.ProcessEnv = process.env,
@@ -25,5 +22,5 @@ export function shouldRunBackgroundCheckers(
   if (flag !== undefined && flag !== "") {
     return flag !== "0" && flag.toLowerCase() !== "false";
   }
-  return env["NODE_ENV"] !== "development";
+  return false;
 }
