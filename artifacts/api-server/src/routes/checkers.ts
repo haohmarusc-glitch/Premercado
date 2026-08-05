@@ -26,6 +26,7 @@
  * inofensivo.
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { checkAlerts, rodarCheckersDeMercado } from "../lib/alert-checker";
@@ -47,7 +48,11 @@ const ORCAMENTO_DO_CICLO_MS = 240_000;
 // A trava expira sozinha: cobre o orçamento acima + a etapa mais lenta que
 // pode ter começado no limite (180s) + folga. Se o processo morrer no meio,
 // a próxima chamada depois da expiração assume normalmente.
-const VALIDADE_DA_TRAVA = "8 minutes";
+//
+// Em minutos e interpolado no SQL, NÃO escrito à mão nos dois UPDATEs: a
+// versão anterior tinha a constante só numa mensagem de log e `interval '8
+// minutes'` literal na query, livres para divergir sem ninguém notar.
+const VALIDADE_DA_TRAVA_MIN = 8;
 
 // Margem subtraída do intervalo de cadência: o agendador externo não é
 // pontual ao segundo, e sem folga uma chamada às 14:59:58 pularia a etapa de
@@ -70,29 +75,61 @@ const ETAPAS: Etapa[] = [
 
 type Cadencia = Record<string, number>;
 
+interface Posse {
+  token: string;
+  cadencia: Cadencia;
+}
+
 /**
  * Tenta assumir a trava. UPDATE atômico: só UMA instância consegue por vez,
- * qualquer que seja o processo. Retorna a cadência persistida, ou null se
- * outra instância está com o ciclo em andamento.
+ * qualquer que seja o processo. Devolve a cadência persistida e um token de
+ * posse, ou null se outra instância está com o ciclo em andamento.
+ *
+ * O token existe porque a trava EXPIRA. Sem ele, o release era incondicional
+ * (`WHERE id = 1`), e este cenário quebrava a exclusão mútua que a trava
+ * inteira existe para garantir:
+ *
+ *   1. A passa dos 8 minutos e a trava vence (o orçamento de 240s só barra o
+ *      INÍCIO de uma etapa nova -- uma que comece em 239s e leve 180s termina
+ *      em ~420s, contra 480s de validade: sobra ~1 minuto, e num container sem
+ *      CPU é esse minuto que some).
+ *   2. B assume e começa o ciclo dele.
+ *   3. A termina e solta -- liberando a trava de B e sobrescrevendo a cadência
+ *      com a cópia velha que A carregava.
+ *
+ * Com o token, o release de A não casa e vira no-op: a trava continua com B, e
+ * a cadência de B continua valendo.
  */
-async function assumirTrava(): Promise<Cadencia | null> {
+async function assumirTrava(): Promise<Posse | null> {
+  const token = randomUUID();
   const result = await db.execute(sql`
     UPDATE checker_lease
-    SET locked_until = now() + interval '8 minutes'
+    SET locked_until = now() + make_interval(mins => ${VALIDADE_DA_TRAVA_MIN}),
+        owner_token = ${token}
     WHERE id = 1 AND locked_until < now()
     RETURNING cadence
   `);
   const row = result.rows[0] as { cadence: Cadencia } | undefined;
   if (!row) return null;
-  return row.cadence ?? {};
+  return { token, cadencia: row.cadence ?? {} };
 }
 
-async function soltarTrava(cadencia: Cadencia): Promise<void> {
-  await db.execute(sql`
+/**
+ * Solta a trava SÓ se ela ainda for nossa. Devolve false quando a posse já
+ * passou para outra instância -- caso em que não há nada a fazer além de
+ * registrar, porque quem manda agora é a outra.
+ */
+async function soltarTrava(token: string, cadencia: Cadencia): Promise<boolean> {
+  const result = await db.execute(sql`
     UPDATE checker_lease
-    SET locked_until = now(), cadence = ${JSON.stringify(cadencia)}::jsonb
-    WHERE id = 1
+    SET locked_until = now(),
+        cadence = ${JSON.stringify(cadencia)}::jsonb,
+        last_cycle_at = now(),
+        owner_token = NULL
+    WHERE id = 1 AND owner_token = ${token}
+    RETURNING id
   `);
+  return result.rows.length > 0;
 }
 
 // Só o operador. requireAuth (mais acima na cadeia) também aceita cookie de
@@ -117,11 +154,12 @@ router.post("/checkers/run", requireOperatorKey, async (_req, res) => {
     return;
   }
 
-  const cadencia = await assumirTrava();
-  if (cadencia === null) {
+  const posse = await assumirTrava();
+  if (posse === null) {
     res.status(409).json({ error: "Ciclo de checkers já em andamento em outra instância" });
     return;
   }
+  const { token, cadencia } = posse;
 
   const inicio = Date.now();
   const executados: { nome: string; ok: boolean; duracaoMs: number; erro?: string }[] = [];
@@ -160,10 +198,21 @@ router.post("/checkers/run", requireOperatorKey, async (_req, res) => {
     }
   } finally {
     try {
-      await soltarTrava(cadencia);
+      const aindaNossa = await soltarTrava(token, cadencia);
+      if (!aindaNossa) {
+        // O ciclo passou da validade e outra instância assumiu no meio. A
+        // cadência daqui foi descartada de propósito -- a de quem está com a
+        // trava agora é a mais nova. Vale WARN e não ERROR: nada quebrou, mas
+        // se isto virar rotina o orçamento do ciclo está grande demais para a
+        // validade da trava.
+        logger.warn(
+          { validadeMin: VALIDADE_DA_TRAVA_MIN, duracaoMs: Date.now() - inicio },
+          "Checkers via request: a trava expirou durante o ciclo e outra instância assumiu",
+        );
+      }
     } catch (err) {
-      // Não fatal: a trava expira sozinha em VALIDADE_DA_TRAVA.
-      logger.error({ err, validade: VALIDADE_DA_TRAVA }, "Checkers via request: falha ao soltar a trava (expira sozinha)");
+      // Não fatal: a trava expira sozinha em VALIDADE_DA_TRAVA_MIN.
+      logger.error({ err, validadeMin: VALIDADE_DA_TRAVA_MIN }, "Checkers via request: falha ao soltar a trava (expira sozinha)");
     }
   }
 

@@ -2,6 +2,20 @@ modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 
 [deployment]
 router = "application"
+# "gce" é o alvo da Reserved VM (o painel escreve esse valor). Migramos do
+# "autoscale" em 05/08: lá o deployment mantinha instâncias antigas vivas nas
+# trocas de versão, cada uma com timer e fila Python próprios, e a que não
+# recebia tráfego falhava o conjunto inteiro em todo ciclo. Na VM é um processo
+# só, sempre de pé -- por isso os timers de checkers voltaram a ser o padrão
+# (ver lib/background-checkers.ts).
+#
+# NUNCA troque para "scheduled". Este bloco descreve o deployment DO APP, e
+# "scheduled" é um job de cron: roda um comando e sai, sem servir HTTP. Publicar
+# assim tira o site e a API do ar -- e o `router = "application"` e os
+# `[[ports]]` abaixo ficariam sem sentido. Um gatilho agendado precisa de um
+# deployment SEPARADO, criado no painel (o .replit só comporta um bloco
+# [deployment]); é o que scripts/trigger-checkers.sh assume ao lembrar que os
+# secrets daquele deployment são independentes dos do workspace.
 deploymentTarget = "gce"
 
 [deployment.postBuild]
@@ -41,6 +55,3 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-
-[userenv.production]
-RUN_BACKGROUND_CHECKERS = "1"
