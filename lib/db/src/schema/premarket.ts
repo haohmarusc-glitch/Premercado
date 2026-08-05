@@ -6,6 +6,7 @@ import {
   numeric,
   boolean,
   integer,
+  jsonb,
   index,
   unique,
   uniqueIndex,
@@ -573,3 +574,31 @@ export const ivHistoryTable = pgTable("iv_history", {
   index("idx_iv_history_ticker").on(t.ticker),
 ]);
 export type IvHistoryRow = typeof ivHistoryTable.$inferSelect;
+
+/**
+ * Trava e cadência do ciclo de checkers disparado por request
+ * (routes/checkers.ts). Linha ÚNICA, id=1.
+ *
+ * Está declarada aqui, e não só no ensure-schema.ts, por um motivo que custou
+ * um susto: em 05/08 o painel Publishing do Replit propôs
+ *
+ *     ALTER TABLE "checker_lease" DROP COLUMN "owner_token";
+ *     ALTER TABLE "checker_lease" DROP COLUMN "last_cycle_at";
+ *
+ * porque a tabela tinha sido criada só por SQL cru em runtime. O `db push`
+ * compara o banco com ESTE arquivo: o que existe lá e não existe aqui é
+ * candidato a ser apagado. Toda tabela do ensure-schema precisa de uma
+ * declaração correspondente aqui -- era a única que não tinha.
+ *
+ * As duas colunas que ele queria apagar não são acessórias: `owner_token` é o
+ * que impede uma instância de soltar a trava de outra depois da expiração, e
+ * `last_cycle_at` é o que alimenta o vigia (lib/checker-watchdog.ts).
+ */
+export const checkerLeaseTable = pgTable("checker_lease", {
+  id: integer("id").primaryKey(),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }).notNull(),
+  cadence: jsonb("cadence").notNull().default({}),
+  ownerToken: text("owner_token"),
+  lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
+});
+export type CheckerLease = typeof checkerLeaseTable.$inferSelect;
