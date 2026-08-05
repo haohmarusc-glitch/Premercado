@@ -402,6 +402,15 @@ export async function ensureSchema(): Promise<void> {
         cadence jsonb NOT NULL DEFAULT '{}'::jsonb
       )
     `);
+    // owner_token: a trava expira sozinha, então quem solta precisa provar que
+    // ainda é dono -- sem isso um ciclo que passou da validade liberava a trava
+    // de OUTRA instância que já tinha assumido. Ver routes/checkers.ts.
+    await db.execute(sql`ALTER TABLE checker_lease ADD COLUMN IF NOT EXISTS owner_token text`);
+    // last_cycle_at: alimenta o vigia (lib/checker-watchdog.ts). Com os timers
+    // desligados, um gatilho externo que pare de chamar não produz erro nenhum
+    // -- os alertas simplesmente somem em silêncio. Este carimbo é o que
+    // permite perceber.
+    await db.execute(sql`ALTER TABLE checker_lease ADD COLUMN IF NOT EXISTS last_cycle_at timestamptz`);
     await db.execute(sql`INSERT INTO checker_lease (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
     logger.info("Schema check ok (checker_lease)");
   } catch (err) {
