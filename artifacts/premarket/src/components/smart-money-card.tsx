@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Landmark, Waves } from "lucide-react";
+import { useStaggerReady } from "@/hooks/use-stagger-ready";
 
 // ─── SmartMoneyCard ────────────────────────────────────────────────────────
 // Consome GET /api/alt-data (get_alt_data.py): negociações do Congresso
@@ -49,9 +50,14 @@ async function fetchAltData(symbol: string): Promise<AltDataItem | null> {
 }
 
 function useAltData(symbol: string) {
+  // 550ms: o mais adiado dos cards por symbol -- Congresso/dark pool é o
+  // menos urgente de tudo que o dashboard mostra, e boa parte das contas nem
+  // tem as chaves pagas configuradas (o card some sozinho nesse caso).
+  const ready = useStaggerReady(550);
   return useQuery({
     queryKey: ["alt-data", symbol],
     queryFn: () => fetchAltData(symbol),
+    enabled: ready,
     staleTime: 15 * 60_000,
     retry: 1,
   });
