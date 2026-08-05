@@ -2,11 +2,14 @@ import { Router, type IRouter } from "express";
 import path from "path";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
 function runEarningsReactionScript(payload: object, timeoutMs = 60_000): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
+  // Ver lib/vaga-python.ts.
+  return comVagaPython("earnings_reaction", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "earnings_reaction_analysis.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -23,7 +26,7 @@ function runEarningsReactionScript(payload: object, timeoutMs = 60_000): Promise
       if (code !== 0) { reject(new Error(err || "Script failed")); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Failed to parse script output")); }
     });
-  });
+  }));
 }
 
 // Sem estado no servidor de propósito -- os dados do yfinance mudam pouco

@@ -5,6 +5,7 @@ import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
@@ -13,7 +14,8 @@ let cache: Cache | null = null;
 const CACHE_TTL_MS = 60_000;
 
 function fetchTechnicals(tickers: string[]): Promise<unknown> {
-  return coalescer(`technicals:${tickers.join(",")}`, () => new Promise((resolve, reject) => {
+  // comVagaPython por dentro do coalescer -- ver lib/vaga-python.ts.
+  return coalescer(`technicals:${tickers.join(",")}`, () => comVagaPython("technicals", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ tickers }));
@@ -28,7 +30,7 @@ function fetchTechnicals(tickers: string[]): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  }));
+  })));
 }
 
 router.get("/technicals", async (req, res): Promise<void> => {

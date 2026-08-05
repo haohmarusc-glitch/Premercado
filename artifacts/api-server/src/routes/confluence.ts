@@ -2,11 +2,14 @@ import { Router, type IRouter } from "express";
 import path from "path";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
 function runConfluence(payload: object): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
+  // Ver lib/vaga-python.ts.
+  return comVagaPython("confluence", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "confluence_engine.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -21,7 +24,7 @@ function runConfluence(payload: object): Promise<unknown> {
       if (code !== 0) { reject(new Error(err || "Script failed")); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 // POST /confluence — avalia o ConfluenceEngine (trend/momentum/volatility/
