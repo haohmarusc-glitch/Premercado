@@ -154,8 +154,9 @@ export function startScenarioParamsChecker(): void {
   async function loop(): Promise<void> {
     try {
       await refreshScenarioParams();
-    } catch (e) {
-      logger.error({ e }, "Scenario params check error");
+    } catch (err) {
+      // `err`, não `e` -- ver comentário em alert-checker.ts::dispararCiclo.
+      logger.error({ err }, "Scenario params check error");
     }
     setTimeout(loop, CHECK_INTERVAL_MS);
   }

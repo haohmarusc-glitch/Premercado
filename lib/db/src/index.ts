@@ -14,8 +14,25 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   // O default do node-postgres e 0: espera PARA SEMPRE por uma conexao livre.
   // Sob pressao isso vira uma request pendurada sem limite em vez de um erro
-  // que alguem consegue ver e tratar.
-  connectionTimeoutMillis: 5_000,
+  // que alguem consegue ver e tratar. Por isso existe um teto -- mas 5s era
+  // baixo demais.
+  //
+  // 05/08, run diaria: o agente dispara 7 save_observation EM PARALELO. O pool
+  // esta frio (idleTimeoutMillis de 10s entre rajadas), entao sao 7 conexoes
+  // NOVAS ao mesmo tempo, cada uma com handshake TLS, num container onde o
+  // interpretador Python leva 10s so para subir. Tres estouraram os 5s e
+  // viraram 500; as cinco que passaram levaram ate 4.17s -- encostando no teto.
+  //
+  // O erro interno engana: pg-pool/index.js:255 faz
+  // `client.connection.stream.destroy()` quando o prazo vence, o pg emite
+  // "Connection terminated unexpectedly", e so DEPOIS isso e embrulhado como
+  // "Connection terminated due to connection timeout". Ou seja, a conexao nao
+  // caiu sozinha -- nos a matamos. Quem ler de dentro para fora vai cacar um
+  // problema de rede ou do Neon que nao existe.
+  //
+  // 15s pelo mesmo criterio ja aplicado aos timeouts de subprocesso: um teto
+  // abaixo do tempo real de partida nao protege nada, so garante a falha.
+  connectionTimeoutMillis: 15_000,
   // Keepalive de TCP: sem ele, um proxy/NAT no caminho pode derrubar a conexao
   // ociosa em silencio, e o pool so descobre ao entregar um socket ja morto
   // para a proxima query -- que e exatamente como um 08P01 (protocol

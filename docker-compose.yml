@@ -1,0 +1,87 @@
+# Stack completa do Pré-Mercado fora do Replit: app (Node + Python no mesmo
+# container), Postgres e Caddy fazendo TLS automático.
+#
+# Sobe com:  docker compose up -d --build
+# Ver logs:  docker compose logs -f app
+#
+# Se você for continuar usando um Postgres gerenciado (Neon, Supabase, RDS),
+# aponte DATABASE_URL no .env para ele e remova daqui o serviço `db` e o
+# `depends_on` do `app`. O resto funciona igual.
+
+name: premercado
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?defina POSTGRES_USER no .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?defina POSTGRES_DB no .env}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Sem `ports:` de propósito. O banco só precisa ser alcançável pelo `app`,
+    # que está na mesma rede do compose. Publicar 5432 no host expõe o Postgres
+    # à internet inteira -- é assim que instância de VPS vira minerador.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        # `service_healthy`, não `service_started`: o ensureSchema() roda no
+        # boot do Express e falha se o Postgres ainda estiver inicializando.
+        # Com restart automático isso até se resolveria sozinho, mas deixaria
+        # um crash no log de todo deploy -- ruído que depois esconde crash real.
+        condition: service_healthy
+    volumes:
+      # Cache de histórico diário do yfinance (hist_cache.py). Em volume
+      # nomeado pra sobreviver a `up --build`: sem isso todo deploy recomeça
+      # baixando tudo do Yahoo de novo, justo no momento de maior pressa.
+      - histcache:/var/cache/premercado/hist
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # O boot faz ensureSchema() + bootstrap da conta semente antes de
+      # responder qualquer coisa. 90s dá folga sem mascarar um app travado.
+      start_period: 90s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # 443/udp = HTTP/3. Opcional, mas é uma linha.
+      - "443:443/udp"
+    environment:
+      DOMINIO: "${DOMINIO:?defina DOMINIO no .env, ex. premercado.seudominio.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # caddy_data guarda os certificados. Perder esse volume significa pedir
+      # certificado novo a cada restart e esbarrar no rate limit da Let's
+      # Encrypt (5 por domínio por semana).
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  histcache:
+  caddy_data:
+  caddy_config:
