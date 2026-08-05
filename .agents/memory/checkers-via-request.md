@@ -1,12 +1,20 @@
 ---
 name: Checkers via request agendado
-description: Arquitetura pós-05/08 dos checkers de fundo no Autoscale — endpoint HTTP + Scheduled Deployment, timers desligados, trava em Postgres
+description: Endpoint HTTP + trava em Postgres para rodar os checkers sem timer — necessário no Autoscale, opcional na Reserved VM (onde os timers voltam a ser o padrão)
 ---
 
-# Checkers via request agendado (Autoscale)
+# Checkers via request agendado
 
-Regra: no Autoscale, trabalho pesado de fundo não roda por `setInterval` — roda
-dentro de um request HTTP disparado por um Scheduled Deployment.
+**Estado atual (05/08, depois da migração para Reserved VM): os timers estão
+LIGADOS de novo e este endpoint não é usado no dia a dia.** Ele continua no
+código como disparo manual e como a saída pronta caso a plataforma volte a ser
+uma que estrangula processo ocioso ou duplique instâncias. O resto deste
+documento descreve quando e por que ele é necessário.
+
+Regra: numa plataforma que mantém várias instâncias (Autoscale/Cloud Run),
+trabalho pesado de fundo não roda por `setInterval` — roda dentro de um request
+HTTP disparado por um agendador externo. Numa VM dedicada, `setInterval` é o
+modelo certo e mais simples.
 
 **Why (o que está confirmado):** o Autoscale mantém instâncias antigas vivas
 durante trocas de versão, cada uma com o próprio timer. Medido em 04/08: dois
@@ -31,8 +39,11 @@ liga/desliga entre timer e request. Não escreva a versão forte como fato.
   condicionado ao token: sem isso, um ciclo que passa da validade solta a trava
   de OUTRA instância que já assumiu, e ainda sobrescreve a cadência dela com
   uma cópia velha.
-- Timers internos: desligados por padrão em TODO ambiente;
-  `RUN_BACKGROUND_CHECKERS=1` força (worker dedicado/teste).
+- Timers internos: padrão LIGADO fora de development (Reserved VM).
+  `RUN_BACKGROUND_CHECKERS=0` desliga, que é o que se usa quando os ciclos vêm
+  do endpoint. Um padrão `false` sem gatilho externo configurado faz NENHUM
+  checker rodar, e o log só diz "Timers de checkers desligados" -- parece
+  intencional. Ver background-checkers.ts.
 - Gatilho: Scheduled Deployment a cada 5min rodando
   `scripts/trigger-checkers.sh` (secret `OPERATOR_API_KEY` no PRÓPRIO
   deployment — secrets de deployment são separadas das do workspace). 409 do
