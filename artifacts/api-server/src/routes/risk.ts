@@ -4,11 +4,14 @@ import { eq } from "drizzle-orm";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { db, portfolioPositionsTable } from "@workspace/db";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
 function runPython(payload: object): Promise<object> {
-  return new Promise((resolve, reject) => {
+  // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
+  // Ver lib/vaga-python.ts.
+  return comVagaPython("risk", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "risk_manager.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -23,7 +26,7 @@ function runPython(payload: object): Promise<object> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 router.post("/risk/position-size", async (req, res, next): Promise<void> => {

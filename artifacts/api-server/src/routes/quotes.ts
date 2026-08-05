@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { coalescer } from "../lib/em-voo";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 import { eq } from "drizzle-orm";
 import { db, portfolioPositionsTable } from "@workspace/db";
 import { agentDir, getPythonBin } from "../lib/runner";
@@ -26,7 +27,8 @@ function fetchQuotes(tickers: string[]): Promise<unknown[]> {
   // O cache é POR USUÁRIO (cacheByUser) mas a busca não depende do usuário --
   // dois usuários com a mesma lista abriam dois processos para o mesmo dado.
   // A chave aqui é a lista, então eles se juntam.
-  return coalescer(`quotes:${tickers.join(",")}`, () => new Promise((resolve, reject) => {
+  // comVagaPython por dentro do coalescer -- ver lib/vaga-python.ts.
+  return coalescer(`quotes:${tickers.join(",")}`, () => comVagaPython("quotes", () => new Promise((resolve, reject) => {
     const py = spawnPython(
       getPythonBin(),
       ["-m", "agent.get_quotes", ...tickers],
@@ -56,7 +58,7 @@ function fetchQuotes(tickers: string[]): Promise<unknown[]> {
         reject(new Error(`Failed to parse quotes JSON: ${stdout}`));
       }
     });
-  }));
+  })));
 }
 
 // GET /fx/usdbrl — cotação USD→BRL (via Yahoo "BRL=X") para converter

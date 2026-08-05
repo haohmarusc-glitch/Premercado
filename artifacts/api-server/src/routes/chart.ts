@@ -4,6 +4,7 @@ import { agentDir, getPythonBin } from "../lib/runner";
 import { GetTickerChartQueryParams, GetTickerChartResponse } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
@@ -21,7 +22,10 @@ const TTL: Record<string, number> = {
 };
 
 function fetchChart(symbol: string, period: string): Promise<unknown> {
-  return coalescer(`chart:${symbol}:${period}`, () => new Promise((resolve, reject) => {
+  // comVagaPython por dentro do coalescer -- ver lib/vaga-python.ts. Este é o
+  // spawn SEM setTimeout do repositório: se o get_chart pendurar, quem devolve
+  // a vaga é o prazo de posse do próprio limitador.
+  return coalescer(`chart:${symbol}:${period}`, () => comVagaPython("chart", () => new Promise((resolve, reject) => {
     const sym = symbol, per = period;
     const py = spawnPython(getPythonBin(), ["-m", "agent.get_chart", sym, per], {
       cwd: agentDir,
@@ -40,7 +44,7 @@ function fetchChart(symbol: string, period: string): Promise<unknown> {
       if (code !== 0) { reject(new Error(`get_chart exited ${code}: ${err}`)); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error(`Bad JSON: ${out}`)); }
     });
-  }));
+  })));
 }
 
 router.get("/tickers/chart", async (req, res): Promise<void> => {

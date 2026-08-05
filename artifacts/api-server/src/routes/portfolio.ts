@@ -18,6 +18,7 @@ import {
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
@@ -27,7 +28,9 @@ type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // Fetch real historical close prices for a ticker on a set of dates (via yfinance)
 function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<string, number>> {
-  return new Promise((resolve, reject) => {
+  // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
+  // Ver lib/vaga-python.ts.
+  return comVagaPython("portfolio", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "get_historical_price.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify({ ticker, dates }));
@@ -45,7 +48,7 @@ function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<
         resolve(parsed.prices ?? {});
       } catch { reject(new Error("Parse error")); }
     });
-  });
+  }));
 }
 
 function serPos(r: typeof portfolioPositionsTable.$inferSelect) {
