@@ -41,3 +41,6 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
+
+[userenv.production]
+RUN_BACKGROUND_CHECKERS = "1"
