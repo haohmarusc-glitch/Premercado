@@ -9,6 +9,7 @@ import { ensureSchema } from "./lib/ensure-schema";
 import { claimSeedAccountBootstrap } from "./lib/claim-seed-account";
 import { shouldRunBackgroundCheckers } from "./lib/background-checkers";
 import { iniciarRelatoPython } from "./lib/python-spawn";
+import { iniciarVigiaDosCheckers } from "./lib/checker-watchdog";
 
 const rawPort = process.env["PORT"];
 
@@ -41,7 +42,11 @@ app.listen(port, async (err) => {
   } else {
     logger.info(
       { nodeEnv: process.env["NODE_ENV"] },
-      "Checkers de fundo desligados (RUN_BACKGROUND_CHECKERS=1 para ligar)",
+      "Timers de checkers desligados -- ciclos rodam via POST /api/checkers/run (RUN_BACKGROUND_CHECKERS=1 força os timers)",
     );
+    // Esta linha sozinha parece intencional -- e pareceria igual se o gatilho
+    // externo nunca tivesse sido criado, e nenhum alerta estivesse rodando.
+    // O vigia é quem transforma essa ausência em ERROR. Ver checker-watchdog.ts.
+    iniciarVigiaDosCheckers();
   }
 });

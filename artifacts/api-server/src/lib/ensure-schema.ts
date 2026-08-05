@@ -388,4 +388,32 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (iv_history table)");
   }
+
+  try {
+    // Trava + cadência do ciclo de checkers via request (routes/checkers.ts).
+    // Linha ÚNICA (id=1): a claim é um UPDATE atômico condicionado a
+    // locked_until < now(), então só uma instância do Autoscale roda o ciclo
+    // por vez -- estado in-process não serve, cada chamada pode cair numa
+    // instância diferente (inclusive fantasmas de versões antigas).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS checker_lease (
+        id integer PRIMARY KEY CHECK (id = 1),
+        locked_until timestamptz NOT NULL DEFAULT to_timestamp(0),
+        cadence jsonb NOT NULL DEFAULT '{}'::jsonb
+      )
+    `);
+    // owner_token: a trava expira sozinha, então quem solta precisa provar que
+    // ainda é dono -- sem isso um ciclo que passou da validade liberava a trava
+    // de OUTRA instância que já tinha assumido. Ver routes/checkers.ts.
+    await db.execute(sql`ALTER TABLE checker_lease ADD COLUMN IF NOT EXISTS owner_token text`);
+    // last_cycle_at: alimenta o vigia (lib/checker-watchdog.ts). Com os timers
+    // desligados, um gatilho externo que pare de chamar não produz erro nenhum
+    // -- os alertas simplesmente somem em silêncio. Este carimbo é o que
+    // permite perceber.
+    await db.execute(sql`ALTER TABLE checker_lease ADD COLUMN IF NOT EXISTS last_cycle_at timestamptz`);
+    await db.execute(sql`INSERT INTO checker_lease (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+    logger.info("Schema check ok (checker_lease)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (checker_lease)");
+  }
 }

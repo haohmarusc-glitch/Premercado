@@ -88,7 +88,7 @@ async function persistKey(key: string): Promise<void> {
   );
 }
 
-async function checkPortfolioAlerts(): Promise<void> {
+export async function checkPortfolioAlerts(): Promise<void> {
   // O agente diário já satura CPU/rede com dezenas de chamadas Python em
   // paralelo -- rodar fetchPrices (outro subprocesso Python) ao mesmo tempo
   // faz os dois competirem e estourar o timeout de 30s (visto em produção).

@@ -1,40 +1,42 @@
 /**
- * Guard que decide se o processo roda os checkers de fundo.
+ * Guard que decide se o processo roda os checkers de fundo POR TIMER.
  *
- * Sem ele, index.ts ligava os quatro incondicionalmente -- então um
- * `pnpm run dev` no mesmo container do app deployado dobrava a carga de
- * subprocessos Python sobre o yfinance, e todo subprocesso do lado deployado
- * estourava seu timeout (visto em produção 02/08).
+ * Histórico: começou como "ligado em produção, desligado em dev" (um `pnpm run
+ * dev` no mesmo container dobrava a carga de Python e todo subprocesso do lado
+ * deployado estourava timeout, visto 02/08). Em 05/08 virou "desligado em todo
+ * lugar": no Autoscale a CPU só existe durante um request, então os ciclos
+ * migraram pra POST /api/checkers/run disparado por Scheduled Deployment, e o
+ * timer interno passou a ser opt-in explícito via env.
  */
 import { describe, it, expect } from "vitest";
 import { shouldRunBackgroundCheckers } from "../background-checkers";
 
 describe("shouldRunBackgroundCheckers", () => {
-  it("liga em produção", () => {
-    expect(shouldRunBackgroundCheckers({ NODE_ENV: "production" })).toBe(true);
+  it("desligado em produção -- os ciclos rodam via request agendado", () => {
+    expect(shouldRunBackgroundCheckers({ NODE_ENV: "production" })).toBe(false);
   });
 
-  it("desliga em development -- o caso que causou a contenção", () => {
+  it("desligado em development", () => {
     expect(shouldRunBackgroundCheckers({ NODE_ENV: "development" })).toBe(false);
   });
 
-  it("liga quando NODE_ENV não está definido (não presume dev)", () => {
-    expect(shouldRunBackgroundCheckers({})).toBe(true);
+  it("desligado quando NODE_ENV não está definido", () => {
+    expect(shouldRunBackgroundCheckers({})).toBe(false);
   });
 
-  it("a env força ligado mesmo em development", () => {
+  it("a env força ligado (worker dedicado / teste local)", () => {
     expect(
       shouldRunBackgroundCheckers({ NODE_ENV: "development", RUN_BACKGROUND_CHECKERS: "1" }),
     ).toBe(true);
+    expect(
+      shouldRunBackgroundCheckers({ NODE_ENV: "production", RUN_BACKGROUND_CHECKERS: "1" }),
+    ).toBe(true);
   });
 
-  it("a env força desligado mesmo em produção", () => {
+  it('a env com "0"/"false" mantém desligado', () => {
     expect(
       shouldRunBackgroundCheckers({ NODE_ENV: "production", RUN_BACKGROUND_CHECKERS: "0" }),
     ).toBe(false);
-  });
-
-  it('aceita "false" além de "0"', () => {
     expect(
       shouldRunBackgroundCheckers({ NODE_ENV: "production", RUN_BACKGROUND_CHECKERS: "false" }),
     ).toBe(false);
@@ -45,7 +47,7 @@ describe("shouldRunBackgroundCheckers", () => {
 
   it("env vazia não conta como escolha explícita", () => {
     expect(
-      shouldRunBackgroundCheckers({ NODE_ENV: "development", RUN_BACKGROUND_CHECKERS: "" }),
+      shouldRunBackgroundCheckers({ NODE_ENV: "production", RUN_BACKGROUND_CHECKERS: "" }),
     ).toBe(false);
   });
 });

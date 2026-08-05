@@ -199,7 +199,7 @@ async function fireAlert(
   }
 }
 
-async function checkAlerts(): Promise<void> {
+export async function checkAlerts(): Promise<void> {
   // O agente diário já satura CPU/rede com dezenas de chamadas Python em
   // paralelo (technicals, candle patterns, short interest, etc.) -- rodar o
   // checker de alertas (outro subprocesso Python) ao mesmo tempo faz os dois
@@ -555,7 +555,7 @@ async function processarSqueezeAlerts(
  * Uma falha isolada não derruba as outras: o Python devolve `falhas` por check
  * e os resultados de quem terminou continuam valendo.
  */
-async function rodarCheckersDeMercado(): Promise<void> {
+export async function rodarCheckersDeMercado(): Promise<void> {
   // Mesmo motivo do checkAlerts -- evita competir por CPU/rede com o agente
   // diário, que sozinho já satura o container.
   if (agentState.running) {
