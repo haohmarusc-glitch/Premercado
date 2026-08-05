@@ -7,13 +7,17 @@ import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
 // Coalescido no ponto do spawn, não em cada rota: assim toda rota que usa
 // runPython herda a proteção, inclusive as que forem adicionadas depois.
 function runPython(script: string, payload: object): Promise<unknown> {
-  return coalescer(`${script}:${JSON.stringify(payload)}`, () => new Promise((resolve, reject) => {
+  // comVagaPython POR DENTRO do coalescer: requests idênticas já foram
+  // fundidas numa só antes de disputar vaga. Invertido, a segunda ocuparia uma
+  // vaga só pra esperar a primeira. Ver lib/vaga-python.ts.
+  return coalescer(`${script}:${JSON.stringify(payload)}`, () => comVagaPython(script, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", script);
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -28,7 +32,7 @@ function runPython(script: string, payload: object): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  }));
+  })));
 }
 
 // get_market_alerts_snapshot.py precisa rodar via `-m agent.xxx` (import
@@ -39,7 +43,7 @@ function runPython(script: string, payload: object): Promise<unknown> {
 function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
   // Foi ESTE que apareceu duplicado no log de 04/08: dois GET /api/market-alerts
   // idênticos em voo (ids 72 e 78), 9s cada, dois interpretadores.
-  return coalescer(`market_alerts:${JSON.stringify(payload)}`, () => new Promise((resolve, reject) => {
+  return coalescer(`market_alerts:${JSON.stringify(payload)}`, () => comVagaPython("market_alerts", () => new Promise((resolve, reject) => {
     const py = spawnPython(getPythonBin(), ["-m", "agent.get_market_alerts_snapshot"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
@@ -60,7 +64,7 @@ function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
       if (code !== 0) return reject(new Error(err || "Script failed"));
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
     });
-  }));
+  })));
 }
 
 async function resolveTickers(raw: string): Promise<string[]> {

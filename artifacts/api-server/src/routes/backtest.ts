@@ -4,11 +4,14 @@ import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { clamp, optionalPct } from "../lib/backtest-params";
 import { spawnPython } from "../lib/python-spawn";
+import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
 
 function runBacktestScript(payload: object, timeoutMs: number): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
+  // Ver lib/vaga-python.ts.
+  return comVagaPython("backtest", () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", "backtest.py");
     const py = spawnPython(getPythonBin(), [scriptPath]);
     py.stdin.write(JSON.stringify(payload));
@@ -23,7 +26,7 @@ function runBacktestScript(payload: object, timeoutMs: number): Promise<unknown>
       if (code !== 0) { reject(new Error(err || "Script failed")); return; }
       try { resolve(JSON.parse(out)); } catch { reject(new Error("Failed to parse script output")); }
     });
-  });
+  }));
 }
 
 router.post("/backtest", async (req, res, next): Promise<void> => {
