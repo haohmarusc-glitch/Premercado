@@ -1,5 +1,5 @@
 """
-Provider adapter — wraps OpenAI-compatible APIs (OpenAI, Gemini, OpenRouter, Kimi)
+Provider adapter — wraps OpenAI-compatible APIs (OpenAI, Gemini, OpenRouter, Kimi, DeepSeek)
 and Anthropic into a single interface that agent.py can use transparently.
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from .security import mask_sensitive_data
 
-# ── Preços por modelo (US$ por 1M tokens; referência 2026-07) ─────────────────
+# ── Preços por modelo (US$ por 1M tokens; referência 2026-07/08) ───────────────
 # cache_read/cache_write só se aplicam a provedores com prompt caching faturado
 # à parte (Anthropic: write 1.25x, read ~0.1x; OpenAI: cached input a 50%).
 # Modelos ausentes daqui têm custo reportado como None (desconhecido), não 0.
@@ -40,6 +40,10 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
     "moonshot-v1-32k": {"input": 1.00, "output": 3.00},
     "moonshot-v1-8k": {"input": 0.20, "output": 2.00},
+    # DeepSeek V4 (oficial ago/2026). Cache hit de input é ~$0.0028 (flash) /
+    # ~$0.0036 (pro); usamos cache_read ≈ 2% do input miss para aproximar.
+    "deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cache_read": 0.0028},
+    "deepseek-v4-pro": {"input": 0.435, "output": 0.87, "cache_read": 0.0036},
 }
 
 
@@ -246,6 +250,17 @@ PROVIDERS = {
             "chat": "claude-haiku-4-5",
         },
         # Sem limite de TPM agressivo conhecido — não trunca por tamanho.
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "models": {
+            # V4 (oficial 2026). Pro = melhor qualidade/raciocínio; Flash =
+            # forte em agent/tool-calling e bem mais barato (atualizado 31/07).
+            "full": "deepseek-v4-pro",
+            "flash": "deepseek-v4-flash",
+            "chat": "deepseek-v4-flash",
+        },
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -710,7 +725,7 @@ class ProviderClient:
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "gemini", "openrouter", "openai", "kimi"]
+_DEFAULT_ORDER = ["anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"]
 
 
 def _provider_order() -> list[str]:
@@ -934,7 +949,7 @@ class FallbackClient:
         self._order = [p for p in _provider_order() if _has_key(p)]
         if not self._order:
             raise RuntimeError(
-                "No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, KIMI_API_KEY"
+                "No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, KIMI_API_KEY"
             )
         self._clients: dict[str, ProviderClient] = {}
         self._current_idx = 0
