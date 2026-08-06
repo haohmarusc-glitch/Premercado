@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useStaggerReady } from "@/hooks/use-stagger-ready";
 
 // ─── MarketAlertsCard ────────────────────────────────────────────────────────
 // Consome GET /api/market-alerts (get_market_alerts_snapshot.py): mesmo
@@ -32,9 +33,15 @@ async function fetchMarketAlerts(): Promise<MarketAlertsResponse> {
 }
 
 function useMarketAlerts() {
+  // 250ms: este card monta incondicionalmente junto com o resto do dashboard
+  // (quotes, exit-plan) -- sem o atraso, é um dos que compete pela primeira
+  // leva de vagas do servidor. O dado é cacheado por 4min, então 250ms de
+  // largada não tira nada em troca.
+  const ready = useStaggerReady(250);
   return useQuery({
     queryKey: ["market-alerts"],
     queryFn: fetchMarketAlerts,
+    enabled: ready,
     staleTime: 4 * 60_000,
     refetchInterval: 5 * 60_000,
     retry: 1,
