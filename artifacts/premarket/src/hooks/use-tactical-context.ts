@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useStaggerReady } from "./use-stagger-ready";
 
 // ─── Contexto tático por ticker ──────────────────────────────────────────────
 // Junta 3 endpoints que já existem e rodam fora do loop do agente (rápidos,
@@ -59,10 +60,22 @@ export function useTacticalContext(tickers: string[]) {
   const key = tickerKey(tickers);
   const enabled = key.length > 0;
 
+  // As 3 chamadas abaixo eram disparadas juntas, ao vivo, no mesmo mount --
+  // sozinhas já eram 3 dos "vários subprocessos concorrendo" medidos em
+  // produção (04-05/08). Cada uma tem seu próprio atraso pra não competir
+  // nem entre si nem com o resto do dashboard (market-alerts geral, trend,
+  // alt-data já espaçados em market-alerts-card.tsx/trend-card.tsx/
+  // smart-money-card.tsx). 0/200/400ms: a mais barata (RSI/MACD via
+  // technicals) primeiro, a mais cara por rede (busca de notícias) por
+  // último.
+  const readyTechnicals = useStaggerReady(0);
+  const readyNews = useStaggerReady(200);
+  const readyAlerts = useStaggerReady(400);
+
   const technicalsQ = useQuery({
     queryKey: ["exit-plan-technicals", key],
     queryFn: () => fetchJSON<{ items: TechnicalSnapshot[] }>(`/api/technicals?tickers=${encodeURIComponent(key)}`),
-    enabled,
+    enabled: enabled && readyTechnicals,
     staleTime: 55_000,
     refetchInterval: 60_000,
     retry: 1,
@@ -71,7 +84,7 @@ export function useTacticalContext(tickers: string[]) {
   const newsQ = useQuery({
     queryKey: ["exit-plan-news", key],
     queryFn: () => fetchJSON<{ items: { ticker: string; news?: NewsHeadline[]; error?: string }[] }>(`/api/news?tickers=${encodeURIComponent(key)}`),
-    enabled,
+    enabled: enabled && readyNews,
     staleTime: 4 * 60_000,
     refetchInterval: 5 * 60_000,
     retry: 1,
@@ -80,7 +93,7 @@ export function useTacticalContext(tickers: string[]) {
   const alertsQ = useQuery({
     queryKey: ["exit-plan-market-alerts", key],
     queryFn: () => fetchJSON<{ total: number; criticalCount: number; alerts: MarketAlertItem[] }>(`/api/market-alerts?tickers=${encodeURIComponent(key)}`),
-    enabled,
+    enabled: enabled && readyAlerts,
     staleTime: 4 * 60_000,
     refetchInterval: 5 * 60_000,
     retry: 1,

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Minus, AlertTriangle } from "lucide-react";
+import { useStaggerReady } from "@/hooks/use-stagger-ready";
 
 // ─── TrendCard ───────────────────────────────────────────────────────────────
 // Consome GET /api/trend (get_trend.py): confluência técnico + notícias.
@@ -74,9 +75,15 @@ function ComponentPill({ label, value, good }: { label: string; value: string; g
 }
 
 export function useTrend(symbol: string) {
+  // 400ms: chave compartilhada entre TrendCard e o overlay de marcadores do
+  // PriceChart -- os dois pedem o MESMO symbol no mesmo mount, então o
+  // react-query já funde num fetch só; o atraso é só pra não competir com
+  // quotes/market-alerts/exit-plan na primeira leva de vagas do servidor.
+  const ready = useStaggerReady(400);
   return useQuery({
     queryKey: ["trend", symbol],
     queryFn: () => fetchTrend(symbol),
+    enabled: ready,
     staleTime: 5 * 60_000, // técnico diário não muda a cada segundo
     retry: 1,
   });
