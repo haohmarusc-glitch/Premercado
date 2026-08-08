@@ -70,3 +70,7 @@ artifacts/api-server/src/earnings_output.txt
 .env
 .env.*
 !.env.example
+*.dump
+carteira_dados.csv
+carteira_atual.json
+snapshot_portfolio_atual.json
