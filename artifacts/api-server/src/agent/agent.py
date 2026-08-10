@@ -103,7 +103,11 @@ Seu fluxo completo:
 4. Chame get_earnings_calendar para identificar quais ativos têm resultados iminentes (≤ 14 dias).
 5. Chame detect_sector_contagion para mapear contágio entre os grupos setoriais monitorados:
 {_sector_groups_text()}
-   Os tickers em "catch_up" são candidatos prioritários para análise aprofundada nesta sessão.
+   Isto é só CONTEXTO para o relatório final: o relatório cobre exclusivamente
+   as posições da carteira (FASE 2), então não abra análise aprofundada de um
+   ticker só por ele ter sido marcado "líder"/"catch_up" aqui — cite o
+   contágio no resumo de um ativo da carteira apenas se ele estiver no mesmo
+   setor do movimento detectado.
    Para captura intradiária: period='1d', interval='5m'.
 6. Chame get_global_market_snapshot para contexto de Ásia overnight, Europa em
    overlap e futuros de índice. É só contexto informativo — não é um sinal de
@@ -114,10 +118,11 @@ Seu fluxo completo:
    sobre o índice ^IXIC, nunca aplique como sinal de entrada/saída de um
    ativo individual da cesta sem dizer explicitamente essa limitação no relatório.
 
-**FASE 2 — Análise por ativo** (dois grupos; não misture a profundidade)
+**FASE 2 — Análise por ativo** (só a carteira — o relatório NÃO cobre outros
+tickers da lista de cobertura; contágio setorial em FASE 1 passo 5 é só
+contexto, não motivo pra abrir análise de um ticker fora da carteira)
 
 *Grupo A — análise COMPLETA*:
-  • Tickers marcados como "líder" ou "catch_up" pelo detect_sector_contagion (FASE 1 passo 5)
   • Posições da carteira: {", ".join(config.PORTFOLIO_TICKERS)}
 
 **Regra de economia (dias calmos):** se detect_sector_contagion NÃO apontar
@@ -176,13 +181,6 @@ em NVDA. Isso multiplica o número de turnos sem necessidade.
 Outras regras de eficiência:
 - Não repita uma ferramenta para o mesmo ticker se o dado já está no contexto.
 - Pare assim que tiver informação suficiente para o relatório; não gaste turnos extras.
-
-*Grupo B — cotação RÁPIDA* (só get_stock_data):
-  • Todos os demais tickers em cobertura não incluídos no Grupo A
-  Registre preço e variação no relatório; não chame outras ferramentas para eles.
-  Agrupe: uma resposta com get_stock_data de todos os tickers do Grupo B juntos.
-  NÃO atribua rótulo de cor ao Grupo B — sem IV/técnico/short coletados não há
-  como avaliar os gates, e um rótulo aqui seria chute.
 
 **FASE 2.5 — Radar de mercado** (após coletar notícias de TODOS os ativos)
 14. Chame check_market_alerts passando todas as manchetes coletadas em headlines_by_ticker.
@@ -1249,9 +1247,12 @@ TURNOS_FIXOS = 16
 def _turnos_para_cobertura() -> int:
     """Piso de turnos para a cobertura REAL da run diária.
 
-    config.TICKERS (não PORTFOLIO_TICKERS): o Grupo A é a carteira MAIS os
-    líderes de contágio, e todos saem da lista de cobertura -- ela é o limite
-    superior de quantos ativos podem exigir turno próprio.
+    Desde que o relatório passou a cobrir só a carteira (Grupo A =
+    PORTFOLIO_TICKERS, sem líderes de contágio nem Grupo B), config.TICKERS é
+    um teto folgado, não o tamanho real da cobertura -- mantido de propósito
+    como headroom generoso: apertar pro tamanho exato da carteira foi o que
+    já causou run truncada em produção 04/08 (ver comentário de TURNOS_FIXOS
+    acima) quando a cobertura real acabou sendo maior que o cálculo.
     """
     return len(config.TICKERS) + TURNOS_FIXOS
 

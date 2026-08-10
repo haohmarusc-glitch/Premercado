@@ -141,10 +141,12 @@ def test_gates_nao_se_apresentam_como_sinal_validado(prompt):
     assert "backtest" in prompt
 
 
-def test_grupo_b_sem_rotulo(prompt):
-    """Grupo B só tem get_stock_data -- sem IV/técnico não há como avaliar os
-    gates, então rótulo ali seria chute."""
-    assert "NÃO atribua rótulo de cor ao Grupo B" in prompt
+def test_relatorio_diario_so_cobre_carteira(prompt):
+    """Relatório diário passou a cobrir só a carteira (Grupo A =
+    PORTFOLIO_TICKERS) -- sem Grupo B (cotação rápida de fora da carteira) e
+    sem expandir Grupo A com líderes/catch_up de contágio setorial."""
+    assert "Grupo B" not in prompt
+    assert 'Tickers marcados como "líder" ou "catch_up"' not in prompt
 
 
 def test_regra_de_frescor_do_bloco_tecnico(prompt):
