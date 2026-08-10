@@ -110,7 +110,7 @@ describe("decideProvider — teto estourado", () => {
     const ordem = (d.order ?? "").split(",");
     expect(ordem[0]).toBe("gemini");
     expect(ordem).not.toContain("anthropic");
-    expect(ordem).toEqual(["gemini", "openrouter", "openai", "kimi"]);
+    expect(ordem).toEqual(["gemini", "deepseek", "openrouter", "openai", "kimi"]);
   });
 
   it("remove o primário mesmo quando ele não é o anthropic", () => {

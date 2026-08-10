@@ -20,6 +20,7 @@ from . import sector_contagion as _sc
 from .backtest import run_backtest as _run_backtest
 from .cache import cached
 from .http_retry import SESSION
+from .portfolio_snapshot import get_portfolio_snapshot
 from .security import mask_sensitive_data, sanitize_for_llm, sanitize_ticker, sanitize_url
 
 _PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
@@ -2384,6 +2385,26 @@ TOOLS = [
         },
     },
     {
+        "name": "get_portfolio_snapshot",
+        "description": (
+            "Snapshot das posições abertas da carteira: quantidade, custo médio, "
+            "investido e (por padrão) preço atual + P&L não realizado. Use quando "
+            "o usuário perguntar sobre a carteira, patrimônio, quanto tem em um "
+            "ticker ou resultado não realizado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_prices": {
+                    "type": "boolean",
+                    "description": "True = preço ao vivo + P&L. False = só qty/custo.",
+                    "default": True,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "list_alerts",
         "description": (
             "Lista os alertas de preço cadastrados no sistema. "
@@ -3026,6 +3047,7 @@ DISPATCH = {
     "search_edgar_filings": search_edgar_filings,
     "read_filing": read_filing,
     "save_observation": save_observation,
+    "get_portfolio_snapshot": get_portfolio_snapshot,
     "list_alerts": list_alerts,
     "create_alert": create_alert,
     "delete_alert": delete_alert,
