@@ -1,0 +1,25 @@
+# Sobe o Deploy Panel ao lado do Premercado.
+# Usa o docker.sock do host para rodar compose no /opt/premercado.
+#
+# Uso:
+#   cd /opt/deploy-panel
+#   cp .env.example .env   # defina PANEL_PASSWORD
+#   docker compose up -d --build
+
+services:
+  panel:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: "3090"
+      PANEL_PASSWORD: "${PANEL_PASSWORD:?defina PANEL_PASSWORD no .env}"
+      APP_DIR: /opt/premercado
+      NODE_ENV: production
+      SESSION_SECRET: "${SESSION_SECRET:-change-me-panel-secret}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/premercado:/opt/premercado
+      - /root/.ssh:/root/.ssh:ro
+      - /root/.gitconfig:/root/.gitconfig:ro
+    ports:
+      - "127.0.0.1:3090:3090"

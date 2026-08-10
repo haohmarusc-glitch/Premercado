@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Deploy Panel · Pré-Mercado</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="login" class="card login-card">
+      <div class="brand">
+        <span class="logo">⚡</span>
+        <h1>Deploy Panel</h1>
+        <p>Pré-Mercado · VPS</p>
+      </div>
+      <form id="login-form">
+        <label for="password">Senha do painel</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+        <button type="submit" class="btn primary block">Entrar</button>
+        <p id="login-error" class="error hidden"></p>
+      </form>
+    </section>
+    <section id="main" class="hidden">
+      <header class="top">
+        <div>
+          <strong>Deploy Panel</strong>
+          <span id="app-dir" class="muted small"></span>
+        </div>
+        <button id="btn-logout" class="btn ghost sm">Sair</button>
+      </header>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="git">Git</button>
+        <button class="tab" data-tab="logs">Logs</button>
+        <button class="tab" data-tab="deploy">Publicar</button>
+      </nav>
+      <div id="tab-git" class="tab-panel">
+        <div class="actions">
+          <button class="btn" data-action="git-status">Status</button>
+          <button class="btn primary" data-action="git-pull">Pull</button>
+          <button class="btn" data-action="git-push">Push</button>
+          <button class="btn ghost" data-action="git-log">Log</button>
+        </div>
+      </div>
+      <div id="tab-logs" class="tab-panel hidden">
+        <div class="actions">
+          <button class="btn" data-action="compose-ps">Containers</button>
+          <button class="btn primary" data-action="compose-logs-app">Logs app</button>
+          <button class="btn" data-action="compose-logs">Logs todos</button>
+        </div>
+      </div>
+      <div id="tab-deploy" class="tab-panel hidden">
+        <div class="actions">
+          <button class="btn primary" data-action="compose-up">Publicar (build)</button>
+          <button class="btn" data-action="compose-restart">Restart app</button>
+          <button class="btn ghost" data-action="health">Health</button>
+        </div>
+        <p class="hint">Publicar roda docker compose up -d --build. Pode demorar.</p>
+      </div>
+      <div class="output-wrap">
+        <div class="output-bar">
+          <span id="status">Pronto</span>
+          <button id="btn-clear" class="btn ghost sm">Limpar</button>
+        </div>
+        <pre id="output" class="output" aria-live="polite"></pre>
+      </div>
+    </section>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
