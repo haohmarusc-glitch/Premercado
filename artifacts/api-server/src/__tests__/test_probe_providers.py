@@ -178,7 +178,7 @@ class TestVariosProvedores:
     com modelo 404, openai sem cota e kimi com a conta suspensa."""
 
     def test_sonda_todos_os_provedores_openai_compat(self):
-        assert set(pg.PROVEDORES_SONDAVEIS) == {"gemini", "openrouter", "openai", "kimi"}
+        assert set(pg.PROVEDORES_SONDAVEIS) == {"deepseek", "gemini", "openrouter", "openai", "kimi"}
 
     def test_anthropic_fica_de_fora(self):
         """Não é camada compat, e não é ele que está quebrado -- é o fallback

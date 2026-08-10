@@ -403,7 +403,7 @@ class TestProviderOrder:
         order = _provider_order()
         assert order[0] == "gemini"
         assert order.count("gemini") == 1
-        assert set(order) == {"anthropic", "gemini", "openrouter", "openai", "kimi"}
+        assert set(order) == {"anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"}
 
     def test_default_primary_is_anthropic(self, monkeypatch):
         monkeypatch.delenv("AGENT_PROVIDER_ORDER", raising=False)

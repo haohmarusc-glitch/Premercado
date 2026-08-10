@@ -512,12 +512,22 @@ Formato da resposta (Markdown):
 def build_chat_prompt() -> str:
     today = _today_brt_str()
     now = _now_brt_str()
+    portfolio_tickers = list(config.PORTFOLIO_TICKERS)
     portfolio_line = (
         f"Posições da carteira (ABERTAS agora, é isso que \"a carteira\"/\"minhas "
-        f"posições\" significa quando o usuário perguntar): {', '.join(config.PORTFOLIO_TICKERS)}."
-        if config.PORTFOLIO_TICKERS
+        f"posições\" significa quando o usuário perguntar): {', '.join(portfolio_tickers)}."
+        if portfolio_tickers
         else "Posições da carteira: nenhuma posição aberta no momento."
     )
+    try:
+        rich = memory.rich_context_block()
+    except Exception as e:
+        rich = f"(contexto rico indisponível: {e})"
+    try:
+        mem = memory.recent_context(portfolio_only=True, portfolio_tickers=portfolio_tickers)
+    except Exception as e:
+        mem = f"(memória indisponível: {e})"
+
     return f"""Você é um analista de ações conversacional em {today} ({now} BRT).
 Ativos monitorados (cobertura geral, NÃO é a carteira do usuário): {", ".join(config.TICKERS)}.
 {portfolio_line}
@@ -530,27 +540,34 @@ não esteja nessa lista, mesmo que ele tenha aparecido em análises recentes.
 Se o usuário pedir um ticker específico fora da carteira, responda normalmente
 sobre ele, só não o rotule como posição da carteira.
 
-Ferramentas disponíveis: get_stock_data, get_news, get_technical_indicators,
-detect_candle_patterns, get_fear_greed_index, get_sector_performance, get_short_interest,
-get_analyst_ratings, get_options_data, get_geopolitical_news (falas/decisões de
-chefes de estado, guerra, petróleo, Big Techs, semicondutores), check_squeeze_setup
-(risco de short squeeze + confirmação técnica de reversão pra um ticker),
-get_macro_indicators (CPI/desemprego/juros do Fed via FRED), get_retail_sentiment
-(menções no Reddit/WSB), get_fundamentals_valuation (DCF + múltiplos via FMP),
-get_insider_trades (compra/venda de executivos da empresa), get_gamma_exposure
-(GEX/paredes de opções — use no máximo 1x por resposta, tier grátis é de só 5/dia)
-e get_earnings_transcript (transcrição da última teleconferência de resultados).
+Ferramentas disponíveis:
+- Análise: get_stock_data, get_news, get_technical_indicators, detect_candle_patterns,
+  get_fear_greed_index, get_sector_performance, get_short_interest, get_analyst_ratings,
+  get_options_data, get_geopolitical_news, check_squeeze_setup, get_macro_indicators,
+  get_retail_sentiment, get_fundamentals_valuation, get_insider_trades,
+  get_gamma_exposure (máx 1x/resposta), get_earnings_transcript
+- Carteira / ações: get_portfolio_snapshot (qty, custo, P&L), list_alerts, create_alert,
+  delete_alert, get_scenario_status (chance de empatar), get_exit_plan_items
+  (metas/janelas de venda cadastradas)
 
 Regras:
 - Responda à pergunta do usuário de forma direta e concisa.
-- Use ferramentas apenas quando necessário. Máximo 4 chamadas por resposta.
-- NÃO use: save_observation, search_edgar_filings, read_filing, create_alert,
-  delete_alert, list_alerts, check_market_alerts, detect_sector_contagion.
+- Use ferramentas apenas quando necessário. Máximo 6 chamadas por resposta.
+- Preferências de ação: antes de create_alert, chame list_alerts (evite duplicata).
+  No máximo 2 create_alert por resposta; sempre explique o motivo ao usuário.
+  delete_alert só com motivo claro (nível superado / obsoleto).
+- NÃO use: save_observation, search_edgar_filings, read_filing,
+  check_market_alerts, detect_sector_contagion, update_exit_plan_item,
+  create_exit_plan_item.
 - Formate em Markdown. Seja factual; cite números.
 
-=== CONTEXTO RECENTE DO AGENTE ===
-{memory.recent_context()}
-=== FIM DO CONTEXTO ==="""
+=== ESTADO ATUAL (carteira / alertas / cenário) ===
+{rich}
+=== FIM DO ESTADO ===
+
+=== MEMÓRIA RECENTE (só tickers da carteira, 1 obs/ticker/dia) ===
+{mem}
+=== FIM DA MEMÓRIA ==="""
 
 
 def run_tool(name: str, args: dict) -> str:
@@ -586,12 +603,17 @@ def _resp_to_history_content(resp) -> list:
 # ── Chat tool subset ──────────────────────────────────────────────────────────
 
 _CHAT_TOOL_NAMES = {
+    # Analise
     "get_stock_data", "get_news", "get_technical_indicators",
     "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
     "get_short_interest", "get_analyst_ratings", "get_options_data",
     "get_geopolitical_news", "check_squeeze_setup",
     "get_macro_indicators", "get_retail_sentiment", "get_fundamentals_valuation",
     "get_insider_trades",
+    # Acao / estado da carteira (liberadas no chat com guardrails no prompt)
+    "get_portfolio_snapshot",
+    "list_alerts", "create_alert", "delete_alert",
+    "get_scenario_status", "get_exit_plan_items",
 }
 # get_gamma_exposure/get_earnings_transcript (CHAT_ONLY_TOOLS em tools.py)
 # ficam de FORA de t.TOOLS de propósito -- tier grátis de 5 req/dia e 5

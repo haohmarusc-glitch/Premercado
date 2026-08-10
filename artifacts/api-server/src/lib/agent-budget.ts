@@ -29,7 +29,7 @@
  * consumida. Um provedor que exista só de um lado silenciosamente sai (ou
  * entra) da cadeia de fallback. Há teste que compara as duas fontes.
  */
-export const PROVIDER_FALLBACK_ORDER = ["anthropic", "gemini", "openrouter", "openai", "kimi"];
+export const PROVIDER_FALLBACK_ORDER = ["anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"];
 
 export const DEFAULT_PRIMARY = "anthropic";
 
