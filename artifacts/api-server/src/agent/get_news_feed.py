@@ -1,7 +1,7 @@
 """Recent news headlines per ticker (traduzidas p/ pt-BR) — standalone subprocess.
 
 Input (stdin JSON):  {"tickers": ["NVDA"], "maxItems": 5, "translate": true}
-Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, source}]}, ... ]}
+Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, source, url}]}, ... ]}
 """
 import sys, json, re
 import yfinance as yf
@@ -63,11 +63,23 @@ def for_ticker(ticker: str, max_items: int) -> dict:
             summary = content.get("summary", item.get("summary", "")) or ""
             provider = content.get("provider", {})
             source = provider.get("displayName", "") if isinstance(provider, dict) else ""
+            # canonicalUrl aponta pro artigo original do veículo (WSJ, Bloomberg
+            # etc.); clickThroughUrl é o fallback hospedado pela própria Yahoo
+            # quando não há canonicalUrl. item.get("link") cobre o formato antigo
+            # do yfinance, caso a resposta não venha aninhada em "content".
+            canonical = content.get("canonicalUrl", {})
+            click_through = content.get("clickThroughUrl", {})
+            url = (
+                (canonical.get("url") if isinstance(canonical, dict) else "")
+                or (click_through.get("url") if isinstance(click_through, dict) else "")
+                or item.get("link", "")
+            )
             out.append({
                 "title": clean_text(content.get("title", item.get("title", ""))),
                 "published": content.get("pubDate", item.get("providerPublishTime", "")),
                 "summary": clean_text(summary[:280] + ("..." if len(summary) > 280 else "")),
                 "source": source,
+                "url": url or None,
             })
         return {"ticker": ticker, "news": out}
     except Exception as e:

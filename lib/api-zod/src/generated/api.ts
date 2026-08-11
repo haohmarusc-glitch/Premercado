@@ -562,7 +562,8 @@ export const GetNewsResponse = zod.object({
   "title": zod.string(),
   "published": zod.union([zod.string(),zod.coerce.number()]).optional(),
   "summary": zod.string().nullish(),
-  "source": zod.string().nullish()
+  "source": zod.string().nullish(),
+  "url": zod.string().nullish()
 })).optional(),
   "error": zod.string().nullish()
 }))

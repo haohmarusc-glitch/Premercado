@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Newspaper, RefreshCw, Search } from "lucide-react";
+import { Newspaper, RefreshCw, Search, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface NewsItem { title: string; published?: string; summary?: string; source?: string; }
+interface NewsItem { title: string; published?: string; summary?: string; source?: string; url?: string | null; }
 interface Item { ticker: string; news?: NewsItem[]; error?: string; }
 
 function NewsList({ it }: { it: Item }) {
@@ -23,7 +23,19 @@ function NewsList({ it }: { it: Item }) {
           {it.news.map((n, i) => (
             <div key={i} className="border border-border rounded-lg bg-card p-3">
               <div className="flex items-start justify-between gap-3 mb-1">
-                <p className="font-mono text-sm font-semibold text-foreground leading-snug">{n.title}</p>
+                {n.url ? (
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-sm font-semibold text-foreground leading-snug hover:text-primary hover:underline inline-flex items-start gap-1.5"
+                  >
+                    {n.title}
+                    <ExternalLink className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
+                  </a>
+                ) : (
+                  <p className="font-mono text-sm font-semibold text-foreground leading-snug">{n.title}</p>
+                )}
               </div>
               {n.summary && <p className="font-mono text-xs text-muted-foreground leading-relaxed">{n.summary}</p>}
               <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono text-muted-foreground">
