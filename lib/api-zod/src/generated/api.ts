@@ -563,7 +563,8 @@ export const GetNewsResponse = zod.object({
   "published": zod.union([zod.string(),zod.coerce.number()]).optional(),
   "summary": zod.string().nullish(),
   "source": zod.string().nullish(),
-  "url": zod.string().nullish()
+  "url": zod.string().nullish(),
+  "relatedTickers": zod.array(zod.string()).nullish()
 })).optional(),
   "error": zod.string().nullish()
 }))

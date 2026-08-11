@@ -1705,6 +1705,13 @@ components:
           type: ["string", "null"]
         url:
           type: ["string", "null"]
+        # Outros tickers da carteira que esta mesma matéria também menciona
+        # (ex.: notícia de aliança entre duas empresas cobertas) -- null/vazio
+        # quando não há correlação detectada.
+        relatedTickers:
+          type: ["array", "null"]
+          items:
+            type: string
 
     TickerNews:
       type: object
