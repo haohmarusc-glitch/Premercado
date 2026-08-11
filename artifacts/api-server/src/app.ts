@@ -73,7 +73,18 @@ app.use(
             imgSrc: ["'self'", "data:", "blob:", "https:"],
             connectSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
             // O widget da TradingView roda dentro de um iframe no domínio deles.
-            frameSrc: ["'self'", "https://www.tradingview.com", "https://s.tradingview.com"],
+            // Visto em produção (10/08): o embed-widget-advanced-chart.js carrega
+            // o iframe de tradingview-widget.com (domínio próprio do widget,
+            // diferente do www.tradingview.com/s.tradingview.com já liberados) --
+            // sem ele o gráfico (e o mesmo componente usado em Cripto) fica em
+            // branco com a CSP bloqueando silenciosamente o frame.
+            frameSrc: [
+              "'self'",
+              "https://www.tradingview.com",
+              "https://s.tradingview.com",
+              "https://tradingview-widget.com",
+              "https://*.tradingview-widget.com",
+            ],
             workerSrc: ["'self'", "blob:"],
             objectSrc: ["'none'"],
             baseUri: ["'self'"],
