@@ -587,7 +587,13 @@ def run_tool(name: str, args: dict) -> str:
 
 
 def _resp_to_history_content(resp) -> list:
-    """Convert NormalizedResponse to Anthropic-style content list for history."""
+    """Convert NormalizedResponse to Anthropic-style content list for history.
+
+    Quando o provedor devolveu reasoning_content (DeepSeek em modo thinking —
+    ver NormalizedResponse.reasoning_content), ele é anexado no primeiro bloco
+    do turno para sobreviver no histórico. provider.py se encarrega de
+    reidratá-lo pro formato certo em cada provedor (reenviado pro DeepSeek,
+    removido antes de ir pra Anthropic)."""
     result = []
     from .provider import TextBlock, ToolUseBlock
     for block in resp.content:
@@ -595,6 +601,8 @@ def _resp_to_history_content(resp) -> list:
             result.append({"type": "text", "text": block.text})
         elif isinstance(block, ToolUseBlock):
             result.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+    if getattr(resp, "reasoning_content", None) and result:
+        result[0] = {**result[0], "reasoning_content": resp.reasoning_content}
     return result
 
 

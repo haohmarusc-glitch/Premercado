@@ -29,6 +29,7 @@ from agent.provider import (
     _openai_response_to_normalized,
     _DEFAULT_ORDER,
     FallbackClient,
+    ProviderClient,
     _provider_order,
     _resolve_tier,
     _condense_history_for_fallback,
@@ -241,6 +242,35 @@ class TestAnthropicMessagesToOpenai:
         result = _anthropic_messages_to_openai("sys", messages)
         assert result[1]["content"] is None
 
+    def test_reasoning_content_on_block_becomes_top_level_field(self):
+        """agent.py::_resp_to_history_content anexa reasoning_content no
+        primeiro bloco do turno -- aqui ele precisa virar um campo de
+        NÍVEL DE MENSAGEM (não ficar dentro do content/tool_calls), que é
+        o formato que a API do DeepSeek exige de volta no turno seguinte."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Vou checar.",
+                        "reasoning_content": "Pensando sobre o pedido...",
+                    },
+                ],
+            }
+        ]
+        result = _anthropic_messages_to_openai("sys", messages)
+        assistant_msg = result[1]
+        assert assistant_msg["reasoning_content"] == "Pensando sobre o pedido..."
+        assert assistant_msg["content"] == "Vou checar."
+        # reasoning_content não pode vazar pro texto visível
+        assert "Pensando sobre o pedido" not in assistant_msg["content"]
+
+    def test_no_reasoning_content_key_when_absent(self):
+        messages = [{"role": "assistant", "content": [{"type": "text", "text": "Oi"}]}]
+        result = _anthropic_messages_to_openai("sys", messages)
+        assert "reasoning_content" not in result[1]
+
     def test_user_message_with_tool_result_converted_to_tool_role(self):
         messages = [
             {
@@ -283,9 +313,9 @@ class TestAnthropicMessagesToOpenai:
         assert result[1] == {"role": "user", "content": "Olá"}
 
 
-def _fake_openai_response(content=None, tool_calls=None, finish_reason="stop"):
+def _fake_openai_response(content=None, tool_calls=None, finish_reason="stop", reasoning_content=None):
     """Monta um objeto que imita response.choices[0].message/finish_reason do SDK OpenAI."""
-    message = SimpleNamespace(content=content, tool_calls=tool_calls)
+    message = SimpleNamespace(content=content, tool_calls=tool_calls, reasoning_content=reasoning_content)
     choice = SimpleNamespace(message=message, finish_reason=finish_reason)
     return SimpleNamespace(choices=[choice])
 
@@ -358,6 +388,23 @@ class TestOpenaiResponseToNormalized:
         result = _openai_response_to_normalized(resp)
         assert result.stop_reason == "end_turn"
         assert result.content == []
+
+    def test_reasoning_content_captured_from_response(self):
+        """DeepSeek em modo thinking devolve reasoning_content junto do
+        content normal -- precisa ser capturado pra poder ser ecoado de
+        volta no próximo turno (ver NormalizedResponse.reasoning_content)."""
+        resp = _fake_openai_response(
+            content="Vou checar o preço.",
+            finish_reason="stop",
+            reasoning_content="Analisando o pedido do usuário...",
+        )
+        result = _openai_response_to_normalized(resp)
+        assert result.reasoning_content == "Analisando o pedido do usuário..."
+
+    def test_no_reasoning_content_defaults_to_none(self):
+        resp = _fake_openai_response(content="Olá", finish_reason="stop")
+        result = _openai_response_to_normalized(resp)
+        assert result.reasoning_content is None
 
 
 class TestTryRecoverToolUseFailed:
@@ -788,3 +835,41 @@ class TestModelosConfiguradosTemPreco:
         ('no longer available to new users'). Foi a razão de o probe medir
         usando, em vez de ler a lista -- e este teste impede a volta."""
         assert "gemini-2.5-pro" not in PROVIDERS["gemini"]["models"].values()
+
+
+class TestStripReasoningContent:
+    """ProviderClient._strip_reasoning_content: reasoning_content (extensão
+    do DeepSeek, ver NormalizedResponse.reasoning_content) precisa sumir
+    antes de qualquer mensagem ir pra API da Anthropic -- ela é estrita
+    sobre chaves desconhecidas em content blocks, e o campo só faz sentido
+    pro DeepSeek entender de volta."""
+
+    def test_removes_reasoning_content_key_from_block(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Vou checar.", "reasoning_content": "..."},
+                ],
+            }
+        ]
+        result = ProviderClient._strip_reasoning_content(messages)
+        assert result[0]["content"][0] == {"type": "text", "text": "Vou checar."}
+
+    def test_leaves_messages_without_reasoning_content_untouched(self):
+        messages = [
+            {"role": "user", "content": "Olá"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Oi"}]},
+        ]
+        result = ProviderClient._strip_reasoning_content(messages)
+        assert result == messages
+
+    def test_does_not_mutate_original_messages(self):
+        original = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "x", "reasoning_content": "y"}],
+            }
+        ]
+        ProviderClient._strip_reasoning_content(original)
+        assert "reasoning_content" in original[0]["content"][0]

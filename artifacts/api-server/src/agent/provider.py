@@ -143,6 +143,12 @@ class NormalizedResponse:
     # em lugar nenhum: só o sintoma, a 3 camadas de distância da causa.
     # Anthropic usa "max_tokens"; a camada OpenAI-compat usa "length".
     raw_stop_reason: str = ""
+    # DeepSeek (modo "thinking", ex.: deepseek-v4-pro) exige que o
+    # reasoning_content de um turno anterior seja ecoado de volta na próxima
+    # chamada -- sem isso a API rejeita com 400 "reasoning_content in the
+    # thinking mode must be passed back". Anthropic/demais provedores nunca
+    # preenchem este campo (fica None).
+    reasoning_content: str | None = None
 
 
 # ── Pseudo tool-call leak detection ───────────────────────────────────────────
@@ -376,8 +382,11 @@ def _anthropic_messages_to_openai(system: str | list, messages: list) -> list:
         if role == "assistant":
             text_parts = []
             tool_calls = []
+            reasoning_content = None
             for block in content:
                 if isinstance(block, dict):
+                    if block.get("reasoning_content"):
+                        reasoning_content = block["reasoning_content"]
                     if block.get("type") == "text":
                         text_parts.append(block["text"])
                     elif block.get("type") == "tool_use":
@@ -399,6 +408,11 @@ def _anthropic_messages_to_openai(system: str | list, messages: list) -> list:
             }
             if tool_calls:
                 oai_msg["tool_calls"] = tool_calls
+            # DeepSeek em modo thinking exige este campo de volta no turno
+            # seguinte (ver comentário em NormalizedResponse.reasoning_content).
+            # Outros provedores OpenAI-compat simplesmente ignoram o campo extra.
+            if reasoning_content:
+                oai_msg["reasoning_content"] = reasoning_content
             out.append(oai_msg)
 
         elif role == "user":
@@ -463,8 +477,17 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
     content.extend(leaked_calls)
 
     stop_reason = "tool_use" if (finish == "tool_calls" or leaked_calls) else "end_turn"
+    # getattr cobre o caso "atributo não existe no schema do SDK"; model_extra
+    # cobre o caso "existe mas o Pydantic do SDK só expõe campos fora do
+    # schema oficial via extra" -- reasoning_content é extensão do DeepSeek,
+    # não faz parte do schema oficial da OpenAI que o SDK openai modela.
+    reasoning_content = getattr(msg, "reasoning_content", None)
+    if not reasoning_content:
+        extra = getattr(msg, "model_extra", None) or {}
+        reasoning_content = extra.get("reasoning_content")
     return NormalizedResponse(
         content=content, stop_reason=stop_reason, raw_stop_reason=str(finish or ""),
+        reasoning_content=reasoning_content,
     )
 
 
@@ -626,9 +649,29 @@ class ProviderClient:
             marked += 1
         return out
 
+    @staticmethod
+    def _strip_reasoning_content(messages: list) -> list:
+        """Remove a chave reasoning_content dos blocos antes de mandar pra
+        Anthropic -- ela só existe pra ecoar de volta pro DeepSeek (ver
+        NormalizedResponse.reasoning_content) e a API da Anthropic é estrita
+        sobre chaves desconhecidas em content blocks."""
+        out = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                content = [
+                    {k: v for k, v in b.items() if k != "reasoning_content"}
+                    if isinstance(b, dict) else b
+                    for b in content
+                ]
+                msg = {**msg, "content": content}
+            out.append(msg)
+        return out
+
     def _call_anthropic(
         self, *, model, max_tokens, system, tools, messages
     ) -> NormalizedResponse:
+        messages = self._strip_reasoning_content(messages)
         # Apply Anthropic prompt caching.
         # Se `system` já vier como lista de blocos, respeitamos os cache_control
         # definidos por quem chamou (bloco fixo cacheado, bloco volátil sem cache).
