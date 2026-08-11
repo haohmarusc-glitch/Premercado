@@ -1,9 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Newspaper, RefreshCw, Search, ExternalLink } from "lucide-react";
+import { Newspaper, RefreshCw, Search, ExternalLink, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface NewsItem { title: string; published?: string; summary?: string; source?: string; url?: string | null; }
+interface NewsItem {
+  title: string;
+  published?: string;
+  summary?: string;
+  source?: string;
+  url?: string | null;
+  relatedTickers?: string[] | null;
+}
 interface Item { ticker: string; news?: NewsItem[]; error?: string; }
 
 function NewsList({ it }: { it: Item }) {
@@ -38,9 +45,15 @@ function NewsList({ it }: { it: Item }) {
                 )}
               </div>
               {n.summary && <p className="font-mono text-xs text-muted-foreground leading-relaxed">{n.summary}</p>}
-              <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono text-muted-foreground">
+              <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono text-muted-foreground flex-wrap">
                 {n.source && <span className="px-1.5 py-0.5 rounded bg-secondary">{n.source}</span>}
                 {n.published && <span>{String(n.published).slice(0, 10)}</span>}
+                {n.relatedTickers && n.relatedTickers.length > 0 && (
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                    <Link2 className="h-2.5 w-2.5" />
+                    também: {n.relatedTickers.join(", ")}
+                  </span>
+                )}
               </div>
             </div>
           ))}

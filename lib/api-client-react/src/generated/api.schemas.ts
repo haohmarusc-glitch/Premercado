@@ -418,6 +418,8 @@ export interface NewsItem {
   source?: string | null;
   /** @nullable */
   url?: string | null;
+  /** @nullable */
+  relatedTickers?: string[] | null;
 }
 
 export interface TickerNews {
