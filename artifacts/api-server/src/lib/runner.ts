@@ -186,13 +186,13 @@ export const state: AgentState = {
 // cima da carteira de QUEM disparou a run, ver getPortfolioTickers acima) --
 // vem de req.userId na rota HTTP (routes/agent.ts). Pros demais modos
 // (compartilhados por todo o app) é ignorado.
-export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" | "veredito" = "manual", maxTurns?: number, userId?: number): void {
+export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfolio" | "coal" | "ai" | "news" | "exit_plan" | "alerts" | "veredito" | "consensus" = "manual", maxTurns?: number, userId?: number): void {
   if (state.running) {
     logger.warn("Agent already running — skipping trigger");
     return;
   }
 
-  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : trigger === "alerts" ? "alerts" : trigger === "veredito" ? "veredito" : "daily";
+  const mode = trigger === "premarket" ? "premarket" : trigger === "portfolio" ? "portfolio" : trigger === "coal" ? "coal" : trigger === "ai" ? "ai" : trigger === "news" ? "news" : trigger === "exit_plan" ? "exit_plan" : trigger === "alerts" ? "alerts" : trigger === "veredito" ? "veredito" : trigger === "consensus" ? "consensus" : "daily";
 
   state.running = true;
   state.currentStep =
@@ -204,6 +204,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
     trigger === "exit_plan" ? "Reavaliando plano de saída..." :
     trigger === "alerts" ? "Iniciando gestão de alertas..." :
     trigger === "veredito" ? "Gerando veredito do dia..." :
+    trigger === "consensus" ? "Iniciando relatório de consenso (3 provedores)..." :
     "Iniciando agente...";
   state.stepLog = [state.currentStep];
   state.lastRunAt = new Date().toISOString();
@@ -213,7 +214,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
 
   void (async () => {
   try {
-  const tickers = trigger === "portfolio" || trigger === "veredito"
+  const tickers = trigger === "portfolio" || trigger === "veredito" || trigger === "consensus"
     // Sem userId (run agendada) a carteira agora vem global em vez de vazia --
     // antes, um veredito agendado caía na lista fixa do config.py.
     ? await getPortfolioTickers(userId)
@@ -229,7 +230,7 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   // exigindo observação de GOOGL e TSLA depois de eles saírem da carteira, e de
   // qualquer posição nova nunca ser exigida. Duas listas para a mesma pergunta,
   // e a que mandava não era a que o usuário edita.
-  const carteira = trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito"
+  const carteira = trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito" || trigger === "consensus"
     ? tickers
     : await getPortfolioTickers(userId);
 

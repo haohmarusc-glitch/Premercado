@@ -10,6 +10,8 @@ AGENT_MODE env var controls the run type:
   alerts              — gestão de alertas isolada (cria/remove, calibrado por ATR)
   veredito            — síntese "Veredito do Dia" cruzando Cenários/Técnicos/Backtest/
                          Earnings/Macro/Plano de Saída
+  consensus           — relatório da carteira com consenso entre 3 provedores de LLM
+                         (ver agent/consensus_report.py)
 """
 
 import json
@@ -25,6 +27,7 @@ _probe_boot()
 
 from . import agent as a
 from . import config
+from . import consensus_report
 from .provider import get_run_usage
 
 _probe_imports()
@@ -101,6 +104,8 @@ if __name__ == "__main__":
             report = a.run_alerts_management(progress_callback=progress)
         elif mode == "veredito":
             report = a.run_veredito(progress_callback=progress)
+        elif mode == "consensus":
+            report = consensus_report.run_consensus_report(progress_callback=progress)
         elif mode in ("portfolio", "coal", "ai"):
             # Garante os tickers corretos mesmo que o Node.js não os passe via env var
             if mode == "coal" and not os.environ.get("AGENT_PORTFOLIO_TICKERS"):
