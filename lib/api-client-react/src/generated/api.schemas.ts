@@ -416,6 +416,8 @@ export interface NewsItem {
   summary?: string | null;
   /** @nullable */
   source?: string | null;
+  /** @nullable */
+  url?: string | null;
 }
 
 export interface TickerNews {

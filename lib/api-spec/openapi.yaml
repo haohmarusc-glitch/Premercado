@@ -1703,6 +1703,8 @@ components:
           type: ["string", "null"]
         source:
           type: ["string", "null"]
+        url:
+          type: ["string", "null"]
 
     TickerNews:
       type: object
