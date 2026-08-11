@@ -16,7 +16,7 @@ router.post("/agent/run", async (req, res): Promise<void> => {
   // (scheduler.ts) chamaria, só que sem depender do processo já estar
   // acordado no horário exato. Mantém o rótulo correto no histórico de runs
   // em vez de aparecer como "manual".
-  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "news" ? "news" : rawMode === "exit_plan" ? "exit_plan" : rawMode === "alerts" ? "alerts" : rawMode === "veredito" ? "veredito" : rawMode === "scheduled" ? "scheduled" : "manual";
+  const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "news" ? "news" : rawMode === "exit_plan" ? "exit_plan" : rawMode === "alerts" ? "alerts" : rawMode === "veredito" ? "veredito" : rawMode === "consensus" ? "consensus" : rawMode === "scheduled" ? "scheduled" : "manual";
   const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
   // req.userId sempre setado por requireAuth -- só é de fato usado pelos
   // modos "portfolio"/"veredito" dentro de runAgent (carteira de quem clicou),
@@ -31,6 +31,7 @@ router.post("/agent/run", async (req, res): Promise<void> => {
     mode === "exit_plan" ? "Reavaliação do plano de saída iniciada. Aguarde a conclusão." :
     mode === "alerts" ? "Gestão de alertas iniciada. Aguarde a conclusão." :
     mode === "veredito" ? "Gerando veredito do dia. Aguarde a conclusão." :
+    mode === "consensus" ? "Relatório de consenso (3 provedores) iniciado. Aguarde a conclusão." :
     "Agente iniciado. Aguarde a conclusão.";
   res.json(RunAgentResponse.parse({ reportId: 0, message }));
 });

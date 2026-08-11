@@ -54,7 +54,7 @@ export const reportsTable = pgTable("reports", {
   date: text("date").notNull(),
   content: text("content").notNull(),
   tickers: text("tickers").array().notNull().default([]),
-  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts | veredito
+  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts | veredito | consensus
   // Dono do relatório -- null pros modos "de casa" (daily/premarket/coal/ai/
   // news/alerts/scheduled/manual), que seguem compartilhados por todo mundo
   // igual sempre foram. Preenchido só pros modos derivados da carteira de
@@ -108,8 +108,8 @@ export const agentRunsTable = pgTable("agent_runs", {
   startedAt: timestamp("started_at").defaultNow().notNull(),
   finishedAt: timestamp("finished_at"),
   status: text("status").notNull().default("running"), // running | success | failed
-  trigger: text("trigger").notNull().default("manual"), // manual | scheduled | premarket | portfolio | coal | ai | news | exit_plan | alerts
-  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts
+  trigger: text("trigger").notNull().default("manual"), // manual | scheduled | premarket | portfolio | coal | ai | news | exit_plan | alerts | veredito | consensus
+  mode: text("mode").notNull().default("daily"), // daily | premarket | portfolio | coal | ai | news | exit_plan | alerts | veredito | consensus
   durationMs: integer("duration_ms"),
   errorMessage: text("error_message"),
   // Uso de LLM da run (agregado de todos os provedores/modelos, via linha USAGE: do agente)
