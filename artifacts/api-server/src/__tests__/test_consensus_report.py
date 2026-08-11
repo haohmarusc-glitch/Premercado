@@ -132,6 +132,118 @@ class TestIntroAtePrimeiroTicker:
         assert intro == ""
 
 
+def _dado_ticker(
+    ticker: str,
+    change_pct: float = 1.0,
+    days_until_earnings: int | None = None,
+    atm_iv_pct: float | None = None,
+    atr_pct: float = 2.0,
+    pct_above_sma200: float = 5.0,
+    rsi_date: str = "2026-08-11",
+    as_of: str = "2026-08-11",
+    short_pct_of_float: float = 3.0,
+    headlines: list[str] | None = None,
+) -> dict:
+    return {
+        "quote": {"ticker": ticker, "change_pct": change_pct, "as_of": as_of},
+        "technicals": {
+            "ticker": ticker,
+            "rsi_date": rsi_date,
+            "atr_pct": atr_pct,
+            "pct_above_sma200": pct_above_sma200,
+        },
+        "options": {"ticker": ticker, "atm_iv_pct": atm_iv_pct, "as_of": as_of},
+        "short_interest": {"ticker": ticker, "short_pct_of_float": short_pct_of_float, "squeeze_risk": "baixo"},
+        "candles": {},
+        "analyst_ratings": {},
+        "news": [{"title": t} for t in (headlines or [])],
+    }
+
+
+def _dado_portfolio(tickers_data: dict[str, dict], earnings: list[dict] | None = None) -> dict:
+    return {
+        "macro": {"earnings_calendar": earnings or []},
+        "tickers": tickers_data,
+    }
+
+
+class TestBuildSnapshot:
+    def test_monta_snapshot_a_partir_do_dado_coletado(self):
+        data = _dado_portfolio(
+            {"NVDA": _dado_ticker("NVDA", change_pct=-1.5, headlines=["NVDA processo antitruste nos EUA"])},
+            earnings=[{"ticker": "NVDA", "days_until_earnings": 3}],
+        )
+        snap = cr._build_snapshot(data, ["NVDA"])
+        assert snap["quotes"]["NVDA"]["change_pct"] == -1.5
+        assert snap["earnings"]["NVDA"] == 3
+        assert "NVDA processo antitruste nos EUA" in snap["headlines"]["NVDA"]
+
+
+class TestApplyGateBackstop:
+    TICKERS = ["NVDA", "SMCI"]
+
+    def _reconciled(self, nvda_label, smci_label):
+        return {
+            "per_ticker": {
+                "NVDA": {"label": nvda_label, "provider": "anthropic", "unanimidade": True},
+                "SMCI": {"label": smci_label, "provider": "anthropic", "unanimidade": True},
+            },
+            "divergencias": [],
+        }
+
+    def test_corrige_verde_inflado_por_maioria(self):
+        """Dois provedores mais fracos concordam em 🟢, mas earnings em 3 dias
+        (crítico) proíbe 🟢 -- o gate tem que vencer a maioria."""
+        data = _dado_portfolio(
+            {"NVDA": _dado_ticker("NVDA"), "SMCI": _dado_ticker("SMCI")},
+            earnings=[{"ticker": "NVDA", "days_until_earnings": 3}],
+        )
+        snap = cr._build_snapshot(data, self.TICKERS)
+        reconciled = self._reconciled("🟢", "🟢")
+        corrigidos = cr._apply_gate_backstop(reconciled, snap, self.TICKERS)
+        assert corrigidos == ["NVDA"]
+        assert reconciled["per_ticker"]["NVDA"]["label"] == "🟡"
+        assert reconciled["per_ticker"]["NVDA"]["label_original"] == "🟢"
+        assert "SMCI" not in corrigidos
+
+    def test_corrige_vermelho_inflado(self):
+        """Maioria vota 🔴 mas só há um gate ativo (não sustenta 🔴) --
+        rebaixa pro teto real em vez de aceitar o receio da maioria."""
+        data = _dado_portfolio({"NVDA": _dado_ticker("NVDA", change_pct=-0.5)})
+        snap = cr._build_snapshot(data, ["NVDA"])
+        reconciled = self._reconciled("🔴", "🟢")
+        corrigidos = cr._apply_gate_backstop(reconciled, snap, ["NVDA"])
+        assert corrigidos == ["NVDA"]
+        assert reconciled["per_ticker"]["NVDA"]["label"] == "🟡"
+
+    def test_nao_mexe_em_rotulo_ja_correto(self):
+        data = _dado_portfolio(
+            {"NVDA": _dado_ticker("NVDA", change_pct=1.0), "SMCI": _dado_ticker("SMCI")},
+        )
+        snap = cr._build_snapshot(data, self.TICKERS)
+        reconciled = self._reconciled("🟢", "🟢")
+        corrigidos = cr._apply_gate_backstop(reconciled, snap, self.TICKERS)
+        assert corrigidos == []
+        assert reconciled["per_ticker"]["NVDA"]["label"] == "🟢"
+
+    def test_ticker_sem_rotulo_nao_quebra(self):
+        data = _dado_portfolio({"NVDA": _dado_ticker("NVDA")})
+        snap = cr._build_snapshot(data, ["NVDA"])
+        reconciled = {"per_ticker": {"NVDA": {"label": None, "provider": None, "unanimidade": False}}, "divergencias": ["NVDA"]}
+        corrigidos = cr._apply_gate_backstop(reconciled, snap, ["NVDA"])
+        assert corrigidos == []
+
+
+class TestRotularSecao:
+    def test_troca_primeiro_rotulo_encontrado(self):
+        secao = "### NVDA\n\n🟢 — setup favorável.\nMais texto."
+        assert cr._rotular_secao(secao, "🟡").startswith("### NVDA\n\n🟡 —")
+
+    def test_sem_rotulo_no_texto_devolve_inalterado(self):
+        secao = "### NVDA\n\nsem rótulo nenhum aqui."
+        assert cr._rotular_secao(secao, "🟡") == secao
+
+
 class TestAssembleFinalReport:
     def _writer(self, provider, nvda, smci):
         return {"provider": provider, "text": _relatorio({"NVDA": nvda, "SMCI": smci}), "labels": {"NVDA": nvda, "SMCI": smci}, "error": None}
@@ -156,6 +268,21 @@ class TestAssembleFinalReport:
         texto = cr._assemble_final_report("2026-08-11", writers, reconciled, ["NVDA", "SMCI"])
         assert "Divergência entre provedores" in texto
         assert "NVDA" in texto.split("Divergência entre provedores")[1]
+
+    def test_rotulo_corrigido_aparece_no_texto_e_no_apendice(self):
+        writers = [
+            self._writer("anthropic", "🟢", "🟡"),
+            self._writer("deepseek", "🟢", "🟡"),
+        ]
+        reconciled = cr.reconcile(writers, ["NVDA", "SMCI"])
+        reconciled["per_ticker"]["NVDA"]["label"] = "🟡"
+        reconciled["per_ticker"]["NVDA"]["label_original"] = "🟢"
+        reconciled["per_ticker"]["NVDA"]["gate_detalhe"] = "[critico] earnings em 3 dias"
+        texto = cr._assemble_final_report("2026-08-11", writers, reconciled, ["NVDA", "SMCI"], corrigidos=["NVDA"])
+        assert "Rótulos corrigidos por gate determinístico" in texto
+        assert "🟢 → 🟡" in texto
+        secao_nvda = texto.split("### NVDA")[1].split("### SMCI")[0]
+        assert "🟡" in secao_nvda
 
     def test_ticker_sem_secao_valida_nao_quebra_montagem(self):
         writers = [

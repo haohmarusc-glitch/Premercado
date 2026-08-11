@@ -25,10 +25,19 @@ Fluxo:
 3. reconcile() extrai o rótulo de cada ticker de cada relatório (reaproveita
    _secao_do_ticker/_rotulo_da_secao de report_validator.py, a mesma lógica
    que já audita o relatório diário normal) e decide por maioria (2 de 3).
-4. _assemble_final_report() monta o relatório final concatenando, por
-   ticker, a seção do provedor que bateu o rótulo majoritário -- com um
-   apêndice listando toda divergência encontrada, pra nunca escolher um lado
-   em silêncio.
+4. _apply_gate_backstop() confere o rótulo majoritário de CADA ticker contra
+   os mesmos gates determinísticos que auditam o relatório diário normal
+   (report_validator._gates_violados/_rotulo_esperado). Maioria entre
+   provedores não é garantia de correção -- dois provedores mais fracos
+   podem compartilhar o mesmo viés e vencer o voto contra o primário (já
+   visto em produção: gemini-flash inflou 5/5 rótulos numa run de
+   fallback). O gate corrige o rótulo quando ele viola a rubrica, mesmo que
+   2 de 3 provedores tenham concordado no rótulo errado.
+5. _assemble_final_report() monta o relatório final concatenando, por
+   ticker, a seção do provedor que bateu o rótulo (já com a correção do
+   gate aplicada, se houve) -- com apêndices listando toda divergência entre
+   provedores E todo rótulo corrigido pelo gate, pra nunca escolher/ajustar
+   um lado em silêncio.
 
 Custo: ~3x o relatório diário normal na parte de LLM (uma chamada de escrita
 por provedor), mas SEM repetir a coleta de dado (que é a parte mais numerosa
@@ -48,10 +57,18 @@ from .report_validator import (
     EARNINGS_ATIVO_DIAS,
     EARNINGS_CRITICO_DIAS,
     EXTENSAO_SMA200_PCT,
+    INFO,
     IV_EVENT_MULTIPLE_ATR,
+    LABELS,
     SHORT_ALTO_PCT,
+    VERDE,
+    VERMELHO,
+    _gates_violados,
     _rotulo_da_secao,
+    _rotulo_esperado,
     _secao_do_ticker,
+    collect_tool_result,
+    new_snapshot,
 )
 
 # Ordem de prioridade: também é a ordem de desempate quando não há maioria
@@ -91,6 +108,24 @@ def gather_portfolio_data(tickers: list[str]) -> dict:
             "news": news.get(tk, []),
         }
     return {"macro": macro, "tickers": per_ticker}
+
+
+def _build_snapshot(data: dict, tickers: list[str]) -> dict:
+    """Reconstrói o snapshot de gates (mesmo formato que collect_tool_result
+    monta dentro do loop agêntico normal) a partir do dado já coletado por
+    gather_portfolio_data() -- sem refazer nenhuma chamada de rede, e sem LLM
+    no meio: os dicts que tools.py devolve têm o formato exato que
+    collect_tool_result já sabe converter."""
+    snap = new_snapshot()
+    for tk in tickers:
+        info = data["tickers"].get(tk) or {}
+        collect_tool_result(snap, "get_stock_data", {}, info.get("quote"))
+        collect_tool_result(snap, "get_technical_indicators", {}, info.get("technicals"))
+        collect_tool_result(snap, "get_options_data", {}, info.get("options"))
+        collect_tool_result(snap, "get_short_interest", {}, info.get("short_interest"))
+        collect_tool_result(snap, "get_news", {}, {tk: info.get("news") or []})
+    collect_tool_result(snap, "get_earnings_calendar", {}, data["macro"].get("earnings_calendar"))
+    return snap
 
 
 # ── Fase 2: prompt do "escritor" (dado já coletado, sem tools) ─────────────────
@@ -252,6 +287,48 @@ def reconcile(writer_results: list[dict], tickers: list[str]) -> dict:
     return {"per_ticker": per_ticker, "divergencias": divergencias}
 
 
+def _apply_gate_backstop(reconciled: dict, snap: dict, tickers: list[str]) -> list[str]:
+    """Confere cada rótulo escolhido por reconcile() contra os gates
+    determinísticos de report_validator.py -- os MESMOS que auditam o
+    relatório diário normal (lint_report). Maioria entre provedores não é
+    garantia de correção: dois provedores mais fracos podem compartilhar o
+    mesmo viés e vencer o voto contra o provedor primário (já visto em
+    produção -- gemini-flash inflou o rótulo de 5/5 ativos numa run de
+    fallback, e só o lint determinístico pegou). O gate é a última palavra
+    aqui, não a maioria: corrige o rótulo in-place em reconciled quando ele
+    viola a rubrica, e devolve a lista de tickers corrigidos pra o relatório
+    final nunca esconder o ajuste."""
+    corrigidos: list[str] = []
+    for tk in tickers:
+        info = reconciled["per_ticker"].get(tk)
+        rotulo = info.get("label") if info else None
+        if not rotulo:
+            continue
+
+        gates = _gates_violados(tk, snap)
+        contam = [(sev, d) for sev, d in gates if sev != INFO]
+        esperado = _rotulo_esperado(gates)
+
+        violado = (rotulo == VERDE and contam) or (rotulo == VERMELHO and esperado != VERMELHO)
+        if violado:
+            info["label_original"] = rotulo
+            info["label"] = esperado
+            info["gate_detalhe"] = "; ".join(f"[{sev}] {d}" for sev, d in contam) or "nenhum"
+            corrigidos.append(tk)
+
+    return corrigidos
+
+
+def _rotular_secao(secao: str, novo_rotulo: str) -> str:
+    """Troca a primeira ocorrência de rótulo (🟢/🟡/🔴) na seção pelo rótulo
+    corrigido pelo gate -- sem isso o texto exibido divergiria do rótulo que
+    o relatório efetivamente reconciliou."""
+    for ch in secao:
+        if ch in LABELS:
+            return secao.replace(ch, novo_rotulo, 1)
+    return secao
+
+
 # ── Fase 5: montagem do relatório final ─────────────────────────────────────────
 
 
@@ -271,9 +348,16 @@ def _intro_ate_primeiro_ticker(texto: str, tickers: list[str]) -> str:
     return texto[: min(posicoes)].strip()
 
 
-def _assemble_final_report(today: str, writer_results: list[dict], reconciled: dict, tickers: list[str]) -> str:
+def _assemble_final_report(
+    today: str,
+    writer_results: list[dict],
+    reconciled: dict,
+    tickers: list[str],
+    corrigidos: list[str] | None = None,
+) -> str:
     by_provider = {r["provider"]: r for r in writer_results}
     primary = _primary_among(writer_results)
+    corrigidos = corrigidos or []
 
     partes = [f"## Análise Pré-Mercado (consenso {len(writer_results)} provedores): {today}"]
 
@@ -287,7 +371,14 @@ def _assemble_final_report(today: str, writer_results: list[dict], reconciled: d
         secao = _secao_do_ticker(by_provider[provider]["text"], tk) if provider else None
         if not secao:
             secao = f"### {tk}\n\n_Nenhum provedor produziu uma seção válida para este ativo._"
+        elif tk in corrigidos:
+            secao = _rotular_secao(secao, info["label"])
         marca = "" if info.get("unanimidade") else " ⚠️ _(rótulo sem unanimidade -- ver divergências abaixo)_"
+        if tk in corrigidos:
+            marca += (
+                f" 🔧 _(rótulo ajustado de {info['label_original']} para {info['label']} "
+                f"por gate determinístico -- ver correções abaixo)_"
+            )
         partes.append(secao + (f"\n\n_(consenso: {provider}{marca})_" if provider else ""))
 
     if reconciled["divergencias"]:
@@ -297,6 +388,12 @@ def _assemble_final_report(today: str, writer_results: list[dict], reconciled: d
                 f"{r['provider']}={r['labels'].get(tk) or '—'}" for r in writer_results
             )
             partes.append(f"- **{tk}**: {votos}")
+
+    if corrigidos:
+        partes.append("\n---\n### 🔧 Rótulos corrigidos por gate determinístico\n")
+        for tk in corrigidos:
+            info = reconciled["per_ticker"][tk]
+            partes.append(f"- **{tk}**: {info['label_original']} → {info['label']} — {info['gate_detalhe']}")
 
     return "\n\n".join(partes)
 
@@ -334,4 +431,9 @@ def run_consensus_report(progress_callback=None) -> str:
         progress_callback("[Consenso] Reconciliando rótulos entre provedores...")
     reconciled = reconcile(validos, tickers)
 
-    return _assemble_final_report(today, validos, reconciled, tickers)
+    snap = _build_snapshot(data, tickers)
+    corrigidos = _apply_gate_backstop(reconciled, snap, tickers)
+    if corrigidos and progress_callback:
+        progress_callback(f"[Consenso] {len(corrigidos)} rótulo(s) corrigido(s) por gate determinístico...")
+
+    return _assemble_final_report(today, validos, reconciled, tickers, corrigidos)
