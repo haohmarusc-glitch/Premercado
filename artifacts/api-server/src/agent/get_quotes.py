@@ -69,6 +69,29 @@ def fetch_extended(ticker) -> dict:
     }
 
 
+def _empty_quote(symbol: str, error: str) -> dict:
+    return {
+        "symbol": symbol,
+        "currency": None,
+        "price": None,
+        "change": None,
+        "changePct": None,
+        "open": None,
+        "previousClose": None,
+        "dayHigh": None,
+        "dayLow": None,
+        "volume": None,
+        "marketCap": None,
+        "marketState": None,
+        "preMarketPrice": None,
+        "preMarketChangePct": None,
+        "postMarketPrice": None,
+        "postMarketChangePct": None,
+        "regularMarketPrice": None,
+        "error": error,
+    }
+
+
 def fetch_quote(symbol: str) -> dict:
     try:
         ticker = yf.Ticker(symbol)
@@ -127,26 +150,7 @@ def fetch_quote(symbol: str) -> dict:
         }
     except Exception as ex:
         print(f"[get_quotes] {symbol}: {ex}", file=sys.stderr)
-        return {
-            "symbol": symbol,
-            "currency": None,
-            "price": None,
-            "change": None,
-            "changePct": None,
-            "open": None,
-            "previousClose": None,
-            "dayHigh": None,
-            "dayLow": None,
-            "volume": None,
-            "marketCap": None,
-            "marketState": None,
-            "preMarketPrice": None,
-            "preMarketChangePct": None,
-            "postMarketPrice": None,
-            "postMarketChangePct": None,
-            "regularMarketPrice": None,
-            "error": friendly_error(ex),
-        }
+        return _empty_quote(symbol, friendly_error(ex))
 
 
 if __name__ == "__main__":
@@ -161,4 +165,14 @@ if __name__ == "__main__":
         budget_s=budget_from_deadline(BUDGET_S, label="get_quotes"),
         label="get_quotes",
     )
+    # bounded_parallel_map devolve só quem terminou a tempo -- sem isto, um
+    # símbolo que estourou o orçamento (ex.: SMCI num dia de earnings, alto
+    # volume) simplesmente sumia da resposta, sem nenhum sinal de erro pro
+    # consumidor (visto em produção: /api/tickers/quotes vazio pra um ticker
+    # com posição aberta, 12/08/2026). Preenche o que faltou com um erro
+    # explícito em vez de omitir.
+    fetched = {r["symbol"] for r in results}
+    for symbol in symbols:
+        if symbol not in fetched:
+            results.append(_empty_quote(symbol, "Tempo esgotado buscando cotação"))
     exit_now(json.dumps(results) + "\n")
