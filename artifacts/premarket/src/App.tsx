@@ -56,6 +56,7 @@ function Router() {
     <Layout>
       <Switch>
         <Route path="/" component={Dashboard} />
+        <Route path="/dashboard" component={Dashboard} />
         <Route path="/history" component={History} />
         <Route path="/observations" component={Observations} />
         <Route path="/settings" component={SettingsPage} />

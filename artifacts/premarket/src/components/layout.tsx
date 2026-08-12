@@ -170,6 +170,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
     </p>
   );
 
+  const navExternal = (href: string, icon: React.ReactNode, label: string) => {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-3 px-3 py-2 rounded-md font-mono text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary"
+      >
+        {icon}
+        <span className="flex-1">{label}</span>
+        <span className="text-[10px] opacity-50">↗</span>
+      </a>
+    );
+  };
+
   const navLink = (href: string, icon: React.ReactNode, label: string, badge?: number) => {
     const active = location === href;
     return (
@@ -290,6 +305,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/opcoes", <Layers className="h-4 w-4" />, "Opções")}
             {navLink("/noticias", <Newspaper className="h-4 w-4" />, "Notícias")}
             {navLink("/cripto", <Bitcoin className="h-4 w-4" />, "Cripto")}
+
+
+            {user?.isAdmin && navSection("Infra / Monitor")}
+            {user?.isAdmin && navExternal("/netdata/", <Monitor className="h-4 w-4" />, "Monitor VPS")}
+            {user?.isAdmin && navExternal("/status/", <Activity className="h-4 w-4" />, "Status do site")}
+            {user?.isAdmin && navExternal("/logs/", <Database className="h-4 w-4" />, "Logs Docker")}
+            {user?.isAdmin && navExternal("http://65.108.154.111:3080", <Layers className="h-4 w-4" />, "Editor (Simple Replit)")}
 
             {navSection("Sistema")}
             {navLink("/settings", <Settings className="h-4 w-4" />, "Settings")}
