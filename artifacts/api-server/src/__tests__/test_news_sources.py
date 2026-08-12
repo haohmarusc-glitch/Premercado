@@ -206,7 +206,7 @@ def test_finnhub_normaliza_campos_proprios(monkeypatch):
 
 def test_alphavantage_sem_chave_nao_participa(monkeypatch):
     monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
-    assert ns._fetch_alpha_vantage_raw("economy_monetary") == []
+    assert ns._fetch_alpha_vantage_raw() == []
 
 
 def test_alphavantage_time_published_sem_separador():
@@ -219,12 +219,32 @@ def test_alphavantage_time_published_sem_separador():
     assert ns._av_time_to_iso("lixo") == "lixo"
 
 
-def test_alphavantage_uma_chamada_cobre_todos_os_topicos_pedidos(monkeypatch):
-    """O ponto inteiro de existir _fetch_alpha_vantage_raw/_alpha_vantage_for_labels
-    em vez de uma busca por (label, origin) como as outras fontes: a cota
-    diária da Alpha Vantage no plano básico é baixa (histórico: 25/dia,
-    compartilhada com qualquer outro uso da mesma chave) -- uma chamada por
-    tema (6 temas) gastaria quase um quarto da cota numa execução só."""
+def test_alphavantage_usa_topico_ancora_nao_lista_de_topicos(monkeypatch):
+    """Bug real visto em produção (12/08/2026): `topics=A,B,C` na Alpha
+    Vantage filtra por INTERSEÇÃO (artigo precisa carregar TODOS os tópicos
+    ao mesmo tempo), não união -- com os 5 tópicos dos nossos temas juntos
+    isso devolvia só 3 artigos genéricos o bastante pra carregar os 5 ao
+    mesmo tempo, a maioria de anos atrás, nenhuma notícia de verdade. A
+    chamada tem que pedir só o tópico-âncora amplo, nunca uma lista."""
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "test-key")
+    chamadas = []
+    monkeypatch.setattr(
+        ns.SESSION,
+        "get",
+        lambda url, params=None, timeout=None: (chamadas.append(params.get("topics")), _FakeResponse(payload={"feed": []}))[1],
+    )
+
+    ns._fetch_alpha_vantage_raw()
+
+    assert chamadas == [ns._ALPHA_VANTAGE_ANCHOR_TOPIC]
+    assert "," not in chamadas[0]
+
+
+def test_alphavantage_uma_chamada_distribui_por_topico_proprio_de_cada_item(monkeypatch):
+    """UMA chamada só (tópico-âncora), e a distribuição pelos NOSSOS temas
+    usa os tópicos que CADA ARTIGO já carrega -- não uma busca nova por
+    tema. Cobre também o caso de dois temas nossos compartilharem o mesmo
+    av_topic (big_techs e semicondutores, ambos "technology")."""
     monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "test-key")
     chamadas = []
 
@@ -262,12 +282,10 @@ def test_alphavantage_uma_chamada_cobre_todos_os_topicos_pedidos(monkeypatch):
         "semicondutores": {"proxy": None, "query": "", "av_topic": "technology"},
         "carvao_metalurgico": {"proxy": None, "query": "", "av_topic": "manufacturing"},
     }
-    needed = {"economy_monetary", "technology", "manufacturing"}
-    result = ns._alpha_vantage_for_labels(topics, needed, max_items=6)
+    result = ns._alpha_vantage_for_labels(topics, max_items=6)
 
-    # UMA chamada só, mesmo com 3 tópicos distintos pedidos por 4 temas.
+    # UMA chamada só, mesmo com 4 temas pedindo distribuição.
     assert len(chamadas) == 1
-    assert set(chamadas[0].split(",")) == needed
 
     assert [i["title"] for i in result["juros_fed"]] == ["Fed sinaliza corte de juros"]
     # big_techs e semicondutores compartilham av_topic="technology" -- os
@@ -290,7 +308,7 @@ def test_alphavantage_erro_de_conta_nao_quebra_e_nao_levanta(monkeypatch):
         lambda *a, **k: _FakeResponse(payload={"Information": "cota diaria esgotada"}),
     )
 
-    assert ns._fetch_alpha_vantage_raw("economy_monetary") == []
+    assert ns._fetch_alpha_vantage_raw() == []
 
 
 # ── Merge / dedupe ────────────────────────────────────────────────────────────
