@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock, GripVertical } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, TrendingUp, DollarSign, Wallet, Activity, RefreshCw, LineChart as LineChartIcon, CandlestickChart as CandlestickChartIcon, Globe as GlobeIcon, Maximize2, Minimize2, Lock, GripVertical, ExternalLink } from "lucide-react";
 import { Line, ComposedChart, Bar, ReferenceDot, ReferenceLine, XAxis, YAxis, ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 import { useGetTickerChart, getGetTickerChartQueryKey, useGetNews, getGetNewsQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -904,7 +904,19 @@ function PriceChart({ ticker }: { ticker: string }) {
           <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
             {(activeNews ?? []).map((n, i) => (
               <div key={i} className="border-b border-border/40 pb-3 last:border-0 last:pb-0">
-                <p className="text-sm font-semibold text-foreground leading-snug">{n.title}</p>
+                {n.url ? (
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-semibold text-foreground leading-snug hover:text-primary hover:underline inline-flex items-start gap-1.5"
+                  >
+                    {n.title}
+                    <ExternalLink className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
+                  </a>
+                ) : (
+                  <p className="text-sm font-semibold text-foreground leading-snug">{n.title}</p>
+                )}
                 {(n.source || fmtNewsDate(n.published)) && (
                   <p className="text-xs text-muted-foreground font-mono mt-1">
                     {[n.source, fmtNewsDate(n.published)].filter(Boolean).join(" · ")}

@@ -218,7 +218,14 @@ function ItemRow({
             <div className="mt-1 space-y-1 pl-4">
               {headlines.slice(0, 3).map((h, i) => (
                 <p key={i} className="text-[11px] text-muted-foreground/80">
-                  <span className="font-mono">[{h.source || "?"}]</span> {h.title}
+                  <span className="font-mono">[{h.source || "?"}]</span>{" "}
+                  {h.url ? (
+                    <a href={h.url} target="_blank" rel="noopener noreferrer" className="hover:text-foreground hover:underline">
+                      {h.title}
+                    </a>
+                  ) : (
+                    h.title
+                  )}
                 </p>
               ))}
             </div>
