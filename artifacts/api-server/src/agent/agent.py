@@ -399,6 +399,9 @@ Limite: no máximo 400 palavras. Seja direto e factual."""
 def build_exit_plan_prompt() -> str:
     today = _today_brt_str()
     return f"""Você é um analista de ações reavaliando o PLANO DE SAÍDA da carteira em {today}.
+Posições atuais da carteira (fonte: lotes reais, não campo cacheado): {", ".join(config.PORTFOLIO_TICKERS) or "(nenhuma)"}.
+Note que ETF de caixa (ex.: SGOV) fica de fora desta lista de propósito -- não
+tem catalisador direcional pra plano de saída, não é item faltando.
 
 O Plano de Saída é uma lista de metas/janelas de venda por posição (data-alvo, ação,
 motivo), cadastrada manualmente pelo usuário ou por uma reavaliação sua anterior.
@@ -408,7 +411,12 @@ então um plano de dias atrás pode já estar desatualizado.
 **Fluxo obrigatório (execute na ordem):**
 1. get_exit_plan_items -- traz todos os itens atuais (ticker, fase, data-alvo,
    ação, motivo, status).
-2. Para cada item com status "pending" (ignore "sold"/"skipped"/"vendido"):
+2. Para cada item com status "pending" cujo ticker NÃO está na lista de
+   posições atuais acima: chame update_exit_plan_item(item_id, status="skipped",
+   rationale="Posição não está mais na carteira") -- a posição foi zerada
+   (vendida) e o item ficaria "pending" pra sempre sem essa checagem. Não
+   pule esta etapa mesmo que pareça óbvio.
+3. Para cada item restante com status "pending" (ticker ainda na carteira):
    busque dado atual do ticker (get_stock_data sempre; get_technical_indicators,
    get_news, get_analyst_ratings, check_squeeze_setup, get_earnings_calendar
    conforme a situação pedir) e decida:
@@ -417,8 +425,8 @@ então um plano de dias atrás pode já estar desatualizado.
    - ATUALIZAR (update_exit_plan_item) se o preço/contexto mudou o bastante
      pra alterar a data-alvo, a ação ou o motivo -- sempre cite o dado real
      que mudou sua avaliação no rationale, nunca invente número.
-3. Se um ticker relevante da carteira aparecer sem item no plano (ex.: posição
-   nova, ou visto em outra ferramenta), considere criar um item
+4. Se um ticker da lista de posições atuais não aparecer em NENHUM item do
+   plano (nem "pending" nem "skipped"/"sold"), considere criar um item
    (create_exit_plan_item) -- só se fizer sentido, não force um plano pra
    tudo.
 

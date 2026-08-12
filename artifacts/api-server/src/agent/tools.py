@@ -530,6 +530,7 @@ def update_exit_plan_item(
     phase: int | None = None,
     phase_label: str | None = None,
     event_date: str | None = None,
+    status: str | None = None,
 ) -> dict:
     """Atualiza um item existente do Plano de Saída após reavaliar o ticker
     com dados atuais (preço, técnicos, notícias). Só envie os campos que
@@ -537,7 +538,11 @@ def update_exit_plan_item(
     action: nova ação/instrução (texto curto, ex: "Vender 50% na abertura").
     rationale: novo motivo/justificativa (cite o dado que mudou sua avaliação).
     phase/phase_label: só se a fase do plano mudou. event_date: data de
-    evento associado (ex: earnings), ou null pra remover."""
+    evento associado (ex: earnings), ou null pra remover. status: "pending"
+    (padrão), "skipped" (o ticker saiu da carteira ou o plano deixou de fazer
+    sentido -- não confundir com "sold", que afirma que ESTE plano causou a
+    venda, o que muitas vezes não dá pra confirmar) ou "sold" (só quando o
+    plano de fato foi executado)."""
     payload = {
         k: v
         for k, v in {
@@ -547,6 +552,7 @@ def update_exit_plan_item(
             "phase": phase,
             "phaseLabel": phase_label,
             "eventDate": event_date,
+            "status": status,
         }.items()
         if v is not None
     }
@@ -2512,6 +2518,14 @@ TOOLS = [
                 "phase": {"type": "integer", "description": "Nova fase (número), só se mudou."},
                 "phase_label": {"type": "string", "description": "Novo rótulo da fase, só se mudou."},
                 "event_date": {"type": "string", "description": "Data de evento associado (ex: earnings), YYYY-MM-DD."},
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "\"pending\" (padrão), \"skipped\" (ticker saiu da carteira ou o plano "
+                        "deixou de fazer sentido) ou \"sold\" (só quando o plano de fato foi "
+                        "executado -- não afirme isso sem confirmar)."
+                    ),
+                },
             },
             "required": ["item_id"],
         },
