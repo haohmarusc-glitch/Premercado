@@ -1,6 +1,12 @@
 yfinance>=0.2.40
 requests>=2.31.0
 pandas>=2.0.0
+# Backend de parsing HTML que yfinance.Ticker.get_earnings_dates() precisa
+# por baixo (pandas.read_html, scraping da agenda de earnings do Yahoo) --
+# sem isso a chamada falha com "Import lxml failed" e check_squeeze_setup
+# (agent/tools.py) fica sempre sem data de earnings, silenciosamente (visto
+# em produção 12/08/2026).
+lxml>=5.0.0
 anthropic>=0.40.0
 openai>=1.30.0
 psycopg2-binary>=2.9.0
