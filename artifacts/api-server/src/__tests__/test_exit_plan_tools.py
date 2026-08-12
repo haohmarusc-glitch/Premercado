@@ -53,6 +53,15 @@ class TestUpdateExitPlanItem:
         _, kwargs = m.call_args
         assert kwargs["json"] == {"action": "Vender 50%"}
 
+    def test_marca_item_como_skipped(self, monkeypatch):
+        """status precisa chegar na API interna -- sem isso o agente não tem
+        como tirar da lista "pending" um item de ticker que já saiu da
+        carteira (ver build_exit_plan_prompt, passo de limpeza)."""
+        with mock.patch.object(tools.requests, "patch", return_value=_FakeResponse({"id": 5})) as m:
+            tools.update_exit_plan_item(5, status="skipped", rationale="Posição não está mais na carteira")
+        _, kwargs = m.call_args
+        assert kwargs["json"] == {"status": "skipped", "rationale": "Posição não está mais na carteira"}
+
     def test_fails_open_on_request_error(self, monkeypatch):
         with mock.patch.object(tools.requests, "patch", side_effect=OSError("timeout")):
             result = tools.update_exit_plan_item(5, action="Vender")
