@@ -67,7 +67,19 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        // Não deixar o PWA "roubar" rotas do Caddy (monitor VPS)
+        navigateFallbackDenylist: [
+          /^\/auth/,
+          /^\/netdata/,
+          /^\/status/,
+          /^\/logs/,
+        ],
         runtimeCaching: [
+          // Monitor / auth: sempre rede (Caddy), nunca cache do PWA
+          {
+            urlPattern: /\/(auth|netdata|status|logs)(\/.*)?$/i,
+            handler: "NetworkOnly",
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: "CacheFirst",
