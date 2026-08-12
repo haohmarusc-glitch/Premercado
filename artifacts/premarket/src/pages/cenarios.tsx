@@ -218,6 +218,7 @@ export default function PainelCenarios() {
         .pc-rng{width:100%;accent-color:${C.channel};height:30px}
         button:focus-visible,input:focus-visible{outline:2px solid ${C.channel};outline-offset:2px}
         @media (prefers-reduced-motion:no-preference){.pc-anim{transition:width .25s ease,fill .25s ease}}
+        .pc-news-link:hover{text-decoration:underline;color:${C.channel}}
       `}</style>
 
       {/* ---- cabeçalho ---- */}
@@ -454,7 +455,19 @@ export default function PainelCenarios() {
               <div className="pc-num" style={{ fontSize: 11, fontWeight: 700, color: C.channel, marginBottom: 4 }}>{i.ticker}</div>
               {(i.news ?? []).slice(0, 2).map((n, idx) => (
                 <div key={idx} style={{ marginBottom: 5 }}>
-                  <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{n.title}</div>
+                  {n.url ? (
+                    <a
+                      href={n.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: C.text, lineHeight: 1.4, textDecoration: "none" }}
+                      className="pc-news-link"
+                    >
+                      {n.title}
+                    </a>
+                  ) : (
+                    <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{n.title}</div>
+                  )}
                   {n.source && (
                     <div style={{ fontSize: 10, color: C.faint, marginTop: 1 }}>{n.source}</div>
                   )}

@@ -34,6 +34,7 @@ export interface NewsHeadline {
   published: string | number;
   summary: string;
   source: string;
+  url?: string | null;
 }
 
 export interface MarketAlertItem {
