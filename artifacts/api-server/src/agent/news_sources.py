@@ -57,6 +57,7 @@ _GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 _FMP_STABLE_NEWS = "https://financialmodelingprep.com/stable/news/stock"
 _FMP_LEGACY_NEWS = "https://financialmodelingprep.com/api/v3/stock_news"
 _FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
+_ALPHA_VANTAGE_NEWS = "https://www.alphavantage.co/query"
 
 
 # Recusas da FMP que são da CONTA, não da requisição: nenhuma espera resolve,
@@ -455,6 +456,104 @@ def _fetch_finnhub(symbol: str, max_items: int) -> list[dict]:
     ]
 
 
+_AV_TIME_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$")
+
+
+def _av_time_to_iso(raw: str) -> str:
+    """Alpha Vantage manda `time_published` sem separador (\"20260812T142919\"),
+    formato que _parse_published (usado por _item) não reconhece -- sem isto o
+    item entra na mescla sem data e afunda pro fim da ordenação por data."""
+    m = _AV_TIME_RE.match(str(raw or ""))
+    if not m:
+        return raw
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}Z"
+
+
+@cached("news_av_raw:{0}", ttl=1800)
+def _fetch_alpha_vantage_raw(av_topics_key: str) -> list[dict]:
+    """UMA chamada só, cobrindo TODOS os tópicos AV pedidos nesta run (chave =
+    tópicos ordenados e unidos por vírgula) -- cacheada 30min, mesmo TTL de
+    _macro_source. Existe separada do fluxo por (label, origin) de propósito:
+    a Alpha Vantage tem cota diária baixa no plano gratuito/básico (histórico:
+    25 chamadas/dia, compartilhada com QUALQUER outro uso da mesma chave), e
+    um round-trip POR TEMA (6 temas) gastaria quase um quarto da cota numa
+    execução só. Aqui os tópicos entram todos juntos no parâmetro `topics`
+    (a Alpha Vantage aceita lista separada por vírgula, união não interseção)
+    e a distribuição por tema acontece depois, em Python, sem chamada extra
+    -- ver _alpha_vantage_for_labels.
+
+    Cada item volta com a lista de tópicos ORIGINAL da Alpha Vantage anexada
+    (chave "topics"), porque é ela quem decide a quais dos NOSSOS temas o
+    item pertence -- um único artigo pode ter vários tópicos ao mesmo tempo
+    (ex.: petróleo + macro), então "pertence a um tema só" seria descartar
+    informação real da fonte.
+    """
+    api_key = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
+    if not api_key or not av_topics_key:
+        return []
+    try:
+        resp = SESSION.get(
+            _ALPHA_VANTAGE_NEWS,
+            params={
+                "function": "NEWS_SENTIMENT",
+                "topics": av_topics_key,
+                "limit": 200,
+                "apikey": api_key,
+            },
+            timeout=_HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        feed = body.get("feed") if isinstance(body, dict) else None
+        if not isinstance(feed, list):
+            # A Alpha Vantage devolve 200 OK mesmo em erro de chave/cota --
+            # o corpo vira {"Information": "..."} / {"Note": "..."} em vez de
+            # {"feed": [...]}, sem status HTTP pra pegar no except abaixo.
+            msg = (
+                body.get("Information") or body.get("Note") or body.get("Error Message")
+                if isinstance(body, dict) else None
+            )
+            raise RuntimeError(msg or "resposta sem 'feed'")
+    except Exception as e:
+        print(f"[news_sources] alphavantage: {mask_sensitive_data(str(e))}", file=sys.stderr)
+        return []
+
+    return [
+        {
+            "item": _item(
+                title=row.get("title", ""),
+                published=_av_time_to_iso(row.get("time_published", "")),
+                summary=row.get("summary", ""),
+                source=row.get("source", "Alpha Vantage"),
+                origin="alphavantage",
+            ),
+            "topics": [t.get("topic") for t in row.get("topics", []) if isinstance(t, dict)],
+        }
+        for row in feed
+        if isinstance(row, dict)
+    ]
+
+
+def _alpha_vantage_for_labels(
+    topics: dict, needed_av_topics: set[str], max_items: int
+) -> dict[str, list[dict]]:
+    """Distribui o feed único da Alpha Vantage pelos NOSSOS temas (label),
+    filtrando por qual tópico AV cada item carrega. Sem chamada de rede
+    própria -- só reparte o que _fetch_alpha_vantage_raw já trouxe (e que já
+    está cacheado por 30min, então isto é essencialmente grátis)."""
+    raw = _fetch_alpha_vantage_raw(",".join(sorted(needed_av_topics)))
+    if not raw:
+        return {}
+    result: dict[str, list[dict]] = {}
+    for label, topic in topics.items():
+        av_topic = topic.get("av_topic")
+        if not av_topic:
+            continue
+        result[label] = [entry["item"] for entry in raw if av_topic in entry["topics"]][:max_items]
+    return result
+
+
 # ── Merge / dedupe ────────────────────────────────────────────────────────────
 
 
@@ -588,7 +687,7 @@ def _finalize(by_origin: list[tuple[str, list[dict]]], max_items: int) -> list[d
     return [{"error": errors[0]}] if errors else []
 
 
-_SOURCE_NAMES = ("yahoo", "google_rss", "fmp", "finnhub")
+_SOURCE_NAMES = ("yahoo", "google_rss", "fmp", "finnhub", "alphavantage")
 
 
 def enabled_sources() -> list[str]:
@@ -646,14 +745,21 @@ def _macro_source(origin: str, key: str, max_items: int) -> list[dict]:
 
 def headlines_for_macro_topics(topics: dict, max_items: int) -> dict[str, list[dict]]:
     """Manchetes por tema macro: proxy de mercado amplo no Yahoo (quando o
-    tema tem um) + busca temática no Google News, mescladas. Mesmo orçamento
-    único de headlines_for_tickers, pelo mesmo motivo.
+    tema tem um) + busca temática no Google News + Alpha Vantage (quando o
+    tema tem `av_topic` e a fonte está habilitada), mescladas. Mesmo
+    orçamento único de headlines_for_tickers, pelo mesmo motivo.
 
-    `topics` = {label: {"proxy": ticker|None, "query": str}}.
+    `topics` = {label: {"proxy": ticker|None, "query": str, "av_topic": str|None}}.
 
     FMP/Finnhub não entram aqui: as duas são APIs por SÍMBOLO (company news),
     não têm busca por tema — usá-las exigiria escolher um ticker representativo,
     que é exatamente o que o proxy do Yahoo já faz.
+
+    Alpha Vantage é buscada FORA do _gather paralelo de propósito: uma
+    chamada por tema estouraria a cota diária baixa do plano gratuito/básico
+    em uma execução só (ver _fetch_alpha_vantage_raw). Em vez disso é UMA
+    chamada cobrindo todos os temas pedidos, cacheada, e distribuída em
+    Python -- ver _alpha_vantage_for_labels.
     """
     origins = enabled_sources()
     keys: dict[tuple[str, str], str] = {}  # (label, origin) -> alvo da busca
@@ -668,13 +774,23 @@ def headlines_for_macro_topics(topics: dict, max_items: int) -> dict[str, list[d
         for key, target in keys.items()
     }
     fetched = _gather(tasks, config.NEWS_FETCH_BUDGET_S)
+
+    av_by_label: dict[str, list[dict]] = {}
+    if "alphavantage" in origins:
+        needed_av_topics = {
+            topic["av_topic"] for topic in topics.values() if topic.get("av_topic")
+        }
+        if needed_av_topics:
+            av_by_label = _alpha_vantage_for_labels(topics, needed_av_topics, max_items)
+
     return {
         label: _finalize(
             [
                 (origin, fetched.get((label, origin), []))
                 for origin in origins
                 if (label, origin) in keys
-            ],
+            ]
+            + ([("alphavantage", av_by_label[label])] if label in av_by_label else []),
             max_items,
         )
         for label in topics

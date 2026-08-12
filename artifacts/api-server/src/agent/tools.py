@@ -178,26 +178,32 @@ _MACRO_NEWS_TOPICS = {
     "mercado_amplo_eua": {  # tarifas, comércio, geopolítica geral
         "proxy": "^GSPC",
         "query": '"US China tariffs" OR "trade restrictions" OR "export ban"',
+        "av_topic": "economy_macro",
     },
     "big_techs": {  # antitrust/regulação de Big Techs, IA
         "proxy": "^NDX",
         "query": '"Big Tech antitrust" OR "AI regulation" OR "AI capex"',
+        "av_topic": "technology",
     },
     "petroleo_wti": {  # guerra, OPEC, sanções
         "proxy": "CL=F",
         "query": '"crude oil prices" OR OPEC OR "oil sanctions"',
+        "av_topic": "energy_transportation",
     },
     "semicondutores": {  # export controls China/Taiwan
         "proxy": "SOXX",
         "query": '"semiconductor export controls" OR "chip export" OR "Taiwan chips"',
+        "av_topic": "technology",
     },
     "juros_fed": {  # sem proxy: índice reage a juro, mas não noticia juro
         "proxy": None,
         "query": '"Federal Reserve" AND ("interest rate" OR inflation OR FOMC)',
+        "av_topic": "economy_monetary",
     },
     "carvao_metalurgico": {  # HCC/AMR estão na cesta e não têm proxy de ETF
         "proxy": None,
         "query": '"coking coal" OR "metallurgical coal" OR "steel prices"',
+        "av_topic": "manufacturing",
     },
 }
 
