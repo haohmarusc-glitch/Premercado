@@ -18,8 +18,6 @@ function localhostOnly(req: Request, res: Response, next: NextFunction): void {
   res.status(403).json({ error: "Forbidden" });
 }
 
-router.use(localhostOnly);
-
 const InternalObservationInput = z.object({
   ticker: z.string(),
   date: z.string(),
@@ -29,7 +27,7 @@ const InternalObservationInput = z.object({
 });
 
 // Save observation from Python agent
-router.post("/observations/internal", async (req, res): Promise<void> => {
+router.post("/observations/internal", localhostOnly, async (req, res): Promise<void> => {
   const parsed = InternalObservationInput.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -49,7 +47,7 @@ router.post("/observations/internal", async (req, res): Promise<void> => {
 });
 
 // Read recent observations for Python agent memory
-router.get("/observations/internal", async (req, res): Promise<void> => {
+router.get("/observations/internal", localhostOnly, async (req, res): Promise<void> => {
   const limit = parseInt(String(req.query.limit ?? "30"), 10);
   const rows = await db
     .select()
