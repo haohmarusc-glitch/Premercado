@@ -1,7 +1,15 @@
+import os
 import urllib.request
 
-url = "http://localhost:5000/api/portfolio"
-req = urllib.request.Request(url, headers={"Authorization": "Bearer Jefferson"})
+url = os.environ.get("CHECKAPI_URL", "http://localhost:5000/api/portfolio")
+token = os.environ.get("OPERATOR_API_KEY")
+if not token:
+    raise SystemExit(
+        "Defina a variável de ambiente OPERATOR_API_KEY antes de rodar este script "
+        "(ex: OPERATOR_API_KEY=xxxxx python checkapi.py). "
+        "Nunca hardcode o token no código."
+    )
+req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
 
 try:
     with urllib.request.urlopen(req) as response:

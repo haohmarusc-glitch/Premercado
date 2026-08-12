@@ -5,14 +5,28 @@ SEC (mockado, sem rede).
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_get_institutional_filings.py -v
 """
+import importlib.util
 import io
 import json
+import os
+import sys
 from contextlib import contextmanager
 from unittest import mock
 
 import pytest
 
-from agent import get_institutional_filings as gif
+# get_institutional_filings.py faz `from security import friendly_error`
+# (import "flat", pensado pra quando o script roda standalone -- ver
+# routes/analysis.ts's runPython, que spawna pelo caminho direto do arquivo,
+# e Python bota o diretório do script em sys.path[0] nesse caso).
+# `from agent import ...` não replica isso: conftest.py só põe `src/` em
+# sys.path, não `src/agent/`. Mesmo padrão de test_get_news_feed.py.
+_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
+if _AGENT_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_DIR)
+_spec = importlib.util.spec_from_file_location("get_institutional_filings", os.path.join(_AGENT_DIR, "get_institutional_filings.py"))
+gif = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gif)
 
 
 class TestResolveFilers:

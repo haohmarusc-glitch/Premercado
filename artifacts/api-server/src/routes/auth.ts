@@ -19,6 +19,7 @@ import {
 } from "../lib/auth";
 import { SEED_OWNER_EMAIL } from "../lib/claim-seed-account";
 import { logger } from "../lib/logger";
+import { authLoginLimiter, authSignupLimiter } from "../middleware/auth-rate-limit";
 
 const router: IRouter = Router();
 
@@ -30,7 +31,7 @@ function setSessionCookie(res: import("express").Response, userId: number): void
   res.cookie(SESSION_COOKIE, signSessionToken(userId), SESSION_COOKIE_OPTIONS);
 }
 
-router.post("/auth/signup", async (req, res): Promise<void> => {
+router.post("/auth/signup", authSignupLimiter, async (req, res): Promise<void> => {
   const parsed = AuthSignupBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
@@ -48,7 +49,7 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
   res.status(201).json(AuthUserSchema.parse(user));
 });
 
-router.post("/auth/login", async (req, res): Promise<void> => {
+router.post("/auth/login", authLoginLimiter, async (req, res): Promise<void> => {
   const parsed = AuthLoginBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 

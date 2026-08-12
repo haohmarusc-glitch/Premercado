@@ -53,15 +53,22 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-// Usado nas rotas que só o administrador pode ver (ex.: histórico de runs do
-// agente). Deve rodar DEPOIS de requireAuth (precisa de req.userId já setado).
-export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+// Extraído de requireAdmin pra ser reutilizável em rotas que só precisam da
+// checagem condicionalmente (ex.: POST /agent/run, que exige admin só para
+// os modos compartilhados -- ver routes/agent.ts).
+export async function isAdminUser(userId: number): Promise<boolean> {
   const [user] = await db
     .select({ isAdmin: usersTable.isAdmin })
     .from(usersTable)
-    .where(eq(usersTable.id, req.userId!))
+    .where(eq(usersTable.id, userId))
     .limit(1);
-  if (!user?.isAdmin) {
+  return !!user?.isAdmin;
+}
+
+// Usado nas rotas que só o administrador pode ver (ex.: histórico de runs do
+// agente). Deve rodar DEPOIS de requireAuth (precisa de req.userId já setado).
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!(await isAdminUser(req.userId!))) {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
