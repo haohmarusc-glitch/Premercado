@@ -33,6 +33,7 @@ import { checkAlerts, rodarCheckersDeMercado } from "../lib/alert-checker";
 import { checkPortfolioAlerts } from "../lib/portfolio-alerts";
 import { checkScenarioAlerts } from "../lib/scenario-alert-checker";
 import { refreshScenarioParams } from "../lib/scenario-params-checker";
+import { refreshEntryExitStudies } from "../lib/entry-exit-study-checker";
 import { state as agentState } from "../lib/runner";
 import { logger } from "../lib/logger";
 
@@ -71,6 +72,7 @@ const ETAPAS: Etapa[] = [
   { nome: "portfolio", intervaloMs: 15 * MIN, run: checkPortfolioAlerts },
   { nome: "scenario_alerts", intervaloMs: 60 * MIN, run: checkScenarioAlerts },
   { nome: "scenario_params", intervaloMs: 24 * 60 * MIN, run: refreshScenarioParams },
+  { nome: "entry_exit_study", intervaloMs: 24 * 60 * MIN, run: refreshEntryExitStudies },
 ];
 
 type Cadencia = Record<string, number>;
