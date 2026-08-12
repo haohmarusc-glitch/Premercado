@@ -470,34 +470,45 @@ def _av_time_to_iso(raw: str) -> str:
     return f"{y}-{mo}-{d}T{h}:{mi}:{s}Z"
 
 
-@cached("news_av_raw:{0}", ttl=1800)
-def _fetch_alpha_vantage_raw(av_topics_key: str) -> list[dict]:
-    """UMA chamada só, cobrindo TODOS os tópicos AV pedidos nesta run (chave =
-    tópicos ordenados e unidos por vírgula) -- cacheada 30min, mesmo TTL de
-    _macro_source. Existe separada do fluxo por (label, origin) de propósito:
-    a Alpha Vantage tem cota diária baixa no plano gratuito/básico (histórico:
-    25 chamadas/dia, compartilhada com QUALQUER outro uso da mesma chave), e
-    um round-trip POR TEMA (6 temas) gastaria quase um quarto da cota numa
-    execução só. Aqui os tópicos entram todos juntos no parâmetro `topics`
-    (a Alpha Vantage aceita lista separada por vírgula, união não interseção)
-    e a distribuição por tema acontece depois, em Python, sem chamada extra
-    -- ver _alpha_vantage_for_labels.
+# Tópico-âncora único pra chamada consolidada -- "financial_markets" é o mais
+# amplo do catálogo da Alpha Vantage, cobrindo o feed geral de mercado.
+# Testado em produção (12/08/2026): `topics=A,B,C` na Alpha Vantage filtra
+# por INTERSEÇÃO (artigo precisa carregar TODOS os tópicos ao mesmo tempo),
+# não união como a docstring original desta função assumia -- com os 5
+# tópicos dos nossos temas juntos isso devolvia só 3 artigos genéricos o
+# bastante pra carregar os 5 rótulos simultaneamente, a maioria de anos
+# atrás (um de 2022), nenhuma notícia de verdade. Um tópico só devolve o
+# feed geral, e cada artigo carrega SEUS PRÓPRIOS tópicos (geralmente
+# vários) -- a distribuição pros nossos temas usa esses tópicos individuais
+# depois (ver _alpha_vantage_for_labels), não uma busca mais restrita.
+_ALPHA_VANTAGE_ANCHOR_TOPIC = "financial_markets"
+
+
+@cached("news_av_raw", ttl=1800)
+def _fetch_alpha_vantage_raw() -> list[dict]:
+    """UMA chamada só (tópico-âncora amplo, ver _ALPHA_VANTAGE_ANCHOR_TOPIC)
+    -- cacheada 30min, mesmo TTL de _macro_source. Existe separada do fluxo
+    por (label, origin) de propósito: a Alpha Vantage tem cota diária baixa
+    no plano gratuito/básico (histórico: 25 chamadas/dia, compartilhada com
+    QUALQUER outro uso da mesma chave), e um round-trip POR TEMA (6 temas)
+    gastaria quase um quarto da cota numa execução só.
 
     Cada item volta com a lista de tópicos ORIGINAL da Alpha Vantage anexada
     (chave "topics"), porque é ela quem decide a quais dos NOSSOS temas o
     item pertence -- um único artigo pode ter vários tópicos ao mesmo tempo
     (ex.: petróleo + macro), então "pertence a um tema só" seria descartar
-    informação real da fonte.
+    informação real da fonte. A distribuição por tema acontece depois, em
+    Python, sem chamada extra -- ver _alpha_vantage_for_labels.
     """
     api_key = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
-    if not api_key or not av_topics_key:
+    if not api_key:
         return []
     try:
         resp = SESSION.get(
             _ALPHA_VANTAGE_NEWS,
             params={
                 "function": "NEWS_SENTIMENT",
-                "topics": av_topics_key,
+                "topics": _ALPHA_VANTAGE_ANCHOR_TOPIC,
                 "limit": 200,
                 "apikey": api_key,
             },
@@ -535,14 +546,12 @@ def _fetch_alpha_vantage_raw(av_topics_key: str) -> list[dict]:
     ]
 
 
-def _alpha_vantage_for_labels(
-    topics: dict, needed_av_topics: set[str], max_items: int
-) -> dict[str, list[dict]]:
+def _alpha_vantage_for_labels(topics: dict, max_items: int) -> dict[str, list[dict]]:
     """Distribui o feed único da Alpha Vantage pelos NOSSOS temas (label),
     filtrando por qual tópico AV cada item carrega. Sem chamada de rede
     própria -- só reparte o que _fetch_alpha_vantage_raw já trouxe (e que já
     está cacheado por 30min, então isto é essencialmente grátis)."""
-    raw = _fetch_alpha_vantage_raw(",".join(sorted(needed_av_topics)))
+    raw = _fetch_alpha_vantage_raw()
     if not raw:
         return {}
     result: dict[str, list[dict]] = {}
@@ -758,7 +767,7 @@ def headlines_for_macro_topics(topics: dict, max_items: int) -> dict[str, list[d
     Alpha Vantage é buscada FORA do _gather paralelo de propósito: uma
     chamada por tema estouraria a cota diária baixa do plano gratuito/básico
     em uma execução só (ver _fetch_alpha_vantage_raw). Em vez disso é UMA
-    chamada cobrindo todos os temas pedidos, cacheada, e distribuída em
+    chamada com tópico-âncora amplo, cacheada, e distribuída pelos temas em
     Python -- ver _alpha_vantage_for_labels.
     """
     origins = enabled_sources()
@@ -776,12 +785,8 @@ def headlines_for_macro_topics(topics: dict, max_items: int) -> dict[str, list[d
     fetched = _gather(tasks, config.NEWS_FETCH_BUDGET_S)
 
     av_by_label: dict[str, list[dict]] = {}
-    if "alphavantage" in origins:
-        needed_av_topics = {
-            topic["av_topic"] for topic in topics.values() if topic.get("av_topic")
-        }
-        if needed_av_topics:
-            av_by_label = _alpha_vantage_for_labels(topics, needed_av_topics, max_items)
+    if "alphavantage" in origins and any(t.get("av_topic") for t in topics.values()):
+        av_by_label = _alpha_vantage_for_labels(topics, max_items)
 
     return {
         label: _finalize(
