@@ -8,12 +8,29 @@ cesta agrega corretamente. Tudo mockado (sem rede).
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_backtest_confluencia.py -v
 """
+import importlib.util
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from agent import backtest as bt
-from agent import get_trend
+
+# get_trend.py faz imports "flat" (`from security import ...`), pensados pra
+# quando o script roda standalone (spawnado por routes/analysis.ts, que passa
+# o caminho direto -- Python bota o diretório do próprio script em sys.path[0]
+# nesse caso). `from agent import get_trend` não replica isso: conftest.py só
+# põe `src/` em sys.path, não `src/agent/`. Mesmo padrão de
+# test_get_news_feed.py -- adiciona `agent/` a sys.path e carrega via
+# importlib em vez de import de pacote.
+_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
+if _AGENT_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_DIR)
+_spec = importlib.util.spec_from_file_location("get_trend", os.path.join(_AGENT_DIR, "get_trend.py"))
+get_trend = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(get_trend)
 
 
 def _dates(n, start="2024-01-02"):

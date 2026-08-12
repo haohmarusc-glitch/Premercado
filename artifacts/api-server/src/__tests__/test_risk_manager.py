@@ -6,11 +6,26 @@ não depender de rede).
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_risk_manager.py -v
 """
 
+import importlib.util
+import os
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from agent import risk_manager as rm
+# risk_manager.py faz `from security import sanitize_ticker` (import "flat",
+# pensado pra quando o script roda standalone -- ver routes/risk.ts, que
+# spawna pelo caminho direto do arquivo, e Python bota o diretório do script
+# em sys.path[0] nesse caso). `from agent import ...` não replica isso:
+# conftest.py só põe `src/` em sys.path, não `src/agent/`. Mesmo padrão de
+# test_get_news_feed.py.
+_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
+if _AGENT_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_DIR)
+_spec = importlib.util.spec_from_file_location("risk_manager", os.path.join(_AGENT_DIR, "risk_manager.py"))
+rm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(rm)
 
 
 class TestPositionSize:
