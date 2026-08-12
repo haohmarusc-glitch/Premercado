@@ -4,6 +4,7 @@ import { db, settingsTable, agentRunsTable } from "@workspace/db";
 import { GetSettingsResponse, UpdateSettingsBody, UpdateSettingsResponse, GetAgentSpendResponse } from "@workspace/api-zod";
 import { applySettings } from "../lib/scheduler";
 import { startOfTodayBRT, todayBRTDateString } from "../lib/timezone";
+import { requireAdmin } from "../middleware/require-auth";
 
 const router: IRouter = Router();
 
@@ -40,7 +41,13 @@ router.get("/settings", async (_req, res): Promise<void> => {
   res.json(GetSettingsResponse.parse(serializeSettings(settings)));
 });
 
-router.patch("/settings", async (req, res): Promise<void> => {
+// requireAdmin: settingsTable é uma linha única global (não por usuário) --
+// tickers monitorados, orçamento diário de LLM e notifyEmail afetam TODO o
+// deployment, não só quem chama. Sem isto, qualquer usuário autenticado
+// (inclusive um cadastro público via /auth/signup) podia sequestrar as
+// notificações do operador ou zerar o orçamento de IA. GET continua aberto a
+// qualquer sessão (só leitura da config atual).
+router.patch("/settings", requireAdmin, async (req, res): Promise<void> => {
   const parsed = UpdateSettingsBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });

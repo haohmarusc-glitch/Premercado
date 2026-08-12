@@ -1,8 +1,14 @@
 import { Router, type IRouter } from "express";
 import { RunAgentResponse, GetAgentStatusResponse } from "@workspace/api-zod";
 import { runAgent, state } from "../lib/runner";
+import { isAdminUser } from "../middleware/require-auth";
 
 const router: IRouter = Router();
+
+// Modos que rodam sobre os DADOS DE QUEM CHAMA (carteira própria) -- ver
+// req.userId sendo passado pra runAgent() abaixo. Qualquer usuário
+// autenticado pode disparar estes, mesmo sem ser admin.
+const MODOS_PROPRIOS_DO_USUARIO = new Set(["portfolio", "veredito"]);
 
 router.post("/agent/run", async (req, res): Promise<void> => {
   if (state.running) {
@@ -17,10 +23,19 @@ router.post("/agent/run", async (req, res): Promise<void> => {
   // acordado no horário exato. Mantém o rótulo correto no histórico de runs
   // em vez de aparecer como "manual".
   const mode = rawMode === "portfolio" ? "portfolio" : rawMode === "premarket" ? "premarket" : rawMode === "coal" ? "coal" : rawMode === "ai" ? "ai" : rawMode === "news" ? "news" : rawMode === "exit_plan" ? "exit_plan" : rawMode === "alerts" ? "alerts" : rawMode === "veredito" ? "veredito" : rawMode === "consensus" ? "consensus" : rawMode === "scheduled" ? "scheduled" : "manual";
+
+  // requireAdmin só para modos COMPARTILHADOS (premarket, news, ai, etc.) --
+  // eles disparam trabalho caro sobre TODOS os usuários e consomem o
+  // orçamento diário de LLM global. Sem isto, qualquer usuário autenticado
+  // -- inclusive um cadastro público via /auth/signup -- podia queimar esse
+  // orçamento. "portfolio"/"veredito" ficam de fora porque rodam só sobre a
+  // carteira de quem chamou (req.userId, repassado pra runAgent() abaixo).
+  if (!MODOS_PROPRIOS_DO_USUARIO.has(mode) && !(await isAdminUser(req.userId!))) {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+
   const maxTurns = typeof req.body?.maxTurns === "number" ? req.body.maxTurns : undefined;
-  // req.userId sempre setado por requireAuth -- só é de fato usado pelos
-  // modos "portfolio"/"veredito" dentro de runAgent (carteira de quem clicou),
-  // ignorado pelos demais modos (compartilhados).
   runAgent(mode, maxTurns, req.userId);
   const message =
     mode === "portfolio" ? "Análise rápida da carteira iniciada. Aguarde a conclusão." :
