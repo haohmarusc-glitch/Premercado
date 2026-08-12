@@ -546,6 +546,59 @@ export const scenarioResolutionsTable = pgTable("scenario_resolutions", {
 ]);
 export type ScenarioResolution = typeof scenarioResolutionsTable.$inferSelect;
 
+// Estudo de Entrada e Saída: acompanhamento de entrada/saída por ticker
+// isolado -- "qual a chance da SMCI bater US$45 até 30 dias?" -- diferente
+// do Painel de Cenários (carteira inteira, premissa de movimento de setor),
+// aqui é 1 ticker + preço-alvo informado pelo usuário + passeio aleatório
+// sem viés (drift zero -- ver entry_exit_study.py). 3 alertas de preço são
+// criados junto (mesmo sistema de `alerts`, reaproveita o checker que já
+// roda, não duplica monitoramento intraday):
+//   - exitAlertId: condition="above" no preço-alvo -- avisa na saída/alta.
+//   - entryAvgLowAlertId: condition="below" na MÉDIA das mínimas diárias dos
+//     últimos 6 meses -- sinal de entrada mais frequente/conservador.
+//   - entryMinLowAlertId: condition="below" na MENOR mínima dos últimos 12
+//     meses (sempre ≤ a de 6 meses, já que a janela de 1 ano contém a de 6
+//     meses) -- sinal de entrada mais raro/extremo.
+export const entryExitStudyTargetsTable = pgTable("entry_exit_study_targets", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  ticker: text("ticker").notNull(),
+  targetPrice: money("target_price").notNull(),
+  targetDate: text("target_date").notNull(), // YYYY-MM-DD
+  exitAlertId: integer("exit_alert_id").references(() => alertsTable.id, { onDelete: "set null" }),
+  entryAvgLowAlertId: integer("entry_avg_low_alert_id").references(() => alertsTable.id, { onDelete: "set null" }),
+  entryMinLowAlertId: integer("entry_min_low_alert_id").references(() => alertsTable.id, { onDelete: "set null" }),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_entry_exit_study_targets_user_id").on(t.userId),
+]);
+export type EntryExitStudyTarget = typeof entryExitStudyTargetsTable.$inferSelect;
+
+// Snapshot diário de UM estudo (uma linha por target por dia, upsert
+// idempotente -- mesmo padrão de scenario_snapshots). low/avg de 1 ano e 6
+// meses vêm do histórico OHLCV real (referência de suporte/entrada);
+// vol_annual/beta_sector reaproveitam scenario_params quando disponível, sem
+// recalcular do zero.
+export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
+  id: serial("id").primaryKey(),
+  targetId: integer("target_id").notNull().references(() => entryExitStudyTargetsTable.id, { onDelete: "cascade" }),
+  calcDate: text("calc_date").notNull(), // YYYY-MM-DD
+  currentPrice: money("current_price").notNull(),
+  avgLow1y: money("avg_low_1y"),
+  minLow1y: money("min_low_1y"),
+  avgLow6m: money("avg_low_6m"),
+  minLow6m: money("min_low_6m"),
+  volAnnual: money("vol_annual"),
+  betaSector: money("beta_sector"),
+  probReachTarget: money("prob_reach_target"), // 0-1
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_entry_exit_study_history_target_id").on(t.targetId),
+  unique("uq_entry_exit_study_history_target_date").on(t.targetId, t.calcDate),
+]);
+export type EntryExitStudyHistory = typeof entryExitStudyHistoryTable.$inferSelect;
+
 /**
  * Série diária de IV ATM por ticker.
  *
