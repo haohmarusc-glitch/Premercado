@@ -201,6 +201,98 @@ def test_finnhub_normaliza_campos_proprios(monkeypatch):
     assert items[0]["origin"] == "finnhub"
 
 
+# ── Alpha Vantage (get_geopolitical_news) ───────────────────────────────────
+
+
+def test_alphavantage_sem_chave_nao_participa(monkeypatch):
+    monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+    assert ns._fetch_alpha_vantage_raw("economy_monetary") == []
+
+
+def test_alphavantage_time_published_sem_separador():
+    """A Alpha Vantage manda time_published como \"YYYYMMDDTHHMMSS\", sem
+    hífen/dois-pontos -- formato que _parse_published (usado por todo mundo
+    via _item) não reconhece. Sem a conversão o item entra sem data e afunda
+    pro fim do merge."""
+    assert ns._av_time_to_iso("20260812T142919") == "2026-08-12T14:29:19Z"
+    # fail-open: formato inesperado passa direto, não quebra
+    assert ns._av_time_to_iso("lixo") == "lixo"
+
+
+def test_alphavantage_uma_chamada_cobre_todos_os_topicos_pedidos(monkeypatch):
+    """O ponto inteiro de existir _fetch_alpha_vantage_raw/_alpha_vantage_for_labels
+    em vez de uma busca por (label, origin) como as outras fontes: a cota
+    diária da Alpha Vantage no plano básico é baixa (histórico: 25/dia,
+    compartilhada com qualquer outro uso da mesma chave) -- uma chamada por
+    tema (6 temas) gastaria quase um quarto da cota numa execução só."""
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "test-key")
+    chamadas = []
+
+    def _fake_get(url, params=None, timeout=None):
+        chamadas.append(params.get("topics"))
+        return _FakeResponse(
+            payload={
+                "feed": [
+                    {
+                        "title": "Fed sinaliza corte de juros",
+                        "time_published": "20260812T093000",
+                        "summary": "FOMC indica postura mais dovish.",
+                        "source": "Reuters",
+                        "topics": [{"topic": "economy_monetary", "relevance_score": "0.9"}],
+                    },
+                    {
+                        "title": "Controle de exportação de chips pressiona setor",
+                        "time_published": "20260812T101500",
+                        "summary": "Novas regras miram Taiwan/China.",
+                        "source": "Bloomberg",
+                        "topics": [
+                            {"topic": "technology", "relevance_score": "0.8"},
+                            {"topic": "economy_macro", "relevance_score": "0.5"},
+                        ],
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setattr(ns.SESSION, "get", _fake_get)
+
+    topics = {
+        "juros_fed": {"proxy": None, "query": "", "av_topic": "economy_monetary"},
+        "big_techs": {"proxy": None, "query": "", "av_topic": "technology"},
+        "semicondutores": {"proxy": None, "query": "", "av_topic": "technology"},
+        "carvao_metalurgico": {"proxy": None, "query": "", "av_topic": "manufacturing"},
+    }
+    needed = {"economy_monetary", "technology", "manufacturing"}
+    result = ns._alpha_vantage_for_labels(topics, needed, max_items=6)
+
+    # UMA chamada só, mesmo com 3 tópicos distintos pedidos por 4 temas.
+    assert len(chamadas) == 1
+    assert set(chamadas[0].split(",")) == needed
+
+    assert [i["title"] for i in result["juros_fed"]] == ["Fed sinaliza corte de juros"]
+    # big_techs e semicondutores compartilham av_topic="technology" -- os
+    # dois recebem o MESMO item, cada um enxergando seu próprio tema.
+    assert result["big_techs"] == result["semicondutores"]
+    assert len(result["big_techs"]) == 1
+    # nenhum item tem o tópico "manufacturing" -- vazio, não erro.
+    assert result["carvao_metalurgico"] == []
+
+
+def test_alphavantage_erro_de_conta_nao_quebra_e_nao_levanta(monkeypatch):
+    """A Alpha Vantage devolve 200 OK mesmo em erro de chave/cota -- o corpo
+    vira {"Information": "..."} em vez de {"feed": [...]}, sem status HTTP
+    de erro pra pegar. Precisa virar lista vazia (fail-open), não exceção
+    propagada pro @cached (que não tem try/except em volta de fn())."""
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "test-key")
+    monkeypatch.setattr(
+        ns.SESSION,
+        "get",
+        lambda *a, **k: _FakeResponse(payload={"Information": "cota diaria esgotada"}),
+    )
+
+    assert ns._fetch_alpha_vantage_raw("economy_monetary") == []
+
+
 # ── Merge / dedupe ────────────────────────────────────────────────────────────
 
 

@@ -39,12 +39,14 @@ PORTFOLIO_TICKERS = (
 # Yahoo vem primeiro por já ser a fonte validada em produção e a única que
 # traz resumo junto; as demais entram pra cobrir ticker que o Yahoo não cobre
 # e pra não zerar a ferramenta quando o Yahoo cai.
-# 'fmp' e 'finnhub' se auto-desativam sem a respectiva chave (ver
-# news_sources.py) -- deixá-las no default não custa nada em quem não tem chave.
+# 'fmp', 'finnhub' e 'alphavantage' se auto-desativam sem a respectiva chave
+# (ver news_sources.py) -- deixá-las no default não custa nada em quem não
+# tem chave. 'alphavantage' só participa de get_geopolitical_news (busca por
+# tema, não por ticker) -- ver headlines_for_macro_topics.
 _env_news_sources = os.environ.get("NEWS_SOURCES", "")
 NEWS_SOURCES = [
     s.strip().lower() for s in _env_news_sources.split(",") if s.strip()
-] or ["yahoo", "google_rss", "fmp", "finnhub"]
+] or ["yahoo", "google_rss", "fmp", "finnhub", "alphavantage"]
 
 NEWS_MAX_ITEMS = int(os.environ.get("NEWS_MAX_ITEMS", "6"))
 # Resumo por manchete: com 3+ fontes por ticker o payload de input cresce
