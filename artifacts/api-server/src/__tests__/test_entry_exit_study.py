@@ -188,3 +188,42 @@ def test_study_for_earnings_fora_da_janela_nao_afeta(monkeypatch):
     sem_evento = ees._study_for({"ticker": "SMCI", "targetPrice": 110.0, "targetDate": alvo})
 
     assert fora["probReachTarget"] == pytest.approx(sem_evento["probReachTarget"], abs=1e-9)
+
+
+# ── _traduzir_noticias (tradução em lote pra pt-BR) ─────────────────────────
+
+def test_traduzir_noticias_aplica_traducao_no_lugar(monkeypatch):
+    monkeypatch.setattr(ees, "translate_all", lambda texts: [f"PT:{t}" for t in texts])
+    results = [
+        {"ticker": "NVDA", "news": [
+            {"title": "Nvidia rallies", "summary": "Chips up big"},
+            {"title": "Second headline", "summary": None},
+        ]},
+        {"ticker": "SMCI", "news": []},
+        {"ticker": "ARM", "error": "sem histórico"},  # sem news nem crash
+    ]
+    ees._traduzir_noticias(results)
+    assert results[0]["news"][0]["title"] == "PT:Nvidia rallies"
+    assert results[0]["news"][0]["summary"] == "PT:Chips up big"
+    assert results[0]["news"][1]["title"] == "PT:Second headline"
+    assert results[0]["news"][1]["summary"] is None  # campo vazio não entra no lote
+
+
+def test_traduzir_noticias_mantem_originais_se_traducao_falha(monkeypatch):
+    def _explode(texts):
+        raise RuntimeError("endpoint fora do ar")
+    monkeypatch.setattr(ees, "translate_all", _explode)
+    results = [{"ticker": "NVDA", "news": [{"title": "Original title", "summary": "Original summary"}]}]
+    ees._traduzir_noticias(results)  # não pode propagar a exceção
+    assert results[0]["news"][0]["title"] == "Original title"
+
+
+def test_traduzir_noticias_descarta_lote_com_tamanho_errado(monkeypatch):
+    # translate_all pode devolver menos linhas se o join/split do endpoint
+    # desalinhar -- nesse caso o certo é manter TUDO original, nunca aplicar
+    # tradução deslocada (título de uma manchete no lugar de outra).
+    monkeypatch.setattr(ees, "translate_all", lambda texts: ["só uma linha"])
+    results = [{"ticker": "NVDA", "news": [{"title": "A", "summary": "B"}]}]
+    ees._traduzir_noticias(results)
+    assert results[0]["news"][0]["title"] == "A"
+    assert results[0]["news"][0]["summary"] == "B"

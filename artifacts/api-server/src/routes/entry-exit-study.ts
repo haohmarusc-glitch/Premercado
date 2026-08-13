@@ -99,6 +99,7 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
       volAnnual: r.volAnnual ?? null,
       betaSector: r.betaSector ?? null,
       probReachTarget: r.probReachTarget ?? null,
+      earningsDate: r.earningsDate ?? null,
       news: r.news ?? null,
     })
     .onConflictDoUpdate({
@@ -112,6 +113,7 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
         volAnnual: r.volAnnual ?? null,
         betaSector: r.betaSector ?? null,
         probReachTarget: r.probReachTarget ?? null,
+        earningsDate: r.earningsDate ?? null,
         news: r.news ?? null,
       },
     })

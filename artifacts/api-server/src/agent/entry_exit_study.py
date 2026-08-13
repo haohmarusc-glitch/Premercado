@@ -53,7 +53,7 @@ from brt import today_brt
 from get_scenario_params import compute as compute_scenario_params
 from get_earnings import get_earnings
 from earnings_reaction_analysis import analyze_ticker as analyze_earnings_reaction
-from get_news_feed import for_ticker as news_for_ticker, _company_names
+from get_news_feed import for_ticker as news_for_ticker, _company_names, translate_all
 
 _probe_imports()
 
@@ -191,6 +191,33 @@ def _study_for(spec: dict) -> dict:
     }
 
 
+def _traduzir_noticias(results: list) -> None:
+    """Traduz título+resumo das manchetes pra pt-BR num LOTE único cobrindo
+    todos os estudos, mutando `results` no lugar -- mesmo padrão do __main__
+    de get_news_feed.py (que já fazia isso pra tela de Notícias; este script
+    buscava as mesmas manchetes mas entregava em inglês). Fora do _study_for
+    de propósito: dentro seria uma requisição de tradução por thread; aqui é
+    uma pro conjunto. translate_all devolve os originais se a tradução
+    falhar, então o pior caso é manchete em inglês, nunca manchete perdida."""
+    refs = []  # (item_dict, campo)
+    texts = []
+    for r in results:
+        for n in r.get("news") or []:
+            for campo in ("title", "summary"):
+                if n.get(campo):
+                    refs.append((n, campo))
+                    texts.append(n[campo])
+    if not texts:
+        return
+    try:
+        translated = translate_all(texts)
+        if len(translated) == len(texts):
+            for (n, campo), tr in zip(refs, translated):
+                n[campo] = tr
+    except Exception as e:
+        print(f"[entry_exit_study] tradução falhou, mantendo originais: {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     try:
         args = json.loads(sys.stdin.read() or "{}")
@@ -204,4 +231,5 @@ if __name__ == "__main__":
         budget_s=budget_from_deadline(BUDGET_S, label="entry_exit_study"),
         label="entry_exit_study",
     )
+    _traduzir_noticias(results)
     exit_now(json.dumps({"results": results}, ensure_ascii=False) + "\n")

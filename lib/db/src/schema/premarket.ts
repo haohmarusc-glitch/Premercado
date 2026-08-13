@@ -592,6 +592,11 @@ export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
   volAnnual: money("vol_annual"),
   betaSector: money("beta_sector"),
   probReachTarget: money("prob_reach_target"), // 0-1
+  // Data do próximo balanço no dia do cálculo (YYYY-MM-DD) -- persistida por
+  // snapshot porque muda com o tempo (a empresa anuncia/ajusta a data) e a
+  // tela destaca "earnings em Xd" quando cai perto ou dentro da janela do
+  // estudo. null quando o Yahoo não informa.
+  earningsDate: text("earnings_date"),
   // Manchetes do dia do cálculo (título/resumo/fonte/url/tickers relacionados
   // -- mesma forma que entry_exit_study.py já devolve em StudyResult.news),
   // persistidas pra não sumir depois que o toast de criação fecha. Só

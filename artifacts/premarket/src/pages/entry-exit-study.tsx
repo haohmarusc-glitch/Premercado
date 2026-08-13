@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Trash2, Target, ChevronDown, ChevronUp, History, TrendingDown, Calendar,
-  Pencil, Check, X, Newspaper, CheckCircle2, XCircle, ExternalLink,
+  Pencil, Check, X, Newspaper, CheckCircle2, XCircle, ExternalLink, CalendarClock,
 } from "lucide-react";
 
 function fmtPct(n: number | null | undefined) {
@@ -453,6 +453,14 @@ export default function EntryExitStudyPage() {
             const isEditing = editingId === target.id;
             const dias = daysUntil(target.targetDate);
 
+            // Destaque de earnings: dentro da janela do estudo o balanço
+            // engorda a volatilidade usada na probabilidade (volComSalto no
+            // cálculo Python), então merece cor de atenção; fora da janela
+            // mas a <=10 dias ainda vale mostrar, neutro, como contexto.
+            const earnDias = latest?.earningsDate ? daysUntil(latest.earningsDate) : null;
+            const earnNaJanela = latest?.earningsDate != null && latest.earningsDate <= target.targetDate;
+            const mostraEarnings = earnDias != null && earnDias >= 0 && (earnNaJanela || earnDias <= 10);
+
             return (
               <div
                 key={target.id}
@@ -521,6 +529,22 @@ export default function EntryExitStudyPage() {
                               className={`font-mono text-xs border-current/30 bg-current/5 ${probColorClass(latest.probReachTarget)}`}
                             >
                               {fmtPct(latest.probReachTarget)} de chance
+                            </Badge>
+                          )}
+                          {mostraEarnings && (
+                            <Badge
+                              variant="outline"
+                              className={`font-mono text-xs ${
+                                earnNaJanela
+                                  ? "border-yellow-500/40 text-yellow-400 bg-yellow-500/5"
+                                  : "text-muted-foreground border-border"
+                              }`}
+                              title={earnNaJanela
+                                ? "Balanço dentro da janela do estudo — o salto de volatilidade de earnings já está embutido na probabilidade"
+                                : "Balanço próximo, mas depois da data-alvo — não afeta este cálculo"}
+                            >
+                              <CalendarClock className="h-3 w-3 mr-1" />
+                              earnings {earnDias === 0 ? "hoje" : `em ${earnDias}d`}
                             </Badge>
                           )}
                         </div>

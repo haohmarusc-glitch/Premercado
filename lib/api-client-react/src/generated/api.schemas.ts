@@ -241,6 +241,11 @@ export interface EntryExitStudyHistory {
      */
   probReachTarget?: number | null;
   /**
+     * YYYY-MM-DD do proximo balanco no dia do calculo
+     * @nullable
+     */
+  earningsDate?: string | null;
+  /**
      * Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.
      * @nullable
      */
