@@ -99,11 +99,16 @@ class _FakeTicker:
 
 
 def _patch_deps(monkeypatch, *, current_price=100.0, lows=None, vol_annual=0.4,
-                 beta_sector=1.2, earnings_date=None, jump_std_pct=None):
+                 beta_sector=1.2, earnings_date=None, jump_std_pct=None,
+                 momentum_annual_pct=None):
     monkeypatch.setattr(ees.yf, "Ticker", lambda t: _FakeTicker(current_price, lows))
     monkeypatch.setattr(
         ees, "compute_scenario_params",
-        lambda tickers, benchmark: {"params": {tickers[0]: {"volAnnual": vol_annual, "betaSector": beta_sector}}},
+        lambda tickers, benchmark: {
+            "params": {tickers[0]: {"volAnnual": vol_annual, "betaSector": beta_sector}},
+            "sectorMomentum": {"benchmark": "SMH", "momentumAnnualPct": momentum_annual_pct, "lookbackDays": 90}
+            if momentum_annual_pct is not None else None,
+        },
     )
     monkeypatch.setattr(
         ees, "get_earnings",
@@ -227,3 +232,30 @@ def test_traduzir_noticias_descarta_lote_com_tamanho_errado(monkeypatch):
     ees._traduzir_noticias(results)
     assert results[0]["news"][0]["title"] == "A"
     assert results[0]["news"][0]["summary"] == "B"
+
+
+# ── probReachTargetMomentum (probabilidade alternativa com drift de momentum) ─
+
+def test_momentum_positivo_sobe_a_probabilidade_de_alvo_acima(monkeypatch):
+    alvo = (HOJE_BRT + timedelta(days=30)).isoformat()
+    _patch_deps(monkeypatch, current_price=100.0, vol_annual=0.4, momentum_annual_pct=30.0)
+    out = ees._study_for({"ticker": "SMCI", "targetPrice": 110.0, "targetDate": alvo})
+    assert out["probReachTargetMomentum"] is not None
+    assert out["probReachTargetMomentum"] > out["probReachTarget"]
+    assert out["momentumAnnualPct"] == pytest.approx(30.0)
+
+
+def test_momentum_negativo_derruba_a_probabilidade(monkeypatch):
+    alvo = (HOJE_BRT + timedelta(days=30)).isoformat()
+    _patch_deps(monkeypatch, current_price=100.0, vol_annual=0.4, momentum_annual_pct=-30.0)
+    out = ees._study_for({"ticker": "SMCI", "targetPrice": 110.0, "targetDate": alvo})
+    assert out["probReachTargetMomentum"] < out["probReachTarget"]
+
+
+def test_sem_momentum_do_benchmark_fica_none(monkeypatch):
+    alvo = (HOJE_BRT + timedelta(days=30)).isoformat()
+    _patch_deps(monkeypatch, current_price=100.0, momentum_annual_pct=None)
+    out = ees._study_for({"ticker": "SMCI", "targetPrice": 110.0, "targetDate": alvo})
+    assert out["probReachTargetMomentum"] is None
+    # o número principal (drift zero) continua saindo normalmente
+    assert out["probReachTarget"] is not None

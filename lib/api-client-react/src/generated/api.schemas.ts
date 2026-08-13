@@ -241,6 +241,16 @@ export interface EntryExitStudyHistory {
      */
   probReachTarget?: number | null;
   /**
+     * 0-1, probabilidade alternativa com drift de momentum do setor (premissa explicita, nunca o numero principal)
+     * @nullable
+     */
+  probReachTargetMomentum?: number | null;
+  /**
+     * Momentum anualizado do benchmark usado como premissa, % a.a.
+     * @nullable
+     */
+  momentumAnnualPct?: number | null;
+  /**
      * YYYY-MM-DD do proximo balanco no dia do calculo
      * @nullable
      */
@@ -323,6 +333,13 @@ export interface EntryExitStudyCalcResult {
      * @nullable
      */
   probReachTarget?: number | null;
+  /**
+     * 0-1, com drift de momentum do setor
+     * @nullable
+     */
+  probReachTargetMomentum?: number | null;
+  /** @nullable */
+  momentumAnnualPct?: number | null;
   news?: EntryExitStudyNewsItem[];
   error?: string;
 }

@@ -1520,6 +1520,8 @@ components:
         volAnnual: { type: ["number", "null"] }
         betaSector: { type: ["number", "null"] }
         probReachTarget: { type: ["number", "null"], description: "0-1" }
+        probReachTargetMomentum: { type: ["number", "null"], description: "0-1, probabilidade alternativa com drift de momentum do setor (premissa explicita, nunca o numero principal)" }
+        momentumAnnualPct: { type: ["number", "null"], description: "Momentum anualizado do benchmark usado como premissa, % a.a." }
         earningsDate: { type: ["string", "null"], description: "YYYY-MM-DD do proximo balanco no dia do calculo" }
         news:
           type: ["array", "null"]
@@ -1586,6 +1588,8 @@ components:
         earningsDate: { type: ["string", "null"] }
         daysUntilTarget: { type: ["integer", "null"] }
         probReachTarget: { type: ["number", "null"], description: "0-1" }
+        probReachTargetMomentum: { type: ["number", "null"], description: "0-1, com drift de momentum do setor" }
+        momentumAnnualPct: { type: ["number", "null"] }
         news:
           type: array
           items:

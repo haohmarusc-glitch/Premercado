@@ -125,9 +125,15 @@ def _study_for(spec: dict) -> dict:
     avg_low_1y, min_low_1y = _low_stats(hist["Low"])
     avg_low_6m, min_low_6m = _low_stats(hist["Low"].tail(SIX_MONTHS_TRADING_DAYS))
 
-    params = compute_scenario_params([ticker], BENCHMARK).get("params", {}).get(ticker, {})
+    scenario_out = compute_scenario_params([ticker], BENCHMARK)
+    params = scenario_out.get("params", {}).get(ticker, {})
     vol_annual = params.get("volAnnual") or DEFAULT_VOL
     beta_sector = params.get("betaSector")
+    # Momentum do benchmark setorial, do MESMO download que já trouxe
+    # vol/beta (sem chamada de rede extra) -- alimenta a probabilidade
+    # alternativa "com momentum" abaixo.
+    sector_momentum = scenario_out.get("sectorMomentum") or {}
+    momentum_annual_pct = sector_momentum.get("momentumAnnualPct")
 
     earnings_date = None
     try:
@@ -166,6 +172,29 @@ def _study_for(spec: dict) -> dict:
     if current_price > 0 and sd > 0:
         prob_reach_target = round(1 - _phi(math.log(target_price / current_price) / sd), 4)
 
+    # Probabilidade ALTERNATIVA com drift de momentum -- premissa explícita
+    # "se a tendência recente do setor continuar", nunca o número principal.
+    # Mesma matemática do cenário central do Painel de Cenários
+    # (probEmpateIndividual em scenario-math.ts): o papel move beta × o
+    # movimento do setor extrapolado pro horizonte, com piso em zero; o
+    # drift lognormal é ln desse multiplicador. Momentum vem de dado REAL
+    # (retorno dos últimos 90 pregões do benchmark, ver _sector_momentum em
+    # get_scenario_params.py) -- diferente de um "sentimento" chutado, dá
+    # pra dizer exatamente qual premissa gerou o número. None quando o
+    # benchmark não tem histórico suficiente ou o beta do ticker falhou.
+    prob_reach_target_momentum = None
+    if (
+        prob_reach_target is not None
+        and momentum_annual_pct is not None
+        and beta_sector is not None
+    ):
+        setor_pct = momentum_annual_pct * T  # movimento do setor até a data-alvo
+        central = max(0.0, 1 + (beta_sector * setor_pct) / 100)
+        drift = math.log(max(central, 1e-6))
+        prob_reach_target_momentum = round(
+            1 - _phi((math.log(target_price / current_price) - drift) / sd), 4
+        )
+
     news_items = []
     try:
         names = _company_names([ticker])
@@ -187,6 +216,8 @@ def _study_for(spec: dict) -> dict:
         "earningsDate": earnings_date,
         "daysUntilTarget": days_until,
         "probReachTarget": prob_reach_target,
+        "probReachTargetMomentum": prob_reach_target_momentum,
+        "momentumAnnualPct": momentum_annual_pct,
         "news": news_items,
     }
 

@@ -310,6 +310,8 @@ export const EntryExitStudyHistorySchema = zod.object({
   "volAnnual": zod.coerce.number().nullish(),
   "betaSector": zod.coerce.number().nullish(),
   "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "probReachTargetMomentum": zod.coerce.number().nullish().describe('0-1, probabilidade alternativa com drift de momentum do setor (premissa explicita, nunca o numero principal)'),
+  "momentumAnnualPct": zod.coerce.number().nullish().describe('Momentum anualizado do benchmark usado como premissa, % a.a.'),
   "earningsDate": zod.string().nullish().describe('YYYY-MM-DD do proximo balanco no dia do calculo'),
   "news": zod.array(EntryExitStudyNewsItemSchema).nullish().describe('Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.'),
   "newsSentiment": zod.string().nullish().describe("Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo."),
@@ -362,6 +364,8 @@ export const EntryExitStudyCalcResultSchema = zod.object({
   "earningsDate": zod.string().nullish(),
   "daysUntilTarget": zod.coerce.number().nullish(),
   "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "probReachTargetMomentum": zod.coerce.number().nullish().describe('0-1, com drift de momentum do setor'),
+  "momentumAnnualPct": zod.coerce.number().nullish(),
   "news": zod.array(EntryExitStudyNewsItemSchema).optional(),
   "error": zod.string().optional()
 })

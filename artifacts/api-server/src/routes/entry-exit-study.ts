@@ -24,6 +24,8 @@ export interface StudyResult {
   earningsDate?: string | null;
   daysUntilTarget?: number;
   probReachTarget?: number | null;
+  probReachTargetMomentum?: number | null;
+  momentumAnnualPct?: number | null;
   news?: Array<{
     title?: string;
     published?: string | null;
@@ -81,6 +83,8 @@ function serializeHistory(h: typeof entryExitStudyHistoryTable.$inferSelect) {
     volAnnual: h.volAnnual == null ? null : Number(h.volAnnual),
     betaSector: h.betaSector == null ? null : Number(h.betaSector),
     probReachTarget: h.probReachTarget == null ? null : Number(h.probReachTarget),
+    probReachTargetMomentum: h.probReachTargetMomentum == null ? null : Number(h.probReachTargetMomentum),
+    momentumAnnualPct: h.momentumAnnualPct == null ? null : Number(h.momentumAnnualPct),
     createdAt: h.createdAt.toISOString(),
   };
 }
@@ -105,6 +109,8 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
       volAnnual: r.volAnnual ?? null,
       betaSector: r.betaSector ?? null,
       probReachTarget: r.probReachTarget ?? null,
+      probReachTargetMomentum: r.probReachTargetMomentum ?? null,
+      momentumAnnualPct: r.momentumAnnualPct ?? null,
       earningsDate: r.earningsDate ?? null,
       news: r.news ?? null,
       newsSentiment: r.newsSentiment ?? null,
@@ -121,6 +127,8 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
         volAnnual: r.volAnnual ?? null,
         betaSector: r.betaSector ?? null,
         probReachTarget: r.probReachTarget ?? null,
+        probReachTargetMomentum: r.probReachTargetMomentum ?? null,
+        momentumAnnualPct: r.momentumAnnualPct ?? null,
         earningsDate: r.earningsDate ?? null,
         news: r.news ?? null,
         newsSentiment: r.newsSentiment ?? null,
