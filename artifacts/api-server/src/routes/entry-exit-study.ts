@@ -32,6 +32,12 @@ export interface StudyResult {
     url?: string | null;
     relatedTickers?: string[] | null;
   }>;
+  // Preenchidos SÓ pelo checker diário (entry-exit-study-checker.ts anexa o
+  // resultado de agent/entry_exit_sentiment.py antes de persistir) -- a rota
+  // POST não paga a chamada de LLM, então snapshots criados por ela ficam
+  // com null aqui.
+  newsSentiment?: "positivo" | "neutro" | "negativo" | null;
+  newsSentimentReason?: string | null;
   error?: string;
 }
 
@@ -99,7 +105,10 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
       volAnnual: r.volAnnual ?? null,
       betaSector: r.betaSector ?? null,
       probReachTarget: r.probReachTarget ?? null,
+      earningsDate: r.earningsDate ?? null,
       news: r.news ?? null,
+      newsSentiment: r.newsSentiment ?? null,
+      newsSentimentReason: r.newsSentimentReason ?? null,
     })
     .onConflictDoUpdate({
       target: [entryExitStudyHistoryTable.targetId, entryExitStudyHistoryTable.calcDate],
@@ -112,7 +121,10 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
         volAnnual: r.volAnnual ?? null,
         betaSector: r.betaSector ?? null,
         probReachTarget: r.probReachTarget ?? null,
+        earningsDate: r.earningsDate ?? null,
         news: r.news ?? null,
+        newsSentiment: r.newsSentiment ?? null,
+        newsSentimentReason: r.newsSentimentReason ?? null,
       },
     })
     .returning();

@@ -241,10 +241,25 @@ export interface EntryExitStudyHistory {
      */
   probReachTarget?: number | null;
   /**
+     * YYYY-MM-DD do proximo balanco no dia do calculo
+     * @nullable
+     */
+  earningsDate?: string | null;
+  /**
      * Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.
      * @nullable
      */
   news?: EntryExitStudyNewsItem[] | null;
+  /**
+     * Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo.
+     * @nullable
+     */
+  newsSentiment?: string | null;
+  /**
+     * Uma frase justificando o rotulo.
+     * @nullable
+     */
+  newsSentimentReason?: string | null;
   createdAt: string;
 }
 

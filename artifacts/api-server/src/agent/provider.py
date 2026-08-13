@@ -1009,6 +1009,18 @@ class FallbackClient:
             f"não será tentado de novo até o próximo processo.",
             flush=True,
         )
+        # Linha estruturada pro runner.ts (mesmo padrão de USAGE:/STEP:/
+        # REPORT:): sem ela, "conta sem crédito" morria no log do processo e o
+        # usuário só descobria quando a cadeia INTEIRA esgotasse. O runner
+        # transforma isso em aviso no topo do e-mail do relatório e no stepLog
+        # da tela de Runs. `motivo` passa por mask_sensitive_data antes de
+        # chegar aqui (ver call site em create()).
+        print(
+            "PROVIDER_DOWN:" + json.dumps(
+                {"provider": name, "motivo": motivo[:300]}, ensure_ascii=False
+            ),
+            flush=True,
+        )
 
     @property
     def provider_name(self) -> str:

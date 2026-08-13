@@ -28,7 +28,7 @@ vi.mock("@workspace/db", () => {
 });
 vi.mock("../logger", () => ({ logger: { warn: () => {}, error: () => {}, info: () => {} } }));
 
-const { preflightRelatorio, bannerDeAvisos } = await import("../report-preflight");
+const { preflightRelatorio, bannerDeAvisos, bannerProvedoresCaidos } = await import("../report-preflight");
 
 const SEGUNDA = new Date(Date.UTC(2026, 7, 3, 15, 0)); // 03/08/2026
 const DOMINGO = new Date(Date.UTC(2026, 7, 2, 15, 0)); // 02/08/2026
@@ -152,5 +152,39 @@ describe("preflight", () => {
 
   it("banner é vazio quando não há aviso", () => {
     expect(bannerDeAvisos([])).toBe("");
+  });
+});
+
+describe("bannerProvedoresCaidos", () => {
+  it("monta o banner a partir das linhas PROVIDER_DOWN do stdout cru", () => {
+    const stdout = [
+      "STEP: analisando NVDA",
+      'PROVIDER_DOWN:{"provider":"openai","motivo":"insufficient_quota"}',
+      "outro log qualquer",
+    ].join("\n");
+    const banner = bannerProvedoresCaidos(stdout);
+    expect(banner).toContain("openai");
+    expect(banner).toContain("insufficient_quota");
+    expect(banner).toContain("Provedor de IA fora de a\u00e7\u00e3o");
+  });
+
+  it("deduplica o mesmo provedor condenado mais de uma vez", () => {
+    const stdout = [
+      'PROVIDER_DOWN:{"provider":"kimi","motivo":"conta suspensa"}',
+      'PROVIDER_DOWN:{"provider":"kimi","motivo":"conta suspensa"}',
+    ].join("\n");
+    const banner = bannerProvedoresCaidos(stdout);
+    expect(banner.match(/kimi/g)).toHaveLength(1);
+  });
+
+  it("vazio quando nenhum provedor caiu (dia normal)", () => {
+    expect(bannerProvedoresCaidos("STEP: tudo certo\nREPORT: ...")).toBe("");
+  });
+
+  it("linha malformada nao derruba nem entra no banner", () => {
+    const stdout = 'PROVIDER_DOWN:{quebrado sem fechar\nPROVIDER_DOWN:{"provider":"gemini","motivo":"404 modelo"}';
+    const banner = bannerProvedoresCaidos(stdout);
+    expect(banner).toContain("gemini");
+    expect(banner).not.toContain("quebrado");
   });
 });

@@ -1520,11 +1520,14 @@ components:
         volAnnual: { type: ["number", "null"] }
         betaSector: { type: ["number", "null"] }
         probReachTarget: { type: ["number", "null"], description: "0-1" }
+        earningsDate: { type: ["string", "null"], description: "YYYY-MM-DD do proximo balanco no dia do calculo" }
         news:
           type: ["array", "null"]
           description: "Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade."
           items:
             $ref: "#/components/schemas/EntryExitStudyNewsItem"
+        newsSentiment: { type: ["string", "null"], description: "Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo." }
+        newsSentimentReason: { type: ["string", "null"], description: "Uma frase justificando o rotulo." }
         createdAt: { type: string }
 
     EntryExitStudyResolution:

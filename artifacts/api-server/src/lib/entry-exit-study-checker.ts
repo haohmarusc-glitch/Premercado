@@ -45,6 +45,53 @@ function runEntryExitStudyScriptExclusive(studies: Array<{ ticker: string; targe
   }));
 }
 
+// Uma chamada de LLM (tier flash) cobrindo TODOS os estudos com manchete --
+// não uma por ticker. Roda como `-m agent.entry_exit_sentiment` porque
+// provider.py usa import relativo (mesmo motivo de get_bounce_alerts.py).
+// 60s de teto: é uma completion curta, sem ferramentas.
+const SENTIMENT_TIMEOUT_MS = 60_000;
+
+type SentimentMap = Record<string, { sentimento: "positivo" | "neutro" | "negativo"; justificativa: string }>;
+
+function runSentimentScript(studies: Array<{ ticker: string; news: StudyResult["news"] }>): Promise<SentimentMap> {
+  return new Promise((resolve, reject) => {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.entry_exit_sentiment"], { cwd: agentDir });
+    py.stdin.write(JSON.stringify({ studies }));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("entry_exit_sentiment timed out")); }, SENTIMENT_TIMEOUT_MS);
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) { reject(new Error(err || "entry_exit_sentiment failed")); return; }
+      try { resolve((JSON.parse(out) as { sentiments?: SentimentMap }).sentiments ?? {}); }
+      catch { reject(new Error("Failed to parse entry_exit_sentiment output")); }
+    });
+  });
+}
+
+// Anexa o sentimento das manchetes aos resultados, mutando no lugar.
+// Best-effort de verdade: qualquer falha aqui vira warn e os snapshots saem
+// sem sentimento -- o rótulo é informativo, nunca pode segurar o histórico.
+async function attachSentiments(results: StudyResult[]): Promise<void> {
+  const comNoticia = results.filter((r) => !r.error && (r.news?.length ?? 0) > 0);
+  if (!comNoticia.length) return;
+  try {
+    const sentiments = await runSentimentScript(comNoticia.map((r) => ({ ticker: r.ticker, news: r.news })));
+    for (const r of comNoticia) {
+      const s = sentiments[r.ticker];
+      if (s) {
+        r.newsSentiment = s.sentimento;
+        r.newsSentimentReason = s.justificativa || null;
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "Entry/exit sentiment: falha na análise -- snapshots seguem sem sentimento");
+  }
+}
+
 export async function refreshEntryExitStudies(): Promise<void> {
   // Mesmo motivo dos outros checkers: entry_exit_study.py baixa histórico via
   // yfinance, não vale competir por CPU/rede com o agente diário.
@@ -68,6 +115,10 @@ export async function refreshEntryExitStudies(): Promise<void> {
     logger.error({ err, count: studies.length }, "Entry/exit study checker: falha ao rodar entry_exit_study.py");
     return;
   }
+
+  // Sentimento das manchetes (LLM barato) SÓ aqui no checker -- a rota POST
+  // não paga essa chamada. Ver agent/entry_exit_sentiment.py.
+  await attachSentiments(data.results);
 
   // Casa cada resultado de volta ao target por ticker+preço-alvo+data-alvo --
   // o script não conhece o id interno, só ecoa os 3 campos que recebeu, e o

@@ -310,7 +310,10 @@ export const EntryExitStudyHistorySchema = zod.object({
   "volAnnual": zod.coerce.number().nullish(),
   "betaSector": zod.coerce.number().nullish(),
   "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "earningsDate": zod.string().nullish().describe('YYYY-MM-DD do proximo balanco no dia do calculo'),
   "news": zod.array(EntryExitStudyNewsItemSchema).nullish().describe('Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.'),
+  "newsSentiment": zod.string().nullish().describe("Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo."),
+  "newsSentimentReason": zod.string().nullish().describe('Uma frase justificando o rotulo.'),
   "createdAt": zod.string()
 })
 
