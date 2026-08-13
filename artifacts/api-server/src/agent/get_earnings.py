@@ -74,8 +74,8 @@ def get_earnings(tickers):
             })
         except Exception as e:
             result.append({"ticker": t, "name": t, "earningsDate": None, "epsEstimate": None})
-    print(json.dumps(result))
+    return result
 
 if __name__ == "__main__":
     tickers = sys.argv[1].split(",") if len(sys.argv) > 1 else []
-    get_earnings(tickers)
+    print(json.dumps(get_earnings(tickers)))
