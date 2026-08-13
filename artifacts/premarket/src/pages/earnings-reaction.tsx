@@ -12,8 +12,24 @@ interface SessionMove {
 
 interface ReactionEvent {
   earnings_date: string;
+  runup_pct?: number | null;
   announcement_day: SessionMove | null;
   next_day: SessionMove | null;
+}
+
+interface RunupSummary {
+  runup_pregoes: number;
+  esticado_corte_pct: number;
+  n_com_runup: number;
+  corr_runup_reacao?: number | null;
+  esticado_n?: number;
+  esticado_caiu_n?: number;
+  esticado_reacao_media?: number | null;
+  descontado_n?: number;
+  descontado_subiu_n?: number;
+  descontado_reacao_media?: number | null;
+  runup_atual_pct?: number;
+  estado_atual?: "esticado" | "descontado" | "neutro";
 }
 
 interface ReactionSummary {
@@ -31,6 +47,7 @@ interface ReactionSummary {
   r2_price: number;
   s1_price: number;
   s2_price: number;
+  runup?: RunupSummary;
 }
 
 interface ReactionResult {
@@ -133,6 +150,34 @@ function interpretResult(r: ReactionResult): string[] {
         `Em ${annBigger} de ${counted} eventos com as duas janelas disponíveis, o próprio dia do anúncio teve a reação maior — sinal de que o resultado tende a sair antes da abertura (BMO).`,
       );
     }
+  }
+
+  const ru = s.runup;
+  if (ru && ru.esticado_n != null && ru.esticado_n > 0) {
+    const frase = `Padrão "chegou esticado": em ${ru.esticado_caiu_n} de ${ru.esticado_n} balanços em que o papel subiu ≥${ru.esticado_corte_pct.toFixed(0)}% no mês anterior, a reação foi de QUEDA` +
+      (ru.esticado_reacao_media != null ? ` (média ${fmtPct(ru.esticado_reacao_media)})` : "") + `.`;
+    notes.push(frase);
+  }
+  if (ru && ru.descontado_n != null && ru.descontado_n > 0) {
+    notes.push(
+      `Chegando descontado (mês anterior ≤ 0%): ${ru.descontado_subiu_n} de ${ru.descontado_n} reações foram de ALTA` +
+      (ru.descontado_reacao_media != null ? ` (média ${fmtPct(ru.descontado_reacao_media)})` : "") + `.`,
+    );
+  }
+  if (ru && ru.corr_runup_reacao != null) {
+    notes.push(
+      `Correlação run-up × reação: ${ru.corr_runup_reacao >= 0 ? "+" : ""}${ru.corr_runup_reacao.toFixed(2)} — amostra pequena, trate como indício, não prova.`,
+    );
+  }
+  if (ru && ru.runup_atual_pct != null && ru.estado_atual) {
+    const rotulo = ru.estado_atual === "esticado"
+      ? "ESTICADO — historicamente é o estado que precede reações negativas mesmo com resultado bom"
+      : ru.estado_atual === "descontado"
+      ? "DESCONTADO — historicamente o estado com mais espaço pra surpresa positiva"
+      : "neutro";
+    notes.push(
+      `Estado atual do papel: run-up de ${fmtPct(ru.runup_atual_pct)} no último mês → ${rotulo}.`,
+    );
   }
 
   if (s.n_events < 4) {
@@ -284,6 +329,7 @@ export default function EarningsReactionPage() {
                         <thead className="bg-secondary/20">
                           <tr>
                             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Earnings</th>
+                            <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase" title="Variação do mês (21 pregões) anterior ao balanço">Run-up prévio</th>
                             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Dia do anúncio</th>
                             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Dia seguinte</th>
                           </tr>
@@ -292,6 +338,9 @@ export default function EarningsReactionPage() {
                           {r.events.map((e, idx) => (
                             <tr key={e.earnings_date} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
                               <td className="px-4 py-2 text-muted-foreground">{e.earnings_date}</td>
+                              <td className={`px-4 py-2 text-right ${e.runup_pct == null ? "text-muted-foreground" : e.runup_pct >= 10 ? "text-yellow-400" : e.runup_pct <= 0 ? "text-blue-400" : "text-muted-foreground"}`}>
+                                {e.runup_pct != null ? fmtPct(e.runup_pct) : "n/d"}
+                              </td>
                               <td className="px-4 py-2"><SessionCell move={e.announcement_day} /></td>
                               <td className="px-4 py-2"><SessionCell move={e.next_day} /></td>
                             </tr>
