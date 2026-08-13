@@ -592,6 +592,14 @@ export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
   volAnnual: money("vol_annual"),
   betaSector: money("beta_sector"),
   probReachTarget: money("prob_reach_target"), // 0-1
+  // Probabilidade ALTERNATIVA com drift de momentum -- premissa explícita
+  // "se a tendência dos últimos 90 pregões do benchmark continuar" (beta ×
+  // momentum extrapolado pro horizonte, mesma matemática do cenário central
+  // do Painel de Cenários). Nunca substitui probReachTarget: os dois são
+  // exibidos lado a lado, o neutro como principal. null quando o benchmark
+  // não tem histórico suficiente ou o beta do ticker falhou.
+  probReachTargetMomentum: money("prob_reach_target_momentum"), // 0-1
+  momentumAnnualPct: money("momentum_annual_pct"), // premissa usada, % a.a.
   // Data do próximo balanço no dia do cálculo (YYYY-MM-DD) -- persistida por
   // snapshot porque muda com o tempo (a empresa anuncia/ajusta a data) e a
   // tela destaca "earnings em Xd" quando cai perto ou dentro da janela do

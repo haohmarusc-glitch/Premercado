@@ -461,6 +461,8 @@ export async function ensureSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS earnings_date text`);
     await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS news_sentiment text`);
     await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS news_sentiment_reason text`);
+    await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS prob_reach_target_momentum numeric(15, 4)`);
+    await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS momentum_annual_pct numeric(15, 4)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS entry_exit_study_resolutions (
         id serial PRIMARY KEY,

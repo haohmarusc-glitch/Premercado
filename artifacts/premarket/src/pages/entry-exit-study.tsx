@@ -277,6 +277,7 @@ function StudyDetails({ id }: { id: number }) {
                 <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Data</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Preço</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Prob. alvo</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide" title="Premissa: tendência dos últimos 90 pregões do setor continua">c/ momentum</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Média baixa 6m</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Mín. 12m</th>
               </tr>
@@ -292,6 +293,7 @@ function StudyDetails({ id }: { id: number }) {
                   <td className={`px-3 py-1.5 text-right font-bold ${probColorClass(h.probReachTarget)}`}>
                     {fmtPct(h.probReachTarget)}
                   </td>
+                  <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtPct(h.probReachTargetMomentum)}</td>
                   <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.avgLow6m)}</td>
                   <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.minLow1y)}</td>
                 </tr>
@@ -611,6 +613,13 @@ export default function EntryExitStudyPage() {
                               <TrendingDown className="h-3 w-3" />
                               entrada: média 6m {fmtUsd(latest.avgLow6m)} · mín. 12m {fmtUsd(latest.minLow1y)}
                             </span>
+                            {latest.probReachTargetMomentum != null && (
+                              <span
+                                title={`Premissa explícita: se a tendência dos últimos 90 pregões do setor continuar (${(latest.momentumAnnualPct ?? 0) >= 0 ? "+" : ""}${(latest.momentumAnnualPct ?? 0).toFixed(0)}% a.a. × beta do papel). O número principal segue sendo o neutro, sem viés.`}
+                              >
+                                c/ momentum do setor: <span className={probColorClass(latest.probReachTargetMomentum)}>{fmtPct(latest.probReachTargetMomentum)}</span>
+                              </span>
+                            )}
                           </div>
                         )}
                       </>
