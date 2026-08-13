@@ -230,3 +230,35 @@ export function bannerDeAvisos(achados: Achado[]): string {
   const linhas = warns.map((a) => `- **${a.code}**: ${a.message}`);
   return `> ⚠️ **Verificação automática antes do envio**\n>\n${linhas.map((l) => `> ${l}`).join("\n")}\n\n---\n\n`;
 }
+
+/**
+ * Banner de provedores de LLM condenados durante a run -- conta sem crédito,
+ * modelo indisponível. Lê as linhas PROVIDER_DOWN:{json} do stdout cru do
+ * agente (emitidas por provider.py::_condenar) e monta o aviso pro topo do
+ * e-mail do relatório. Sem isso o evento morria no log do processo e o dono
+ * da conta só descobria quando a cadeia INTEIRA de fallback esgotasse e a
+ * run falhasse de vez.
+ *
+ * Deduplica por provedor (a run pode condenar o mesmo em processos filhos) e
+ * devolve "" quando não houve condenação -- caso de todo dia normal.
+ */
+export function bannerProvedoresCaidos(stdoutCru: string): string {
+  const caidos = new Map<string, string>();
+  for (const m of stdoutCru.matchAll(/PROVIDER_DOWN:(\{.*\})/g)) {
+    try {
+      const info = JSON.parse(m[1]) as { provider?: string; motivo?: string };
+      if (info.provider && !caidos.has(info.provider)) {
+        caidos.set(info.provider, info.motivo ?? "motivo desconhecido");
+      }
+    } catch { /* linha malformada não entra no banner */ }
+  }
+  if (!caidos.size) return "";
+  const linhas = [...caidos.entries()].map(
+    ([provider, motivo]) => `- **${provider}**: ${motivo}`,
+  );
+  return (
+    `> 🔴 **Provedor de IA fora de ação nesta run** — verifique créditos/configuração:\n>\n` +
+    `${linhas.map((l) => `> ${l}`).join("\n")}\n>\n` +
+    `> A run seguiu pelos provedores restantes da cadeia de fallback.\n\n---\n\n`
+  );
+}

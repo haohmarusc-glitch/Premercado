@@ -611,6 +611,15 @@ export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
     url?: string | null;
     relatedTickers?: string[] | null;
   }>>(),
+  // Leitura do tom agregado das manchetes do dia, feita pelo LLM barato no
+  // checker diário (agent/entry_exit_sentiment.py) -- "positivo" | "neutro" |
+  // "negativo" + uma frase de justificativa. Rótulo INFORMATIVO: não entra no
+  // cálculo de probReachTarget (quantificar sentimento de forma confiável é
+  // problema em aberto; misturar exigiria validação que não temos). null nos
+  // snapshots da rota POST (só o checker paga a chamada de LLM) e quando a
+  // análise falha.
+  newsSentiment: text("news_sentiment"),
+  newsSentimentReason: text("news_sentiment_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_entry_exit_study_history_target_id").on(t.targetId),

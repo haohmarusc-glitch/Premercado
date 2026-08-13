@@ -9,7 +9,7 @@ import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTabl
 import { logger } from "./logger";
 import { spawnPython } from "./python-spawn";
 import { sendReportEmail } from "./mailer";
-import { bannerDeAvisos, preflightRelatorio } from "./report-preflight";
+import { bannerDeAvisos, bannerProvedoresCaidos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
 import { decideProvider } from "./agent-budget";
 import { isPositionActiveFromLots, carteiraParaOAgente } from "./portfolio-math";
@@ -315,6 +315,21 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
         state.stepLog = state.stepLog.slice(-STEP_LOG_MAX);
       }
     }
+    // PROVIDER_DOWN:{json} -- provedor de LLM condenado na run (conta sem
+    // crédito, modelo indisponível). Vai pro stepLog na hora pra aparecer ao
+    // vivo na tela de Runs; o aviso no e-mail é montado no close, a partir
+    // do output completo.
+    if (line.includes("PROVIDER_DOWN:")) {
+      const m = line.match(/PROVIDER_DOWN:(\{.*\})/);
+      if (m) {
+        try {
+          const info = JSON.parse(m[1]) as { provider?: string; motivo?: string };
+          const aviso = `⚠️ Provedor ${info.provider ?? "?"} fora desta run: ${info.motivo ?? "motivo desconhecido"}`;
+          state.stepLog.push(aviso);
+          logger.error({ provider: info.provider, motivo: info.motivo }, "Provedor de LLM condenado na run (sem crédito/indisponível)");
+        } catch { /* linha malformada não pode derrubar o stream */ }
+      }
+    }
     output += data.toString();
   });
 
@@ -485,6 +500,13 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       // Preflight com defeito não pode impedir o relatório de sair.
       logger.error({ err }, "Preflight falhou — enviando e-mail sem verificação");
     }
+
+    // Provedores condenados na run (PROVIDER_DOWN:{json} no stdout, ver
+    // provider.py::_condenar) -- conta sem crédito/modelo indisponível.
+    // Montado FORA do try do preflight: um preflight quebrado não pode
+    // engolir o aviso de que um provedor de IA está fora. Vai no topo do
+    // e-mail porque é onde o dono da conta realmente olha todo dia.
+    corpoEmail = bannerProvedoresCaidos(output) + corpoEmail;
 
     // Send e-mail notification
     await sendReportEmail(corpoEmail, today, tickers, mode);

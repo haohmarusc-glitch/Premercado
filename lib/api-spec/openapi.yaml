@@ -1526,6 +1526,8 @@ components:
           description: "Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade."
           items:
             $ref: "#/components/schemas/EntryExitStudyNewsItem"
+        newsSentiment: { type: ["string", "null"], description: "Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo." }
+        newsSentimentReason: { type: ["string", "null"], description: "Uma frase justificando o rotulo." }
         createdAt: { type: string }
 
     EntryExitStudyResolution:

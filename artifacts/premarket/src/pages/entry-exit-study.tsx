@@ -122,20 +122,56 @@ function ProbSparkline({ history }: { history: EntryExitStudyHistory[] }) {
   );
 }
 
-function NewsList({ news }: { news: EntryExitStudyNewsItem[] }) {
+const SENTIMENT_STYLE: Record<string, { label: string; cls: string }> = {
+  positivo: { label: "clima positivo", cls: "border-green-500/40 text-green-400 bg-green-500/5" },
+  neutro: { label: "clima neutro", cls: "text-muted-foreground border-border" },
+  negativo: { label: "clima negativo", cls: "border-red-500/40 text-red-400 bg-red-500/5" },
+};
+
+function NewsList({ news, novasUrls, sentiment, sentimentReason }: {
+  news: EntryExitStudyNewsItem[];
+  // URLs (ou títulos, como fallback) que NÃO estavam no snapshot anterior.
+  // null = sem snapshot anterior pra comparar -- aí ninguém ganha selo, pra
+  // não marcar tudo como "nova" no primeiro dia.
+  novasUrls: Set<string> | null;
+  sentiment?: string | null;
+  sentimentReason?: string | null;
+}) {
   if (!news.length) return null;
+  const sent = sentiment ? SENTIMENT_STYLE[sentiment] : undefined;
   return (
     <div className="px-4 pb-4 pt-1">
-      <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground uppercase tracking-wide mb-2">
-        <Newspaper className="h-3 w-3" />
-        Notícias do último cálculo
+      <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground uppercase tracking-wide mb-2 flex-wrap">
+        <span className="flex items-center gap-1.5">
+          <Newspaper className="h-3 w-3" />
+          Notícias do último cálculo
+        </span>
+        {sent && (
+          <Badge
+            variant="outline"
+            className={`font-mono text-[10px] normal-case ${sent.cls}`}
+            title={sentimentReason ?? "Tom agregado das manchetes, rotulado por IA. Informativo -- não entra no cálculo da probabilidade."}
+          >
+            {sent.label}
+          </Badge>
+        )}
       </div>
+      {sent && sentimentReason && (
+        <p className="text-[11px] text-muted-foreground mb-2 leading-snug">{sentimentReason}</p>
+      )}
       <div className="space-y-2">
         {news.map((n, i) => (
           <div key={i} className="border border-border/50 rounded-md px-3 py-2 bg-secondary/10">
             <div className="flex items-start gap-2">
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-foreground leading-snug">{n.title}</div>
+                <div className="text-xs font-medium text-foreground leading-snug">
+                  {novasUrls?.has(n.url ?? n.title ?? "") && (
+                    <span className="text-primary font-mono text-[9px] font-bold uppercase border border-primary/40 bg-primary/5 rounded px-1 py-px mr-1.5 align-middle">
+                      nova
+                    </span>
+                  )}
+                  {n.title}
+                </div>
                 {n.summary && (
                   <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{n.summary}</div>
                 )}
@@ -180,7 +216,22 @@ function StudyDetails({ id }: { id: number }) {
 
   const history = data?.history ?? [];
   const resolution = data?.resolution;
-  const ultimasNoticias = [...history].reverse().find((h) => h.news && h.news.length > 0)?.news ?? [];
+
+  // Últimos DOIS snapshots com manchete: o mais recente é o exibido; o
+  // anterior serve de referência pro selo "nova" (manchete que não estava lá
+  // ontem). Sem anterior, ninguém ganha selo -- senão o primeiro dia inteiro
+  // viraria "nova", que é ruído, não informação.
+  const snapsComNoticia = [...history].reverse().filter((h) => h.news && h.news.length > 0);
+  const snapAtual = snapsComNoticia[0];
+  const snapAnterior = snapsComNoticia[1];
+  const ultimasNoticias = snapAtual?.news ?? [];
+  const novasUrls = snapAnterior
+    ? new Set(
+        ultimasNoticias
+          .map((n) => n.url ?? n.title ?? "")
+          .filter((chave) => chave && !snapAnterior.news!.some((p) => (p.url ?? p.title ?? "") === chave)),
+      )
+    : null;
 
   if (history.length === 0) {
     return (
@@ -250,7 +301,12 @@ function StudyDetails({ id }: { id: number }) {
         </div>
       </div>
 
-      <NewsList news={ultimasNoticias} />
+      <NewsList
+        news={ultimasNoticias}
+        novasUrls={novasUrls}
+        sentiment={snapAtual?.newsSentiment}
+        sentimentReason={snapAtual?.newsSentimentReason}
+      />
     </div>
   );
 }
