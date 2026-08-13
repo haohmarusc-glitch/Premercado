@@ -41,6 +41,29 @@ import yfinance as yf
 DEFAULT_TICKERS = ["NVDA", "SMCI", "AVGO", "SKHY", "ARM"]
 
 
+# ~1 mês em pregões, mesma convenção de janela em pregões (não dias corridos)
+# de SIX_MONTHS_TRADING_DAYS em entry_exit_study.py.
+RUNUP_PREGOES = 21
+# Corte de "chegou esticado": run-up de dois dígitos no mês pré-earnings.
+# Fixo e documentado de propósito -- um corte por volatilidade do ticker
+# seria mais fino, mas deixaria de ser comparável entre papéis e viraria
+# caixa-preta; começa simples, calibra depois com os próprios dados.
+RUNUP_ESTICADO_PCT = 10.0
+
+
+def _runup_pct(hist: pd.DataFrame, pos: int) -> float | None:
+    """Variação % do fechamento RUNUP_PREGOES pregões antes do balanço até o
+    fechamento da véspera (pos-1). None quando o histórico não alcança."""
+    ini = pos - 1 - RUNUP_PREGOES
+    if ini < 0:
+        return None
+    base = float(hist["Close"].iloc[ini])
+    if not base or pd.isna(base):
+        return None
+    prev_close = float(hist["Close"].iloc[pos - 1])
+    return round((prev_close / base - 1) * 100, 2)
+
+
 def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | None:
     """Métricas de um único pregão (índice `pos` em `hist`) relativas ao
     fechamento anterior `prev_close`. None se `pos` estiver fora do range."""
@@ -102,6 +125,14 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
 
         events.append({
             "earnings_date": str(earnings_date.date()),
+            # Quanto o papel subiu/caiu no ~mês (RUNUP_PREGOES pregões) ANTES
+            # do balanço -- proxy de expectativa embutida no preço. Motivado
+            # pelo padrão "bom não é bom o suficiente" visto em produção
+            # (ago/2026): SKHY com lucro recorde caiu ~9% e META caiu 8% no
+            # earnings, ambas chegando esticadas; DELL/HPE chegando sem
+            # euforia saltaram +32%/+19% -- a direção da reação dependeu mais
+            # do run-up prévio que do resultado em si.
+            "runup_pct": _runup_pct(hist, pos),
             "announcement_day": announcement_day,
             "next_day": next_day,
         })
@@ -117,7 +148,9 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
         candidates = [m for m in (e["announcement_day"], e["next_day"]) if m is not None]
         if not candidates:
             continue
-        reaction_moves.append(max(candidates, key=lambda m: abs(m["close_pct"])))
+        escolhido = dict(max(candidates, key=lambda m: abs(m["close_pct"])))
+        escolhido["runup_pct"] = e["runup_pct"]
+        reaction_moves.append(escolhido)
 
     if not reaction_moves:
         return {"ticker": ticker, "error": "sem janelas válidas de reação nos eventos encontrados"}
@@ -157,7 +190,59 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     summary["s1_price"] = round(current_price * (1 - avg_frac), 2)
     summary["s2_price"] = round(current_price * (1 - extreme_frac), 2)
 
+    summary["runup"] = _runup_summary(df, hist)
+
     return {"ticker": ticker, "summary": summary, "events": events}
+
+
+def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame) -> dict:
+    """Estatística do padrão "bom não é bom o suficiente": o run-up do mês
+    pré-earnings previu a direção da reação nos balanços passados deste
+    ticker? E em qual estado (esticado/descontado/neutro) o papel está AGORA?
+
+    Só descreve o histórico -- não prevê nada sozinho. Com ~8 eventos por
+    ticker a amostra é pequena; por isso os CONTADORES por bucket (fáceis de
+    auditar: "5 de 6 esticados caíram") acompanham a correlação de Pearson,
+    que nesse tamanho de amostra é só um indício, nunca prova.
+    """
+    com_runup = df.dropna(subset=["runup_pct"]) if "runup_pct" in df.columns else pd.DataFrame()
+
+    out: dict = {
+        "runup_pregoes": RUNUP_PREGOES,
+        "esticado_corte_pct": RUNUP_ESTICADO_PCT,
+        "n_com_runup": int(len(com_runup)),
+    }
+
+    if len(com_runup) >= 3:
+        esticados = com_runup[com_runup["runup_pct"] >= RUNUP_ESTICADO_PCT]
+        descontados = com_runup[com_runup["runup_pct"] <= 0]
+        out.update({
+            "corr_runup_reacao": round(float(com_runup["runup_pct"].corr(com_runup["close_pct"])), 2)
+            if len(com_runup) >= 4 else None,
+            "esticado_n": int(len(esticados)),
+            "esticado_caiu_n": int((esticados["close_pct"] < 0).sum()),
+            "esticado_reacao_media": round(float(esticados["close_pct"].mean()), 2) if len(esticados) else None,
+            "descontado_n": int(len(descontados)),
+            "descontado_subiu_n": int((descontados["close_pct"] > 0).sum()),
+            "descontado_reacao_media": round(float(descontados["close_pct"].mean()), 2) if len(descontados) else None,
+        })
+
+    # Estado ATUAL: mesmo run-up de RUNUP_PREGOES pregões, terminando no
+    # último fechamento -- é o que permite dizer "o papel está chegando
+    # esticado no próximo balanço".
+    if len(hist) > RUNUP_PREGOES:
+        base = float(hist["Close"].iloc[-1 - RUNUP_PREGOES])
+        atual = float(hist["Close"].iloc[-1])
+        if base and not pd.isna(base):
+            runup_atual = round((atual / base - 1) * 100, 2)
+            out["runup_atual_pct"] = runup_atual
+            out["estado_atual"] = (
+                "esticado" if runup_atual >= RUNUP_ESTICADO_PCT
+                else "descontado" if runup_atual <= 0
+                else "neutro"
+            )
+
+    return out
 
 
 def _print_report(results: list[dict]) -> None:
@@ -178,13 +263,31 @@ def _print_report(results: list[dict]) -> None:
         print(f"  Preço atual: ${s['current_price']:.2f}")
         print(f"  R2 (+{s['suggested_threshold_pct']:.2f}%): ${s['r2_price']:.2f}  |  R1 (+{s['close_pct_abs_mean']:.2f}%): ${s['r1_price']:.2f}")
         print(f"  S1 (-{s['close_pct_abs_mean']:.2f}%): ${s['s1_price']:.2f}  |  S2 (-{s['suggested_threshold_pct']:.2f}%): ${s['s2_price']:.2f}")
-        print("  Últimos eventos (dia do anúncio | dia seguinte):")
+        ru = s.get("runup") or {}
+        if ru.get("esticado_n") is not None:
+            print(
+                f"  Run-up pré-earnings ({ru['runup_pregoes']} pregões, corte esticado ≥{ru['esticado_corte_pct']:.0f}%):"
+            )
+            print(
+                f"    esticados: {ru['esticado_caiu_n']}/{ru['esticado_n']} caíram na reação"
+                + (f" (média {ru['esticado_reacao_media']:+.2f}%)" if ru.get("esticado_reacao_media") is not None else "")
+            )
+            print(
+                f"    descontados: {ru['descontado_subiu_n']}/{ru['descontado_n']} subiram na reação"
+                + (f" (média {ru['descontado_reacao_media']:+.2f}%)" if ru.get("descontado_reacao_media") is not None else "")
+            )
+            if ru.get("corr_runup_reacao") is not None:
+                print(f"    correlação run-up × reação: {ru['corr_runup_reacao']:+.2f} (amostra pequena, indício)")
+        if ru.get("runup_atual_pct") is not None:
+            print(f"  Estado atual: {ru['estado_atual']} (run-up de {ru['runup_atual_pct']:+.2f}% no último mês)")
+        print("  Últimos eventos (run-up prévio → dia do anúncio | dia seguinte):")
         for e in r["events"][:6]:
             a = e["announcement_day"]
             n = e["next_day"]
             a_txt = f"gap {a['gap_pct']:+.2f}% / fech {a['close_pct']:+.2f}%" if a else "sem pregão"
             n_txt = f"gap {n['gap_pct']:+.2f}% / fech {n['close_pct']:+.2f}%" if n else "sem pregão"
-            print(f"    {e['earnings_date']}: [{a_txt}]  |  [{n_txt}]")
+            ru_txt = f"{e['runup_pct']:+.2f}%" if e.get("runup_pct") is not None else "n/d"
+            print(f"    {e['earnings_date']} (run-up {ru_txt}): [{a_txt}]  |  [{n_txt}]")
 
 
 def main() -> None:
