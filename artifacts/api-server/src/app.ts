@@ -165,6 +165,11 @@ if (servirEstaticoLigado()) {
 // uma mensagem genérica. Precisa vir depois de todas as rotas e ter
 // exatamente 4 parâmetros para o Express reconhecer como error handler.
 const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  // err.body (corpo bruto que body-parser anexa quando o JSON é inválido,
+  // pra ajudar a debugar o parse) é redigido em lib/logger.ts -- vaza
+  // literalmente qualquer coisa que o cliente mandou, incluindo senha em
+  // texto puro em /auth/login (visto em produção: senha real gravada em
+  // claro no log depois de um erro de parse).
   logger.error({ err }, "Unhandled route error");
   marcarOrigemErrorHandler(res);
   if (res.headersSent) return;

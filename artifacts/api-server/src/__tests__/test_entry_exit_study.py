@@ -19,7 +19,7 @@ import os
 import sys
 import math
 import importlib.util
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pandas as pd
 import pytest
@@ -32,6 +32,16 @@ _MODULE_PATH = os.path.join(_AGENT_DIR, "entry_exit_study.py")
 _spec = importlib.util.spec_from_file_location("entry_exit_study", _MODULE_PATH)
 ees = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ees)
+
+from brt import today_brt  # noqa: E402 -- precisa vir depois do sys.path.insert acima
+
+# _study_for usa today_brt() (BRT = UTC-3), não date.today() (fuso do
+# processo) -- perto da meia-noite BRT (21h-23h59 BRT = 00h-02h59 UTC) os
+# dois discordam em 1 dia, e um teste que monta targetDate com date.today()
+# vira flaky bem nesse intervalo (visto em produção: daysUntilTarget saiu 31
+# em vez de 30). Todo lugar abaixo que monta uma data relativa a "hoje" usa
+# este helper, não date.today().
+HOJE_BRT = today_brt()
 
 
 # ── _phi (CDF normal padrão) ────────────────────────────────────────────────
@@ -117,14 +127,14 @@ def test_study_for_ticker_invalido(monkeypatch):
 
 def test_study_for_target_date_no_passado(monkeypatch):
     _patch_deps(monkeypatch)
-    ontem = (date.today() - timedelta(days=1)).isoformat()
+    ontem = (HOJE_BRT - timedelta(days=1)).isoformat()
     out = ees._study_for({"ticker": "SMCI", "targetPrice": 50, "targetDate": ontem})
     assert "error" in out
     assert "futuro" in out["error"]
 
 
 def test_study_for_calculo_basico_sem_earnings_na_janela(monkeypatch):
-    alvo = (date.today() + timedelta(days=30)).isoformat()
+    alvo = (HOJE_BRT + timedelta(days=30)).isoformat()
     _patch_deps(monkeypatch, current_price=100.0, lows=[90.0] * 260, vol_annual=0.4, earnings_date=None)
     out = ees._study_for({"ticker": "SMCI", "targetPrice": 110.0, "targetDate": alvo})
 
@@ -141,7 +151,7 @@ def test_study_for_calculo_basico_sem_earnings_na_janela(monkeypatch):
 
 
 def test_study_for_alvo_igual_preco_atual_prob_50pct(monkeypatch):
-    alvo = (date.today() + timedelta(days=60)).isoformat()
+    alvo = (HOJE_BRT + timedelta(days=60)).isoformat()
     _patch_deps(monkeypatch, current_price=100.0, vol_annual=0.5, earnings_date=None)
     out = ees._study_for({"ticker": "SMCI", "targetPrice": 100.0, "targetDate": alvo})
     # log(alvo/atual) = 0 -> Phi(0) = 0.5 -> prob = 1 - 0.5 = 0.5, drift zero
@@ -149,8 +159,8 @@ def test_study_for_alvo_igual_preco_atual_prob_50pct(monkeypatch):
 
 
 def test_study_for_earnings_dentro_da_janela_aumenta_volatilidade(monkeypatch):
-    alvo = (date.today() + timedelta(days=30)).isoformat()
-    earnings_dentro = (date.today() + timedelta(days=10)).isoformat()
+    alvo = (HOJE_BRT + timedelta(days=30)).isoformat()
+    earnings_dentro = (HOJE_BRT + timedelta(days=10)).isoformat()
 
     _patch_deps(monkeypatch, current_price=100.0, vol_annual=0.3,
                 earnings_date=earnings_dentro, jump_std_pct=8.0)
@@ -166,8 +176,8 @@ def test_study_for_earnings_dentro_da_janela_aumenta_volatilidade(monkeypatch):
 
 
 def test_study_for_earnings_fora_da_janela_nao_afeta(monkeypatch):
-    alvo = (date.today() + timedelta(days=10)).isoformat()
-    earnings_depois_do_alvo = (date.today() + timedelta(days=60)).isoformat()
+    alvo = (HOJE_BRT + timedelta(days=10)).isoformat()
+    earnings_depois_do_alvo = (HOJE_BRT + timedelta(days=60)).isoformat()
 
     _patch_deps(monkeypatch, current_price=100.0, vol_annual=0.3,
                 earnings_date=earnings_depois_do_alvo, jump_std_pct=8.0)
