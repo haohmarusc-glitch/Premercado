@@ -289,6 +289,15 @@ export const EntryExitStudyTargetSchema = zod.object({
   "createdAt": zod.string()
 })
 
+export const EntryExitStudyNewsItemSchema = zod.object({
+  "title": zod.string().optional(),
+  "published": zod.string().nullish(),
+  "summary": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "url": zod.string().nullish(),
+  "relatedTickers": zod.array(zod.string()).nullish()
+})
+
 export const EntryExitStudyHistorySchema = zod.object({
   "id": zod.coerce.number(),
   "targetId": zod.coerce.number(),
@@ -301,7 +310,20 @@ export const EntryExitStudyHistorySchema = zod.object({
   "volAnnual": zod.coerce.number().nullish(),
   "betaSector": zod.coerce.number().nullish(),
   "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "news": zod.array(EntryExitStudyNewsItemSchema).nullish().describe('Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.'),
   "createdAt": zod.string()
+})
+
+export const EntryExitStudyResolutionSchema = zod.object({
+  "id": zod.coerce.number(),
+  "targetId": zod.coerce.number(),
+  "ticker": zod.string(),
+  "targetPrice": zod.coerce.number(),
+  "targetDate": zod.string(),
+  "finalPrice": zod.coerce.number(),
+  "bateu": zod.boolean().describe('finalPrice >= targetPrice'),
+  "probFinal": zod.coerce.number().nullish().describe('ultima probReachTarget antes da resolucao'),
+  "resolvedAt": zod.string()
 })
 
 export const EntryExitStudyListItemSchema = zod.object({
@@ -321,15 +343,6 @@ export const CreateEntryExitStudyBody = zod.object({
   "ticker": zod.string(),
   "targetPrice": zod.number(),
   "targetDate": zod.string().describe('YYYY-MM-DD, precisa ser no futuro')
-})
-
-export const EntryExitStudyNewsItemSchema = zod.object({
-  "title": zod.string().optional(),
-  "published": zod.string().nullish(),
-  "summary": zod.string().nullish(),
-  "source": zod.string().nullish(),
-  "url": zod.string().nullish(),
-  "relatedTickers": zod.array(zod.string()).nullish()
 })
 
 export const EntryExitStudyCalcResultSchema = zod.object({
@@ -365,7 +378,26 @@ export const GetEntryExitStudyParams = zod.object({
 
 export const GetEntryExitStudyResponse = zod.object({
   "target": EntryExitStudyTargetSchema,
-  "history": zod.array(EntryExitStudyHistorySchema)
+  "history": zod.array(EntryExitStudyHistorySchema),
+  "resolution": EntryExitStudyResolutionSchema.nullish()
+})
+
+
+/**
+ * @summary Update target price/date of a study, keeping its history
+ */
+export const UpdateEntryExitStudyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateEntryExitStudyBody = zod.object({
+  "targetPrice": zod.number().optional(),
+  "targetDate": zod.string().optional().describe('YYYY-MM-DD, precisa ser no futuro')
+})
+
+export const UpdateEntryExitStudyResponse = zod.object({
+  "target": EntryExitStudyTargetSchema,
+  "calc": EntryExitStudyCalcResultSchema
 })
 
 

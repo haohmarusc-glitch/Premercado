@@ -429,8 +429,47 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EntryExitStudyHistory"
+                  resolution:
+                    oneOf:
+                      - $ref: "#/components/schemas/EntryExitStudyResolution"
+                      - type: "null"
         "404":
           description: Not found
+    patch:
+      operationId: updateEntryExitStudy
+      tags: [agent]
+      summary: Update target price/date of a study, keeping its history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryExitStudyUpdateInput"
+      responses:
+        "200":
+          description: Updated study with a fresh calculation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target, calc]
+                properties:
+                  target:
+                    $ref: "#/components/schemas/EntryExitStudyTarget"
+                  calc:
+                    $ref: "#/components/schemas/EntryExitStudyCalcResult"
+        "400":
+          description: Invalid input
+        "404":
+          description: Not found
+        "422":
+          description: Failed to compute study
     delete:
       operationId: deleteEntryExitStudy
       tags: [agent]
@@ -1481,13 +1520,39 @@ components:
         volAnnual: { type: ["number", "null"] }
         betaSector: { type: ["number", "null"] }
         probReachTarget: { type: ["number", "null"], description: "0-1" }
+        news:
+          type: ["array", "null"]
+          description: "Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade."
+          items:
+            $ref: "#/components/schemas/EntryExitStudyNewsItem"
         createdAt: { type: string }
+
+    EntryExitStudyResolution:
+      type: object
+      required: [id, targetId, ticker, targetPrice, targetDate, finalPrice, bateu, resolvedAt]
+      properties:
+        id: { type: integer }
+        targetId: { type: integer }
+        ticker: { type: string }
+        targetPrice: { type: number }
+        targetDate: { type: string }
+        finalPrice: { type: number }
+        bateu: { type: boolean, description: "finalPrice >= targetPrice" }
+        probFinal: { type: ["number", "null"], description: "ultima probReachTarget antes da resolucao" }
+        resolvedAt: { type: string }
 
     EntryExitStudyCreateInput:
       type: object
       required: [ticker, targetPrice, targetDate]
       properties:
         ticker: { type: string }
+        targetPrice: { type: number }
+        targetDate: { type: string, description: "YYYY-MM-DD, precisa ser no futuro" }
+
+    EntryExitStudyUpdateInput:
+      type: object
+      description: "Pelo menos um dos dois. Mantem o historico ja acumulado."
+      properties:
         targetPrice: { type: number }
         targetDate: { type: string, description: "YYYY-MM-DD, precisa ser no futuro" }
 

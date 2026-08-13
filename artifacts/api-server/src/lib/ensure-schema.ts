@@ -455,4 +455,26 @@ export async function ensureSchema(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (entry_exit_study_targets/history tables)");
   }
+
+  try {
+    await db.execute(sql`ALTER TABLE entry_exit_study_history ADD COLUMN IF NOT EXISTS news jsonb`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS entry_exit_study_resolutions (
+        id serial PRIMARY KEY,
+        target_id integer NOT NULL REFERENCES entry_exit_study_targets(id) ON DELETE CASCADE,
+        ticker text NOT NULL,
+        target_price numeric(15, 4) NOT NULL,
+        target_date text NOT NULL,
+        final_price numeric(15, 4) NOT NULL,
+        bateu boolean NOT NULL,
+        prob_final numeric(15, 4),
+        resolved_at timestamp NOT NULL DEFAULT now(),
+        CONSTRAINT uq_entry_exit_study_resolutions_target UNIQUE (target_id)
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_entry_exit_study_resolutions_target_id ON entry_exit_study_resolutions (target_id)`);
+    logger.info("Schema check ok (entry_exit_study_history.news column + entry_exit_study_resolutions table)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (entry_exit_study_history.news column + entry_exit_study_resolutions table)");
+  }
 }

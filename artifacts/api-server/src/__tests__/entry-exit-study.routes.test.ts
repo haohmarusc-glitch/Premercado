@@ -233,6 +233,68 @@ describe.skipIf(!DB_URL)("Rotas /entry-exit-study (integração, Postgres real)"
     expect(naoExiste.status).toBe(404);
   });
 
+  it("POST persiste as notícias do cálculo junto do snapshot", async () => {
+    proximaSaidaDoScript = {
+      ...CALC_OK,
+      news: [{ title: "SMCI sobe 19% após balanço", source: "WSJ", url: "https://exemplo/1", summary: "resumo", published: "2026-08-12T21:43:00Z", relatedTickers: ["CRWV"] }],
+    };
+    const created = await request(app).post("/api/entry-exit-study").send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });
+
+    const res = await request(app).get(`/api/entry-exit-study/${created.body.target.id}`);
+    expect(res.body.history[0].news).toHaveLength(1);
+    expect(res.body.history[0].news[0].title).toContain("SMCI sobe 19%");
+    expect(res.body.history[0].news[0].relatedTickers).toEqual(["CRWV"]);
+  });
+
+  it("GET /:id devolve resolution: null enquanto o estudo não venceu", async () => {
+    proximaSaidaDoScript = CALC_OK;
+    const created = await request(app).post("/api/entry-exit-study").send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });
+
+    const res = await request(app).get(`/api/entry-exit-study/${created.body.target.id}`);
+    expect(res.body.resolution).toBeNull();
+  });
+
+  it("PATCH muda alvo/data MANTENDO o histórico e atualiza o alerta de saída", async () => {
+    proximaSaidaDoScript = CALC_OK;
+    const created = await request(app).post("/api/entry-exit-study").send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });
+    const id = created.body.target.id;
+    const exitAlertId = created.body.target.exitAlertId;
+    const entryAlertId = created.body.target.entryAvgLowAlertId;
+
+    proximaSaidaDoScript = { ...CALC_OK, targetPrice: 60, targetDate: "2099-06-01", probReachTarget: 0.11 };
+    const patch = await request(app)
+      .patch(`/api/entry-exit-study/${id}`)
+      .send({ targetPrice: 60, targetDate: "2099-06-01" });
+
+    expect(patch.status).toBe(200);
+    expect(patch.body.target.targetPrice).toBe(60);
+    expect(patch.body.target.targetDate).toBe("2099-06-01");
+
+    // o alerta de SAÍDA acompanha o novo alvo...
+    const [exitAlert] = await db.select().from(alertsTable).where(eq(alertsTable.id, exitAlertId));
+    expect(Number(exitAlert.thresholdPrice)).toBe(60);
+
+    // ...mas os de ENTRADA não, porque vêm das mínimas históricas do papel,
+    // que não dependem do alvo escolhido.
+    const [entryAlert] = await db.select().from(alertsTable).where(eq(alertsTable.id, entryAlertId));
+    expect(Number(entryAlert.thresholdPrice)).toBeCloseTo(29.38);
+
+    // histórico preservado (é o ponto do PATCH existir em vez de recriar)
+    const detalhe = await request(app).get(`/api/entry-exit-study/${id}`);
+    expect(detalhe.body.history.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("PATCH sem nenhum campo devolve 400; id inexistente devolve 404", async () => {
+    proximaSaidaDoScript = CALC_OK;
+    const created = await request(app).post("/api/entry-exit-study").send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });
+
+    const semCampo = await request(app).patch(`/api/entry-exit-study/${created.body.target.id}`).send({});
+    expect(semCampo.status).toBe(400);
+
+    const naoExiste = await request(app).patch("/api/entry-exit-study/999999999").send({ targetPrice: 60 });
+    expect(naoExiste.status).toBe(404);
+  });
+
   it("DELETE desativa o target e os 3 alertas, mas mantém o histórico", async () => {
     proximaSaidaDoScript = CALC_OK;
     const created = await request(app).post("/api/entry-exit-study").send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });

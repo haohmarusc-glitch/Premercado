@@ -1,8 +1,9 @@
 import { useState } from "react";
 import {
   useListEntryExitStudies, getListEntryExitStudiesQueryKey,
-  useCreateEntryExitStudy, useDeleteEntryExitStudy,
+  useCreateEntryExitStudy, useDeleteEntryExitStudy, useUpdateEntryExitStudy,
   useGetEntryExitStudy, getGetEntryExitStudyQueryKey,
+  type EntryExitStudyHistory, type EntryExitStudyNewsItem,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Trash2, Target, ChevronDown, ChevronUp, History, TrendingDown, Calendar,
+  Pencil, Check, X, Newspaper, CheckCircle2, XCircle, ExternalLink,
 } from "lucide-react";
 
 function fmtPct(n: number | null | undefined) {
@@ -45,7 +47,125 @@ function daysUntil(isoDate: string): number {
   return Math.max(0, Math.round((alvo.getTime() - hoje.getTime()) / 86400000));
 }
 
-function StudyHistoryTable({ id }: { id: number }) {
+// Sparkline da probabilidade dia a dia.
+//
+// Escala ANCORADA NO ZERO com teto adaptativo, não 0-100% fixo nem
+// min-max automático. Os dois extremos falham de formas opostas: com teto
+// fixo em 100%, uma série que vive na faixa de 15-30% (normal pra um alvo
+// ambicioso) vira uma linha reta que não mostra movimento nenhum; com
+// min-max, uma variação de 24% pra 26% preenche o gráfico inteiro e finge
+// um salto que não houve. Ancorar no zero mantém a altura proporcional à
+// probabilidade de verdade (é o que dá sentido à área preenchida), e o teto
+// que acompanha a série mantém a variação visível.
+function ProbSparkline({ history }: { history: EntryExitStudyHistory[] }) {
+  const pontos = history.filter((h) => h.probReachTarget != null);
+  if (pontos.length < 2) return null;
+
+  const W = 300;
+  const H = 64;
+  const PAD = 4;
+  const maxProb = Math.max(...pontos.map((h) => h.probReachTarget!));
+  // Piso de 20% no teto pra uma série toda perto de zero não virar ruído
+  // amplificado; 1.25× de folga pro pico não encostar na borda de cima.
+  const teto = Math.min(1, Math.max(0.2, maxProb * 1.25));
+
+  const x = (i: number) => PAD + (i * (W - PAD * 2)) / (pontos.length - 1);
+  const y = (p: number) => H - PAD - (p / teto) * (H - PAD * 2);
+
+  const linha = pontos.map((h, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(h.probReachTarget!).toFixed(1)}`).join(" ");
+  const area = `${linha} L ${x(pontos.length - 1).toFixed(1)} ${H - PAD} L ${x(0).toFixed(1)} ${H - PAD} Z`;
+
+  const ultimo = pontos[pontos.length - 1];
+  const primeiro = pontos[0];
+  const delta = ultimo.probReachTarget! - primeiro.probReachTarget!;
+
+  return (
+    <div className="px-4 pb-3 pt-1">
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-[11px] font-mono text-muted-foreground uppercase tracking-wide">
+          Evolução da probabilidade
+        </span>
+        <span className={`text-[11px] font-mono ${delta >= 0 ? "text-green-400" : "text-red-400"}`}>
+          {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)}pp desde {fmtDateBR(primeiro.calcDate)}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        height={H}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={`Probabilidade de ${fmtPct(primeiro.probReachTarget)} em ${fmtDateBR(primeiro.calcDate)} para ${fmtPct(ultimo.probReachTarget)} em ${fmtDateBR(ultimo.calcDate)}.`}
+      >
+        {/* Fronteira dos 50% ("mais provável que não") -- só quando cabe na
+            escala; num alvo ambicioso o teto fica bem abaixo disso. */}
+        {teto >= 0.5 && (
+          <line x1={PAD} y1={y(0.5)} x2={W - PAD} y2={y(0.5)} className="stroke-border" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+        )}
+        <path d={area} className="fill-primary/10" />
+        <path d={linha} className="stroke-primary" strokeWidth="1.5" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        {/* Marcador do valor de hoje como tick vertical, não círculo: o
+            viewBox é esticado na horizontal (preserveAspectRatio="none"),
+            e um círculo viraria uma elipse achatada. */}
+        <line
+          x1={x(pontos.length - 1)} y1={y(ultimo.probReachTarget!)}
+          x2={x(pontos.length - 1)} y2={H - PAD}
+          className="stroke-primary" strokeWidth="1.5" vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <div className="flex justify-between text-[10px] font-mono text-muted-foreground mt-0.5">
+        <span>0%</span>
+        <span>{pontos.length} dias · topo da escala {fmtPct(teto)}</span>
+        <span>{fmtPct(ultimo.probReachTarget)} hoje</span>
+      </div>
+    </div>
+  );
+}
+
+function NewsList({ news }: { news: EntryExitStudyNewsItem[] }) {
+  if (!news.length) return null;
+  return (
+    <div className="px-4 pb-4 pt-1">
+      <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground uppercase tracking-wide mb-2">
+        <Newspaper className="h-3 w-3" />
+        Notícias do último cálculo
+      </div>
+      <div className="space-y-2">
+        {news.map((n, i) => (
+          <div key={i} className="border border-border/50 rounded-md px-3 py-2 bg-secondary/10">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-foreground leading-snug">{n.title}</div>
+                {n.summary && (
+                  <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{n.summary}</div>
+                )}
+                <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-muted-foreground">
+                  {n.source && <span>{n.source}</span>}
+                  {n.relatedTickers && n.relatedTickers.length > 0 && (
+                    <span className="text-primary">· {n.relatedTickers.join(" ")}</span>
+                  )}
+                </div>
+              </div>
+              {n.url && (
+                <a
+                  href={n.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0 p-0.5"
+                  aria-label="Abrir notícia"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StudyDetails({ id }: { id: number }) {
   const { data, isLoading } = useGetEntryExitStudy(id, {
     query: { queryKey: getGetEntryExitStudyQueryKey(id), staleTime: 30_000 },
   });
@@ -59,6 +179,9 @@ function StudyHistoryTable({ id }: { id: number }) {
   }
 
   const history = data?.history ?? [];
+  const resolution = data?.resolution;
+  const ultimasNoticias = [...history].reverse().find((h) => h.news && h.news.length > 0)?.news ?? [];
+
   if (history.length === 0) {
     return (
       <div className="px-4 pb-3 pt-1 flex items-center gap-2 text-xs font-mono text-muted-foreground">
@@ -69,36 +192,65 @@ function StudyHistoryTable({ id }: { id: number }) {
   }
 
   return (
-    <div className="px-4 pb-4 pt-1">
-      <div className="border border-border/50 rounded-md overflow-hidden overflow-x-auto">
-        <table className="w-full text-xs font-mono">
-          <thead>
-            <tr className="border-b border-border/50 bg-secondary/30">
-              <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Data</th>
-              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Preço</th>
-              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Prob. alvo</th>
-              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Média baixa 6m</th>
-              <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Mín. 12m</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...history].reverse().map((h, i) => (
-              <tr
-                key={h.id}
-                className={`border-b border-border/30 last:border-0 ${i % 2 === 0 ? "" : "bg-secondary/10"}`}
-              >
-                <td className="px-3 py-1.5 text-muted-foreground">{fmtDateBR(h.calcDate)}</td>
-                <td className="px-3 py-1.5 text-right text-foreground">{fmtUsd(h.currentPrice)}</td>
-                <td className={`px-3 py-1.5 text-right font-bold ${probColorClass(h.probReachTarget)}`}>
-                  {fmtPct(h.probReachTarget)}
-                </td>
-                <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.avgLow6m)}</td>
-                <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.minLow1y)}</td>
+    <div>
+      {resolution && (
+        <div className="px-4 pt-3 pb-1">
+          <div className={`flex items-center gap-2.5 border rounded-md px-3 py-2.5 ${
+            resolution.bateu
+              ? "border-green-500/30 bg-green-500/5"
+              : "border-red-500/30 bg-red-500/5"
+          }`}>
+            {resolution.bateu
+              ? <CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0" />
+              : <XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />}
+            <div className="text-xs font-mono">
+              <span className={resolution.bateu ? "text-green-400 font-bold" : "text-red-400 font-bold"}>
+                {resolution.bateu ? "Bateu o alvo" : "Não bateu o alvo"}
+              </span>
+              <span className="text-muted-foreground">
+                {" "}· fechou em {fmtUsd(resolution.finalPrice)} contra alvo de {fmtUsd(resolution.targetPrice)}
+                {resolution.probFinal != null && ` · o modelo dava ${fmtPct(resolution.probFinal)}`}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ProbSparkline history={history} />
+
+      <div className="px-4 pb-4 pt-1">
+        <div className="border border-border/50 rounded-md overflow-hidden overflow-x-auto">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="border-b border-border/50 bg-secondary/30">
+                <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Data</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Preço</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Prob. alvo</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Média baixa 6m</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Mín. 12m</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {[...history].reverse().map((h, i) => (
+                <tr
+                  key={h.id}
+                  className={`border-b border-border/30 last:border-0 ${i % 2 === 0 ? "" : "bg-secondary/10"}`}
+                >
+                  <td className="px-3 py-1.5 text-muted-foreground">{fmtDateBR(h.calcDate)}</td>
+                  <td className="px-3 py-1.5 text-right text-foreground">{fmtUsd(h.currentPrice)}</td>
+                  <td className={`px-3 py-1.5 text-right font-bold ${probColorClass(h.probReachTarget)}`}>
+                    {fmtPct(h.probReachTarget)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.avgLow6m)}</td>
+                  <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.minLow1y)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      <NewsList news={ultimasNoticias} />
     </div>
   );
 }
@@ -112,6 +264,7 @@ export default function EntryExitStudyPage() {
   });
   const createStudy = useCreateEntryExitStudy();
   const deleteStudy = useDeleteEntryExitStudy();
+  const updateStudy = useUpdateEntryExitStudy();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: getListEntryExitStudiesQueryKey() });
 
@@ -119,6 +272,9 @@ export default function EntryExitStudyPage() {
   const [targetPrice, setTargetPrice] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPrice, setEditPrice] = useState("");
+  const [editDate, setEditDate] = useState("");
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -140,6 +296,37 @@ export default function EntryExitStudyPage() {
         },
         onError: (err) => toast({
           title: "Erro ao criar estudo",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        }),
+      },
+    );
+  }
+
+  function startEdit(id: number, price: number, date: string) {
+    setEditingId(id);
+    setEditPrice(String(price));
+    setEditDate(date);
+  }
+
+  function handleSaveEdit(id: number) {
+    const price = parseFloat(editPrice);
+    if (isNaN(price) || price <= 0 || !editDate) return;
+
+    updateStudy.mutate(
+      { id, data: { targetPrice: price, targetDate: editDate } },
+      {
+        onSuccess: (res) => {
+          invalidate();
+          qc.invalidateQueries({ queryKey: getGetEntryExitStudyQueryKey(id) });
+          setEditingId(null);
+          toast({
+            title: "Estudo atualizado",
+            description: `${res.target.ticker}: ${fmtPct(res.calc.probReachTarget)} de chance de bater ${fmtUsd(res.target.targetPrice)} até ${fmtDateBR(res.target.targetDate)}`,
+          });
+        },
+        onError: (err) => toast({
+          title: "Erro ao atualizar",
           description: err instanceof Error ? err.message : String(err),
           variant: "destructive",
         }),
@@ -263,6 +450,7 @@ export default function EntryExitStudyPage() {
         <div className="space-y-2">
           {studies.map(({ target, latest }) => {
             const isExpanded = expandedId === target.id;
+            const isEditing = editingId === target.id;
             const dias = daysUntil(target.targetDate);
 
             return (
@@ -275,56 +463,113 @@ export default function EntryExitStudyPage() {
                   <Target className="h-4 w-4 flex-shrink-0 text-primary" />
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono font-bold text-primary">{target.ticker}</span>
-                      <Badge variant="outline" className="font-mono text-xs border-primary/30 text-primary bg-primary/5">
-                        alvo {fmtUsd(target.targetPrice)}
-                      </Badge>
-                      <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border">
-                        <Calendar className="h-3 w-3 mr-1" />
-                        {fmtDateBR(target.targetDate)} ({dias}d)
-                      </Badge>
-                      {latest && (
-                        <Badge
-                          variant="outline"
-                          className={`font-mono text-xs border-current/30 bg-current/5 ${probColorClass(latest.probReachTarget)}`}
+                    {isEditing ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-bold text-primary">{target.ticker}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-mono text-xs text-muted-foreground">$</span>
+                          <Input
+                            value={editPrice}
+                            onChange={(e) => setEditPrice(e.target.value)}
+                            type="number"
+                            step="0.01"
+                            className="font-mono bg-secondary border-border w-24 h-8 text-sm"
+                            data-testid={`edit-price-${target.id}`}
+                          />
+                        </div>
+                        <Input
+                          value={editDate}
+                          onChange={(e) => setEditDate(e.target.value)}
+                          type="date"
+                          className="font-mono bg-secondary border-border h-8 text-sm w-40"
+                          data-testid={`edit-date-${target.id}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEdit(target.id)}
+                          disabled={updateStudy.isPending}
+                          className="text-green-400 hover:text-green-300 transition-colors p-1 disabled:opacity-50"
+                          data-testid={`save-edit-${target.id}`}
+                          aria-label="Salvar alterações"
                         >
-                          {fmtPct(latest.probReachTarget)} de chance
-                        </Badge>
-                      )}
-                    </div>
-                    {latest && (
-                      <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-muted-foreground flex-wrap">
-                        <span>Preço atual: <span className="text-foreground">{fmtUsd(latest.currentPrice)}</span></span>
-                        <span className="flex items-center gap-1">
-                          <TrendingDown className="h-3 w-3" />
-                          entrada: média 6m {fmtUsd(latest.avgLow6m)} · mín. 12m {fmtUsd(latest.minLow1y)}
-                        </span>
+                          <Check className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          data-testid={`cancel-edit-${target.id}`}
+                          aria-label="Cancelar edição"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-primary">{target.ticker}</span>
+                          <Badge variant="outline" className="font-mono text-xs border-primary/30 text-primary bg-primary/5">
+                            alvo {fmtUsd(target.targetPrice)}
+                          </Badge>
+                          <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border">
+                            <Calendar className="h-3 w-3 mr-1" />
+                            {fmtDateBR(target.targetDate)} ({dias}d)
+                          </Badge>
+                          {latest && (
+                            <Badge
+                              variant="outline"
+                              className={`font-mono text-xs border-current/30 bg-current/5 ${probColorClass(latest.probReachTarget)}`}
+                            >
+                              {fmtPct(latest.probReachTarget)} de chance
+                            </Badge>
+                          )}
+                        </div>
+                        {latest && (
+                          <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-muted-foreground flex-wrap">
+                            <span>Preço atual: <span className="text-foreground">{fmtUsd(latest.currentPrice)}</span></span>
+                            <span className="flex items-center gap-1">
+                              <TrendingDown className="h-3 w-3" />
+                              entrada: média 6m {fmtUsd(latest.avgLow6m)} · mín. 12m {fmtUsd(latest.minLow1y)}
+                            </span>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId(isExpanded ? null : target.id)}
-                      className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-secondary"
-                      data-testid={`history-toggle-${target.id}`}
-                      title="Ver histórico diário"
-                    >
-                      <History className="h-3.5 w-3.5" />
-                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(target.id)}
-                      className="text-muted-foreground hover:text-red-400 transition-colors p-1"
-                      data-testid={`delete-study-${target.id}`}
-                      aria-label="Parar de acompanhar"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {!isEditing && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(isExpanded ? null : target.id)}
+                        className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-secondary"
+                        data-testid={`history-toggle-${target.id}`}
+                        title="Ver histórico diário"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(target.id, target.targetPrice, target.targetDate)}
+                        className="text-muted-foreground hover:text-primary transition-colors p-1"
+                        data-testid={`edit-study-${target.id}`}
+                        aria-label="Editar alvo"
+                        title="Editar preço-alvo e data (mantém o histórico)"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(target.id)}
+                        className="text-muted-foreground hover:text-red-400 transition-colors p-1"
+                        data-testid={`delete-study-${target.id}`}
+                        aria-label="Parar de acompanhar"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {isExpanded && (
@@ -333,7 +578,7 @@ export default function EntryExitStudyPage() {
                       <History className="h-3 w-3" />
                       Histórico diário
                     </div>
-                    <StudyHistoryTable id={target.id} />
+                    <StudyDetails id={target.id} />
                   </div>
                 )}
               </div>
@@ -343,7 +588,8 @@ export default function EntryExitStudyPage() {
       )}
 
       <p className="text-xs font-mono text-muted-foreground mt-6">
-        Recalculado 1x por dia automaticamente · 3 alertas por estudo (saída + 2 entradas) via Alertas de Preço
+        Recalculado 1x por dia automaticamente · 3 alertas por estudo (saída + 2 entradas) via Alertas de Preço ·
+        Quando a data-alvo vence, o resultado (bateu ou não) fica registrado no histórico
       </p>
     </div>
   );
