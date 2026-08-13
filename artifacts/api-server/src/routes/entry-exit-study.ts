@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import path from "path";
 import { and, eq, asc, desc, inArray } from "drizzle-orm";
-import { db, entryExitStudyTargetsTable, entryExitStudyHistoryTable, alertsTable, usersTable } from "@workspace/db";
+import { db, entryExitStudyTargetsTable, entryExitStudyHistoryTable, entryExitStudyResolutionsTable, alertsTable, usersTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
@@ -24,7 +24,14 @@ export interface StudyResult {
   earningsDate?: string | null;
   daysUntilTarget?: number;
   probReachTarget?: number | null;
-  news?: unknown[];
+  news?: Array<{
+    title?: string;
+    published?: string | null;
+    summary?: string | null;
+    source?: string | null;
+    url?: string | null;
+    relatedTickers?: string[] | null;
+  }>;
   error?: string;
 }
 
@@ -92,6 +99,7 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
       volAnnual: r.volAnnual ?? null,
       betaSector: r.betaSector ?? null,
       probReachTarget: r.probReachTarget ?? null,
+      news: r.news ?? null,
     })
     .onConflictDoUpdate({
       target: [entryExitStudyHistoryTable.targetId, entryExitStudyHistoryTable.calcDate],
@@ -104,10 +112,21 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
         volAnnual: r.volAnnual ?? null,
         betaSector: r.betaSector ?? null,
         probReachTarget: r.probReachTarget ?? null,
+        news: r.news ?? null,
       },
     })
     .returning();
   return row;
+}
+
+function serializeResolution(r: typeof entryExitStudyResolutionsTable.$inferSelect) {
+  return {
+    ...r,
+    targetPrice: Number(r.targetPrice),
+    finalPrice: Number(r.finalPrice),
+    probFinal: r.probFinal == null ? null : Number(r.probFinal),
+    resolvedAt: r.resolvedAt.toISOString(),
+  };
 }
 
 // POST /entry-exit-study -- cria um novo estudo (ticker + preço-alvo + data-alvo),
@@ -195,6 +214,9 @@ router.get("/entry-exit-study", async (req, res, next): Promise<void> => {
 
 // GET /entry-exit-study/:id -- histórico diário completo de UM estudo (pra
 // acompanhar como a probabilidade mudou desde que começou a acompanhar).
+// Inclui `resolution` quando a data-alvo já venceu e o checker já registrou
+// se bateu ou não (ver lib/entry-exit-study-checker.ts) -- null enquanto o
+// estudo ainda está ativo.
 router.get("/entry-exit-study/:id", async (req, res, next): Promise<void> => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -209,8 +231,75 @@ router.get("/entry-exit-study/:id", async (req, res, next): Promise<void> => {
       .where(eq(entryExitStudyHistoryTable.targetId, id))
       .orderBy(asc(entryExitStudyHistoryTable.calcDate));
 
-    res.json({ target: serializeTarget(target), history: history.map(serializeHistory) });
+    const [resolution] = await db.select().from(entryExitStudyResolutionsTable)
+      .where(eq(entryExitStudyResolutionsTable.targetId, id))
+      .limit(1);
+
+    res.json({
+      target: serializeTarget(target),
+      history: history.map(serializeHistory),
+      resolution: resolution ? serializeResolution(resolution) : null,
+    });
   } catch (e) { next(e); }
+});
+
+// PATCH /entry-exit-study/:id -- muda preço-alvo e/ou data-alvo MANTENDO o
+// histórico já acumulado (recriar do zero perderia o histórico, porque cada
+// snapshot é amarrado ao target_id). Recalcula na hora com o alvo novo e
+// atualiza o alerta de saída (o preço-alvo mudou); os dois alertas de
+// entrada não mexem -- eles vêm das mínimas históricas do papel, que não
+// dependem do alvo escolhido.
+router.patch("/entry-exit-study/:id", async (req, res, next): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+    const temPreco = req.body?.targetPrice !== undefined;
+    const temData = req.body?.targetDate !== undefined;
+    if (!temPreco && !temData) { res.status(400).json({ error: "targetPrice or targetDate is required" }); return; }
+
+    const [atual] = await db.select().from(entryExitStudyTargetsTable)
+      .where(and(eq(entryExitStudyTargetsTable.id, id), eq(entryExitStudyTargetsTable.userId, req.userId!)))
+      .limit(1);
+    if (!atual) { res.status(404).json({ error: "Not found" }); return; }
+
+    let targetPrice = Number(atual.targetPrice);
+    if (temPreco) {
+      targetPrice = Number(req.body.targetPrice);
+      if (!Number.isFinite(targetPrice) || targetPrice <= 0) { res.status(400).json({ error: "targetPrice must be a positive number" }); return; }
+    }
+
+    let targetDate = atual.targetDate;
+    if (temData) {
+      targetDate = String(req.body.targetDate).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) { res.status(400).json({ error: "targetDate must be YYYY-MM-DD" }); return; }
+    }
+
+    const data = await runEntryExitStudyScript([{ ticker: atual.ticker, targetPrice, targetDate }]);
+    const result = data.results?.[0];
+    if (!result || result.error) {
+      res.status(422).json({ error: result?.error ?? "Failed to compute study" });
+      return;
+    }
+
+    const [target] = await db.update(entryExitStudyTargetsTable)
+      .set({ targetPrice, targetDate, active: true })
+      .where(eq(entryExitStudyTargetsTable.id, id))
+      .returning();
+
+    if (atual.exitAlertId != null) {
+      await db.update(alertsTable)
+        .set({ thresholdPrice: targetPrice, enabled: true })
+        .where(eq(alertsTable.id, atual.exitAlertId));
+    }
+
+    await persistSnapshot(target.id, result);
+
+    res.json({ target: serializeTarget(target), calc: result });
+  } catch (e) {
+    logger.error({ err: e }, "PATCH /entry-exit-study failed");
+    next(e);
+  }
 });
 
 // DELETE /entry-exit-study/:id -- para de acompanhar (soft: mantém o

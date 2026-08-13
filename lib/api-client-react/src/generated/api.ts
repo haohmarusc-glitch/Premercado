@@ -41,6 +41,7 @@ import type {
   ClaimSeedAccountBody,
   CreateEntryExitStudyResponse,
   EntryExitStudyCreateInput,
+  EntryExitStudyUpdateInput,
   ExitPlanItem,
   ExitPlanItemCreate,
   ExitPlanItemUpdate,
@@ -76,6 +77,7 @@ import type {
   SettingsUpdate,
   TickerChart,
   TickerQuote,
+  UpdateEntryExitStudyResponse,
   UserPasswordUpdate,
   WatchlistItem,
   WatchlistItemCreate
@@ -1658,6 +1660,78 @@ export function useGetEntryExitStudy<TData = Awaited<ReturnType<typeof getEntryE
 
 
 
+
+export const getUpdateEntryExitStudyUrl = (id: number,) => {
+
+
+
+
+  return `/api/entry-exit-study/${id}`
+}
+
+/**
+ * @summary Update target price/date of a study, keeping its history
+ */
+export const updateEntryExitStudy = async (id: number,
+    entryExitStudyUpdateInput: EntryExitStudyUpdateInput, options?: RequestInit): Promise<UpdateEntryExitStudyResponse> => {
+
+  return customFetch<UpdateEntryExitStudyResponse>(getUpdateEntryExitStudyUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      entryExitStudyUpdateInput,)
+  }
+);}
+
+
+
+
+export const getUpdateEntryExitStudyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEntryExitStudy>>, TError,{id: number;data: BodyType<EntryExitStudyUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateEntryExitStudy>>, TError,{id: number;data: BodyType<EntryExitStudyUpdateInput>}, TContext> => {
+
+const mutationKey = ['updateEntryExitStudy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateEntryExitStudy>>, {id: number;data: BodyType<EntryExitStudyUpdateInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateEntryExitStudy(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateEntryExitStudyMutationResult = NonNullable<Awaited<ReturnType<typeof updateEntryExitStudy>>>
+    export type UpdateEntryExitStudyMutationBody = BodyType<EntryExitStudyUpdateInput>
+    export type UpdateEntryExitStudyMutationError = ErrorType<void>
+
+    /**
+ * @summary Update target price/date of a study, keeping its history
+ */
+export const useUpdateEntryExitStudy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEntryExitStudy>>, TError,{id: number;data: BodyType<EntryExitStudyUpdateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateEntryExitStudy>>,
+        TError,
+        {id: number;data: BodyType<EntryExitStudyUpdateInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateEntryExitStudyMutationOptions(options));
+    }
 
 export const getDeleteEntryExitStudyUrl = (id: number,) => {
 

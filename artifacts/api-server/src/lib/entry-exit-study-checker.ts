@@ -10,8 +10,8 @@
  * só é garantida durante um request.
  */
 import path from "path";
-import { and, eq, lt } from "drizzle-orm";
-import { db, entryExitStudyTargetsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { db, entryExitStudyTargetsTable, entryExitStudyResolutionsTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "./runner";
 import { spawnPython } from "./python-spawn";
 import { runExclusive } from "./python-queue";
@@ -55,13 +55,6 @@ export async function refreshEntryExitStudies(): Promise<void> {
 
   const hoje = todayBRTDateString();
 
-  // Estudo com data-alvo já vencida sai de "ativo" sozinho -- mesma lógica de
-  // "uma vez resolvida, não muda mais" de scenario_resolutions. O histórico já
-  // registrado continua acessível via GET /entry-exit-study/:id.
-  await db.update(entryExitStudyTargetsTable)
-    .set({ active: false })
-    .where(and(eq(entryExitStudyTargetsTable.active, true), lt(entryExitStudyTargetsTable.targetDate, hoje)));
-
   const targets = await db.select().from(entryExitStudyTargetsTable)
     .where(eq(entryExitStudyTargetsTable.active, true));
   if (!targets.length) return;
@@ -83,20 +76,51 @@ export async function refreshEntryExitStudies(): Promise<void> {
   const byKey = new Map(data.results.map((r) => [`${r.ticker}|${r.targetPrice}|${r.targetDate}`, r]));
 
   let updated = 0;
+  let resolved = 0;
   const failed: string[] = [];
   for (const t of targets) {
+    // Vencida = data-alvo já passou (não hoje -- o dia da data-alvo ainda
+    // conta como dentro da janela). Roda o cálculo do dia PRA TODOS antes de
+    // decidir isso, pra capturar o preço final de verdade (mesmo dado que o
+    // usuário veria pedindo agora), em vez de só apagar o estudo sem saber
+    // se bateu.
+    const vencida = t.targetDate < hoje;
+
     const key = `${t.ticker}|${Number(t.targetPrice)}|${t.targetDate}`;
     const r = byKey.get(key);
     if (!r || r.error || r.currentPrice == null) {
       failed.push(`${t.ticker}(#${t.id})`);
+      if (vencida) {
+        // Sem preço final não dá pra registrar se bateu -- desativa mesmo
+        // assim (não fica preso tentando pra sempre), só sem resolução.
+        await db.update(entryExitStudyTargetsTable).set({ active: false }).where(eq(entryExitStudyTargetsTable.id, t.id));
+        logger.warn({ id: t.id, ticker: t.ticker }, "Entry/exit study: data-alvo vencida sem conseguir preço final -- desativado sem resolução registrada");
+      }
       continue;
     }
+
     await persistSnapshot(t.id, r);
     updated++;
+
+    if (vencida) {
+      await db.insert(entryExitStudyResolutionsTable)
+        .values({
+          targetId: t.id,
+          ticker: t.ticker,
+          targetPrice: t.targetPrice,
+          targetDate: t.targetDate,
+          finalPrice: r.currentPrice,
+          bateu: r.currentPrice >= Number(t.targetPrice),
+          probFinal: r.probReachTarget ?? null,
+        })
+        .onConflictDoNothing({ target: entryExitStudyResolutionsTable.targetId });
+      await db.update(entryExitStudyTargetsTable).set({ active: false }).where(eq(entryExitStudyTargetsTable.id, t.id));
+      resolved++;
+    }
   }
 
   if (failed.length) {
     logger.warn({ failed }, "Entry/exit study checker: estudos sem cálculo válido no ciclo");
   }
-  logger.info({ updated, total: targets.length }, "Entry/exit studies refreshed");
+  logger.info({ updated, resolved, total: targets.length }, "Entry/exit studies refreshed");
 }

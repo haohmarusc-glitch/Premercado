@@ -592,12 +592,48 @@ export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
   volAnnual: money("vol_annual"),
   betaSector: money("beta_sector"),
   probReachTarget: money("prob_reach_target"), // 0-1
+  // Manchetes do dia do cálculo (título/resumo/fonte/url/tickers relacionados
+  // -- mesma forma que entry_exit_study.py já devolve em StudyResult.news),
+  // persistidas pra não sumir depois que o toast de criação fecha. Só
+  // informativo, não entra no cálculo de probReachTarget -- mesma limitação
+  // documentada em scenario-math.ts sobre não dar pra quantificar sentimento
+  // de notícia de forma confiável.
+  news: jsonb("news").$type<Array<{
+    title?: string;
+    published?: string | null;
+    summary?: string | null;
+    source?: string | null;
+    url?: string | null;
+    relatedTickers?: string[] | null;
+  }>>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_entry_exit_study_history_target_id").on(t.targetId),
   unique("uq_entry_exit_study_history_target_date").on(t.targetId, t.calcDate),
 ]);
 export type EntryExitStudyHistory = typeof entryExitStudyHistoryTable.$inferSelect;
+
+// Resultado final de UM estudo já vencido -- mesmo padrão de
+// scenario_resolutions (uma vez resolvida, nunca muda). O checker
+// (entry-exit-study-checker.ts) roda o cálculo do dia ANTES de desativar um
+// estudo com data-alvo vencida, pra capturar o preço final de verdade em vez
+// de só apagar o rastro -- é o que dá pra medir, com o tempo, se a
+// probabilidade calculada é confiável.
+export const entryExitStudyResolutionsTable = pgTable("entry_exit_study_resolutions", {
+  id: serial("id").primaryKey(),
+  targetId: integer("target_id").notNull().references(() => entryExitStudyTargetsTable.id, { onDelete: "cascade" }),
+  ticker: text("ticker").notNull(),
+  targetPrice: money("target_price").notNull(),
+  targetDate: text("target_date").notNull(),
+  finalPrice: money("final_price").notNull(),
+  bateu: boolean("bateu").notNull(), // finalPrice >= targetPrice
+  probFinal: money("prob_final"), // última probReachTarget conhecida no dia da resolução
+  resolvedAt: timestamp("resolved_at").defaultNow().notNull(),
+}, (t) => [
+  index("idx_entry_exit_study_resolutions_target_id").on(t.targetId),
+  unique("uq_entry_exit_study_resolutions_target").on(t.targetId),
+]);
+export type EntryExitStudyResolution = typeof entryExitStudyResolutionsTable.$inferSelect;
 
 /**
  * Série diária de IV ATM por ticker.

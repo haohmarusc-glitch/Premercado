@@ -203,6 +203,20 @@ export interface EntryExitStudyTarget {
   createdAt: string;
 }
 
+export interface EntryExitStudyNewsItem {
+  title?: string;
+  /** @nullable */
+  published?: string | null;
+  /** @nullable */
+  summary?: string | null;
+  /** @nullable */
+  source?: string | null;
+  /** @nullable */
+  url?: string | null;
+  /** @nullable */
+  relatedTickers?: string[] | null;
+}
+
 export interface EntryExitStudyHistory {
   id: number;
   targetId: number;
@@ -226,7 +240,29 @@ export interface EntryExitStudyHistory {
      * @nullable
      */
   probReachTarget?: number | null;
+  /**
+     * Manchetes do dia do calculo. Informativo, nao entra no calculo da probabilidade.
+     * @nullable
+     */
+  news?: EntryExitStudyNewsItem[] | null;
   createdAt: string;
+}
+
+export interface EntryExitStudyResolution {
+  id: number;
+  targetId: number;
+  ticker: string;
+  targetPrice: number;
+  targetDate: string;
+  finalPrice: number;
+  /** finalPrice >= targetPrice */
+  bateu: boolean;
+  /**
+     * ultima probReachTarget antes da resolucao
+     * @nullable
+     */
+  probFinal?: number | null;
+  resolvedAt: string;
 }
 
 export interface EntryExitStudyCreateInput {
@@ -236,18 +272,13 @@ export interface EntryExitStudyCreateInput {
   targetDate: string;
 }
 
-export interface EntryExitStudyNewsItem {
-  title?: string;
-  /** @nullable */
-  published?: string | null;
-  /** @nullable */
-  summary?: string | null;
-  /** @nullable */
-  source?: string | null;
-  /** @nullable */
-  url?: string | null;
-  /** @nullable */
-  relatedTickers?: string[] | null;
+/**
+ * Pelo menos um dos dois. Mantem o historico ja acumulado.
+ */
+export interface EntryExitStudyUpdateInput {
+  targetPrice?: number;
+  /** YYYY-MM-DD, precisa ser no futuro */
+  targetDate?: string;
 }
 
 export interface EntryExitStudyCalcResult {
@@ -299,6 +330,13 @@ export interface CreateEntryExitStudyResponse {
 export interface GetEntryExitStudyResponse {
   target: EntryExitStudyTarget;
   history: EntryExitStudyHistory[];
+  /** @nullable */
+  resolution?: EntryExitStudyResolution | null;
+}
+
+export interface UpdateEntryExitStudyResponse {
+  target: EntryExitStudyTarget;
+  calc: EntryExitStudyCalcResult;
 }
 
 /**
