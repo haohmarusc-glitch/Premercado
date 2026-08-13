@@ -177,6 +177,130 @@ export interface AlertFiring {
   firedAt: string;
 }
 
+export interface EntryExitStudyTarget {
+  id: number;
+  userId: number;
+  ticker: string;
+  targetPrice: number;
+  /** YYYY-MM-DD */
+  targetDate: string;
+  /**
+     * Alerta condition=above no preco-alvo.
+     * @nullable
+     */
+  exitAlertId?: number | null;
+  /**
+     * Alerta condition=below na media das minimas de 6 meses.
+     * @nullable
+     */
+  entryAvgLowAlertId?: number | null;
+  /**
+     * Alerta condition=below na menor minima de 12 meses.
+     * @nullable
+     */
+  entryMinLowAlertId?: number | null;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface EntryExitStudyHistory {
+  id: number;
+  targetId: number;
+  /** YYYY-MM-DD */
+  calcDate: string;
+  currentPrice: number;
+  /** @nullable */
+  avgLow1y?: number | null;
+  /** @nullable */
+  minLow1y?: number | null;
+  /** @nullable */
+  avgLow6m?: number | null;
+  /** @nullable */
+  minLow6m?: number | null;
+  /** @nullable */
+  volAnnual?: number | null;
+  /** @nullable */
+  betaSector?: number | null;
+  /**
+     * 0-1
+     * @nullable
+     */
+  probReachTarget?: number | null;
+  createdAt: string;
+}
+
+export interface EntryExitStudyCreateInput {
+  ticker: string;
+  targetPrice: number;
+  /** YYYY-MM-DD, precisa ser no futuro */
+  targetDate: string;
+}
+
+export interface EntryExitStudyNewsItem {
+  title?: string;
+  /** @nullable */
+  published?: string | null;
+  /** @nullable */
+  summary?: string | null;
+  /** @nullable */
+  source?: string | null;
+  /** @nullable */
+  url?: string | null;
+  /** @nullable */
+  relatedTickers?: string[] | null;
+}
+
+export interface EntryExitStudyCalcResult {
+  ticker: string;
+  targetPrice: number;
+  targetDate: string;
+  /** @nullable */
+  currentPrice?: number | null;
+  /** @nullable */
+  avgLow1y?: number | null;
+  /** @nullable */
+  minLow1y?: number | null;
+  /** @nullable */
+  avgLow6m?: number | null;
+  /** @nullable */
+  minLow6m?: number | null;
+  /** @nullable */
+  volAnnual?: number | null;
+  /** @nullable */
+  betaSector?: number | null;
+  /** @nullable */
+  earningsDate?: string | null;
+  /** @nullable */
+  daysUntilTarget?: number | null;
+  /**
+     * 0-1
+     * @nullable
+     */
+  probReachTarget?: number | null;
+  news?: EntryExitStudyNewsItem[];
+  error?: string;
+}
+
+export interface EntryExitStudyListItem {
+  target: EntryExitStudyTarget;
+  /** @nullable */
+  latest?: EntryExitStudyHistory | null;
+}
+
+export interface ListEntryExitStudiesResponse {
+  studies: EntryExitStudyListItem[];
+}
+
+export interface CreateEntryExitStudyResponse {
+  target: EntryExitStudyTarget;
+  calc: EntryExitStudyCalcResult;
+}
+
+export interface GetEntryExitStudyResponse {
+  target: EntryExitStudyTarget;
+  history: EntryExitStudyHistory[];
+}
+
 /**
  * Sessão do pregão -- só populado pra períodos intradiários (1d/5d); "regular" pros demais.
  */

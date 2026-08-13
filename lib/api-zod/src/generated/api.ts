@@ -274,6 +274,110 @@ export const ListAlertFiringsResponse = zod.array(ListAlertFiringsResponseItem)
 
 
 /**
+ * @summary List active entry/exit studies with their latest snapshot
+ */
+export const EntryExitStudyTargetSchema = zod.object({
+  "id": zod.coerce.number(),
+  "userId": zod.coerce.number(),
+  "ticker": zod.string(),
+  "targetPrice": zod.coerce.number(),
+  "targetDate": zod.string().describe('YYYY-MM-DD'),
+  "exitAlertId": zod.coerce.number().nullish().describe('Alerta condition=above no preco-alvo.'),
+  "entryAvgLowAlertId": zod.coerce.number().nullish().describe('Alerta condition=below na media das minimas de 6 meses.'),
+  "entryMinLowAlertId": zod.coerce.number().nullish().describe('Alerta condition=below na menor minima de 12 meses.'),
+  "active": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+export const EntryExitStudyHistorySchema = zod.object({
+  "id": zod.coerce.number(),
+  "targetId": zod.coerce.number(),
+  "calcDate": zod.string().describe('YYYY-MM-DD'),
+  "currentPrice": zod.coerce.number(),
+  "avgLow1y": zod.coerce.number().nullish(),
+  "minLow1y": zod.coerce.number().nullish(),
+  "avgLow6m": zod.coerce.number().nullish(),
+  "minLow6m": zod.coerce.number().nullish(),
+  "volAnnual": zod.coerce.number().nullish(),
+  "betaSector": zod.coerce.number().nullish(),
+  "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "createdAt": zod.string()
+})
+
+export const EntryExitStudyListItemSchema = zod.object({
+  "target": EntryExitStudyTargetSchema,
+  "latest": EntryExitStudyHistorySchema.nullish()
+})
+
+export const ListEntryExitStudiesResponse = zod.object({
+  "studies": zod.array(EntryExitStudyListItemSchema)
+})
+
+
+/**
+ * @summary Create an entry/exit study and run today's calculation
+ */
+export const CreateEntryExitStudyBody = zod.object({
+  "ticker": zod.string(),
+  "targetPrice": zod.number(),
+  "targetDate": zod.string().describe('YYYY-MM-DD, precisa ser no futuro')
+})
+
+export const EntryExitStudyNewsItemSchema = zod.object({
+  "title": zod.string().optional(),
+  "published": zod.string().nullish(),
+  "summary": zod.string().nullish(),
+  "source": zod.string().nullish(),
+  "url": zod.string().nullish(),
+  "relatedTickers": zod.array(zod.string()).nullish()
+})
+
+export const EntryExitStudyCalcResultSchema = zod.object({
+  "ticker": zod.string(),
+  "targetPrice": zod.coerce.number(),
+  "targetDate": zod.string(),
+  "currentPrice": zod.coerce.number().nullish(),
+  "avgLow1y": zod.coerce.number().nullish(),
+  "minLow1y": zod.coerce.number().nullish(),
+  "avgLow6m": zod.coerce.number().nullish(),
+  "minLow6m": zod.coerce.number().nullish(),
+  "volAnnual": zod.coerce.number().nullish(),
+  "betaSector": zod.coerce.number().nullish(),
+  "earningsDate": zod.string().nullish(),
+  "daysUntilTarget": zod.coerce.number().nullish(),
+  "probReachTarget": zod.coerce.number().nullish().describe('0-1'),
+  "news": zod.array(EntryExitStudyNewsItemSchema).optional(),
+  "error": zod.string().optional()
+})
+
+export const CreateEntryExitStudyResponse = zod.object({
+  "target": EntryExitStudyTargetSchema,
+  "calc": EntryExitStudyCalcResultSchema
+})
+
+
+/**
+ * @summary Get full daily history for one entry/exit study
+ */
+export const GetEntryExitStudyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetEntryExitStudyResponse = zod.object({
+  "target": EntryExitStudyTargetSchema,
+  "history": zod.array(EntryExitStudyHistorySchema)
+})
+
+
+/**
+ * @summary Stop tracking a study (soft-deactivate, keeps history) and disable its alerts
+ */
+export const DeleteEntryExitStudyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+
+/**
  * @summary Get OHLCV chart data for a ticker
  */
 export const GetTickerChartQueryParams = zod.object({

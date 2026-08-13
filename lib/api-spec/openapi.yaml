@@ -357,6 +357,96 @@ paths:
         "404":
           description: Not found
 
+  /entry-exit-study:
+    get:
+      operationId: listEntryExitStudies
+      tags: [agent]
+      summary: List active entry/exit studies with their latest snapshot
+      responses:
+        "200":
+          description: Active studies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [studies]
+                properties:
+                  studies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntryExitStudyListItem"
+    post:
+      operationId: createEntryExitStudy
+      tags: [agent]
+      summary: Create an entry/exit study and run today's calculation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryExitStudyCreateInput"
+      responses:
+        "201":
+          description: Created study with today's calculation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target, calc]
+                properties:
+                  target:
+                    $ref: "#/components/schemas/EntryExitStudyTarget"
+                  calc:
+                    $ref: "#/components/schemas/EntryExitStudyCalcResult"
+        "400":
+          description: Invalid input
+        "422":
+          description: Failed to compute study
+
+  /entry-exit-study/{id}:
+    get:
+      operationId: getEntryExitStudy
+      tags: [agent]
+      summary: Get full daily history for one entry/exit study
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Study with full history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target, history]
+                properties:
+                  target:
+                    $ref: "#/components/schemas/EntryExitStudyTarget"
+                  history:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntryExitStudyHistory"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteEntryExitStudy
+      tags: [agent]
+      summary: Stop tracking a study (soft-deactivate, keeps history) and disable its alerts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deactivated
+        "404":
+          description: Not found
+
   /tickers/chart:
     get:
       operationId: getTickerChart
@@ -1360,6 +1450,90 @@ components:
         changePctAtFiring: { type: ["number", "null"] }
         priceAtFiring: { type: ["number", "null"] }
         firedAt: { type: string }
+
+    EntryExitStudyTarget:
+      type: object
+      required: [id, userId, ticker, targetPrice, targetDate, active, createdAt]
+      properties:
+        id: { type: integer }
+        userId: { type: integer }
+        ticker: { type: string }
+        targetPrice: { type: number }
+        targetDate: { type: string, description: "YYYY-MM-DD" }
+        exitAlertId: { type: ["integer", "null"], description: "Alerta condition=above no preco-alvo." }
+        entryAvgLowAlertId: { type: ["integer", "null"], description: "Alerta condition=below na media das minimas de 6 meses." }
+        entryMinLowAlertId: { type: ["integer", "null"], description: "Alerta condition=below na menor minima de 12 meses." }
+        active: { type: boolean }
+        createdAt: { type: string }
+
+    EntryExitStudyHistory:
+      type: object
+      required: [id, targetId, calcDate, currentPrice, createdAt]
+      properties:
+        id: { type: integer }
+        targetId: { type: integer }
+        calcDate: { type: string, description: "YYYY-MM-DD" }
+        currentPrice: { type: number }
+        avgLow1y: { type: ["number", "null"] }
+        minLow1y: { type: ["number", "null"] }
+        avgLow6m: { type: ["number", "null"] }
+        minLow6m: { type: ["number", "null"] }
+        volAnnual: { type: ["number", "null"] }
+        betaSector: { type: ["number", "null"] }
+        probReachTarget: { type: ["number", "null"], description: "0-1" }
+        createdAt: { type: string }
+
+    EntryExitStudyCreateInput:
+      type: object
+      required: [ticker, targetPrice, targetDate]
+      properties:
+        ticker: { type: string }
+        targetPrice: { type: number }
+        targetDate: { type: string, description: "YYYY-MM-DD, precisa ser no futuro" }
+
+    EntryExitStudyNewsItem:
+      type: object
+      properties:
+        title: { type: string }
+        published: { type: ["string", "null"] }
+        summary: { type: ["string", "null"] }
+        source: { type: ["string", "null"] }
+        url: { type: ["string", "null"] }
+        relatedTickers: { type: ["array", "null"], items: { type: string } }
+
+    EntryExitStudyCalcResult:
+      type: object
+      required: [ticker, targetPrice, targetDate]
+      properties:
+        ticker: { type: string }
+        targetPrice: { type: number }
+        targetDate: { type: string }
+        currentPrice: { type: ["number", "null"] }
+        avgLow1y: { type: ["number", "null"] }
+        minLow1y: { type: ["number", "null"] }
+        avgLow6m: { type: ["number", "null"] }
+        minLow6m: { type: ["number", "null"] }
+        volAnnual: { type: ["number", "null"] }
+        betaSector: { type: ["number", "null"] }
+        earningsDate: { type: ["string", "null"] }
+        daysUntilTarget: { type: ["integer", "null"] }
+        probReachTarget: { type: ["number", "null"], description: "0-1" }
+        news:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntryExitStudyNewsItem"
+        error: { type: string }
+
+    EntryExitStudyListItem:
+      type: object
+      required: [target]
+      properties:
+        target:
+          $ref: "#/components/schemas/EntryExitStudyTarget"
+        latest:
+          oneOf:
+            - $ref: "#/components/schemas/EntryExitStudyHistory"
+            - type: "null"
 
     Candle:
       type: object

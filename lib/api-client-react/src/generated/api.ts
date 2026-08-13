@@ -39,11 +39,14 @@ import type {
   ChatMessage,
   ChatSession,
   ClaimSeedAccountBody,
+  CreateEntryExitStudyResponse,
+  EntryExitStudyCreateInput,
   ExitPlanItem,
   ExitPlanItemCreate,
   ExitPlanItemUpdate,
   FxRate,
   GetAgentSpendHistoryParams,
+  GetEntryExitStudyResponse,
   GetLatestReportParams,
   GetNewsParams,
   GetTickerChartParams,
@@ -52,6 +55,7 @@ import type {
   JournalEntryCreate,
   JournalEntryUpdate,
   ListAgentRunsParams,
+  ListEntryExitStudiesResponse,
   ListObservationsParams,
   NewsFeedResponse,
   Observation,
@@ -1432,6 +1436,298 @@ export function useListAlertFirings<TData = Awaited<ReturnType<typeof listAlertF
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+
+
+
+export const getListEntryExitStudiesUrl = () => {
+
+
+
+
+  return `/api/entry-exit-study`
+}
+
+/**
+ * @summary List active entry/exit studies with their latest snapshot
+ */
+export const listEntryExitStudies = async ( options?: RequestInit): Promise<ListEntryExitStudiesResponse> => {
+
+  return customFetch<ListEntryExitStudiesResponse>(getListEntryExitStudiesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEntryExitStudiesQueryKey = () => {
+    return [
+    `/api/entry-exit-study`
+    ] as const;
+    }
+
+
+export const getListEntryExitStudiesQueryOptions = <TData = Awaited<ReturnType<typeof listEntryExitStudies>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEntryExitStudies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEntryExitStudiesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEntryExitStudies>>> = ({ signal }) => listEntryExitStudies({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEntryExitStudies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEntryExitStudiesQueryResult = NonNullable<Awaited<ReturnType<typeof listEntryExitStudies>>>
+export type ListEntryExitStudiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List active entry/exit studies with their latest snapshot
+ */
+
+export function useListEntryExitStudies<TData = Awaited<ReturnType<typeof listEntryExitStudies>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEntryExitStudies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEntryExitStudiesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+export const getCreateEntryExitStudyUrl = () => {
+
+
+
+
+  return `/api/entry-exit-study`
+}
+
+/**
+ * @summary Create an entry/exit study and run today's calculation
+ */
+export const createEntryExitStudy = async (entryExitStudyCreateInput: EntryExitStudyCreateInput, options?: RequestInit): Promise<CreateEntryExitStudyResponse> => {
+
+  return customFetch<CreateEntryExitStudyResponse>(getCreateEntryExitStudyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      entryExitStudyCreateInput,)
+  }
+);}
+
+
+
+
+export const getCreateEntryExitStudyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEntryExitStudy>>, TError,{data: BodyType<EntryExitStudyCreateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createEntryExitStudy>>, TError,{data: BodyType<EntryExitStudyCreateInput>}, TContext> => {
+
+const mutationKey = ['createEntryExitStudy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEntryExitStudy>>, {data: BodyType<EntryExitStudyCreateInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createEntryExitStudy(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateEntryExitStudyMutationResult = NonNullable<Awaited<ReturnType<typeof createEntryExitStudy>>>
+    export type CreateEntryExitStudyMutationBody = BodyType<EntryExitStudyCreateInput>
+    export type CreateEntryExitStudyMutationError = ErrorType<void>
+
+    /**
+ * @summary Create an entry/exit study and run today's calculation
+ */
+export const useCreateEntryExitStudy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEntryExitStudy>>, TError,{data: BodyType<EntryExitStudyCreateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createEntryExitStudy>>,
+        TError,
+        {data: BodyType<EntryExitStudyCreateInput>},
+        TContext
+      > => {
+      return useMutation(getCreateEntryExitStudyMutationOptions(options));
+    }
+
+export const getGetEntryExitStudyUrl = (id: number,) => {
+
+
+
+
+  return `/api/entry-exit-study/${id}`
+}
+
+/**
+ * @summary Get full daily history for one entry/exit study
+ */
+export const getEntryExitStudy = async (id: number, options?: RequestInit): Promise<GetEntryExitStudyResponse> => {
+
+  return customFetch<GetEntryExitStudyResponse>(getGetEntryExitStudyUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEntryExitStudyQueryKey = (id: number,) => {
+    return [
+    `/api/entry-exit-study/${id}`
+    ] as const;
+    }
+
+
+export const getGetEntryExitStudyQueryOptions = <TData = Awaited<ReturnType<typeof getEntryExitStudy>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEntryExitStudy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEntryExitStudyQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEntryExitStudy>>> = ({ signal }) => getEntryExitStudy(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions, enabled: !!(id)} as UseQueryOptions<Awaited<ReturnType<typeof getEntryExitStudy>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEntryExitStudyQueryResult = NonNullable<Awaited<ReturnType<typeof getEntryExitStudy>>>
+export type GetEntryExitStudyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get full daily history for one entry/exit study
+ */
+
+export function useGetEntryExitStudy<TData = Awaited<ReturnType<typeof getEntryExitStudy>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEntryExitStudy>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEntryExitStudyQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+export const getDeleteEntryExitStudyUrl = (id: number,) => {
+
+
+
+
+  return `/api/entry-exit-study/${id}`
+}
+
+/**
+ * @summary Stop tracking a study (soft-deactivate, keeps history) and disable its alerts
+ */
+export const deleteEntryExitStudy = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteEntryExitStudyUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteEntryExitStudyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEntryExitStudy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteEntryExitStudy>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteEntryExitStudy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEntryExitStudy>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteEntryExitStudy(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteEntryExitStudyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEntryExitStudy>>>
+
+    export type DeleteEntryExitStudyMutationError = ErrorType<void>
+
+    /**
+ * @summary Stop tracking a study (soft-deactivate, keeps history) and disable its alerts
+ */
+export const useDeleteEntryExitStudy = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEntryExitStudy>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteEntryExitStudy>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteEntryExitStudyMutationOptions(options));
+    }
 
 
 
