@@ -1517,6 +1517,7 @@ components:
         minLow1y: { type: ["number", "null"] }
         avgLow6m: { type: ["number", "null"] }
         minLow6m: { type: ["number", "null"] }
+        entryPullbackPrice: { type: ["number", "null"], description: "Nivel de entrada projetado pela vol atual do papel (nao historico cru de minima)" }
         volAnnual: { type: ["number", "null"] }
         betaSector: { type: ["number", "null"] }
         probReachTarget: { type: ["number", "null"], description: "0-1" }
@@ -1583,6 +1584,7 @@ components:
         minLow1y: { type: ["number", "null"] }
         avgLow6m: { type: ["number", "null"] }
         minLow6m: { type: ["number", "null"] }
+        entryPullbackPrice: { type: ["number", "null"] }
         volAnnual: { type: ["number", "null"] }
         betaSector: { type: ["number", "null"] }
         earningsDate: { type: ["string", "null"] }

@@ -231,6 +231,11 @@ export interface EntryExitStudyHistory {
   avgLow6m?: number | null;
   /** @nullable */
   minLow6m?: number | null;
+  /**
+     * Nivel de entrada projetado pela vol atual do papel (nao historico cru de minima)
+     * @nullable
+     */
+  entryPullbackPrice?: number | null;
   /** @nullable */
   volAnnual?: number | null;
   /** @nullable */
@@ -320,6 +325,8 @@ export interface EntryExitStudyCalcResult {
   avgLow6m?: number | null;
   /** @nullable */
   minLow6m?: number | null;
+  /** @nullable */
+  entryPullbackPrice?: number | null;
   /** @nullable */
   volAnnual?: number | null;
   /** @nullable */
