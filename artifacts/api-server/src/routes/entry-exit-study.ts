@@ -19,6 +19,12 @@ export interface StudyResult {
   minLow1y?: number | null;
   avgLow6m?: number | null;
   minLow6m?: number | null;
+  // Nível de entrada projetado pela vol atual do papel (Phi^-1 da mesma
+  // matemática de probReachTarget) -- ver entry_exit_study.py::
+  // _entry_pullback_price. Base do 2º alerta de entrada em vez de minLow1y:
+  // pra papéis que subiram muito no último ano, a mínima de 12 meses fica
+  // longe demais do preço atual pra servir de gatilho realista.
+  entryPullbackPrice?: number | null;
   volAnnual?: number | null;
   betaSector?: number | null;
   earningsDate?: string | null;
@@ -80,6 +86,7 @@ function serializeHistory(h: typeof entryExitStudyHistoryTable.$inferSelect) {
     minLow1y: h.minLow1y == null ? null : Number(h.minLow1y),
     avgLow6m: h.avgLow6m == null ? null : Number(h.avgLow6m),
     minLow6m: h.minLow6m == null ? null : Number(h.minLow6m),
+    entryPullbackPrice: h.entryPullbackPrice == null ? null : Number(h.entryPullbackPrice),
     volAnnual: h.volAnnual == null ? null : Number(h.volAnnual),
     betaSector: h.betaSector == null ? null : Number(h.betaSector),
     probReachTarget: h.probReachTarget == null ? null : Number(h.probReachTarget),
@@ -106,6 +113,7 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
       minLow1y: r.minLow1y ?? null,
       avgLow6m: r.avgLow6m ?? null,
       minLow6m: r.minLow6m ?? null,
+      entryPullbackPrice: r.entryPullbackPrice ?? null,
       volAnnual: r.volAnnual ?? null,
       betaSector: r.betaSector ?? null,
       probReachTarget: r.probReachTarget ?? null,
@@ -124,6 +132,7 @@ export async function persistSnapshot(targetId: number, r: StudyResult) {
         minLow1y: r.minLow1y ?? null,
         avgLow6m: r.avgLow6m ?? null,
         minLow6m: r.minLow6m ?? null,
+        entryPullbackPrice: r.entryPullbackPrice ?? null,
         volAnnual: r.volAnnual ?? null,
         betaSector: r.betaSector ?? null,
         probReachTarget: r.probReachTarget ?? null,
@@ -178,8 +187,13 @@ router.post("/entry-exit-study", async (req, res, next): Promise<void> => {
     // ABSOLUTO, não variação diária, ver lib/alert-checker.ts linha 253) --
     // reaproveita o checker de alertas que já roda em background, não duplica
     // monitoramento intraday. Saída: acima do preço-alvo. Entrada: abaixo da
-    // média das mínimas de 6 meses (sinal mais frequente) e abaixo da menor
-    // mínima de 12 meses (sinal mais raro/extremo) -- os dois níveis pedidos.
+    // média das mínimas de 6 meses (sinal mais frequente) e abaixo do nível
+    // de entrada projetado pela vol atual (entryPullbackPrice, ver
+    // entry_exit_study.py -- fallback pra minLow1y só se a vol não pôde ser
+    // calculada). Trocado de minLow1y puro em ago/2026: pra papéis que
+    // subiram muito no último ano (visto em produção com INTC/SMCI), a
+    // mínima de 12 meses fica tão longe do preço atual que o alerta nunca
+    // dispara -- o nível projetado se adapta à vol de cada papel.
     const [exitAlert] = await db.insert(alertsTable)
       .values({ symbol: ticker, indicator: "price", condition: "above", thresholdPrice: targetPrice, notifyEmail, userId: req.userId! })
       .returning();
@@ -193,9 +207,10 @@ router.post("/entry-exit-study", async (req, res, next): Promise<void> => {
     }
 
     let entryMinLowAlertId: number | null = null;
-    if (result.minLow1y != null) {
+    const entryPullbackThreshold = result.entryPullbackPrice ?? result.minLow1y;
+    if (entryPullbackThreshold != null) {
       const [a] = await db.insert(alertsTable)
-        .values({ symbol: ticker, indicator: "price", condition: "below", thresholdPrice: result.minLow1y, notifyEmail, userId: req.userId! })
+        .values({ symbol: ticker, indicator: "price", condition: "below", thresholdPrice: entryPullbackThreshold, notifyEmail, userId: req.userId! })
         .returning();
       entryMinLowAlertId = a.id;
     }

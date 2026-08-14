@@ -75,6 +75,41 @@ def test_low_stats_vazio_devolve_none():
     assert ees._low_stats(pd.Series([], dtype=float)) == (None, None)
 
 
+# ── _entry_pullback_price (nível de entrada projetado pela vol atual) ──────
+# Motivado por papéis que subiram muito no último ano (visto em produção com
+# INTC/SMCI ago/2026): a mínima de 12 meses fica longe demais do preço atual
+# pra servir de gatilho de alerta -- este nível se adapta à vol de cada
+# papel em vez de olhar pra um piso histórico que pode nunca mais se repetir.
+
+def test_entry_pullback_price_fica_abaixo_do_preco_atual():
+    preco = ees._entry_pullback_price(100.0, 0.4)
+    assert preco is not None
+    assert preco < 100.0
+
+
+def test_entry_pullback_price_bate_com_a_formula_lognormal():
+    from statistics import NormalDist
+    preco_atual, vol = 100.0, 0.4
+    t_curto = ees.ENTRY_PULLBACK_DAYS / 365
+    z = NormalDist().inv_cdf(ees.ENTRY_PULLBACK_PROB)
+    esperado = preco_atual * math.exp(z * vol * math.sqrt(t_curto))
+    assert ees._entry_pullback_price(preco_atual, vol) == pytest.approx(esperado, abs=1e-4)
+
+
+def test_entry_pullback_price_mais_vol_afasta_mais_do_preco_atual():
+    # Papel mais volátil -> nível projetado mais longe (mais "espaço" pro
+    # pull-back), não mais perto -- checa a direção certa da monotonicidade.
+    baixa_vol = ees._entry_pullback_price(100.0, 0.2)
+    alta_vol = ees._entry_pullback_price(100.0, 0.8)
+    assert alta_vol < baixa_vol < 100.0
+
+
+def test_entry_pullback_price_none_sem_vol_ou_preco():
+    assert ees._entry_pullback_price(100.0, None) is None
+    assert ees._entry_pullback_price(100.0, 0.0) is None
+    assert ees._entry_pullback_price(0.0, 0.4) is None
+
+
 # ── _study_for (integração, com yfinance e módulos irmãos mockados) ────────
 
 class _FakeFastInfo:
@@ -147,6 +182,10 @@ def test_study_for_calculo_basico_sem_earnings_na_janela(monkeypatch):
     assert out["currentPrice"] == pytest.approx(100.0)
     assert out["avgLow1y"] == pytest.approx(90.0)
     assert out["minLow1y"] == pytest.approx(90.0)
+    # Nível projetado pela vol -- abaixo do preço atual, calculado com o
+    # mesmo vol_annual devolvido acima (não com o histórico de mínimas).
+    assert out["entryPullbackPrice"] is not None
+    assert out["entryPullbackPrice"] < out["currentPrice"]
     assert out["volAnnual"] == pytest.approx(0.4)
     assert out["betaSector"] == pytest.approx(1.2)
     assert out["daysUntilTarget"] == 30

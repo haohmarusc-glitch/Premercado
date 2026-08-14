@@ -589,6 +589,17 @@ export const entryExitStudyHistoryTable = pgTable("entry_exit_study_history", {
   minLow1y: money("min_low_1y"),
   avgLow6m: money("avg_low_6m"),
   minLow6m: money("min_low_6m"),
+  // Nível de entrada projetado pela vol do próprio papel (não histórico
+  // "cru"): preço em que há ENTRY_PULLBACK_PROB de chance de o papel estar
+  // em ENTRY_PULLBACK_DAYS, assumindo drift zero -- mesma matemática de
+  // probReachTarget, só invertida (Phi^-1 em vez de Phi). Motivado por
+  // papéis que subiram muito no último ano (ex.: INTC, SMCI ago/2026): a
+  // mínima de 12 meses fica tão longe do preço atual que o alerta baseado
+  // nela nunca dispara -- este nível se adapta à vol atual em vez de olhar
+  // pra um piso histórico que pode nunca mais se repetir. Ver
+  // agent/entry_exit_study.py::_entry_pullback_price. null quando volAnnual
+  // não pôde ser calculado.
+  entryPullbackPrice: money("entry_pullback_price"),
   volAnnual: money("vol_annual"),
   betaSector: money("beta_sector"),
   probReachTarget: money("prob_reach_target"), // 0-1

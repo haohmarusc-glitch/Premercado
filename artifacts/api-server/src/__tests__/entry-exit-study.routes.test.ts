@@ -184,6 +184,21 @@ describe.skipIf(!DB_URL)("Rotas /entry-exit-study (integração, Postgres real)"
     expect(alerts).toHaveLength(1);
   });
 
+  it("POST usa entryPullbackPrice (não minLow1y) como base do 2º alerta de entrada quando presente", async () => {
+    // Caso real (INTC/SMCI ago/2026): minLow1y muito longe do preço atual
+    // pra um papel que subiu muito -- entryPullbackPrice deve prevalecer.
+    proximaSaidaDoScript = { ...CALC_OK, minLow1y: 19.48, entryPullbackPrice: 33.2 };
+
+    const res = await request(app)
+      .post("/api/entry-exit-study")
+      .send({ ticker: "SMCI", targetPrice: 45, targetDate: "2099-01-01" });
+
+    expect(res.status).toBe(201);
+    const alerts = await db.select().from(alertsTable).where(eq(alertsTable.userId, userId));
+    const entradaMin = alerts.find((a) => a.id === res.body.target.entryMinLowAlertId);
+    expect(Number(entradaMin?.thresholdPrice)).toBe(33.2);
+  });
+
   it("POST com falha da calculadora devolve 422 e não cria nada", async () => {
     proximaSaidaDoScript = { ticker: "SMCI", error: "sem histórico de preço" };
 

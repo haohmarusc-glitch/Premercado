@@ -28,8 +28,9 @@ Input (stdin JSON):
   {"studies": [{"ticker": "SMCI", "targetPrice": 45.0, "targetDate": "2026-09-15"}, ...]}
 Output (stdout JSON):
   {"results": [{ticker, targetPrice, targetDate, currentPrice, avgLow1y,
-                minLow1y, avgLow6m, minLow6m, volAnnual, betaSector,
-                earningsDate, daysUntilTarget, probReachTarget, news, error?}, ...]}
+                minLow1y, avgLow6m, minLow6m, entryPullbackPrice, volAnnual,
+                betaSector, earningsDate, daysUntilTarget, probReachTarget,
+                news, error?}, ...]}
 
 Busca em PARALELO (bounded_parallel_map, mesmo padrão de get_bounce_alerts.py)
 -- cada estudo é uma sequência de várias chamadas de rede (yfinance +
@@ -39,6 +40,7 @@ threads separadas em vez de sequencial.
 import sys
 import json
 import math
+from statistics import NormalDist
 
 from startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
 
@@ -72,6 +74,19 @@ BUDGET_S = 45
 # get_scenario_params.py.
 SIX_MONTHS_TRADING_DAYS = 126
 
+# Horizonte e probabilidade usados pro nível de entrada projetado
+# (_entry_pullback_price) -- motivado por papéis que subiram muito no
+# último ano (ex.: INTC/SMCI ago/2026): a mínima de 12 meses fica tão longe
+# do preço atual que o alerta baseado nela nunca dispara. Em vez de olhar
+# pra um piso histórico que pode nunca mais se repetir, projeta um nível
+# plausível de curto prazo a partir da VOL ATUAL do próprio papel -- mesma
+# matemática de probReachTarget (lognormal, drift zero), só invertida.
+# 30 dias / 30% é deliberadamente moderado: alto o bastante pra ter chance
+# real de disparar num pull-back normal, baixo o bastante pra não ser só o
+# preço atual (que seria p=50%, z=0, inútil como alerta).
+ENTRY_PULLBACK_DAYS = 30
+ENTRY_PULLBACK_PROB = 0.30
+
 
 def _phi(z: float) -> float:
     """CDF normal padrão -- mesma fórmula lognormal de scenario-math.ts::Phi,
@@ -88,6 +103,18 @@ def _low_stats(series: "pd.Series") -> tuple[float | None, float | None]:
     if clean.empty:
         return None, None
     return round(float(clean.mean()), 4), round(float(clean.min()), 4)
+
+
+def _entry_pullback_price(current_price: float, vol_annual: float | None) -> float | None:
+    """Preço em que há ENTRY_PULLBACK_PROB de chance do papel estar em
+    ENTRY_PULLBACK_DAYS, assumindo drift zero -- Phi^-1(p) em vez de Phi(z)
+    de probReachTarget. None quando não há vol pra projetar (mesmo caso que
+    já faz DEFAULT_VOL entrar em cena antes desta função ser chamada)."""
+    if not current_price or current_price <= 0 or not vol_annual or vol_annual <= 0:
+        return None
+    t_curto = ENTRY_PULLBACK_DAYS / 365
+    z = NormalDist().inv_cdf(ENTRY_PULLBACK_PROB)  # negativo, p < 0.5
+    return round(current_price * math.exp(z * vol_annual * math.sqrt(t_curto)), 4)
 
 
 def _study_for(spec: dict) -> dict:
@@ -129,6 +156,7 @@ def _study_for(spec: dict) -> dict:
     params = scenario_out.get("params", {}).get(ticker, {})
     vol_annual = params.get("volAnnual") or DEFAULT_VOL
     beta_sector = params.get("betaSector")
+    entry_pullback_price = _entry_pullback_price(current_price, vol_annual)
     # Momentum do benchmark setorial, do MESMO download que já trouxe
     # vol/beta (sem chamada de rede extra) -- alimenta a probabilidade
     # alternativa "com momentum" abaixo.
@@ -211,6 +239,7 @@ def _study_for(spec: dict) -> dict:
         "minLow1y": min_low_1y,
         "avgLow6m": avg_low_6m,
         "minLow6m": min_low_6m,
+        "entryPullbackPrice": entry_pullback_price,
         "volAnnual": vol_annual,
         "betaSector": beta_sector,
         "earningsDate": earnings_date,

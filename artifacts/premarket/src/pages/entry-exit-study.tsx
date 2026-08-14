@@ -279,7 +279,7 @@ function StudyDetails({ id }: { id: number }) {
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Prob. alvo</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide" title="Premissa: tendência dos últimos 90 pregões do setor continua">c/ momentum</th>
                 <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Média baixa 6m</th>
-                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Mín. 12m</th>
+                <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide" title="Nível projetado pela vol atual do papel, não histórico cru de mínima">Entrada projetada</th>
               </tr>
             </thead>
             <tbody>
@@ -295,7 +295,7 @@ function StudyDetails({ id }: { id: number }) {
                   </td>
                   <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtPct(h.probReachTargetMomentum)}</td>
                   <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.avgLow6m)}</td>
-                  <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.minLow1y)}</td>
+                  <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtUsd(h.entryPullbackPrice ?? h.minLow1y)}</td>
                 </tr>
               ))}
             </tbody>
@@ -609,9 +609,9 @@ export default function EntryExitStudyPage() {
                         {latest && (
                           <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-muted-foreground flex-wrap">
                             <span>Preço atual: <span className="text-foreground">{fmtUsd(latest.currentPrice)}</span></span>
-                            <span className="flex items-center gap-1">
+                            <span className="flex items-center gap-1" title="Nível de entrada projetado pela vol atual do papel (não histórico cru de mínima) -- mais realista pra papéis que subiram muito, onde a mínima de 12 meses fica longe demais do preço atual pra servir de gatilho">
                               <TrendingDown className="h-3 w-3" />
-                              entrada: média 6m {fmtUsd(latest.avgLow6m)} · mín. 12m {fmtUsd(latest.minLow1y)}
+                              entrada: média 6m {fmtUsd(latest.avgLow6m)} · projetada {fmtUsd(latest.entryPullbackPrice ?? latest.minLow1y)}
                             </span>
                             {latest.probReachTargetMomentum != null && (
                               <span
