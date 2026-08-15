@@ -268,6 +268,17 @@ function interpretBasketResult(basketResult: BasketResult): string[] {
   return notes;
 }
 
+// Pregões aproximados entre duas datas: ~252 dias úteis por ano civil. Serve só
+// pra avisar antes de rodar — quem decide de verdade é o Python, contando as
+// linhas que o yfinance devolveu (feriado, IPO recente, ticker novo).
+export function pregoesAproximados(start: string, end: string): number | null {
+  const a = new Date(start).getTime();
+  const b = new Date(end).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+  const dias = (b - a) / 86_400_000;
+  return Math.floor((dias * 252) / 365.25);
+}
+
 export default function BacktestPage() {
   const [mode, setMode] = useState<"ticker" | "basket">("ticker");
   const [ticker, setTicker] = useState("NVDA");
@@ -282,6 +293,9 @@ export default function BacktestPage() {
   const [rsiOversold, setRsiOversold] = useState("30");
   const [rsiOverbought, setRsiOverbought] = useState("70");
   const [scoreThreshold, setScoreThreshold] = useState("60");
+  const [treinoPregoes, setTreinoPregoes] = useState("252");
+  const [testePregoes, setTestePregoes] = useState("63");
+  const [objetivo, setObjetivo] = useState("sharpe");
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [basketResult, setBasketResult] = useState<BasketResult | null>(null);
   const [sensitivityResult, setSensitivityResult] = useState<SensitivityResult | null>(null);
@@ -310,6 +324,19 @@ export default function BacktestPage() {
       scoreThreshold: parseFloat(scoreThreshold),
     };
   }
+
+  // O backend faz o clamp final (60–1260 / 20–504); aqui só espelhamos os
+  // limites pra que o aviso na tela case com o que o Python vai contar.
+  const treinoNum = Math.min(1260, Math.max(60, parseInt(treinoPregoes, 10) || 252));
+  const testeNum = Math.min(504, Math.max(20, parseInt(testePregoes, 10) || 63));
+  const minimoPregoes = treinoNum + testeNum;
+  const pregoesNoPeriodo = pregoesAproximados(start, end);
+  const foldsEstimados = pregoesNoPeriodo === null
+    ? 0
+    : Math.max(0, Math.floor((pregoesNoPeriodo - treinoNum) / testeNum));
+  const avisoJanela = pregoesNoPeriodo !== null && pregoesNoPeriodo < minimoPregoes
+    ? `O período escolhido rende ~${pregoesNoPeriodo} pregões, abaixo dos ${minimoPregoes} que treino + teste exigem. Estenda a data de início ou reduza as janelas.`
+    : null;
 
   const run = useMutation({
     mutationFn: async () => {
@@ -362,7 +389,12 @@ export default function BacktestPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: ticker.toUpperCase(), start, end, strategy, ...riskParams() }),
+        body: JSON.stringify({
+          ticker: ticker.toUpperCase(), start, end, strategy, ...riskParams(),
+          treinoPregoes: parseInt(treinoPregoes, 10),
+          testePregoes: parseInt(testePregoes, 10),
+          objetivo,
+        }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
@@ -521,6 +553,44 @@ export default function BacktestPage() {
             </div>
           )}
         </div>
+        {mode === "ticker" && (
+          <div className="border-t border-border/40 pt-4 space-y-2">
+            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Janela do walk-forward</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase">Treino (pregões, 60–1260)</label>
+                <input
+                  type="number" step="21" min="60" max="1260" value={treinoPregoes}
+                  onChange={(e) => setTreinoPregoes(e.target.value)}
+                  className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase">Teste (pregões, 20–504)</label>
+                <input
+                  type="number" step="21" min="20" max="504" value={testePregoes}
+                  onChange={(e) => setTestePregoes(e.target.value)}
+                  className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase">Objetivo da otimização</label>
+                <select
+                  value={objetivo}
+                  onChange={(e) => setObjetivo(e.target.value)}
+                  className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="sharpe">Sharpe</option>
+                  <option value="totalReturn">Retorno total</option>
+                  <option value="cagr">CAGR</option>
+                </select>
+              </div>
+            </div>
+            <p className={`text-[11px] font-mono ${avisoJanela ? "text-yellow-400" : "text-muted-foreground"}`}>
+              {avisoJanela ?? `Precisa de ao menos ${minimoPregoes} pregões; o período escolhido tem ~${pregoesNoPeriodo} — dá para ~${foldsEstimados} janela(s) de teste. Só o walk-forward usa esses campos.`}
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => mode === "basket" ? runBasket.mutate() : run.mutate()}
