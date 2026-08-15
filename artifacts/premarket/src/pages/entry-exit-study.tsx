@@ -4,6 +4,7 @@ import {
   useCreateEntryExitStudy, useDeleteEntryExitStudy, useUpdateEntryExitStudy,
   useGetEntryExitStudy, getGetEntryExitStudyQueryKey,
   type EntryExitStudyHistory, type EntryExitStudyNewsItem,
+  type GetEntryExitStudyResponse,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -14,6 +15,7 @@ import {
   Plus, Trash2, Target, ChevronDown, ChevronUp, History, TrendingDown, Calendar,
   Pencil, Check, X, Newspaper, CheckCircle2, XCircle, ExternalLink, CalendarClock,
 } from "lucide-react";
+import { ExportarRelatorio, cabecalho, itens, tabela } from "@/components/exportar-relatorio";
 
 function fmtPct(n: number | null | undefined) {
   if (n == null) return "—";
@@ -309,8 +311,69 @@ function StudyDetails({ id }: { id: number }) {
         sentiment={snapAtual?.newsSentiment}
         sentimentReason={snapAtual?.newsSentimentReason}
       />
+
+      {data?.target && (
+        <div className="px-4 pb-4">
+          <ExportarRelatorio
+            titulo={`Estudo ${data.target.ticker} — alvo ${fmtUsd(data.target.targetPrice)}`}
+            mode="tela_entry_exit_study"
+            tickers={[data.target.ticker]}
+            construir={() => montarRelatorioEstudo(data)}
+          />
+        </div>
+      )}
     </div>
   );
+}
+
+// Relatório de UM estudo: a série diária inteira, não só o último cálculo. A
+// pergunta que o estudo responde é "a probabilidade está subindo ou caindo?",
+// e isso só aparece na sequência.
+function montarRelatorioEstudo(data: GetEntryExitStudyResponse): string {
+  const t = data.target;
+  const history = data.history ?? [];
+  const ultimo = history[history.length - 1];
+  const blocos: string[] = [cabecalho(
+    `Estudo de entrada/saída — ${t.ticker}`,
+    `Alvo ${fmtUsd(t.targetPrice)} até ${fmtDateBR(t.targetDate)}`,
+  )];
+
+  if (ultimo) {
+    blocos.push("## Cálculo mais recente\n\n" + itens([
+      ["Data do cálculo", fmtDateBR(ultimo.calcDate)],
+      ["Preço atual", fmtUsd(ultimo.currentPrice)],
+      ["Chance de bater o alvo", fmtPct(ultimo.probReachTarget)],
+      ["Chance c/ momentum do setor", fmtPct(ultimo.probReachTargetMomentum)],
+      ["Momentum do benchmark (a.a.)", ultimo.momentumAnnualPct != null ? `${ultimo.momentumAnnualPct.toFixed(1)}%` : "—"],
+      ["Entrada projetada pela vol", ultimo.entryPullbackPrice != null ? fmtUsd(ultimo.entryPullbackPrice) : "—"],
+      ["Média das mínimas 6m", ultimo.avgLow6m != null ? fmtUsd(ultimo.avgLow6m) : "—"],
+      ["Mínima 12m", ultimo.minLow1y != null ? fmtUsd(ultimo.minLow1y) : "—"],
+      ["Vol anualizada", ultimo.volAnnual != null ? `${(ultimo.volAnnual * 100).toFixed(1)}%` : "—"],
+      ["Beta setorial", ultimo.betaSector != null ? ultimo.betaSector.toFixed(2) : "—"],
+      ["Próximo balanço", ultimo.earningsDate ? fmtDateBR(ultimo.earningsDate) : "—"],
+    ]));
+  }
+
+  if (data.resolution) {
+    blocos.push("## Resolução\n\n" + itens([
+      ["Resultado", data.resolution.bateu ? "alvo atingido" : "alvo não atingido"],
+      ["Preço final", fmtUsd(data.resolution.finalPrice)],
+      ["Probabilidade que o modelo dava", fmtPct(data.resolution.probFinal)],
+    ]));
+  }
+
+  if (history.length) {
+    blocos.push("## Evolução diária\n\n" + tabela(
+      ["Data", "Preço", "Prob.", "Prob. c/ momentum", "Entrada projetada"],
+      history.map((h) => [
+        fmtDateBR(h.calcDate), fmtUsd(h.currentPrice),
+        fmtPct(h.probReachTarget), fmtPct(h.probReachTargetMomentum),
+        h.entryPullbackPrice != null ? fmtUsd(h.entryPullbackPrice) : "—",
+      ]),
+    ));
+  }
+
+  return blocos.join("\n\n");
 }
 
 export default function EntryExitStudyPage() {

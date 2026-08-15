@@ -7,6 +7,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus, X, Zap } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { ExportarRelatorio, montarRelatorioSetor } from "@/components/exportar-relatorio";
 
 const AI_TICKERS = ["NVDA", "ARM", "GOOGL", "META", "MSFT", "AMD", "PLTR", "SMCI"];
 
@@ -213,6 +214,14 @@ export default function SectorAI() {
           ))}
         </div>
       )}
+
+      <ExportarRelatorio
+        titulo="Setor Inteligência Artificial"
+        mode="tela_sector_ai"
+        tickers={AI_TICKERS}
+        pronto={sectorObs.length > 0}
+        construir={() => montarRelatorioSetor("Inteligência Artificial", AI_TICKERS, filtered)}
+      />
     </div>
   );
 }

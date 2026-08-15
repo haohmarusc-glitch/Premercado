@@ -12,6 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AGENDA } from "@/lib/eventos";
 import { ScenarioAlertSettings } from "@/components/scenario-alert-settings";
 import { ScenarioThermometer } from "@/components/scenario-thermometer";
+// `pct` fica de fora do import: esta tela já tem uma versão local com casas
+// decimais próprias, e importar a do componente a sombrearia em silêncio.
+import { ExportarRelatorio, cabecalho, itens, tabela } from "@/components/exportar-relatorio";
 
 /* ============================================================
 Painel de Cenários — Premercado
@@ -77,6 +80,63 @@ async function fetchSectorMomentum(): Promise<SectorMomentum | null> {
   const r = await fetch("/api/scenarios/sector-momentum", { credentials: "include" });
   if (!r.ok) throw new Error("Failed to load sector momentum");
   return r.json();
+}
+
+// O relatório registra os PARÂMETROS junto do resultado (data-alvo, movimento
+// de setor, multiplicador de vol, quais posições foram marcadas como vendidas).
+// Sem isso, dois relatórios do mesmo dia com números diferentes viram um
+// mistério — a diferença está na simulação, não no mercado.
+function montarRelatorioCenarios(opts: {
+  lista: Posicao[];
+  m: Metricas;
+  dataAlvoStr: string;
+  dias: number;
+  setor: number;
+  volMult: number;
+  vendidas: Record<string, boolean>;
+  valores: Record<string, number>;
+}): string {
+  const { lista, m, dataAlvoStr, dias, setor, volMult, vendidas, valores } = opts;
+  const travadas = lista.filter((p) => vendidas[p.t]).map((p) => p.t);
+  const blocos: string[] = [];
+
+  blocos.push(cabecalho(
+    "Painel de Cenários",
+    `Data-alvo ${dataAlvoStr} (${dias} dias) · movimento de setor ${pct(setor)} · vol ×${volMult.toFixed(2)}`,
+  ));
+
+  blocos.push("## Resultado\n\n" + itens([
+    ["Break-even (total investido)", usd(m.custoTotal)],
+    ["Valor de mercado hoje", usd(m.valorTotalHoje)],
+    ["Garantido em caixa", usd(m.caixa)],
+    ["Em risco", usd(m.risco)],
+    ["Chance de empatar", pct(m.pEmpate * 100, 0)],
+    [`Chance de cair mais de ${pct(m.gatilhoQueda, 0)}`, pct(m.pQueda * 100, 0)],
+    ["Cenário central", usd(m.central)],
+    ["Faixa provável (p05 – p95)", `${usd(m.p05)} – ${usd(m.p95)}`],
+    ["Mediana (p50)", usd(m.p50)],
+    ["Volatilidade da carteira no horizonte", pct(m.sigma * 100)],
+    ["Posições travadas em caixa", travadas.length ? travadas.join(", ") : "nenhuma"],
+  ]));
+
+  blocos.push("## Posições\n\n" + tabela(
+    ["Ticker", "Nome", "Valor simulado", "Custo", "Vol anual", "Beta", "Próx. balanço", "Travada"],
+    lista.map((p) => [
+      p.t, p.nome,
+      usd(valores[p.t] ?? p.value), usd(p.cost),
+      pct(p.vol * 100), p.beta.toFixed(2),
+      p.evento,
+      vendidas[p.t] ? "sim" : "não",
+    ]),
+  ));
+
+  blocos.push(
+    "## Limitações\n\n" +
+    "- Modelo lognormal com correlação fixa entre posições; em stress, as correlações reais sobem acima do medido.\n" +
+    "- Ferramenta de dimensionamento de risco — não é recomendação de compra ou venda.",
+  );
+
+  return blocos.join("\n\n");
 }
 
 export default function PainelCenarios() {
@@ -477,6 +537,18 @@ export default function PainelCenarios() {
           ))}
         </div>
       )}
+
+      <div className="pc-card" style={{ marginTop: 12 }}>
+        <ExportarRelatorio
+          titulo="Painel de Cenários"
+          mode="tela_cenarios"
+          tickers={lista.map((p) => p.t)}
+          pronto={lista.length > 0}
+          construir={() => (lista.length
+            ? montarRelatorioCenarios({ lista, m, dataAlvoStr, dias, setor, volMult, vendidas, valores })
+            : null)}
+        />
+      </div>
 
       <p style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.55, marginTop: 12 }}>
         Modelo lognormal com β sobre o setor e correlação fixa, com salto de volatilidade (baseado na

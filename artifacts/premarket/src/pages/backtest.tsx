@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { FlaskConical, Layers } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Badge } from "@/components/ui/badge";
+import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 
 interface Trade {
   entryDate: string;
@@ -338,6 +339,90 @@ export default function BacktestPage() {
     ? `O período escolhido rende ~${pregoesNoPeriodo} pregões, abaixo dos ${minimoPregoes} que treino + teste exigem. Estenda a data de início ou reduza as janelas.`
     : null;
 
+  // Monta o relatório com o que estiver na tela — backtest, sensibilidade e
+  // walk-forward são independentes, e é comum rodar só um deles. A leitura
+  // interpretada (interpretTickerResult) vai junto: sem ela o relatório é uma
+  // planilha de números sem a conclusão que a tela já sabe tirar.
+  function montarRelatorioBacktest(): string | null {
+    const blocos: string[] = [];
+    const alvo = mode === "basket" ? "cesta" : ticker.toUpperCase();
+    blocos.push(cabecalho(
+      `Backtest — ${alvo}`,
+      `Estratégia ${strategy.toUpperCase()} · período ${start} a ${end}`,
+    ));
+
+    if (mode === "ticker" && result && !result.error) {
+      blocos.push("## Resultado\n\n" + itens([
+        ["Retorno total", pct(result.totalReturn)],
+        ["Buy & hold", pct(result.buyAndHoldReturn)],
+        ["Diferença", `${(result.totalReturn - result.buyAndHoldReturn).toFixed(2)}pp`],
+        ["CAGR", pct(result.cagr)],
+        ["Sharpe", result.sharpe.toFixed(2)],
+        ["Drawdown máximo", pct(result.maxDrawdown)],
+        ["Operações", result.totalTrades],
+        ["Taxa de acerto", pct(result.winRate * 100, 1)],
+      ]));
+      if (result.trades.length) {
+        blocos.push("### Operações\n\n" + tabela(
+          ["Entrada", "Saída", "Preço entrada", "Preço saída", "P&L", "Motivo"],
+          result.trades.map((t) => [
+            t.entryDate, t.exitDate,
+            `$${t.entryPrice.toFixed(2)}`, `$${t.exitPrice.toFixed(2)}`,
+            pct(t.pnl),
+            (EXIT_REASON_LABEL[t.exitReason ?? ""] ?? "—") + (t.closedOpen ? " (aberta)" : ""),
+          ]),
+        ));
+      }
+      blocos.push("## Leitura\n\n" + interpretTickerResult(result).map((n) => `- ${n}`).join("\n"));
+    }
+
+    if (mode === "basket" && basketResult) {
+      blocos.push("## Cesta\n\n" + tabela(
+        ["Ticker", "Retorno", "Buy & hold", "Sharpe", "Operações"],
+        basketResult.results.filter((r) => !r.error).map((r) => [
+          r.ticker, pct(r.totalReturn), pct(r.buyAndHoldReturn), r.sharpe.toFixed(2), r.totalTrades,
+        ]),
+      ));
+      blocos.push("## Leitura\n\n" + interpretBasketResult(basketResult).map((n) => `- ${n}`).join("\n"));
+    }
+
+    if (sensitivityResult && !sensitivityResult.error) {
+      blocos.push("## Sensibilidade\n\n" + tabela(
+        ["Parâmetro", "Valor", "Retorno", "Sharpe", "Drawdown", "Operações"],
+        sensitivityResult.variations.map((v) => [
+          v.param ?? "—", v.value ?? "—", pct(v.totalReturn), v.sharpe.toFixed(2),
+          pct(v.maxDrawdown), v.totalTrades,
+        ]),
+      ));
+    }
+
+    if (walkForwardResult && !walkForwardResult.error) {
+      const r = walkForwardResult.resumo;
+      blocos.push("## Walk-forward (out-of-sample)\n\n" + itens([
+        ["Janelas", r.nFolds],
+        ["Treino / teste (pregões)", `${walkForwardResult.treinoPregoes} / ${walkForwardResult.testePregoes}`],
+        ["Objetivo", walkForwardResult.objetivo],
+        ["Retorno médio in-sample", fmtPctNum(r.retornoMedioInSample)],
+        ["Retorno médio out-of-sample", fmtPctNum(r.retornoMedioOutOfSample)],
+        ["Degradação", fmtPctNum(r.degradacao)],
+        ["Buy & hold out-of-sample", fmtPctNum(r.buyAndHoldMedioOutOfSample)],
+        ["Janelas positivas", `${r.foldsPositivos ?? 0} de ${r.nFolds}`],
+        ["Bateram o buy & hold", `${r.foldsQueVenceramBuyHold ?? 0} de ${r.nFolds}`],
+        ["Parâmetro estável", r.parametroEstavel ? "sim" : `não (${r.parametrosDistintosEscolhidos} conjuntos venceram)`],
+      ]));
+    }
+
+    // Só o cabeçalho significa que nenhuma análise rodou ainda.
+    return blocos.length > 1 ? blocos.join("\n\n") : null;
+  }
+
+  const temResultadoParaExportar = Boolean(
+    (mode === "ticker" && result && !result.error) ||
+    (mode === "basket" && basketResult) ||
+    (sensitivityResult && !sensitivityResult.error) ||
+    (walkForwardResult && !walkForwardResult.error),
+  );
+
   const run = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/backtest", {
@@ -648,6 +733,16 @@ export default function BacktestPage() {
         )}
         {mode === "ticker" && runSensitivity.isError && (
           <p className="text-sm text-red-400 font-mono">{String(runSensitivity.error)}</p>
+        )}
+        {temResultadoParaExportar && (
+          <div className="border-t border-border/40 pt-4">
+            <ExportarRelatorio
+              titulo={`Backtest ${mode === "basket" ? "cesta" : ticker.toUpperCase()}`}
+              mode="tela_backtest"
+              tickers={mode === "basket" ? [] : [ticker.toUpperCase()]}
+              construir={montarRelatorioBacktest}
+            />
+          </div>
         )}
       </div>
 
