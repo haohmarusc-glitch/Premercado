@@ -72,6 +72,50 @@ interface SensitivityResult {
   error?: string;
 }
 
+// Percentual que pode vir null (janela sem resultado) -- "—" em vez de
+// "0.00%", que seria lido como "deu zero" quando o caso é "não há número".
+function fmtPctNum(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+interface WalkForwardFold {
+  treinoInicio: string;
+  treinoFim: string;
+  testeInicio: string;
+  testeFim: string;
+  melhorParams?: Record<string, number>;
+  inSample?: SensitivityRun;
+  outOfSample?: SensitivityRun & { error?: string };
+  semSinalNoTreino?: boolean;
+}
+
+interface WalkForwardResult {
+  ticker: string;
+  strategy: string;
+  objetivo: string;
+  treinoPregoes: number;
+  testePregoes: number;
+  combinacoesTestadas: number;
+  folds: WalkForwardFold[];
+  resumo: {
+    nFolds: number;
+    aviso?: string;
+    retornoMedioInSample?: number | null;
+    retornoMedioOutOfSample?: number | null;
+    degradacao?: number | null;
+    sharpeMedioOutOfSample?: number | null;
+    maxDrawdownMedioOutOfSample?: number | null;
+    buyAndHoldMedioOutOfSample?: number | null;
+    foldsPositivos?: number;
+    foldsQueVenceramBuyHold?: number;
+    parametrosDistintosEscolhidos?: number;
+    parametroEstavel?: boolean;
+    foldsSemSinalNoTreino?: number;
+  };
+  error?: string;
+}
+
 const SENSITIVITY_PARAM_LABEL: Record<string, string> = {
   rsiOversold: "RSI Sobrevendido",
   rsiOverbought: "RSI Sobrecomprado",
@@ -241,6 +285,7 @@ export default function BacktestPage() {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [basketResult, setBasketResult] = useState<BasketResult | null>(null);
   const [sensitivityResult, setSensitivityResult] = useState<SensitivityResult | null>(null);
+  const [walkForwardResult, setWalkForwardResult] = useState<WalkForwardResult | null>(null);
 
   function switchToBasket() {
     setMode("basket");
@@ -309,6 +354,21 @@ export default function BacktestPage() {
       return data as SensitivityResult;
     },
     onSuccess: (data) => setSensitivityResult(data),
+  });
+
+  const runWalkForward = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/backtest/walk-forward", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: ticker.toUpperCase(), start, end, strategy, ...riskParams() }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as WalkForwardResult;
+    },
+    onSuccess: (data) => setWalkForwardResult(data),
   });
 
   return (
@@ -489,6 +549,23 @@ export default function BacktestPage() {
                 </>
               ) : (
                 "Análise de Sensibilidade"
+              )}
+            </button>
+          )}
+          {mode === "ticker" && (
+            <button
+              onClick={() => runWalkForward.mutate()}
+              disabled={runWalkForward.isPending || !ticker.trim()}
+              title="Escolhe o parâmetro numa janela de treino e mede na janela seguinte, que o otimizador não viu — diferente da sensibilidade, que varia parâmetro sobre o mesmo período em que mede"
+              className="px-6 py-2 border border-border rounded font-mono text-sm font-bold text-foreground disabled:opacity-50 flex items-center gap-2 hover:border-primary/50"
+            >
+              {runWalkForward.isPending ? (
+                <>
+                  <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-border border-t-foreground rounded-full" />
+                  Validando...
+                </>
+              ) : (
+                "Walk-Forward (out-of-sample)"
               )}
             </button>
           )}
@@ -795,6 +872,127 @@ export default function BacktestPage() {
       )}
 
       {/* Sensitivity analysis */}
+      {mode === "ticker" && walkForwardResult && (
+        walkForwardResult.error ? (
+          <div className="border border-red-500/40 rounded-lg p-4 font-mono text-sm text-red-400">
+            {walkForwardResult.error}
+          </div>
+        ) : (
+          <div className="border border-border rounded-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap font-mono text-sm">
+              <span className="font-bold text-foreground">
+                Walk-forward — {walkForwardResult.ticker} · {walkForwardResult.strategy.toUpperCase()}
+              </span>
+              <span className="text-muted-foreground text-xs">
+                treino {walkForwardResult.treinoPregoes} pregões → teste {walkForwardResult.testePregoes} ·
+                {" "}{walkForwardResult.combinacoesTestadas} combinações · objetivo {walkForwardResult.objetivo}
+              </span>
+            </div>
+
+            {walkForwardResult.resumo.aviso ? (
+              <div className="px-4 py-4 font-mono text-sm text-yellow-400">
+                {walkForwardResult.resumo.aviso}
+              </div>
+            ) : (
+              <>
+                {/* A degradação é o número central: quanto do backtest tradicional
+                    era ajuste ao próprio período de avaliação. */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 font-mono">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase">In-sample (treino)</div>
+                    <div className="text-lg font-bold text-muted-foreground">
+                      {fmtPctNum(walkForwardResult.resumo.retornoMedioInSample)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase" title="O número honesto: medido em janela que o otimizador nunca viu">
+                      Out-of-sample
+                    </div>
+                    <div className={`text-lg font-bold ${(walkForwardResult.resumo.retornoMedioOutOfSample ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {fmtPctNum(walkForwardResult.resumo.retornoMedioOutOfSample)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase" title="In-sample menos out-of-sample: o quanto do resultado era ajuste de ruído">
+                      Degradação
+                    </div>
+                    <div className={`text-lg font-bold ${(walkForwardResult.resumo.degradacao ?? 0) > 5 ? "text-red-400" : "text-yellow-400"}`}>
+                      {fmtPctNum(walkForwardResult.resumo.degradacao)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground uppercase" title="Buy & hold nas MESMAS janelas de teste">
+                      Buy &amp; hold (OOS)
+                    </div>
+                    <div className="text-lg font-bold text-muted-foreground">
+                      {fmtPctNum(walkForwardResult.resumo.buyAndHoldMedioOutOfSample)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-4 pb-4 font-mono text-xs text-muted-foreground space-y-1">
+                  <div>
+                    › {walkForwardResult.resumo.foldsQueVenceramBuyHold ?? 0} de {walkForwardResult.resumo.nFolds} janelas
+                    bateram o buy &amp; hold · {walkForwardResult.resumo.foldsPositivos ?? 0} tiveram retorno positivo
+                  </div>
+                  <div className={walkForwardResult.resumo.parametroEstavel ? "" : "text-yellow-400"}>
+                    › {walkForwardResult.resumo.parametroEstavel
+                        ? "O mesmo parâmetro venceu em todas as janelas — sinal de regularidade, não de ruído."
+                        : `${walkForwardResult.resumo.parametrosDistintosEscolhidos} conjuntos de parâmetro diferentes venceram entre as janelas — quando o "melhor" muda a cada período, a busca está perseguindo ruído.`}
+                  </div>
+                  {(walkForwardResult.resumo.foldsSemSinalNoTreino ?? 0) > 0 && (
+                    <div className="text-yellow-400">
+                      › {walkForwardResult.resumo.foldsSemSinalNoTreino} janela(s) sem nenhum negócio no treino — sem base para escolher parâmetro, ficaram de fora.
+                    </div>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto border-t border-border">
+                  <table className="w-full min-w-[720px] font-mono text-sm">
+                    <thead className="bg-secondary/20">
+                      <tr>
+                        <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Treino</th>
+                        <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Parâmetro escolhido</th>
+                        <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Teste (não visto)</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase">In-sample</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase">Out-of-sample</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase">B&amp;H</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {walkForwardResult.folds.map((f, i) => (
+                        <tr key={`${f.testeInicio}-${i}`} className={i % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
+                          <td className="px-4 py-2 text-muted-foreground whitespace-nowrap text-xs">
+                            {f.treinoInicio} → {f.treinoFim}
+                          </td>
+                          <td className="px-4 py-2 text-foreground text-xs">
+                            {f.semSinalNoTreino
+                              ? <span className="text-yellow-400">sem negócio no treino</span>
+                              : Object.entries(f.melhorParams ?? {}).map(([k, v]) => `${k}=${v}`).join(" · ") || "—"}
+                          </td>
+                          <td className="px-4 py-2 text-muted-foreground whitespace-nowrap text-xs">
+                            {f.testeInicio} → {f.testeFim}
+                          </td>
+                          <td className="px-4 py-2 text-right text-muted-foreground">
+                            {fmtPctNum(f.inSample?.totalReturn)}
+                          </td>
+                          <td className={`px-4 py-2 text-right font-bold ${(f.outOfSample?.totalReturn ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {f.outOfSample?.error ? "—" : fmtPctNum(f.outOfSample?.totalReturn)}
+                          </td>
+                          <td className="px-4 py-2 text-right text-muted-foreground">
+                            {fmtPctNum(f.outOfSample?.buyAndHoldReturn)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )
+      )}
+
       {mode === "ticker" && sensitivityResult && (
         sensitivityResult.error ? (
           <div className="p-6 border border-red-500/30 rounded-lg bg-red-500/5 font-mono text-red-400 text-sm">
