@@ -11,17 +11,21 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_atualiza
 """
 import importlib.util
 import os
-import sys
 
 import numpy as np
 import pandas as pd
 import pytest
 
-_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
-if _AGENT_DIR not in sys.path:
-    sys.path.insert(0, _AGENT_DIR)
+# Import de PACOTE (conftest.py já põe src/ no sys.path). NÃO inserir
+# src/agent/ no path: existe um agent.py DENTRO de agent/, então com o
+# diretório no path o nome `agent` passa a resolver pro módulo em vez do
+# pacote -- e qualquer teste que faça `from agent.x import ...` depois deste
+# quebra. Isso já passou despercebido porque a suíte inteira só falhava em
+# certas ordens de coleta (outro arquivo importava agent.* antes e deixava o
+# pacote certo em sys.modules).
+from agent import atualizar_correlacoes as ac
 
-import atualizar_correlacoes as ac  # noqa: E402
+_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
 
 
 def _fechamentos(series: dict[str, list[float]]) -> pd.DataFrame:

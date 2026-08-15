@@ -59,11 +59,13 @@ import yfinance as yf
 # rodam tanto standalone quanto como módulo do pacote.
 try:
     from brt import today_brt
-    from radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
+                               HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
     from parametros_macro import INDICADORES_GLOBAIS
 except ImportError:
     from agent.brt import today_brt
-    from agent.radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from agent.radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
+                                     HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
     from agent.parametros_macro import INDICADORES_GLOBAIS
 
 # Mínimo de pregões em comum pra um par valer. ~3 meses: abaixo disso a
@@ -208,6 +210,13 @@ def gravar_overlay(pares: dict[tuple[str, str], float], meses: int = MESES_DEFAU
 
 
 def resumo_mudancas(pares: dict[tuple[str, str], float], corte: float = 0.15) -> dict:
+    # NOTA sobre a base de comparação: CORRELACOES já vem com o overlay
+    # anterior aplicado (radar_ia_2026 faz isso no import). Então na PRIMEIRA
+    # execução isto compara contra o snapshot embutido de 14/08, e da segunda
+    # em diante contra a MEDIÇÃO ANTERIOR -- que é o que interessa num job
+    # semanal ("o que mudou desde a semana passada?"). O texto do relatório
+    # reflete essa diferença em vez de dizer sempre "vs snapshot", que
+    # passaria a ser mentira depois do primeiro overlay.
     """Compara com o snapshot embutido: pares novos, pares que sumiram e
     mudanças relevantes (regime de correlação pode ter virado)."""
     base = {tuple(sorted(k)): v for k, v in CORRELACOES.items()}
@@ -226,19 +235,26 @@ def resumo_mudancas(pares: dict[tuple[str, str], float], corte: float = 0.15) ->
 
 
 def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
-    print(f"\npares calculados: {len(pares)} | novos vs snapshot: {len(res['novos'])} "
-          f"| do snapshot sem dado agora: {len(res['ausentes'])}")
+    # A base de comparação é o que está CARREGADO agora: o snapshot embutido
+    # na primeira execução, e a medição anterior depois que existe overlay
+    # (ver nota em resumo_mudancas). Nomear isso evita a leitura errada de
+    # "estável desde 14/08" quando o que se mediu foi "estável desde a
+    # semana passada".
+    base = (f"a medição de {CORRELACOES_ATUALIZADO_EM}" if CORRELACOES_ATUALIZADO_EM
+            else f"o snapshot de {HOJE_SNAPSHOT.isoformat()}")
+    print(f"\npares calculados: {len(pares)} | comparando com {base}")
+    print(f"novos: {len(res['novos'])} | sem dado agora: {len(res['ausentes'])}")
     if res["cruzaram_070"]:
         print("\nCRUZARAM o limiar de 0.70 (muda dedup/contágio/concentração):")
         for (a, b), antigo, novo in res["cruzaram_070"]:
             direcao = "virou MESMO TRADE" if novo >= 0.70 else "deixou de ser mesmo trade"
             print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}  ({direcao})")
     if res["grandes"]:
-        print(f"\nmudanças >= 0.15 vs snapshot 14/08 ({len(res['grandes'])} pares, top 15):")
+        print(f"\nmudanças >= 0.15 ({len(res['grandes'])} pares, top 15):")
         for (a, b), antigo, novo in res["grandes"][:15]:
             print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}")
     else:
-        print("\nnenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
+        print("nenhuma mudança >= 0.15 -- regime estável.")
 
 
 def divergencias_de_vol(vols: dict[str, float], fator: float = 1.5) -> list[dict]:
