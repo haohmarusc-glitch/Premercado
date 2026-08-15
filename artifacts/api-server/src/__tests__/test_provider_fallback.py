@@ -1,5 +1,5 @@
 """
-Testes de provider_health.py + market_data_provider.py + stooq_provider.py.
+Testes de provider_health.py + market_data_provider.py + alpha_vantage_provider.py.
 
 Convenção do repo: pytest com monkeypatch em vez de mock de biblioteca, mesmo
 padrão simples do restante da suíte. Nenhum teste toca a rede.
@@ -10,6 +10,7 @@ do pacote no path faz o nome `agent` resolver para o módulo solto, quebrando
 `from agent.x import y` em qualquer teste coletado depois. O conftest.py já
 põe `src/` no path.
 """
+import datetime
 import time
 
 import pandas as pd
@@ -64,11 +65,11 @@ def test_breaker_closes_after_cooldown():
 
 
 def test_breaker_is_per_provider():
-    """Yahoo fora do ar não pode desviar tráfego do Stooq junto."""
+    """Yahoo fora do ar não pode abrir o disjuntor da fonte externa junto."""
     for _ in range(provider_health.FAILURE_THRESHOLD):
         provider_health.record_failure("yfinance")
     assert provider_health.is_open("yfinance") is True
-    assert provider_health.is_open("stooq") is False
+    assert provider_health.is_open("alphavantage") is False
 
 
 def test_status_reports_open_state():
@@ -82,10 +83,10 @@ def test_status_reports_open_state():
 
 def test_reset_clears_one_provider():
     provider_health.record_failure("yfinance")
-    provider_health.record_failure("stooq")
+    provider_health.record_failure("alphavantage")
     provider_health.reset("yfinance")
     assert "yfinance" not in provider_health.status()
-    assert "stooq" in provider_health.status()
+    assert "alphavantage" in provider_health.status()
 
 
 def test_health_file_unreadable_fails_open(monkeypatch, tmp_path):
@@ -117,8 +118,8 @@ def test_history_prefers_yfinance(monkeypatch):
     monkeypatch.setattr(mdp, "_yf_history_with_retry", lambda *a, **k: _fake_df([10.0, 11.0]))
     monkeypatch.setattr(mdp.hist_cache, "guardar", lambda *a, **k: None)
     monkeypatch.setattr(
-        mdp.stooq_provider, "fetch_daily_history",
-        lambda *a, **k: pytest.fail("não deveria chamar Stooq com yfinance vivo"),
+        mdp.alpha_vantage_provider, "fetch_daily_history",
+        lambda *a, **k: pytest.fail("não deveria chamar Alpha Vantage com yfinance vivo"),
     )
 
     result = mdp.get_daily_history("NVDA", period="3mo")
@@ -141,7 +142,7 @@ def test_history_uses_cache_within_ttl_before_anything_else(monkeypatch, _yf_mor
     assert result.is_stale is False
 
 
-def test_history_uses_stale_cache_before_stooq(monkeypatch, _yf_morto):
+def test_history_uses_stale_cache_before_fonte_externa(monkeypatch, _yf_morto):
     monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
     monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: _fake_df([50.0, 51.0]))
     monkeypatch.setattr(mdp, "_conferir_cache_vencido", lambda *a, **k: None)
@@ -153,25 +154,25 @@ def test_history_uses_stale_cache_before_stooq(monkeypatch, _yf_morto):
     assert result.is_stale is True
 
 
-def test_history_falls_back_to_stooq_when_yfinance_and_cache_fail(monkeypatch, _yf_morto):
+def test_history_falls_back_to_alpha_vantage_when_yfinance_and_cache_fail(monkeypatch, _yf_morto):
     monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
     monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: None)
     monkeypatch.setattr(
-        mdp.stooq_provider, "fetch_daily_history",
+        mdp.alpha_vantage_provider, "fetch_daily_history",
         lambda ticker, period: _fake_df([100.0, 101.0, 102.0]),
     )
 
     result = mdp.get_daily_history("NVDA", period="3mo")
 
     assert result.ok
-    assert result.source == "stooq"
-    assert any("Stooq" in w for w in result.warnings)
+    assert result.source == "alphavantage"
+    assert any("Alpha Vantage" in w for w in result.warnings)
 
 
 def test_history_returns_none_source_when_everything_fails(monkeypatch, _yf_morto):
     monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
     monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: None)
-    monkeypatch.setattr(mdp.stooq_provider, "fetch_daily_history", lambda *a, **k: None)
+    monkeypatch.setattr(mdp.alpha_vantage_provider, "fetch_daily_history", lambda *a, **k: None)
 
     result = mdp.get_daily_history("NVDA", period="3mo")
 
@@ -217,14 +218,14 @@ def test_cross_check_silent_without_reference():
     assert warnings == []
 
 
-def test_stale_cache_is_cross_checked_against_stooq(monkeypatch, _yf_morto):
+def test_stale_cache_is_cross_checked_against_fonte_externa(monkeypatch, _yf_morto):
     """O caso que o plano original deixava passar: a comparação precisa rodar
     no ramo do cache vencido, que é onde as duas pontas existem. No ramo do
-    Stooq o cache é sempre None por construção, e o cross-check nunca rodava."""
+    Alpha Vantage o cache é sempre None por construção, e o cross-check nunca rodava."""
     monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
     monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: _fake_df([100.0]))
     monkeypatch.setattr(
-        mdp.stooq_provider, "fetch_daily_history", lambda *a, **k: _fake_df([120.0]),
+        mdp.alpha_vantage_provider, "fetch_daily_history", lambda *a, **k: _fake_df([120.0]),
     )
 
     result = mdp.get_daily_history("NVDA", period="3mo")
@@ -234,11 +235,11 @@ def test_stale_cache_is_cross_checked_against_stooq(monkeypatch, _yf_morto):
 
 
 def test_stale_cache_served_even_if_cross_check_source_fails(monkeypatch, _yf_morto):
-    """Stooq fora do ar significa "sem segunda opinião", não "sem dado"."""
+    """Alpha Vantage fora do ar significa "sem segunda opinião", não "sem dado"."""
     monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
     monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: _fake_df([100.0]))
     monkeypatch.setattr(
-        mdp.stooq_provider, "fetch_daily_history",
+        mdp.alpha_vantage_provider, "fetch_daily_history",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rede fora")),
     )
 
@@ -251,18 +252,18 @@ def test_stale_cache_served_even_if_cross_check_source_fails(monkeypatch, _yf_mo
 
 # ── cotação ─────────────────────────────────────────────────────────────────
 
-def test_quote_falls_back_to_stooq_marked_as_delayed(monkeypatch):
+def test_quote_falls_back_to_alpha_vantage_marked_as_delayed(monkeypatch):
     for _ in range(provider_health.FAILURE_THRESHOLD):
         provider_health.record_failure("yfinance")
     monkeypatch.setattr(
-        mdp.stooq_provider, "fetch_last_close",
+        mdp.alpha_vantage_provider, "fetch_last_close",
         lambda *a, **k: {"price": 10.0, "asOf": "2026-08-14", "previousClose": 9.0,
                          "change": 1.0, "changePct": 11.1, "volume": 1000},
     )
 
     result = mdp.get_quote("NVDA")
 
-    assert result.source == "stooq_eod"
+    assert result.source == "alphavantage_eod"
     # is_delayed é o que impede a UI de mostrar fechamento de ontem como
     # preço ao vivo — o ponto inteiro do fallback de cotação.
     assert result.is_delayed is True
@@ -272,7 +273,7 @@ def test_quote_falls_back_to_stooq_marked_as_delayed(monkeypatch):
 def test_quote_returns_none_when_all_sources_fail(monkeypatch):
     for _ in range(provider_health.FAILURE_THRESHOLD):
         provider_health.record_failure("yfinance")
-    monkeypatch.setattr(mdp.stooq_provider, "fetch_last_close", lambda *a, **k: None)
+    monkeypatch.setattr(mdp.alpha_vantage_provider, "fetch_last_close", lambda *a, **k: None)
 
     result = mdp.get_quote("NVDA")
 
@@ -280,10 +281,141 @@ def test_quote_returns_none_when_all_sources_fail(monkeypatch):
     assert result.source == "none"
 
 
-# ── símbolos do Stooq ───────────────────────────────────────────────────────
 
-def test_stooq_symbol_normalization():
-    from agent.stooq_provider import _stooq_symbol
-    assert _stooq_symbol("NVDA") == "nvda.us"
-    assert _stooq_symbol("BRK.B") == "brk-b.us"
-    assert _stooq_symbol("  msft ") == "msft.us"
+
+# ── orçamento diário compartilhado com o feed de notícias ───────────────────
+
+def test_orcamento_autoriza_ate_o_limite():
+    assert all(provider_health.consumir_orcamento_diario("alphavantage", 3) for _ in range(3))
+    assert provider_health.consumir_orcamento_diario("alphavantage", 3) is False
+
+
+def test_orcamento_conta_o_consumo():
+    provider_health.consumir_orcamento_diario("alphavantage", 5)
+    provider_health.consumir_orcamento_diario("alphavantage", 5)
+    assert provider_health.orcamento_usado("alphavantage") == 2
+
+
+def test_orcamento_zera_na_virada_do_dia():
+    for _ in range(3):
+        provider_health.consumir_orcamento_diario("alphavantage", 3, hoje="2026-08-15")
+    assert provider_health.consumir_orcamento_diario("alphavantage", 3, hoje="2026-08-15") is False
+    # Dia novo, cota nova.
+    assert provider_health.consumir_orcamento_diario("alphavantage", 3, hoje="2026-08-16") is True
+
+
+def test_orcamento_e_por_provedor():
+    provider_health.consumir_orcamento_diario("alphavantage", 1)
+    assert provider_health.consumir_orcamento_diario("alphavantage", 1) is False
+    assert provider_health.consumir_orcamento_diario("outro", 1) is True
+
+
+def test_orcamento_nao_polui_o_status_dos_provedores():
+    """A contagem vive sob uma chave própria (`_orcamento:...`) — se vazasse
+    para o status, um provedor saudável apareceria com falhas acumuladas."""
+    provider_health.consumir_orcamento_diario("alphavantage", 5)
+    assert "alphavantage" not in provider_health.status()
+
+
+def test_orcamento_falha_aberta_autoriza(monkeypatch):
+    """Contador quebrado não pode custar o dado: perder histórico por causa de
+    um arquivo ilegível seria pior que estourar a cota."""
+    monkeypatch.setattr(provider_health, "_load", lambda: (_ for _ in ()).throw(OSError("disco")))
+    assert provider_health.consumir_orcamento_diario("alphavantage", 1) is True
+
+
+# ── Alpha Vantage: 200 OK que não é dado ────────────────────────────────────
+
+class _RespostaFalsa:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _av(monkeypatch, payload, *, chave="fake"):
+    from agent import alpha_vantage_provider as av
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", chave)
+    monkeypatch.setattr(av.SESSION, "get", lambda *a, **k: _RespostaFalsa(payload))
+    return av
+
+
+# Datas RELATIVAS a hoje, não fixas: `fetch_daily_history` corta por período
+# (hoje - N dias), então uma série com data cravada passaria agora e começaria
+# a devolver vazio sozinha quando o calendário andasse — o mesmo tipo de bomba
+# de data congelada que já mordeu o radar.
+from agent.brt import today_brt  # noqa: E402
+
+_ONTEM = (today_brt() - datetime.timedelta(days=1)).isoformat()
+_ANTEONTEM = (today_brt() - datetime.timedelta(days=2)).isoformat()
+
+_SERIE_OK = {
+    "Time Series (Daily)": {
+        _ONTEM: {"1. open": "100.0", "2. high": "102.0", "3. low": "99.0",
+                 "4. close": "101.0", "5. volume": "1000000"},
+        _ANTEONTEM: {"1. open": "98.0", "2. high": "100.0", "3. low": "97.0",
+                     "4. close": "99.0", "5. volume": "900000"},
+    }
+}
+
+
+def test_av_parseia_serie_diaria(monkeypatch):
+    av = _av(monkeypatch, _SERIE_OK)
+    df = av.fetch_daily_history("AAPL", period="1y")
+    assert df is not None
+    assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    # Ordem cronológica: o JSON da API vem do mais recente pro mais antigo.
+    assert df.index[0] < df.index[-1]
+    assert float(df["Close"].iloc[-1]) == 101.0
+
+
+def test_av_converte_numeros_e_nao_deixa_string(monkeypatch):
+    av = _av(monkeypatch, _SERIE_OK)
+    df = av.fetch_daily_history("AAPL", period="1y")
+    assert pd.api.types.is_numeric_dtype(df["Close"])
+
+
+@pytest.mark.parametrize("aviso", [
+    {"Note": "Thank you for using Alpha Vantage! Our standard API rate limit is..."},
+    {"Information": "premium endpoint"},
+    {"Error Message": "Invalid API call"},
+    {},
+])
+def test_av_trata_200_sem_serie_como_falha(monkeypatch, aviso):
+    """A Alpha Vantage responde 200 com JSON de aviso quando a cota estoura ou
+    a chave é inválida. Devolver DataFrame vazio aqui seria confundir "estamos
+    cegos" com "o mercado não abriu"."""
+    av = _av(monkeypatch, aviso)
+    assert av.fetch_daily_history("AAPL", period="1y") is None
+
+
+def test_av_sem_chave_nao_chama_a_rede(monkeypatch):
+    from agent import alpha_vantage_provider as av
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "")
+    monkeypatch.setattr(
+        av.SESSION, "get",
+        lambda *a, **k: pytest.fail("sem chave não deveria tocar a rede"),
+    )
+    assert av.fetch_daily_history("AAPL") is None
+
+
+def test_av_respeita_o_orcamento(monkeypatch):
+    av = _av(monkeypatch, _SERIE_OK)
+    monkeypatch.setattr(av, "_ORCAMENTO_DIARIO", 1)
+    assert av.fetch_daily_history("AAPL", period="1y") is not None
+    # Segunda chamada no mesmo dia: cota esgotada, sem ir à rede.
+    assert av.fetch_daily_history("AAPL", period="1y") is None
+
+
+def test_av_last_close_calcula_variacao(monkeypatch):
+    av = _av(monkeypatch, _SERIE_OK)
+    q = av.fetch_last_close("AAPL")
+    assert q["price"] == 101.0
+    assert q["previousClose"] == 99.0
+    assert q["change"] == 2.0
+    assert round(q["changePct"], 2) == 2.02
+    assert q["asOf"] == _ONTEM

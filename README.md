@@ -297,8 +297,8 @@ perder tudo ao mesmo tempo —
 ```
 yfinance (retry curto)
   → cache dentro do TTL
-  → cache VENCIDO, conferido contra o Stooq
-  → Stooq (gratuito, sem chave, marcado como tal)
+  → cache VENCIDO, conferido contra a fonte externa
+  → Alpha Vantage TIME_SERIES_DAILY (marcada como tal)
   → erro explícito (nunca dado inventado)
 ```
 
@@ -306,12 +306,23 @@ Um disjuntor por provedor (`provider_health.py`, arquivo em `/tmp` compartilhado
 entre os processos Python) abre após 3 falhas seguidas e evita que cada checker
 redescubra a queda pagando o timeout inteiro.
 
-> **O Stooq é fallback de continuidade, não fonte de verdade.** Ele devolve
-> OHLCV "as traded" e o ajuste de split/dividendo não foi confirmado contra
-> `auto_adjust=True`. Serve para indicador técnico e para a tela não ficar sem
-> gráfico; **nunca** para P&L, preço médio ou qualquer coisa que vire dinheiro.
-> A cotação por Stooq é sempre fechamento do dia anterior e vem com
+> **A fonte externa é fallback de continuidade, não fonte de verdade.**
+> `TIME_SERIES_DAILY` devolve OHLCV "as traded" — a versão ajustada por
+> split/dividendo é paga. Serve para indicador técnico e para a tela não ficar
+> sem gráfico; **nunca** para P&L, preço médio ou qualquer coisa que vire
+> dinheiro. A cotação por ela é sempre fechamento do dia anterior e vem com
 > `is_delayed=True` — a UI mostra "atrasado", nunca finge preço ao vivo.
+>
+> A chave é a **mesma do feed de notícias**, então toda chamada de fallback
+> passa por um teto diário (`AGENT_ALPHAVANTAGE_MAX_DIA`, padrão 15). Sem ele,
+> um dia de yfinance fora esgotaria a cota e derrubaria as notícias junto —
+> uma falha parcial viraria duas.
+
+> **O Stooq foi descartado.** Era a escolha do plano original por ser gratuito
+> e sem chave, mas medido do IP do VPS ele devolve 404 para cliente
+> programático e, com User-Agent de navegador, um 200 cujo corpo é uma página
+> de desafio anti-bot (proof-of-work em JavaScript). Fingir navegador trocaria
+> um 404 limpo por um 200 com HTML no lugar de preço.
 
 `provider_preflight.py` mede as duas fontes antes do deploy (`python -m
 agent.provider_preflight`, exit 0/1/2) e roda como passo informativo no CI.
@@ -436,7 +447,8 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 
 | PR | O que entregou |
 |---|---|
-| #279 | Cadeia de fallback (yfinance → cache → cache vencido → Stooq), disjuntor por provedor, preflight de deploy |
+| #279 | Cadeia de fallback (yfinance → cache → cache vencido → fonte externa), disjuntor por provedor, preflight de deploy |
+| #280 | Stooq descartado (anti-bot) e trocado por Alpha Vantage, com teto diário de cota |
 
 ### Estudo de Entrada e Saída (ago/2026)
 

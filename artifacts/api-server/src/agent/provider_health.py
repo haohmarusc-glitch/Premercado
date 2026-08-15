@@ -1,6 +1,7 @@
 """
 provider_health.py — Circuit breaker simples por provedor de dado de mercado
-(yfinance, stooq, ...), persistido em disco e compartilhado entre processos.
+(yfinance, alphavantage, ...), persistido em disco e compartilhado entre
+processos.
 
 ## Por que existe
 
@@ -120,6 +121,52 @@ def record_failure(provider: str) -> None:
         st.opened_until_ts = now + COOLDOWN_S
     state[provider] = st
     _save(state)
+
+
+def consumir_orcamento_diario(provider: str, limite: int, *, hoje: str | None = None) -> bool:
+    """Reserva UMA chamada da cota diária de `provider`. True = pode chamar.
+
+    Existe porque a Alpha Vantage, usada como fonte externa de fallback,
+    compartilha chave e cota com o feed de notícias (`news_sources.py`). Sem
+    teto, um dia ruim — yfinance fora + dezenas de tickers em vários checkers —
+    esgotaria a cota do dia e derrubaria as notícias junto, trocando uma falha
+    parcial por duas.
+
+    O contador vive no mesmo arquivo do disjuntor (compartilhado entre os
+    processos Python) e zera na virada do dia. Falha aberta como o resto do
+    módulo: se o arquivo não puder ser lido, a chamada é AUTORIZADA — perder
+    dado por causa de um contador quebrado seria pior que estourar a cota.
+    """
+    hoje = hoje or time.strftime("%Y-%m-%d")
+    chave = f"_orcamento:{provider}"
+    try:
+        state = _load()
+        st = state.get(chave, _ProviderState())
+        # `last_failure_ts` guarda o dia corrente codificado; `total_failures`,
+        # o consumo. Reaproveitar o dataclass evita migrar o formato do arquivo
+        # e quebrar a leitura de um processo que ainda roda a versão anterior.
+        dia_gravado = time.strftime("%Y-%m-%d", time.localtime(st.last_failure_ts)) if st.last_failure_ts else ""
+        if dia_gravado != hoje:
+            st.total_failures = 0
+            st.last_failure_ts = time.time()
+        if st.total_failures >= limite:
+            return False
+        st.total_failures += 1
+        state[chave] = st
+        _save(state)
+        return True
+    except Exception:
+        return True  # falha aberta — ver docstring
+
+
+def orcamento_usado(provider: str) -> int:
+    """Quantas chamadas do dia já foram reservadas (debug/preflight)."""
+    st = _load().get(f"_orcamento:{provider}")
+    if st is None or not st.last_failure_ts:
+        return 0
+    if time.strftime("%Y-%m-%d", time.localtime(st.last_failure_ts)) != time.strftime("%Y-%m-%d"):
+        return 0
+    return st.total_failures
 
 
 def status() -> dict:
