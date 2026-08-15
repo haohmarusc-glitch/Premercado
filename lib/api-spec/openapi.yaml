@@ -357,6 +357,23 @@ paths:
         "404":
           description: Not found
 
+  /radar:
+    get:
+      operationId: getRadar
+      tags: [agent]
+      summary: Radar IA 2026 snapshot (earnings, correlacoes, tema IA, riscos)
+      description: >
+        Blob estatico do snapshot de 14/08/2026 embutido em radar_ia_2026.py
+        (fonte unica de verdade, sem tabela no Postgres). Mapas chaveados por
+        ticker; correlacoes chaveadas por par "A|B".
+      responses:
+        "200":
+          description: Snapshot completo do radar
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RadarSnapshot"
+
   /entry-exit-study:
     get:
       operationId: listEntryExitStudies
@@ -1532,6 +1549,67 @@ components:
         newsSentiment: { type: ["string", "null"], description: "Tom agregado das manchetes ('positivo'|'neutro'|'negativo'), rotulado por LLM no checker diario. Informativo, fora do calculo." }
         newsSentimentReason: { type: ["string", "null"], description: "Uma frase justificando o rotulo." }
         createdAt: { type: string }
+
+    RadarSnapshot:
+      type: object
+      required: [snapshot, earnings, correlacoes, tema_ia, riscos, min52, reacao_earnings, portfolio_default]
+      properties:
+        snapshot: { type: string, description: "YYYY-MM-DD do snapshot dos dados" }
+        earnings:
+          type: object
+          description: "ticker -> {data, quando (BO|AC|null), setor, nota?}"
+          additionalProperties:
+            type: object
+            required: [data, setor]
+            properties:
+              data: { type: string }
+              quando: { type: ["string", "null"] }
+              setor: { type: string }
+              nota: { type: string }
+        min52:
+          type: object
+          description: "ticker -> {preco, min52, status (dentro|borderline)}"
+          additionalProperties:
+            type: object
+            properties:
+              preco: { type: number }
+              min52: { type: number }
+              status: { type: string }
+        reacao_earnings:
+          type: object
+          description: "ticker -> {evr?, move_impl_sem?, move_impl_mes?, vies?, ultima_reacao?}"
+          additionalProperties:
+            type: object
+            properties:
+              evr: { type: ["number", "null"] }
+              move_impl_sem: { type: ["number", "null"] }
+              move_impl_mes: { type: ["number", "null"] }
+              vies: { type: ["string", "null"] }
+        riscos:
+          type: object
+          description: "ticker -> lista de riscos em ordem de relevancia"
+          additionalProperties:
+            type: array
+            items: { type: string }
+        tema_ia:
+          type: object
+          description: "ticker -> {ytd, vol_sem, beta, est, grupo, driver}"
+          additionalProperties:
+            type: object
+            properties:
+              ytd: { type: ["number", "null"] }
+              vol_sem: { type: ["number", "null"] }
+              beta: { type: ["number", "null"] }
+              est: { type: boolean, description: "true = vol estimada de setor, nao medida" }
+              grupo: { type: string }
+              driver: { type: string }
+        correlacoes:
+          type: object
+          description: "par 'A|B' -> correlacao medida (janela 13/02-14/08/26)"
+          additionalProperties: { type: number }
+        portfolio_default:
+          type: array
+          items: { type: string }
 
     EntryExitStudyResolution:
       type: object

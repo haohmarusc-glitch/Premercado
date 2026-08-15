@@ -32,6 +32,7 @@ import scenariosRouter from "./scenarios";
 import scenarioAlertsRouter from "./scenario-alerts";
 import checkersRouter from "./checkers";
 import entryExitStudyRouter from "./entry-exit-study";
+import radarRouter from "./radar";
 
 const router: IRouter = Router();
 
@@ -79,5 +80,6 @@ router.use(scenariosRouter);
 router.use(scenarioAlertsRouter);
 router.use(checkersRouter); // ciclo de checkers via request (Scheduled Deployment)
 router.use(entryExitStudyRouter);
+router.use(radarRouter);
 
 export default router;

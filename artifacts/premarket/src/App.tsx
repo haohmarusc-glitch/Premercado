@@ -14,6 +14,7 @@ import RunsPage from "@/pages/runs";
 import AiSpendPage from "@/pages/ai-spend";
 import CenariosPage from "@/pages/cenarios";
 import EntryExitStudyPage from "@/pages/entry-exit-study";
+import RadarPage from "@/pages/radar";
 import VereditoPage from "@/pages/veredito";
 import AdminUsersPage from "@/pages/admin-users";
 import AlertsPage from "@/pages/alerts";
@@ -65,6 +66,7 @@ function Router() {
         <Route path="/ai-spend" component={AiSpendPage} />
         <Route path="/cenarios" component={CenariosPage} />
         <Route path="/estudo-entrada-saida" component={EntryExitStudyPage} />
+        <Route path="/radar-ia" component={RadarPage} />
         <Route path="/veredito" component={VereditoPage} />
         <Route path="/users" component={AdminUsersPage} />
         <Route path="/alerts" component={AlertsPage} />
