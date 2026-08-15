@@ -263,3 +263,42 @@ def test_overnight_ordena_por_impacto_absoluto():
     s = pm.sinal_overnight({"EWY": -3.0}, ["MU", "SMCI", "NVDA"])
     impactos = [abs(x["impacto_esperado_pct"]) for x in s]
     assert impactos == sorted(impactos, reverse=True)
+
+
+# ── qual proxy lidera cada posição (derivado do dado, não de texto fixo) ───
+
+def test_melhor_proxy_ordena_por_correlacao():
+    ranking = pm.melhor_proxy("MU")
+    assert ranking, "MU deveria ter ao menos EWY medido no snapshot"
+    corrs = [c for _, c in ranking]
+    assert corrs == sorted(corrs, reverse=True)
+    assert all(p in pm.INDICADORES_GLOBAIS for p, _ in ranking)
+
+
+def test_melhor_proxy_de_ticker_sem_correlacao_e_vazio():
+    assert pm.melhor_proxy("XXXX") == []
+
+
+def test_lideres_por_posicao_reporta_margem_sobre_o_segundo(monkeypatch):
+    # EWT lidera MU por 0.10 sobre EWY neste cenário.
+    fake = {("EWT", "MU"): 0.70, ("EWY", "MU"): 0.60}
+    monkeypatch.setattr(pm, "correlacao",
+                        lambda a, b: fake.get((a.upper(), b.upper())))
+    lid = pm.lideres_por_posicao(["MU"])[0]
+    assert lid["proxy"] == "EWT"
+    assert lid["correlacao"] == pytest.approx(0.70)
+    assert lid["margem_sobre_2o"] == pytest.approx(0.10, abs=0.001)
+    assert lid["indice"] == "^TWII"
+
+
+def test_lideres_por_posicao_ignora_quem_nao_tem_medida(monkeypatch):
+    monkeypatch.setattr(pm, "correlacao", lambda a, b: None)
+    assert pm.lideres_por_posicao(["MU", "NVDA"]) == []
+
+
+def test_composicao_descreve_sem_ranquear():
+    """A descrição não pode voltar a afirmar qual proxy é o 'melhor' -- esse
+    julgamento depende da carteira e sai do dado (ver melhor_proxy)."""
+    for info in pm.INDICADORES_GLOBAIS.values():
+        assert "composicao" in info
+        assert "melhor indicador" not in info["composicao"].lower()

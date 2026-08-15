@@ -34,6 +34,7 @@ import { checkPortfolioAlerts } from "../lib/portfolio-alerts";
 import { checkScenarioAlerts } from "../lib/scenario-alert-checker";
 import { refreshScenarioParams } from "../lib/scenario-params-checker";
 import { refreshEntryExitStudies } from "../lib/entry-exit-study-checker";
+import { refreshRadarCorrelacoes } from "../lib/radar-correlacoes-checker";
 import { state as agentState } from "../lib/runner";
 import { logger } from "../lib/logger";
 
@@ -73,6 +74,10 @@ const ETAPAS: Etapa[] = [
   { nome: "scenario_alerts", intervaloMs: 60 * MIN, run: checkScenarioAlerts },
   { nome: "scenario_params", intervaloMs: 24 * 60 * MIN, run: refreshScenarioParams },
   { nome: "entry_exit_study", intervaloMs: 24 * 60 * MIN, run: refreshEntryExitStudies },
+  // Semanal: correlação de janela de 6 meses se move devagar -- o que
+  // importa capturar é mudança de regime (par cruzando 0.70), não a
+  // terceira casa decimal. Ver lib/radar-correlacoes-checker.ts.
+  { nome: "radar_correlacoes", intervaloMs: 7 * 24 * 60 * MIN, run: refreshRadarCorrelacoes },
 ];
 
 type Cadencia = Record<string, number>;
