@@ -9,6 +9,7 @@ e montam Alerts sintéticos -- nenhuma chamada yfinance envolvida.
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_market_alerts_radar.py -v
 """
+import pytest
 from datetime import date
 
 from agent.market_alerts import (
@@ -80,3 +81,39 @@ def test_dedup_ignora_alertas_info_e_indices():
 def test_dedup_par_de_baixa_correlacao_nao_dispara():
     alerts = [_alerta("MU", Severity.CRITICO), _alerta("CEG", Severity.CRITICO)]
     assert check_sinais_correlacionados(alerts) == []
+
+
+# ── check_overnight_asia ───────────────────────────────────────────────────
+
+def test_overnight_asia_traduz_queda_da_asia_em_alerta(monkeypatch):
+    import agent.market_alerts as ma
+    # ^KS11 (proxy EWY) caiu 3% no fechamento coreano; demais indisponíveis.
+    monkeypatch.setattr(ma, "_day_change_pct",
+                        lambda t: -3.0 if t == "^KS11" else None)
+    alerts = ma.check_overnight_asia(["MU"])
+    assert len(alerts) == 1
+    assert alerts[0].ticker == "MU"
+    assert alerts[0].severity == Severity.ATENCAO       # -2.43% -> FORTE
+    assert "pressão" in alerts[0].title or "pressao" in alerts[0].title
+    assert alerts[0].value == pytest.approx(-2.43, abs=0.01)
+
+
+def test_overnight_asia_alta_vira_suporte(monkeypatch):
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "_day_change_pct",
+                        lambda t: 3.0 if t == "^KS11" else None)
+    alerts = ma.check_overnight_asia(["MU"])
+    assert "suporte" in alerts[0].title
+
+
+def test_overnight_asia_ignora_impacto_leve(monkeypatch):
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "_day_change_pct",
+                        lambda t: -0.2 if t == "^KS11" else None)
+    assert ma.check_overnight_asia(["MU"]) == []
+
+
+def test_overnight_asia_sem_cotacao_nao_explode(monkeypatch):
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "_day_change_pct", lambda t: None)
+    assert ma.check_overnight_asia(["MU"]) == []
