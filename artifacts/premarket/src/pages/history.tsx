@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Calendar, Zap } from "lucide-react";
+import { ChevronDown, ChevronRight, Calendar, Zap, FileDown } from "lucide-react";
+import { ROTULO_POR_MODO_EXPORTADO } from "@/components/exportar-relatorio";
 
 function ModeBadge({ mode }: { mode: string }) {
   if (mode === "premarket") {
@@ -17,6 +18,18 @@ function ModeBadge({ mode }: { mode: string }) {
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono text-[10px] uppercase">
         <Zap className="h-2.5 w-2.5" />
         flash
+      </span>
+    );
+  }
+  // Relatório exportado de uma tela pelo usuário. Sem este ramo, todo modo
+  // desconhecido caía no rótulo "diário" — um Radar exportado apareceria no
+  // histórico como se fosse a análise automática da manhã.
+  const rotuloTela = ROTULO_POR_MODO_EXPORTADO[mode];
+  if (rotuloTela) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-secondary border border-border text-foreground font-mono text-[10px] uppercase">
+        <FileDown className="h-2.5 w-2.5" />
+        {rotuloTela}
       </span>
     );
   }
@@ -28,7 +41,7 @@ function ModeBadge({ mode }: { mode: string }) {
   );
 }
 
-type Tab = "all" | "daily" | "premarket";
+type Tab = "all" | "daily" | "premarket" | "exportados";
 
 export default function History() {
   const { data: reports, isLoading } = useListReports({
@@ -40,11 +53,17 @@ export default function History() {
 
   const filtered = reports?.filter((r) => {
     if (tab === "all") return true;
+    // "daily" é o catch-all histórico (modos antigos sem coluna preenchida),
+    // mas os relatórios exportados de tela têm modo próprio e não podem cair
+    // nele — senão a aba Diário mistura análise da manhã com export manual.
+    if (tab === "exportados") return Boolean(ROTULO_POR_MODO_EXPORTADO[r.mode ?? ""]);
+    if (tab === "daily") return !ROTULO_POR_MODO_EXPORTADO[r.mode ?? ""] && (r.mode ?? "daily") === "daily";
     return (r.mode ?? "daily") === tab;
   });
 
-  const dailyCount = reports?.filter((r) => (r.mode ?? "daily") === "daily").length ?? 0;
+  const dailyCount = reports?.filter((r) => !ROTULO_POR_MODO_EXPORTADO[r.mode ?? ""] && (r.mode ?? "daily") === "daily").length ?? 0;
   const flashCount = reports?.filter((r) => r.mode === "premarket").length ?? 0;
+  const exportCount = reports?.filter((r) => Boolean(ROTULO_POR_MODO_EXPORTADO[r.mode ?? ""])).length ?? 0;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -78,6 +97,13 @@ export default function History() {
               Flash
               <span className="ml-1.5 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground text-[10px]">
                 {flashCount}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="exportados">
+              <FileDown className="h-3 w-3 mr-1.5" />
+              Exportados
+              <span className="ml-1.5 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground text-[10px]">
+                {exportCount}
               </span>
             </TabsTrigger>
           </TabsList>

@@ -5,6 +5,7 @@ import {
   Radar as RadarIcon, CalendarClock, Link2, Flame, AlertTriangle,
   ChevronDown, ChevronUp, TrendingDown,
 } from "lucide-react";
+import { ExportarRelatorio, cabecalho, tabela, pct } from "@/components/exportar-relatorio";
 
 // Datas chegam como "YYYY-MM-DD" puro -- formatar na string, nunca via
 // `new Date(iso)` (meia-noite UTC vira o dia anterior em BRT, mesma
@@ -275,6 +276,89 @@ function RiscosEMinimas({ data }: { data: RadarSnapshot }) {
 
 // ── Página ──────────────────────────────────────────────────────────────────
 
+// Relatório do radar. Correlações vão só as ≥0.50 — as 109 pares inteiras
+// viram 5 páginas de e-mail em que o que importa (o que passou de 0.70) some
+// no meio. O limiar é o mesmo que a tela usa pra colorir.
+function montarRelatorioRadar(data: RadarSnapshot): string {
+  const blocos: string[] = [];
+  const janela = data.correlacoes_janela_fim ?? data.snapshot;
+  blocos.push(cabecalho(
+    "Radar IA 2026",
+    `Snapshot ${fmtDateBR(data.snapshot)} · correlações até ${fmtDateBR(janela)}` +
+    (data.correlacoes_atualizado_em ? ` (medidas em ${data.correlacoes_atualizado_em})` : ""),
+  ));
+
+  const hoje = hojeISO();
+  const eventos = Object.entries(data.earnings)
+    .filter(([, e]) => e.data >= hoje)
+    .sort((a, b) => a[1].data.localeCompare(b[1].data));
+  if (eventos.length) {
+    blocos.push("## Earnings no radar\n\n" + tabela(
+      ["Ticker", "Data", "Quando", "Setor", "EVR", "Move impl. semana"],
+      eventos.map(([t, e]) => {
+        const r = data.reacao_earnings[t];
+        return [
+          t, fmtDateBR(e.data), e.quando ?? "—", e.setor,
+          r?.evr != null ? r.evr.toFixed(2) : "—",
+          r?.move_impl_sem != null ? `${r.move_impl_sem.toFixed(1)}%` : "—",
+        ];
+      }),
+    ));
+  }
+
+  const fortes = Object.entries(data.correlacoes)
+    .filter(([, c]) => c >= 0.5)
+    .sort((a, b) => b[1] - a[1]);
+  if (fortes.length) {
+    blocos.push(`## Correlações ≥ 0.50 (${fortes.length} de ${Object.keys(data.correlacoes).length} pares)\n\n` + tabela(
+      ["Par", "Correlação", "Leitura"],
+      fortes.map(([par, c]) => [
+        par.replace("|", " × "), c.toFixed(2),
+        c >= 0.7 ? "mesmo trade" : "co-movimento relevante",
+      ]),
+    ));
+  }
+
+  const tema = Object.entries(data.tema_ia).sort((a, b) => (b[1].ytd ?? -999) - (a[1].ytd ?? -999));
+  if (tema.length) {
+    blocos.push("## Tema IA\n\n" + tabela(
+      ["Ticker", "Grupo", "YTD", "Vol semanal", "Beta", "Driver"],
+      tema.map(([t, v]) => [
+        t, GRUPO_LABEL[v.grupo ?? ""] ?? v.grupo ?? "—",
+        v.ytd != null ? pct(v.ytd, 1) : "—",
+        v.vol_sem != null ? `${v.vol_sem.toFixed(1)}%${v.est ? " (est.)" : ""}` : "—",
+        v.beta != null ? v.beta.toFixed(2) : "n/d",
+        v.driver ?? "—",
+      ]),
+    ));
+  }
+
+  const min52 = Object.entries(data.min52);
+  if (min52.length) {
+    blocos.push("## Mínimas de 52 semanas\n\n" + tabela(
+      ["Ticker", "Preço", "Mín. 52s", "Distância", "Status"],
+      min52.map(([t, v]) => [
+        t,
+        v.preco != null ? `$${v.preco.toFixed(2)}` : "—",
+        v.min52 != null ? `$${v.min52.toFixed(2)}` : "—",
+        v.preco != null && v.min52 != null && v.min52 > 0
+          ? `${(((v.preco - v.min52) / v.min52) * 100).toFixed(1)}%`
+          : "—",
+        v.status ?? "—",
+      ]),
+    ));
+  }
+
+  const riscos = Object.entries(data.riscos);
+  if (riscos.length) {
+    blocos.push("## Riscos\n\n" + riscos
+      .map(([tema, lista]) => `**${tema}**\n${lista.map((r) => `- ${r}`).join("\n")}`)
+      .join("\n\n"));
+  }
+
+  return blocos.join("\n\n");
+}
+
 export default function RadarPage() {
   const { data, isLoading, error } = useGetRadar();
 
@@ -340,6 +424,13 @@ export default function RadarPage() {
             </div>
             <RiscosEMinimas data={data} />
           </section>
+
+          <ExportarRelatorio
+            titulo="Radar IA 2026"
+            mode="tela_radar"
+            tickers={data.portfolio_default}
+            construir={() => montarRelatorioRadar(data)}
+          />
         </>
       )}
     </div>

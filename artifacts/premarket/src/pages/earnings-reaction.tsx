@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Gauge } from "lucide-react";
+import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 
 interface SessionMove {
   date: string;
@@ -189,6 +190,68 @@ function interpretResult(r: ReactionResult): string[] {
   return notes;
 }
 
+// Um bloco por ticker, com os níveis técnicos e a tabela evento a evento —
+// que é o dado que sustenta a média. O run-up entra como seção própria só
+// quando existe: nem todo ticker tem histórico suficiente pro cálculo.
+function montarRelatorioReacao(results: ReactionResult[], lookback: string): string {
+  const blocos: string[] = [];
+  const ok = results.filter((r) => r.summary);
+  blocos.push(cabecalho(
+    `Reação a earnings — ${ok.map((r) => r.ticker).join(", ") || "sem resultado"}`,
+    `Lookback de ${lookback} earnings passados`,
+  ));
+
+  for (const r of results) {
+    if (r.error || !r.summary) {
+      blocos.push(`## ${r.ticker}\n\nSem resultado: ${r.error ?? "dados insuficientes"}`);
+      continue;
+    }
+    const s = r.summary;
+    blocos.push(`## ${r.ticker}\n\n` + itens([
+      ["Eventos analisados", s.n_events],
+      ["Threshold sugerido", `±${s.suggested_threshold_pct.toFixed(2)}%`],
+      ["Preço atual", `$${s.current_price.toFixed(2)}`],
+      ["Gap médio", pct(s.gap_pct_mean)],
+      ["Gap médio absoluto", `${s.gap_pct_abs_mean.toFixed(2)}%`],
+      ["Fechamento médio", pct(s.close_pct_mean)],
+      ["Fechamento médio absoluto", `${s.close_pct_abs_mean.toFixed(2)}%`],
+      ["Desvio-padrão do fechamento", s.close_pct_std != null ? `${s.close_pct_std.toFixed(2)}%` : "—"],
+      ["Amplitude intradiária média", `${s.intraday_range_pct_mean.toFixed(2)}%`],
+      ["Razão de volume", s.volume_ratio_mean != null ? `${s.volume_ratio_mean.toFixed(2)}x` : "—"],
+      ["Resistências", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
+      ["Suportes", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
+    ]));
+
+    const ru = s.runup;
+    if (ru) {
+      blocos.push(`### Run-up prévio (${r.ticker})\n\n` + itens([
+        ["Janela", `${ru.runup_pregoes} pregões · corte de esticado em ${ru.esticado_corte_pct}%`],
+        ["Eventos com run-up medido", ru.n_com_runup],
+        ["Correlação run-up × reação", ru.corr_runup_reacao != null ? ru.corr_runup_reacao.toFixed(2) : "—"],
+        ["Esticado", ru.esticado_n != null ? `${ru.esticado_caiu_n ?? 0} de ${ru.esticado_n} caíram · reação média ${pct(ru.esticado_reacao_media)}` : "—"],
+        ["Descontado", ru.descontado_n != null ? `${ru.descontado_subiu_n ?? 0} de ${ru.descontado_n} subiram · reação média ${pct(ru.descontado_reacao_media)}` : "—"],
+        ["Run-up atual", ru.runup_atual_pct != null ? `${pct(ru.runup_atual_pct)} (${ru.estado_atual ?? "—"})` : "—"],
+      ]));
+    }
+
+    if (r.events?.length) {
+      blocos.push(`### Eventos (${r.ticker})\n\n` + tabela(
+        ["Data", "Run-up", "Gap dia", "Fech. dia", "Amplitude", "Fech. D+1"],
+        r.events.map((e) => [
+          e.earnings_date,
+          e.runup_pct != null ? pct(e.runup_pct) : "—",
+          e.announcement_day ? pct(e.announcement_day.gap_pct) : "—",
+          e.announcement_day ? pct(e.announcement_day.close_pct) : "—",
+          e.announcement_day ? `${e.announcement_day.intraday_range_pct.toFixed(2)}%` : "—",
+          e.next_day ? pct(e.next_day.close_pct) : "—",
+        ]),
+      ));
+    }
+  }
+
+  return blocos.join("\n\n");
+}
+
 export default function EarningsReactionPage() {
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
   const [lookback, setLookback] = useState("8");
@@ -258,6 +321,16 @@ export default function EarningsReactionPage() {
           )}
         </button>
         {run.isError && <p className="text-sm text-red-400 font-mono">{String(run.error)}</p>}
+        {results && results.length > 0 && (
+          <div className="border-t border-border/40 pt-4">
+            <ExportarRelatorio
+              titulo={`Reação a earnings — ${results.map((r) => r.ticker).join(", ")}`}
+              mode="tela_earnings_reaction"
+              tickers={results.map((r) => r.ticker)}
+              construir={() => montarRelatorioReacao(results, lookback)}
+            />
+          </div>
+        )}
       </div>
 
       {results && (

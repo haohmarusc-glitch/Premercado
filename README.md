@@ -26,7 +26,8 @@ para o modelo de ameaças, [`threat_model.md`](threat_model.md).
   - [6. Reação a Earnings](#6-reação-a-earnings)
   - [7. Radar IA 2026](#7-radar-ia-2026)
   - [8. Risco, backtest e confluência](#8-risco-backtest-e-confluência)
-  - [9. Chat e memória](#9-chat-e-memória)
+  - [9. Exportar relatório das telas de análise](#9-exportar-relatório-das-telas-de-análise)
+  - [10. Chat e memória](#10-chat-e-memória)
 - [Telas](#telas)
 - [Jobs de background](#jobs-de-background)
 - [Fontes de dado](#fontes-de-dado)
@@ -213,7 +214,29 @@ fixo.
   position sizing
 - **Plano de Saída**: itens com prazo, revisados pelo agente
 
-### 9. Chat e memória
+### 9. Exportar relatório das telas de análise
+
+Oito telas de análise (Backtest, Radar IA, Cenários, Veredito, Reação a
+Earnings, Estudo de Entrada/Saída, Setor IA, Setor Carvão) têm **Salvar
+relatório** e **Enviar por e-mail**. A tela monta um markdown com os números
+que está exibindo; `POST /reports/export` grava em `reports` com um `mode`
+próprio (`tela_*`) e, se pedido, envia.
+
+Três decisões que valem lembrar:
+
+- O relatório é sempre gravado com o **`userId` de quem clicou**, mesmo nas
+  telas que não derivam de carteira. Export é retrato pessoal — gravar com
+  `userId` nulo o publicaria para todos os usuários.
+- O e-mail vai para o **endereço de login de quem clicou**, não para o
+  `notifyEmail` das configurações (que é o endereço de alertas da casa).
+- Falha de SMTP **não** vira erro na tela: o relatório já foi gravado, então a
+  resposta é 200 com `erroEnvio`. Devolver erro faria a pessoa reclicar e
+  duplicar o registro no histórico.
+
+O Histórico ganhou a aba **Exportados**, e os modos `tela_*` não caem mais no
+rótulo genérico "diário".
+
+### 10. Chat e memória
 
 Chat conversacional com as mesmas ferramentas do agente, contexto rico da
 carteira e memória filtrada por identidade. Sessões persistidas.
@@ -355,6 +378,14 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #269 | Parâmetros de vol: stops, sizing, vol de carteira **com covariância**, stress; camada macro (FOMC) e sinal overnight |
 | #270 | Proxy líder por posição vindo do dado + refresh semanal automático |
 | #271 | Vol **medida por nós** substitui a coleta manual (contaminava stop e sizing) |
+
+### Backtest e exportação (ago/2026)
+
+| PR | O que entregou |
+|---|---|
+| #273 | Walk-forward com validação out-of-sample: otimiza no treino, mede na janela seguinte |
+| #275 | Campos de janela (treino/teste/objetivo) na tela — a rota já aceitava, a tela não enviava |
+| #276 | Salvar relatório e enviar por e-mail nas oito telas de análise |
 
 ### Estudo de Entrada e Saída (ago/2026)
 

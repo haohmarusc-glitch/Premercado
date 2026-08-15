@@ -7,6 +7,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus, X, Zap } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { ExportarRelatorio, montarRelatorioSetor } from "@/components/exportar-relatorio";
 
 const COAL_TICKERS = ["HCC", "AMR", "ARCH", "CEIX", "BTU"];
 
@@ -213,6 +214,14 @@ export default function SectorCoal() {
           ))}
         </div>
       )}
+
+      <ExportarRelatorio
+        titulo="Setor Carvão"
+        mode="tela_sector_coal"
+        tickers={COAL_TICKERS}
+        pronto={sectorObs.length > 0}
+        construir={() => montarRelatorioSetor("Carvão", COAL_TICKERS, filtered)}
+      />
     </div>
   );
 }

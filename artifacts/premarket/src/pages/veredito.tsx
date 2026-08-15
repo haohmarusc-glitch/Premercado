@@ -17,6 +17,7 @@ import { formatDateTime, daysUntilBRT } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Sparkles, RefreshCw, Target, Activity, Flag, Calendar, Globe, AlertTriangle } from "lucide-react";
 import { useTacticalContext, tacticalSignal } from "@/hooks/use-tactical-context";
+import { ExportarRelatorio, cabecalho, itens, tabela } from "@/components/exportar-relatorio";
 
 // ─── Veredito do Dia ─────────────────────────────────────────────────────────
 // Duas partes independentes: (1) um painel estruturado que agrega dados já
@@ -324,6 +325,80 @@ export default function VereditoPage() {
           )}
         </SectionCard>
       </div>
+
+      {/* O veredito da IA, quando existe, entra INTEIRO no relatório: é texto
+          que custou chamada de LLM pra produzir e não se regenera de graça.
+          O painel estruturado vai junto porque é o dado que sustenta o texto. */}
+      <ExportarRelatorio
+        titulo="Veredito do Dia"
+        mode="tela_veredito"
+        tickers={tickers}
+        pronto={Boolean(veredito) || tickers.length > 0}
+        construir={() => {
+          const blocos: string[] = [cabecalho("Veredito do Dia")];
+
+          if (veredito) {
+            blocos.push(`## Veredito gerado por IA\n\n_Gerado em ${formatDateTime(veredito.createdAt)}_\n\n${veredito.content}`);
+          }
+
+          if (scenarioSettings?.configured && ultimoSnapshot && !resolucaoAtual) {
+            blocos.push("## Cenários\n\n" + itens([
+              ["Data-alvo", scenarioSettings.dataAlvo.split("-").reverse().join("/")],
+              ["Chance de empatar", `${(ultimoSnapshot.pEmpate * 100).toFixed(0)}%`],
+              ["Dias restantes", ultimoSnapshot.diasRestantes],
+              ["Dias acompanhados", scenarioProgress?.snapshots.length ?? 0],
+            ]));
+          } else if (resolucaoAtual) {
+            blocos.push("## Cenários\n\n" + itens([
+              ["Data-alvo", resolucaoAtual.dataAlvo.split("-").reverse().join("/")],
+              ["Resultado", resolucaoAtual.bateu ? "ciclo confirmado" : "ciclo não confirmado"],
+            ]));
+          }
+
+          if (tickers.length) {
+            blocos.push("## Técnicos\n\n" + tabela(
+              ["Ticker", "RSI", "Sinal"],
+              tickers.map((t) => {
+                const tech = ctx.technicalsByTicker.get(t);
+                return [t, tech?.rsi != null ? tech.rsi.toFixed(0) : "—", tacticalSignal(t, ctx)?.label ?? "sem sinal relevante"];
+              }),
+            ));
+          }
+
+          if (pendentes.length) {
+            blocos.push("## Plano de saída (pendentes)\n\n" + tabela(
+              ["Ticker", "Prazo", "Dias", "Ação"],
+              pendentes.map((i) => [
+                i.ticker, i.targetDate, daysUntilBRT(i.targetDate), i.action ?? "—",
+              ]),
+            ));
+          }
+
+          if (proximosEarnings.length) {
+            blocos.push("## Earnings próximos\n\n" + tabela(
+              ["Ticker", "Data", "Dias", "EPS estimado"],
+              proximosEarnings.map((e) => [
+                e.ticker, e.earningsDate ?? "—",
+                e.earningsDate ? daysUntilBRT(e.earningsDate) : "—",
+                e.epsEstimate != null ? e.epsEstimate.toFixed(2) : "—",
+              ]),
+            ));
+          }
+
+          if (macroData) {
+            const linhas: [string, string | number | null][] = [];
+            if (macroData.fearGreed?.score != null) {
+              linhas.push(["Fear & Greed", `${macroData.fearGreed.score} · ${macroData.fearGreed.ratingPt ?? macroData.fearGreed.ratingEn ?? "—"}`]);
+            }
+            for (const s of macroData.sectors ?? []) {
+              linhas.push([s.name, s.changePct != null ? `${s.changePct >= 0 ? "+" : ""}${s.changePct.toFixed(2)}%` : "—"]);
+            }
+            if (linhas.length) blocos.push("## Macro\n\n" + itens(linhas));
+          }
+
+          return blocos.length > 1 ? blocos.join("\n\n") : null;
+        }}
+      />
     </div>
   );
 }

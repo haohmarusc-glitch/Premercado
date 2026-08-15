@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { db, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
+import { markdownParaHtml } from "./markdown-email";
 
 function createTransport() {
   return nodemailer.createTransport({
@@ -461,6 +462,58 @@ const ASSUNTO_POR_MODO: Record<string, string> = {
   ai: "Setor IA",
 };
 
+/**
+ * Relatório exportado de uma tela pelo usuário (botão "Enviar por e-mail"),
+ * diferente dos e-mails automáticos acima em dois pontos:
+ *
+ * 1. O destinatário é o e-mail de LOGIN de quem clicou, não o `notifyEmail` das
+ *    configurações. `notifyEmail` é o endereço de alertas da casa; telas como
+ *    Cenários e Veredito derivam da carteira de quem está logado, e mandar isso
+ *    pro endereço compartilhado vazaria posição de um usuário pro outro — a
+ *    mesma classe de vazamento que o `userId` em `reportsTable` já corrigiu.
+ * 2. Lança em caso de falha, em vez de só logar. Os automáticos rodam em
+ *    checker de fundo, onde engolir o erro é o certo; aqui alguém está olhando
+ *    a tela esperando resposta, e "enviado" sem envio é pior que um erro.
+ */
+export async function sendRelatorioDeTelaEmail(opts: {
+  to: string;
+  titulo: string;
+  markdown: string;
+  date: string;
+}): Promise<void> {
+  const to = opts.to.trim();
+  if (!to) throw new Error("Sem e-mail de destino");
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    throw new Error("SMTP não configurado no servidor — defina SMTP_USER e SMTP_PASS");
+  }
+
+  const subject = `📄 ${opts.titulo} — ${opts.date}`;
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body{font-family:'Courier New',monospace;background:#111;color:#e0e0e0;padding:24px}
+  h2{color:#ff8c00;border-bottom:1px solid #333;padding-bottom:4px}
+  h3{color:#ffaa44}
+  strong{color:#fff}
+  .footer{margin-top:32px;font-size:11px;color:#555}
+</style></head>
+<body>
+<p style="color:#555;font-size:12px;text-transform:uppercase;">Relatório de tela — ${opts.date}</p>
+${markdownParaHtml(opts.markdown)}
+<div class="footer">Exportado manualmente do Pré-Mercado Agente. Retrato dos dados no momento do clique — não é recomendação de investimento.</div>
+</body></html>`;
+
+  const transporter = createTransport();
+  await transporter.sendMail({
+    from: `"Pré-Mercado Agente" <${process.env.SMTP_USER}>`,
+    to,
+    subject,
+    text: opts.markdown,
+    html,
+  });
+  logger.info({ to, subject }, "Screen report e-mail sent");
+}
+
 export async function sendReportEmail(
   reportContent: string,
   date: string,
@@ -480,15 +533,7 @@ export async function sendReportEmail(
   const prefixo = ASSUNTO_POR_MODO[mode] ?? "Pré-Mercado";
   const subject = `${prefixo} ${date}${tickers && tickers.length ? ` — ${tickers.join(", ")}` : ""}`;
 
-  const htmlBody = reportContent
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/^#{1,2} (.+)$/gm, "<h2>$1</h2>")
-    .replace(/^#{3,} (.+)$/gm, "<h3>$1</h3>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/\n/g, "<br>");
+  const htmlBody = markdownParaHtml(reportContent);
 
   const html = `<!DOCTYPE html>
 <html>
