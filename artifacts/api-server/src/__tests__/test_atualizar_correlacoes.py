@@ -11,17 +11,21 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_atualiza
 """
 import importlib.util
 import os
-import sys
 
 import numpy as np
 import pandas as pd
 import pytest
 
-_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
-if _AGENT_DIR not in sys.path:
-    sys.path.insert(0, _AGENT_DIR)
+# Import de PACOTE (conftest.py já põe src/ no sys.path). NÃO inserir
+# src/agent/ no path: existe um agent.py DENTRO de agent/, então com o
+# diretório no path o nome `agent` passa a resolver pro módulo em vez do
+# pacote -- e qualquer teste que faça `from agent.x import ...` depois deste
+# quebra. Isso já passou despercebido porque a suíte inteira só falhava em
+# certas ordens de coleta (outro arquivo importava agent.* antes e deixava o
+# pacote certo em sys.modules).
+from agent import atualizar_correlacoes as ac
 
-import atualizar_correlacoes as ac  # noqa: E402
+_AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
 
 
 def _fechamentos(series: dict[str, list[float]]) -> pd.DataFrame:
@@ -225,3 +229,39 @@ def test_overlay_sem_vol_nao_mexe_no_tema(tmp_path, monkeypatch):
     assert radar.TEMA_IA["MU"]["vol_sem"] == pytest.approx(7.89)
     assert radar.VOL_MEDIDA_APLICADA == 0
     assert radar.correlacao("MU", "SNDK") == pytest.approx(0.61)  # correlação ok
+
+
+def test_diagnostico_de_divergencia_nao_cega_no_segundo_refresh(tmp_path, monkeypatch):
+    """O defeito que isto trava: divergencias_de_vol comparava contra
+    TEMA_IA, que o overlay sobrescreve no import -- do segundo refresh em
+    diante a comparação virava "medição nova vs medição anterior" (razão ~1)
+    e o erro da coleta ORIGINAL sumia do relatório para sempre."""
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    # 1º refresh: NVDA medido em 5.5 contra 1.50 manual (o caso real, x3.65).
+    ac.gravar_overlay({("MU", "SNDK"): 0.8}, path=destino, vols={"NVDA": 5.5})
+
+    radar = _carregar_radar_fresco("radar_divergencia_test")
+    assert radar.TEMA_IA["NVDA"]["vol_sem"] == pytest.approx(5.5)
+    # o valor manual original fica preservado, não é perdido na sobrescrita
+    assert radar.TEMA_IA["NVDA"]["vol_sem_snapshot"] == pytest.approx(1.50)
+
+    # 2º refresh sobre o módulo JÁ com overlay aplicado: a divergência
+    # continua sendo reportada contra o manual, não contra a medição de antes
+    monkeypatch.setattr(ac, "TEMA_IA", radar.TEMA_IA)
+    divs = ac.divergencias_de_vol({"NVDA": 5.6})
+    assert divs and divs[0]["ticker"] == "NVDA"
+    assert divs[0]["manual"] == pytest.approx(1.50)
+    assert divs[0]["razao"] > 3.0
+
+
+def test_valor_manual_preservado_nao_e_sobrescrito_na_segunda_aplicacao(tmp_path, monkeypatch):
+    """Guardar o original só na primeira vez -- senão a segunda aplicação
+    salvaria a medição da semana passada como se fosse o manual."""
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    ac.gravar_overlay({("MU", "SNDK"): 0.8}, path=destino, vols={"NVDA": 5.5})
+    radar = _carregar_radar_fresco("radar_preserva_1")
+    radar._aplicar_vol_medida({"vol_semanal": {"NVDA": 6.2}})  # 2ª aplicação
+    assert radar.TEMA_IA["NVDA"]["vol_sem"] == pytest.approx(6.2)
+    assert radar.TEMA_IA["NVDA"]["vol_sem_snapshot"] == pytest.approx(1.50)

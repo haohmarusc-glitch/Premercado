@@ -59,11 +59,13 @@ import yfinance as yf
 # rodam tanto standalone quanto como módulo do pacote.
 try:
     from brt import today_brt
-    from radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
+                               HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
     from parametros_macro import INDICADORES_GLOBAIS
 except ImportError:
     from agent.brt import today_brt
-    from agent.radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from agent.radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
+                                     HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
     from agent.parametros_macro import INDICADORES_GLOBAIS
 
 # Mínimo de pregões em comum pra um par valer. ~3 meses: abaixo disso a
@@ -208,6 +210,13 @@ def gravar_overlay(pares: dict[tuple[str, str], float], meses: int = MESES_DEFAU
 
 
 def resumo_mudancas(pares: dict[tuple[str, str], float], corte: float = 0.15) -> dict:
+    # NOTA sobre a base de comparação: CORRELACOES já vem com o overlay
+    # anterior aplicado (radar_ia_2026 faz isso no import). Então na PRIMEIRA
+    # execução isto compara contra o snapshot embutido de 14/08, e da segunda
+    # em diante contra a MEDIÇÃO ANTERIOR -- que é o que interessa num job
+    # semanal ("o que mudou desde a semana passada?"). O texto do relatório
+    # reflete essa diferença em vez de dizer sempre "vs snapshot", que
+    # passaria a ser mentira depois do primeiro overlay.
     """Compara com o snapshot embutido: pares novos, pares que sumiram e
     mudanças relevantes (regime de correlação pode ter virado)."""
     base = {tuple(sorted(k)): v for k, v in CORRELACOES.items()}
@@ -226,31 +235,44 @@ def resumo_mudancas(pares: dict[tuple[str, str], float], corte: float = 0.15) ->
 
 
 def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
-    print(f"\npares calculados: {len(pares)} | novos vs snapshot: {len(res['novos'])} "
-          f"| do snapshot sem dado agora: {len(res['ausentes'])}")
+    # A base de comparação é o que está CARREGADO agora: o snapshot embutido
+    # na primeira execução, e a medição anterior depois que existe overlay
+    # (ver nota em resumo_mudancas). Nomear isso evita a leitura errada de
+    # "estável desde 14/08" quando o que se mediu foi "estável desde a
+    # semana passada".
+    base = (f"a medição de {CORRELACOES_ATUALIZADO_EM}" if CORRELACOES_ATUALIZADO_EM
+            else f"o snapshot de {HOJE_SNAPSHOT.isoformat()}")
+    print(f"\npares calculados: {len(pares)} | comparando com {base}")
+    print(f"novos: {len(res['novos'])} | sem dado agora: {len(res['ausentes'])}")
     if res["cruzaram_070"]:
         print("\nCRUZARAM o limiar de 0.70 (muda dedup/contágio/concentração):")
         for (a, b), antigo, novo in res["cruzaram_070"]:
             direcao = "virou MESMO TRADE" if novo >= 0.70 else "deixou de ser mesmo trade"
             print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}  ({direcao})")
     if res["grandes"]:
-        print(f"\nmudanças >= 0.15 vs snapshot 14/08 ({len(res['grandes'])} pares, top 15):")
+        print(f"\nmudanças >= 0.15 ({len(res['grandes'])} pares, top 15):")
         for (a, b), antigo, novo in res["grandes"][:15]:
             print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}")
     else:
-        print("\nnenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
+        print("nenhuma mudança >= 0.15 -- regime estável.")
 
 
 def divergencias_de_vol(vols: dict[str, float], fator: float = 1.5) -> list[dict]:
-    """Tickers cuja vol MEDIDA difere da coleta manual do snapshot por mais
-    de `fator` (pra mais ou pra menos).
+    """Tickers cuja vol MEDIDA difere da coleta manual ORIGINAL por mais de
+    `fator` (pra mais ou pra menos).
 
     Existe pra tornar visível o problema que motivou medir a vol: quando a
     diferença é de 2-3x, não é ruído de janela -- é erro de dado, e vinha
-    contaminando stop e sizing em silêncio."""
+    contaminando stop e sizing em silêncio.
+
+    Compara contra `vol_sem_snapshot` (o valor manual preservado por
+    radar_ia_2026._aplicar_vol_medida) e não contra `vol_sem`, que a partir
+    do primeiro refresh já É a medição anterior -- comparar com ela daria
+    razão ~1 sempre e apagaria o diagnóstico depois de usá-lo uma vez."""
     fora = []
     for ticker, medida in vols.items():
-        manual = (TEMA_IA.get(ticker) or {}).get("vol_sem")
+        info = TEMA_IA.get(ticker) or {}
+        manual = info.get("vol_sem_snapshot", info.get("vol_sem"))
         if not manual or not medida:
             continue
         razao = medida / manual
