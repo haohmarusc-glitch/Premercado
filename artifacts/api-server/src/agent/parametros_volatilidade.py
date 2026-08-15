@@ -369,13 +369,24 @@ def relatorio(ref: date | None = None) -> None:
           f"{'VOL ANO':>8}{'BETA':>6}{'STOP%':>7}  MODO")
     med = sorted(((t, d) for t, d in TEMA_IA.items() if d.get("vol_sem")),
                  key=lambda x: -x[1]["vol_sem"])
+    algum_estimado = False
     for t, _ in med:
         p = parametros(t, ref)
         est = "*" if p["vol_estimada"] else " "
+        algum_estimado = algum_estimado or bool(p["vol_estimada"])
+        # Beta AUSENTE não é beta zero: `or 0` imprimia "0.00" pra quem não
+        # tem o dado (ex.: DELL), e beta zero significaria "não acompanha o
+        # setor" -- leitura oposta de "não sabemos". Vale pra qualquer
+        # número derivado: ausência precisa parecer ausência.
+        beta = f"{p['beta']:>6.2f}" if isinstance(p.get("beta"), (int, float)) else f"{'n/d':>6}"
         print(f"{t:<7}{p['classe']:<9}{p['vol_semanal_pct']:>7.2f}{est}"
               f"{p['vol_diaria_pct']:>8.2f}{p['vol_anualizada_pct']:>8.1f}"
-              f"{p['beta'] or 0:>6.2f}{p['stop_sugerido_pct']:>7.2f}  {p['modo']}")
-    print("\n(*) vol estimada de setor, não medida")
+              f"{beta}{p['stop_sugerido_pct']:>7.2f}  {p['modo']}")
+    # Só imprime a legenda se algum ticker de fato levou o marcador -- depois
+    # que a vol medida cobriu todo o tema, a nota ficou órfã explicando um
+    # símbolo que não aparecia em lugar nenhum.
+    if algum_estimado:
+        print("\n(*) vol estimada de setor, não medida")
 
     carteira = _carteira_default()
     print(f"\n--- CARTEIRA ({', '.join(carteira)}, pesos iguais) ---")

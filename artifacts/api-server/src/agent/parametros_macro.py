@@ -148,8 +148,11 @@ def parametros_completos(ticker: str, ref: date | None = None) -> dict | None:
     if not ev:
         return p
     mult = MULT_FOMC_SEP if ev["sep"] else MULT_FOMC
-    beta = p.get("beta") or 0
-    beta_pesa = ev["sep"] and beta >= BETA_ALTO
+    # Beta ausente NÃO conta como beta zero: sem o dado não dá pra afirmar
+    # que o papel é de beta alto, então ele simplesmente não leva o
+    # multiplicador extra -- falha pro lado seguro (não infla vol sem base).
+    beta = p.get("beta")
+    beta_pesa = ev["sep"] and isinstance(beta, (int, float)) and beta >= BETA_ALTO
     if beta_pesa:
         mult *= MULT_EXTRA_BETA_ALTO
     vol_final = round(p["vol_operacional_pct"] * mult, 2)

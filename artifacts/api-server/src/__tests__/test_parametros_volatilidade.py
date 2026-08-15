@@ -320,3 +320,25 @@ def test_composicao_descreve_sem_ranquear():
     for info in pm.INDICADORES_GLOBAIS.values():
         assert "composicao" in info
         assert "melhor indicador" not in info["composicao"].lower()
+
+
+# ── ausência de dado precisa parecer ausência ─────────────────────────────
+
+def test_beta_ausente_nao_vira_beta_alto_nem_zero(monkeypatch):
+    """Beta desconhecido não pode ser tratado como 0 (que significaria 'não
+    acompanha o setor', leitura oposta de 'não sabemos'). Sem o dado, o
+    papel só não leva o multiplicador extra de dot plot."""
+    monkeypatch.setitem(pv.TEMA_IA, "FAKE",
+                        {"vol_sem": 20.0, "beta": None, "est": False,
+                         "grupo": "chips", "driver": "teste"})
+    p = pm.parametros_completos("FAKE", date(2026, 9, 15))  # véspera de FOMC c/ dot plot
+    assert p["mult_macro"] == pytest.approx(pm.MULT_FOMC_SEP, abs=0.001)
+    assert "beta alto" not in p["modo"]
+
+
+def test_beta_alto_conhecido_continua_levando_o_extra(monkeypatch):
+    monkeypatch.setitem(pv.TEMA_IA, "FAKE2",
+                        {"vol_sem": 20.0, "beta": 3.0, "est": False,
+                         "grupo": "chips", "driver": "teste"})
+    p = pm.parametros_completos("FAKE2", date(2026, 9, 15))
+    assert p["mult_macro"] == pytest.approx(pm.MULT_FOMC_SEP * pm.MULT_EXTRA_BETA_ALTO, abs=0.001)
