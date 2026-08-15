@@ -59,9 +59,11 @@ import yfinance as yf
 try:
     from brt import today_brt
     from radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from parametros_macro import INDICADORES_GLOBAIS
 except ImportError:
     from agent.brt import today_brt
     from agent.radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
+    from agent.parametros_macro import INDICADORES_GLOBAIS
 
 # Mínimo de pregões em comum pra um par valer. ~3 meses: abaixo disso a
 # correlação vira ruído (papel recém-listado, ADR com feriado diferente),
@@ -80,9 +82,14 @@ def _overlay_path() -> str:
 
 def universo() -> list[str]:
     """Todos os tickers que o radar já descreve: os dois lados de cada par
-    medido, o tema IA e a carteira default. Assim o refresh cobre pelo menos
-    o que o snapshot cobria, sem lista paralela pra sair de sincronia."""
-    tickers: set[str] = set(PORTFOLIO_DEFAULT) | set(TEMA_IA)
+    medido, o tema IA, a carteira default e os ETFs proxy dos mercados
+    asiáticos. Assim o refresh cobre pelo menos o que o snapshot cobria,
+    sem lista paralela pra sair de sincronia.
+
+    Os proxies (EWY/EWT/EWJ/FXI) entram porque parametros_macro.
+    sinal_overnight lê a correlação deles com as posições pelo radar -- sem
+    estarem aqui, ficariam presos ao que veio no snapshot (só EWY tinha)."""
+    tickers: set[str] = set(PORTFOLIO_DEFAULT) | set(TEMA_IA) | set(INDICADORES_GLOBAIS)
     for a, b in CORRELACOES:
         tickers.add(a)
         tickers.add(b)

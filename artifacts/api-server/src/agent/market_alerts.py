@@ -28,6 +28,7 @@ import yfinance as yf
 from .cache import cached
 from . import hist_cache
 from .radar_ia_2026 import CORR_ALTA, alerta_contagio, correlacao, earnings_proximos
+from .parametros_macro import INDICADORES_GLOBAIS, sinal_overnight
 
 
 # =============================================================================
@@ -1073,6 +1074,45 @@ def check_earnings_contagion(tickers: list[str],
     return alerts
 
 
+def check_overnight_asia(tickers: list[str]) -> list[Alert]:
+    """Leitura antecipada do pré-mercado: Coreia, Taiwan e Japão FECHAM
+    horas antes de NY abrir, e o cluster de memória/semis responde a eles.
+    Estima o impacto por posição via correlação medida x movimento do
+    índice (ver parametros_macro.sinal_overnight).
+
+    Diferente de check_intl_peers, que olha só duas ações coreanas e só na
+    queda: aqui é bidirecional, cobre quatro mercados e traduz o movimento
+    em impacto esperado NA POSIÇÃO, não em "pressão genérica".
+
+    O movimento vem do índice REAL (^KS11 etc.), mas a correlação é a do
+    ETF proxy US-listed -- é o número que o radar mede na mesma sessão dos
+    semis. Índice sem cotação disponível é pulado, não vira erro."""
+    fechamentos: dict[str, float] = {}
+    for proxy, info in INDICADORES_GLOBAIS.items():
+        chg = _day_change_pct(info["indice"])
+        if chg is not None:
+            fechamentos[proxy] = chg
+    if not fechamentos:
+        return []
+
+    alerts: list[Alert] = []
+    for s in sinal_overnight(fechamentos, tickers):
+        if s["alerta"] == "leve":
+            continue  # ruído de fundo -- não vale uma linha no relatório
+        direcao = "pressão" if s["impacto_esperado_pct"] < 0 else "suporte"
+        alerts.append(Alert(
+            ticker=s["posicao"], category=Category.SETOR,
+            severity=Severity.ATENCAO if s["alerta"] == "FORTE" else Severity.INFO,
+            title=f"Overnight asiatico: {direcao}",
+            detail=(f"Fechamento na Asia projeta {s['impacto_esperado_pct']:+.2f}% "
+                    f"em {s['posicao']} ({'; '.join(s['componentes'])}). "
+                    f"Estimativa linear por correlacao -- indicio de pre-mercado, "
+                    f"nao previsao."),
+            value=s["impacto_esperado_pct"],
+        ))
+    return alerts
+
+
 def check_sinais_correlacionados(alerts: list[Alert]) -> list[Alert]:
     """Dedup de sinal por cluster (Radar IA 2026): se DOIS tickers com
     correlação >= 0.70 dispararam alerta relevante no MESMO ciclo, é um sinal
@@ -1708,6 +1748,7 @@ def run_all_alerts(tickers: list[str],
 
     alerts += check_peer_contagion()
     alerts += check_earnings_contagion(tickers, today)
+    alerts += check_overnight_asia(tickers)
     alerts += check_intl_peers()
     alerts += check_macro_triggers(today)
     alerts += check_macro_regime_risk(headlines_by_ticker)
