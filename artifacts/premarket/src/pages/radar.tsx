@@ -28,16 +28,33 @@ function diasAte(isoDate: string): number {
   return Math.round((alvo.getTime() - hoje.getTime()) / 86400000);
 }
 
-const GRUPO_LABEL: Record<string, string> = {
+// Precisa cobrir TODO grupo presente em TEMA_IA (agent/radar_ia_2026.py) — há
+// um teste que lê o Python e quebra se algum ficar sem rótulo. A chave `rede`
+// morreu quando o dado passou a usar `networking`; o rótulo sobreviveu, só
+// mudou de chave, e por um tempo ANET e CSCO apareceram como "networking" cru.
+export const GRUPO_LABEL: Record<string, string> = {
   memoria: "Memória",
   equipamento: "Equipamento",
   chips: "Chips",
+  foundry: "Foundry",
   hardware: "Hardware",
   energia: "Energia",
-  rede: "Rede/Interconexão",
+  networking: "Rede/Interconexão",
   software: "Software",
   hyperscaler: "Hyperscalers",
+  neocloud: "Neoclouds",
 };
+
+/**
+ * Rótulo de exibição de um grupo. O fallback capitaliza em vez de devolver a
+ * chave crua: se um grupo novo entrar no radar antes de ganhar rótulo aqui,
+ * ele aparece como "Fotônica" e não como "fotonica" no meio de uma coluna de
+ * nomes capitalizados. O teste continua cobrando o rótulo próprio.
+ */
+export function rotuloGrupo(grupo: string | null | undefined): string {
+  if (!grupo) return "—";
+  return GRUPO_LABEL[grupo] ?? grupo.charAt(0).toUpperCase() + grupo.slice(1);
+}
 
 function corrColorClass(c: number) {
   if (c >= 0.7) return "text-red-400";
@@ -184,7 +201,7 @@ function TemaIA({ data }: { data: RadarSnapshot }) {
           {linhas.map((l, idx) => (
             <tr key={l.ticker} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
               <td className="px-4 py-2 font-bold text-foreground">{l.ticker}</td>
-              <td className="px-4 py-2 text-muted-foreground">{GRUPO_LABEL[l.grupo ?? ""] ?? l.grupo ?? "—"}</td>
+              <td className="px-4 py-2 text-muted-foreground">{rotuloGrupo(l.grupo)}</td>
               <td className={`px-4 py-2 text-right font-bold ${(l.ytd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                 {l.ytd != null ? `${l.ytd >= 0 ? "+" : ""}${l.ytd.toFixed(1)}%` : "—"}
               </td>
@@ -324,7 +341,7 @@ function montarRelatorioRadar(data: RadarSnapshot): string {
     blocos.push("## Tema IA\n\n" + tabela(
       ["Ticker", "Grupo", "YTD", "Vol semanal", "Beta", "Driver"],
       tema.map(([t, v]) => [
-        t, GRUPO_LABEL[v.grupo ?? ""] ?? v.grupo ?? "—",
+        t, rotuloGrupo(v.grupo),
         v.ytd != null ? pct(v.ytd, 1) : "—",
         v.vol_sem != null ? `${v.vol_sem.toFixed(1)}%${v.est ? " (est.)" : ""}` : "—",
         v.beta != null ? v.beta.toFixed(2) : "n/d",
