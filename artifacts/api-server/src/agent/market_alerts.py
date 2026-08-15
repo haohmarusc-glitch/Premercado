@@ -27,6 +27,7 @@ import yfinance as yf
 
 from .cache import cached
 from . import hist_cache
+from .radar_ia_2026 import CORR_ALTA, alerta_contagio, correlacao, earnings_proximos
 
 
 # =============================================================================
@@ -1038,6 +1039,65 @@ def check_peer_contagion() -> list[Alert]:
     return alerts
 
 
+def check_earnings_contagion(tickers: list[str],
+                             today: Optional[dt.date] = None) -> list[Alert]:
+    """Contágio ANTECIPATÓRIO de earnings (Radar IA 2026): outra empresa
+    correlacionada reporta nos próximos 2 dias -> avisa quais posições do
+    portfólio estão expostas por correlação medida. Complementa
+    check_peer_contagion, que é REATIVO (só dispara depois que o bellwether
+    já caiu); aqui o aviso sai antes do evento, com a correlação concreta
+    (ex.: NVDA reporta 26/08 -> SMCI corr 0.51).
+
+    Sem chamada de rede: earnings_proximos/alerta_contagio leem o snapshot
+    embutido em radar_ia_2026.py. O ticker do próprio evento é pulado quando
+    está no portfólio -- check_earnings_proximity já cobre earnings da
+    própria posição; contágio é sobre o balanço DOS OUTROS."""
+    today = today or dt.date.today()
+    portfolio = [t.upper() for t in tickers]
+    alerts: list[Alert] = []
+    for ev in earnings_proximos(dias=2, ref=today):
+        expostos = alerta_contagio(ev["ticker"], portfolio)["posicoes_expostas"]
+        for p in expostos:
+            if p["posicao"] == ev["ticker"]:
+                continue
+            severity = Severity.ATENCAO if p["nivel"] == "ALTO" else Severity.INFO
+            alerts.append(Alert(
+                ticker=p["posicao"], category=Category.SETOR, severity=severity,
+                title="Contagio de earnings (radar)",
+                detail=(f"{ev['ticker']} reporta {ev['data']} "
+                        f"({ev.get('quando') or 'horario n/d'}): {p['posicao']} exposto "
+                        f"por correlacao {p['correlacao']:.2f} [{p['nivel']}]. "
+                        f"Janela da correlacao: 6 meses ate 14/08/26 (em stress sobe)."),
+                value=p["correlacao"],
+            ))
+    return alerts
+
+
+def check_sinais_correlacionados(alerts: list[Alert]) -> list[Alert]:
+    """Dedup de sinal por cluster (Radar IA 2026): se DOIS tickers com
+    correlação >= 0.70 dispararam alerta relevante no MESMO ciclo, é um sinal
+    contado duas vezes (MU-SNDK 0.82 é o mesmo trade), não dois independentes.
+    Emite um INFO por par pra leitura de risco -- não suprime nenhum alerta,
+    só nomeia a redundância."""
+    relevantes = sorted({a.ticker for a in alerts
+                         if a.severity in (Severity.CRITICO, Severity.ATENCAO)
+                         and not a.ticker.startswith("^")})
+    extras: list[Alert] = []
+    for i, a in enumerate(relevantes):
+        for b in relevantes[i + 1:]:
+            c = correlacao(a, b)
+            if c is not None and c >= CORR_ALTA:
+                extras.append(Alert(
+                    ticker=a, category=Category.SETOR, severity=Severity.INFO,
+                    title="Sinais no mesmo cluster (radar)",
+                    detail=(f"{a} e {b} alertaram no mesmo ciclo com correlacao "
+                            f"{c:.2f} -- e o mesmo trade contado 2x; considerar "
+                            f"como 1 sinal / dividir sizing."),
+                    value=c,
+                ))
+    return extras
+
+
 def check_intl_peers() -> list[Alert]:
     alerts: list[Alert] = []
     for t in INTL_MEMORY_PEERS:
@@ -1647,6 +1707,7 @@ def run_all_alerts(tickers: list[str],
     alerts: list[Alert] = []
 
     alerts += check_peer_contagion()
+    alerts += check_earnings_contagion(tickers, today)
     alerts += check_intl_peers()
     alerts += check_macro_triggers(today)
     alerts += check_macro_regime_risk(headlines_by_ticker)
@@ -1669,6 +1730,10 @@ def run_all_alerts(tickers: list[str],
             alerts += check_trading_halt(t, include_market=(i == 0))
         if check_edgar:
             alerts += check_edgar_events(t, filings=filings_by_ticker.get(t), today=today)
+
+    # Passa por ÚLTIMO, sobre o conjunto completo do ciclo -- precisa ver
+    # todos os alertas pra apontar pares do mesmo cluster (radar).
+    alerts += check_sinais_correlacionados(alerts)
 
     order = {Severity.CRITICO: 0, Severity.ATENCAO: 1, Severity.INFO: 2}
     alerts.sort(key=lambda a: order[a.severity])
