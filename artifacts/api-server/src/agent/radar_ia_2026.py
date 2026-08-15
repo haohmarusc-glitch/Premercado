@@ -338,6 +338,57 @@ PORTFOLIO_DEFAULT = ["MU", "SMCI", "ARM", "MRVL", "AVGO"]
 CORR_ALTA = 0.70      # mesmo trade
 CORR_MODERADA = 0.40  # fator compartilhado
 
+# ── Overlay de correlações atualizadas (atualizar_correlacoes.py) ──────────
+# O snapshot embutido acima é de 14/08/2026; o script de refresh grava um
+# JSON com a janela recalculada e este bloco o aplica POR CIMA no import.
+# Falha em qualquer ponto (arquivo ausente, JSON inválido, shape errado) é
+# silenciosa de propósito: o embutido continua valendo -- dado velho bem
+# rotulado é melhor que processo quebrado. Pares do snapshot que o overlay
+# não cobre permanecem com o valor (e a janela) originais.
+CORRELACOES_JANELA_FIM = HOJE_SNAPSHOT.isoformat()
+CORRELACOES_ATUALIZADO_EM: str | None = None
+
+_OVERLAY_PATH_DEFAULT = "/var/cache/premercado/radar_correlacoes.json"
+
+
+def _aplicar_overlay_correlacoes() -> None:
+    global CORRELACOES_JANELA_FIM, CORRELACOES_ATUALIZADO_EM
+    import os
+    path = os.environ.get("RADAR_CORR_OVERLAY") or _OVERLAY_PATH_DEFAULT
+    try:
+        with open(path, encoding="utf-8") as f:
+            blob = json.load(f)
+        pares = blob.get("correlacoes")
+        if not isinstance(pares, dict) or not pares:
+            return
+        aplicados = 0
+        for chave, valor in pares.items():
+            partes = str(chave).split("|")
+            if len(partes) != 2:
+                continue
+            a, b = sorted(p.upper() for p in partes)
+            try:
+                c = round(float(valor), 2)
+            except (TypeError, ValueError):
+                continue
+            # normaliza pra chave que o snapshot usa (qualquer ordem serve
+            # pro lookup de correlacao(), mas evita par duplicado invertido)
+            CORRELACOES.pop((b, a), None)
+            CORRELACOES[(a, b)] = c
+            aplicados += 1
+        if aplicados:
+            CORRELACOES_JANELA_FIM = str(blob.get("janela_fim") or CORRELACOES_JANELA_FIM)
+            CORRELACOES_ATUALIZADO_EM = str(blob.get("atualizado_em")) if blob.get("atualizado_em") else None
+            print(f"[radar] overlay de correlações aplicado: {aplicados} pares, "
+                  f"janela até {CORRELACOES_JANELA_FIM} ({path})", file=sys.stderr)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[radar] overlay de correlações ignorado ({path}): {e}", file=sys.stderr)
+
+
+_aplicar_overlay_correlacoes()
+
 
 # ============================================================================
 # FUNÇÕES DE ANÁLISE
@@ -570,6 +621,11 @@ def relatorio_completo():
 def exportar_json():
     blob = {
         "snapshot": HOJE_SNAPSHOT.isoformat(),
+        # Janela real das correlações servidas: igual ao snapshot quando só
+        # há o embutido; avança quando o overlay de atualizar_correlacoes.py
+        # foi aplicado no import.
+        "correlacoes_janela_fim": CORRELACOES_JANELA_FIM,
+        "correlacoes_atualizado_em": CORRELACOES_ATUALIZADO_EM,
         "earnings": EARNINGS,
         "min52": MIN52,
         "reacao_earnings": REACAO_EARNINGS,

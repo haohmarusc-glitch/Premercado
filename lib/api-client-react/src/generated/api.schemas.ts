@@ -258,6 +258,10 @@ export interface RadarTemaIaItem {
 export interface RadarSnapshot {
   /** YYYY-MM-DD do snapshot dos dados */
   snapshot: string;
+  /** YYYY-MM-DD do fim da janela das correlações servidas (avança quando o overlay de atualizar_correlacoes.py está aplicado) */
+  correlacoes_janela_fim?: string;
+  /** @nullable */
+  correlacoes_atualizado_em?: string | null;
   earnings: Record<string, RadarEarningsItem>;
   min52: Record<string, RadarMin52Item>;
   reacao_earnings: Record<string, RadarReacaoItem>;

@@ -299,7 +299,14 @@ export default function RadarPage() {
             <div className="px-4 py-3 border-b border-border flex items-center gap-2 mb-3">
               <Link2 className="h-4 w-4 text-muted-foreground" />
               <h2 className="font-mono text-sm font-bold text-foreground">Correlações medidas</h2>
-              <span className="font-mono text-[10px] text-muted-foreground">janela 13/02–14/08/26 · ≥0.70 = mesmo trade</span>
+              <span className="font-mono text-[10px] text-muted-foreground">
+                janela de 6m até {fmtDateBR(data.correlacoes_janela_fim ?? data.snapshot)} · ≥0.70 = mesmo trade
+              </span>
+              {data.correlacoes_janela_fim != null && data.correlacoes_janela_fim > data.snapshot && (
+                <Badge variant="outline" className="font-mono text-[10px] border-green-500/40 text-green-400" title="Overlay de atualizar_correlacoes.py aplicado — correlações mais novas que o snapshot embutido">
+                  atualizado
+                </Badge>
+              )}
             </div>
             <CorrelacoesFortes data={data} />
           </section>
