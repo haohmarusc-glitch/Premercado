@@ -347,8 +347,47 @@ CORR_MODERADA = 0.40  # fator compartilhado
 # não cobre permanecem com o valor (e a janela) originais.
 CORRELACOES_JANELA_FIM = HOJE_SNAPSHOT.isoformat()
 CORRELACOES_ATUALIZADO_EM: str | None = None
+# Quantos tickers tiveram a vol de TEMA_IA substituída por vol MEDIDA por
+# nós (ver adiante) -- 0 significa que tudo ainda vem da coleta manual.
+VOL_MEDIDA_APLICADA = 0
 
 _OVERLAY_PATH_DEFAULT = "/var/cache/premercado/radar_correlacoes.json"
+
+
+def _aplicar_vol_medida(blob: dict) -> None:
+    """Substitui a vol semanal de TEMA_IA pela MEDIDA por nós, quando o
+    overlay traz.
+
+    A vol embutida veio de coleta manual externa e discordava da medição do
+    próprio agente (visto em 15/08/2026: INTC 31.7% a.a. no radar contra
+    79.1% medidos por get_scenario_params; NVDA saindo com 10.8% a.a.).
+    Como ela é a base do stop sugerido e da contribuição de risco em
+    parametros_volatilidade, o erro chegava até a decisão -- NVDA aparecia
+    como a posição menos arriscada da carteira.
+
+    Ticker que o overlay não cobre mantém o valor manual, e o marcador
+    `est` (estimativa de setor) só cai pra False onde a medida entrou --
+    assim o relatório continua distinguindo medido de estimado."""
+    global VOL_MEDIDA_APLICADA
+    vols = blob.get("vol_semanal")
+    if not isinstance(vols, dict) or not vols:
+        return
+    for ticker, valor in vols.items():
+        alvo = TEMA_IA.get(str(ticker).upper())
+        if alvo is None:
+            continue  # proxy de país (EWY etc.) não faz parte do tema
+        try:
+            v = round(float(valor), 2)
+        except (TypeError, ValueError):
+            continue
+        if v <= 0:
+            continue
+        alvo["vol_sem"] = v
+        alvo["est"] = False  # deixou de ser estimativa: foi medida
+        VOL_MEDIDA_APLICADA += 1
+    if VOL_MEDIDA_APLICADA:
+        print(f"[radar] vol medida aplicada a {VOL_MEDIDA_APLICADA} tickers "
+              f"(substitui a coleta manual do snapshot)", file=sys.stderr)
 
 
 def _aplicar_overlay_correlacoes() -> None:
@@ -358,6 +397,7 @@ def _aplicar_overlay_correlacoes() -> None:
     try:
         with open(path, encoding="utf-8") as f:
             blob = json.load(f)
+        _aplicar_vol_medida(blob)
         pares = blob.get("correlacoes")
         if not isinstance(pares, dict) or not pares:
             return

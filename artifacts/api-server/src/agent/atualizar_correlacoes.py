@@ -46,6 +46,7 @@ script de novo (ou monte um volume pro diretório).
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import os
 import sys
@@ -148,8 +149,41 @@ def correlacoes_de(fechamentos: pd.DataFrame,
     return out
 
 
+def vol_semanal_de(fechamentos: pd.DataFrame,
+                   min_pregoes: int = MIN_PREGOES) -> dict[str, float]:
+    """Volatilidade SEMANAL realizada (%) por ticker, do mesmo download que
+    já veio pras correlações -- zero chamada de rede a mais.
+
+    Motivo de existir (visto em produção, 15/08/2026): a vol embutida em
+    TEMA_IA é coleta manual de fonte externa e discordava da medição do
+    próprio agente -- INTC aparecia com 31.7% anualizada no radar contra
+    79.1% medidos por get_scenario_params no mesmo período, e NVDA saía com
+    10.8% a.a., implausível pra qualquer janela recente. Como essa vol é a
+    base do stop sugerido e da contribuição de risco, o erro se propagava
+    pra decisão: NVDA vinha como a posição "mais segura" da carteira.
+
+    Metodologia igual à do resto do agente: desvio-padrão dos RETORNOS
+    diários, escalado pra semana por raiz do tempo (x sqrt(5)) -- mesma
+    convenção de parametros_volatilidade.vol_diaria/vol_anualizada, então
+    os números conversam entre módulos."""
+    if fechamentos.empty:
+        return {}
+    retornos = fechamentos.pct_change().dropna(how="all")
+    out: dict[str, float] = {}
+    for col in retornos.columns:
+        serie = retornos[col].dropna()
+        if len(serie) < min_pregoes:
+            continue
+        desvio_diario = float(serie.std())
+        if not desvio_diario or pd.isna(desvio_diario):
+            continue
+        out[str(col).upper()] = round(desvio_diario * math.sqrt(5) * 100, 2)
+    return out
+
+
 def gravar_overlay(pares: dict[tuple[str, str], float], meses: int = MESES_DEFAULT,
-                   path: str | None = None) -> str:
+                   path: str | None = None,
+                   vols: dict[str, float] | None = None) -> str:
     """Grava o overlay que radar_ia_2026.py carrega no import. Escrita
     atômica (tmp + rename) pra um leitor concorrente nunca ver JSON pela
     metade."""
@@ -161,6 +195,9 @@ def gravar_overlay(pares: dict[tuple[str, str], float], meses: int = MESES_DEFAU
         "atualizado_em": hoje.isoformat(),
         "fonte": "yfinance_retornos_diarios",
         "correlacoes": {f"{a}|{b}": c for (a, b), c in sorted(pares.items())},
+        # Vol semanal realizada (%) por ticker -- substitui a coleta manual
+        # de TEMA_IA, que discordava da medição do próprio agente.
+        "vol_semanal": dict(sorted((vols or {}).items())),
     }
     os.makedirs(os.path.dirname(destino), exist_ok=True)
     tmp = destino + ".tmp"
@@ -204,6 +241,25 @@ def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
         print("\nnenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
 
 
+def divergencias_de_vol(vols: dict[str, float], fator: float = 1.5) -> list[dict]:
+    """Tickers cuja vol MEDIDA difere da coleta manual do snapshot por mais
+    de `fator` (pra mais ou pra menos).
+
+    Existe pra tornar visível o problema que motivou medir a vol: quando a
+    diferença é de 2-3x, não é ruído de janela -- é erro de dado, e vinha
+    contaminando stop e sizing em silêncio."""
+    fora = []
+    for ticker, medida in vols.items():
+        manual = (TEMA_IA.get(ticker) or {}).get("vol_sem")
+        if not manual or not medida:
+            continue
+        razao = medida / manual
+        if razao >= fator or razao <= 1 / fator:
+            fora.append({"ticker": ticker, "manual": manual, "medida": medida,
+                         "razao": round(razao, 2)})
+    return sorted(fora, key=lambda x: -abs(x["razao"] - 1))
+
+
 def atualizar_e_gravar(meses: int = MESES_DEFAULT,
                        min_pregoes: int = MIN_PREGOES) -> dict:
     """Ciclo completo (baixar -> calcular -> gravar) numa chamada, pro
@@ -222,11 +278,14 @@ def atualizar_e_gravar(meses: int = MESES_DEFAULT,
         if not pares:
             return {"ok": False, "erro": "nenhum par com pregões suficientes"}
         res = resumo_mudancas(pares)
-        destino = gravar_overlay(pares, meses)
+        vols = vol_semanal_de(fech, min_pregoes)
+        destino = gravar_overlay(pares, meses, vols=vols)
         return {
             "ok": True,
             "pares": len(pares),
             "tickers": len(tickers),
+            "vols": len(vols),
+            "vol_divergencias": divergencias_de_vol(vols),
             "sem_historico": sorted(set(tickers) - set(map(str, fech.columns))),
             "novos": len(res["novos"]),
             "mudancas_relevantes": len(res["grandes"]),
@@ -278,10 +337,22 @@ def main(argv=None) -> int:
 
     _imprimir_resumo(pares, resumo_mudancas(pares))
 
+    vols = vol_semanal_de(fech, args.min_pregoes)
+    print(f"\nvol semanal medida: {len(vols)} tickers")
+    divs = divergencias_de_vol(vols)
+    if divs:
+        print(f"DIVERGEM da coleta manual do snapshot ({len(divs)} tickers) — "
+              f"a medida passa a valer:")
+        for d in divs[:15]:
+            ann_manual = d["manual"] * (52 ** 0.5)
+            ann_medida = d["medida"] * (52 ** 0.5)
+            print(f"  {d['ticker']:<6} {d['manual']:>6.2f}%/sem ({ann_manual:>5.1f}% a.a.) "
+                  f"-> {d['medida']:>6.2f}%/sem ({ann_medida:>5.1f}% a.a.)  x{d['razao']}")
+
     if args.dry_run:
         print("\n--dry-run: overlay não gravado.")
         return 0
-    destino = gravar_overlay(pares, args.meses)
+    destino = gravar_overlay(pares, args.meses, vols=vols)
     print(f"\noverlay gravado em {destino} -- novos processos do radar já leem daqui.")
     return 0
 
