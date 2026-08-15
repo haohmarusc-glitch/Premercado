@@ -232,6 +232,11 @@ Três decisões que valem lembrar:
 - Falha de SMTP **não** vira erro na tela: o relatório já foi gravado, então a
   resposta é 200 com `erroEnvio`. Devolver erro faria a pessoa reclicar e
   duplicar o registro no histórico.
+- Tabela markdown vira `<table>` com **estilo inline em cada célula**. A
+  primeira versão deixava a tabela como texto contando com o `font-family`
+  monoespaçado do bloco `<style>`; o Gmail no celular ignora esse bloco e o
+  relatório chegou como linhas de `|` cruas, quebrando de linha. Estilo inline
+  é o único que nenhum cliente de e-mail descarta.
 
 O Histórico ganhou a aba **Exportados**, e os modos `tela_*` não caem mais no
 rótulo genérico "diário".
