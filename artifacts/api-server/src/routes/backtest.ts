@@ -91,6 +91,51 @@ router.post("/backtest/sensitivity", async (req, res, next): Promise<void> => {
   }
 });
 
+// POST /backtest/walk-forward — otimiza o parâmetro numa janela de treino e
+// mede só na janela de teste seguinte, que o otimizador nunca viu. Diferente
+// de /backtest/sensitivity, que varia parâmetro sobre o MESMO período em que
+// mede (e por isso responde "quão sensível é?", não "isto funciona?").
+router.post("/backtest/walk-forward", async (req, res, next): Promise<void> => {
+  const { ticker, start, end, strategy } = req.body;
+  if (!ticker || !start || !end) {
+    res.status(400).json({ error: "ticker, start, end are required" });
+    return;
+  }
+
+  const positionFraction = clamp(req.body.positionFraction, 0.1, 1.0, 1.0);
+  const commissionPct    = clamp(req.body.commissionPct,    0,   0.05, 0.001);
+  const slippagePct      = clamp(req.body.slippagePct,      0,   0.05, 0.0005);
+  const stopLossPct      = optionalPct(req.body.stopLossPct);
+  const takeProfitPct    = optionalPct(req.body.takeProfitPct);
+  const rsiOversold      = clamp(req.body.rsiOversold,   1,  49, 30);
+  const rsiOverbought    = clamp(req.body.rsiOverbought, 51, 99, 70);
+  const scoreThreshold   = clamp(req.body.scoreThreshold, 5, 100, 60);
+  // Pisos generosos: janela de treino curta demais otimiza sobre ruído puro,
+  // que é exatamente o vício que este modo existe pra expor.
+  const treinoPregoes    = clamp(req.body.treinoPregoes, 60, 1260, 252);
+  const testePregoes     = clamp(req.body.testePregoes,  20,  504,  63);
+  const objetivo = ["sharpe", "totalReturn", "cagr"].includes(String(req.body.objetivo))
+    ? String(req.body.objetivo)
+    : "sharpe";
+
+  try {
+    // Pior caso: 25 combinações (grade RSI) x N janelas, mais 1 teste por
+    // janela. O fetch do yfinance roda uma vez só; o custo é CPU de
+    // simulação, daí o teto mais alto que os outros modos.
+    const data = await runBacktestScript({
+      mode: "walkforward",
+      ticker: String(ticker).toUpperCase(), start, end,
+      strategy: strategy ?? "rsi",
+      positionFraction, commissionPct, slippagePct,
+      stopLossPct, takeProfitPct, rsiOversold, rsiOverbought, scoreThreshold,
+      treinoPregoes, testePregoes, objetivo,
+    }, 180_000);
+    res.json(data);
+  } catch (e: unknown) {
+    next(e);
+  }
+});
+
 // POST /backtest/basket — roda a mesma simulação pra cesta inteira de uma vez
 // (default: tickers configurados em Settings), pensado pra estratégia
 // "confluencia" (o sinal técnico do Screener/TrendCard sem a camada de

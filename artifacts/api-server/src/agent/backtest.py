@@ -379,6 +379,228 @@ def run_basket_backtest(tickers, start, end, strategy="confluencia",
         "failed": failed,
     }
 
+# ============================================================================
+# WALK-FORWARD / OUT-OF-SAMPLE
+# ============================================================================
+#
+# Por que existe: run_sensitivity_analysis varia os parâmetros SOBRE O MESMO
+# período em que mede o resultado. Isso responde "quão sensível o resultado é
+# ao parâmetro?", mas é rotineiramente lido como se respondesse "esta
+# estratégia funciona?" -- e não responde: escolher o parâmetro que foi melhor
+# no histórico e depois avaliá-lo nesse mesmo histórico mede a capacidade de
+# ajustar ruído, não de prever.
+#
+# Aqui a série é partida em janelas: o parâmetro é escolhido na janela de
+# TREINO e o resultado é medido só na janela de TESTE seguinte, que o
+# otimizador nunca viu. O número que sai é comparável ao que se esperaria ao
+# operar de verdade.
+#
+# O que mais informa não é o retorno out-of-sample isolado, e sim:
+#   - a DEGRADAÇÃO (in-sample menos out-of-sample): o quanto do backtest
+#     original era ajuste de ruído;
+#   - a ESTABILIDADE do parâmetro escolhido entre janelas: se o "melhor"
+#     RSI muda a cada trimestre, não existe parâmetro certo -- a busca está
+#     perseguindo ruído;
+#   - o confronto com buy & hold NAS MESMAS janelas de teste: sem isso, um
+#     retorno positivo pode ser só o mercado subindo.
+
+# ~1 ano de treino, ~1 trimestre de teste, em PREGÕES (não dias corridos --
+# mesma convenção do resto do repo, evita feriado/fim de semana bagunçar a
+# contagem).
+_WF_TREINO_PREGOES = 252
+_WF_TESTE_PREGOES = 63
+# Piso do _simulate; janela menor que isso não produz simulação válida.
+_WF_MIN_PREGOES = 20
+
+
+def _janelas_walk_forward(n: int, treino: int, teste: int) -> list[tuple[int, int, int, int]]:
+    """Janelas (ini_treino, fim_treino, ini_teste, fim_teste) por POSIÇÃO.
+
+    Avança um bloco de teste por vez, então as janelas de teste NÃO se
+    sobrepõem -- se sobrepusessem, o mesmo pregão entraria várias vezes no
+    resultado agregado e inflaria a confiança."""
+    janelas = []
+    ini = 0
+    while ini + treino + teste <= n:
+        janelas.append((ini, ini + treino, ini + treino, ini + treino + teste))
+        ini += teste
+    return janelas
+
+
+def _combos_de_params(strategy: str) -> list[dict]:
+    """Grade de parâmetros a otimizar por estratégia.
+
+    ma_cross não tem parâmetro exposto: devolve uma combinação vazia, e o
+    walk-forward vira medição out-of-sample pura (sem otimização) -- ainda
+    útil, e sem fingir que houve escolha."""
+    if strategy == "rsi":
+        # ob > o: combinação com sobrecomprado <= sobrevendido não descreve
+        # nada e só suja a grade.
+        return [{"rsi_oversold": o, "rsi_overbought": ob}
+                for o in _RSI_OVERSOLD_GRID for ob in _RSI_OVERBOUGHT_GRID if ob > o]
+    if strategy == "confluencia":
+        return [{"score_threshold": v} for v in _SCORE_THRESHOLD_GRID]
+    return [{}]
+
+
+def _metrica_objetivo(resultado: dict, objetivo: str) -> float | None:
+    """Valor a maximizar no treino. None quando a janela não produziu
+    negócio nenhum -- sem trade não há o que otimizar, e tratar isso como
+    zero faria a busca escolher um parâmetro qualquer por empate."""
+    if "error" in resultado or not resultado.get("totalTrades"):
+        return None
+    valor = resultado.get(objetivo)
+    return float(valor) if isinstance(valor, (int, float)) else None
+
+
+def run_walk_forward(ticker, start, end, strategy="rsi",
+                     position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005,
+                     stop_loss_pct=None, take_profit_pct=None,
+                     rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0,
+                     treino_pregoes=_WF_TREINO_PREGOES, teste_pregoes=_WF_TESTE_PREGOES,
+                     objetivo="sharpe"):
+    """Otimiza na janela de treino, mede na de teste, avança e repete.
+
+    stop-loss/take-profit ficam FIXOS no que o usuário configurou: entram na
+    grade só se o número de combinações justificasse, e cada eixo a mais
+    multiplica o risco de garimpar ruído -- o próprio problema que este
+    modo existe pra medir."""
+    close_full, error = _fetch_warmed_close(ticker, start, end)
+    if error:
+        return {"error": error}
+
+    combos = _combos_de_params(strategy)
+    # Sinais são construídos UMA vez por combinação sobre a série inteira
+    # (com aquecimento) e depois fatiados por janela -- reconstruir por fold
+    # multiplicaria o custo sem mudar resultado nenhum.
+    sinais = {}
+    for i, params in enumerate(combos):
+        buy_full, sell_full = _build_signals(
+            close_full, strategy,
+            params.get("rsi_oversold", rsi_oversold),
+            params.get("rsi_overbought", rsi_overbought),
+            params.get("score_threshold", score_threshold),
+        )
+        close, buy, sell = _trim_to_window(close_full, buy_full, sell_full, start)
+        sinais[i] = (close, buy, sell)
+
+    close_ref = sinais[0][0]
+    n = len(close_ref)
+    janelas = _janelas_walk_forward(n, treino_pregoes, teste_pregoes)
+    if not janelas:
+        return {"error": (f"Período curto demais: {n} pregões para treino de "
+                          f"{treino_pregoes} + teste de {teste_pregoes}. "
+                          f"Use um intervalo maior ou janelas menores.")}
+
+    def simular(idx_combo, ini, fim, rotulo):
+        close, buy, sell = sinais[idx_combo]
+        c, b, s = close.iloc[ini:fim], buy.iloc[ini:fim], sell.iloc[ini:fim]
+        if len(c) < _WF_MIN_PREGOES:
+            return {"error": "janela curta demais"}
+        return _simulate(ticker, strategy, str(c.index[0].date()), str(c.index[-1].date()),
+                         c, b, s, position_fraction, commission_pct, slippage_pct,
+                         stop_loss_pct, take_profit_pct)
+
+    folds = []
+    for ini_tr, fim_tr, ini_te, fim_te in janelas:
+        melhor_idx, melhor_valor, melhor_res = None, None, None
+        for i in range(len(combos)):
+            res = simular(i, ini_tr, fim_tr, "treino")
+            valor = _metrica_objetivo(res, objetivo)
+            if valor is None:
+                continue
+            if melhor_valor is None or valor > melhor_valor:
+                melhor_idx, melhor_valor, melhor_res = i, valor, res
+
+        if melhor_idx is None:
+            # Nenhuma combinação negociou no treino: registrar e seguir, em
+            # vez de escolher uma à toa e chamar de "otimizada".
+            folds.append({
+                "treinoInicio": str(close_ref.index[ini_tr].date()),
+                "treinoFim": str(close_ref.index[fim_tr - 1].date()),
+                "testeInicio": str(close_ref.index[ini_te].date()),
+                "testeFim": str(close_ref.index[fim_te - 1].date()),
+                "semSinalNoTreino": True,
+            })
+            continue
+
+        res_teste = simular(melhor_idx, ini_te, fim_te, "teste")
+        folds.append({
+            "treinoInicio": str(close_ref.index[ini_tr].date()),
+            "treinoFim": str(close_ref.index[fim_tr - 1].date()),
+            "testeInicio": str(close_ref.index[ini_te].date()),
+            "testeFim": str(close_ref.index[fim_te - 1].date()),
+            "melhorParams": combos[melhor_idx],
+            "inSample": {k: melhor_res.get(k) for k in _SENSITIVITY_METRICS},
+            "outOfSample": ({k: res_teste.get(k) for k in _SENSITIVITY_METRICS}
+                            if "error" not in res_teste else {"error": res_teste["error"]}),
+        })
+
+    return {
+        "ticker": ticker, "strategy": strategy, "objetivo": objetivo,
+        "treinoPregoes": treino_pregoes, "testePregoes": teste_pregoes,
+        "combinacoesTestadas": len(combos),
+        "folds": folds,
+        "resumo": _resumo_walk_forward(folds),
+    }
+
+
+def _media(valores):
+    vals = [v for v in valores if isinstance(v, (int, float))]
+    return round(sum(vals) / len(vals), 2) if vals else None
+
+
+def _resumo_walk_forward(folds: list[dict]) -> dict:
+    validos = [f for f in folds
+               if f.get("inSample") and isinstance(f.get("outOfSample"), dict)
+               and "error" not in f["outOfSample"]]
+    sem_sinal = sum(1 for f in folds if f.get("semSinalNoTreino"))
+    if not validos:
+        # Continua reportando o CONTADOR de janelas sem sinal: "nenhum
+        # resultado" com o motivo escondido faria o operador procurar bug
+        # onde só houve estratégia que nunca dispara com aqueles parâmetros.
+        return {"nFolds": 0, "foldsSemSinalNoTreino": sem_sinal,
+                "aviso": ("nenhuma janela produziu resultado out-of-sample"
+                          + (f" -- {sem_sinal} janela(s) sem nenhum negócio no treino"
+                             if sem_sinal else ""))}
+
+    ret_is = _media(f["inSample"].get("totalReturn") for f in validos)
+    ret_oos = _media(f["outOfSample"].get("totalReturn") for f in validos)
+    bh_oos = _media(f["outOfSample"].get("buyAndHoldReturn") for f in validos)
+    positivos = sum(1 for f in validos
+                    if isinstance(f["outOfSample"].get("totalReturn"), (int, float))
+                    and f["outOfSample"]["totalReturn"] > 0)
+    venceu_bh = sum(1 for f in validos
+                    if isinstance(f["outOfSample"].get("totalReturn"), (int, float))
+                    and isinstance(f["outOfSample"].get("buyAndHoldReturn"), (int, float))
+                    and f["outOfSample"]["totalReturn"] > f["outOfSample"]["buyAndHoldReturn"])
+
+    # Estabilidade: quantos conjuntos DISTINTOS de parâmetro venceram. Um
+    # parâmetro diferente por janela é sinal de que a busca está achando
+    # ruído, não regularidade -- vale mais que qualquer retorno bonito.
+    assinaturas = [tuple(sorted((f.get("melhorParams") or {}).items())) for f in validos]
+    distintos = len(set(assinaturas))
+
+    return {
+        "nFolds": len(validos),
+        "retornoMedioInSample": ret_is,
+        "retornoMedioOutOfSample": ret_oos,
+        # A degradação é o número central: quanto do resultado do backtest
+        # tradicional era ajuste ao próprio período de avaliação.
+        "degradacao": (round(ret_is - ret_oos, 2)
+                       if isinstance(ret_is, (int, float)) and isinstance(ret_oos, (int, float))
+                       else None),
+        "sharpeMedioOutOfSample": _media(f["outOfSample"].get("sharpe") for f in validos),
+        "maxDrawdownMedioOutOfSample": _media(f["outOfSample"].get("maxDrawdown") for f in validos),
+        "buyAndHoldMedioOutOfSample": bh_oos,
+        "foldsPositivos": positivos,
+        "foldsQueVenceramBuyHold": venceu_bh,
+        "parametrosDistintosEscolhidos": distintos,
+        "parametroEstavel": distintos == 1,
+        "foldsSemSinalNoTreino": sem_sinal,
+    }
+
+
 def _optional_float(args, key):
     v = args.get(key)
     return float(v) if v not in (None, "") else None
@@ -396,7 +618,14 @@ if __name__ == "__main__":
         rsi_overbought=float(args.get("rsiOverbought", 70.0)),
         score_threshold=float(args.get("scoreThreshold", 60.0)),
     )
-    if args.get("mode") == "sensitivity":
+    if args.get("mode") == "walkforward":
+        result = run_walk_forward(
+            args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"),
+            treino_pregoes=int(args.get("treinoPregoes") or _WF_TREINO_PREGOES),
+            teste_pregoes=int(args.get("testePregoes") or _WF_TESTE_PREGOES),
+            objetivo=args.get("objetivo") or "sharpe",
+            **common)
+    elif args.get("mode") == "sensitivity":
         result = run_sensitivity_analysis(args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"), **common)
     elif tickers:
         result = run_basket_backtest(tickers, args["start"], args["end"], args.get("strategy", "confluencia"), **common)
