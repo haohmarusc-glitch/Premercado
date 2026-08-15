@@ -51,7 +51,8 @@ jobs:
       # Não bloqueante de propósito: rede fora do ar no runner do GitHub não
       # diz nada sobre a saúde das fontes em produção, e barrar o CI por isso
       # treinaria todo mundo a ignorar o passo. O valor está no relatório no
-      # log — um "source_used: stooq" aqui é o aviso de que o Yahoo mudou algo.
+      # log — um "source_used" diferente de yfinance aqui é o aviso de que o
+      # Yahoo mudou algo.
       - name: Preflight das fontes de dado (informativo)
         continue-on-error: true
         working-directory: artifacts/api-server/src

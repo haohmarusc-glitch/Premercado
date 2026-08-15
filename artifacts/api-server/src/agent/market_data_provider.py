@@ -10,16 +10,16 @@ erro e alguns silenciosamente mostram dado velho do cache. Não existe hoje
 NENHUM caminho que troque de fonte quando a primária falha: se o yfinance
 sai do ar, o sistema inteiro perde histórico e cotação ao mesmo tempo, apesar
 de o preço de fechamento diário existir em pelo menos mais um lugar gratuito
-(Stooq).
+(Alpha Vantage).
 
-Este módulo não troca o yfinance por Stooq — ele o mantém como fonte
+Este módulo não troca o yfinance pela fonte externa — ele o mantém como fonte
 PRIMÁRIA (é a única com pré-mercado, `fast_info`, opções etc.) e adiciona uma
 cadeia de degradação explícita e observável:
 
     yfinance (com retry curto)
       -> cache em disco dentro do TTL
-      -> cache VENCIDO (last-known-good), conferido contra o Stooq
-      -> Stooq (fallback externo, marcado)
+      -> cache VENCIDO (last-known-good), conferido contra a Alpha Vantage
+      -> Alpha Vantage (fallback externo, marcado)
       -> erro explícito (nunca dado inventado)
 
 Cada camada é OPT-IN por módulo consumidor — nenhum dos 24 call-sites
@@ -28,7 +28,8 @@ módulo é aditivo.
 
 ## Por que isto custa pouco
 
-- Nenhuma chave nova, nenhum provedor pago novo (Stooq é gratuito).
+- Nenhuma chave nova: a da Alpha Vantage já existe no projeto (usada pelo
+  feed de notícias) e o endpoint de série diária é do tier gratuito.
 - Reaproveita infraestrutura que já existe (`hist_cache.py`, `http_retry.py`,
   `brt.py`) em vez de criar uma segunda forma de cachear/retentar.
 - É aditivo: pode ser adotado módulo a módulo (começando pelos mais críticos
@@ -48,12 +49,12 @@ import yfinance as yf
 try:
     from . import hist_cache
     from . import provider_health
-    from . import stooq_provider
+    from . import alpha_vantage_provider
     from .security import friendly_error
 except ImportError:  # execução standalone
     import hist_cache
     import provider_health
-    import stooq_provider
+    import alpha_vantage_provider
     from security import friendly_error
 
 # Diferença de fechamento acima disso entre duas fontes vira warning
@@ -74,7 +75,7 @@ _YF_BACKOFF_BASE_S = 0.6
 @dataclass
 class HistoryResult:
     df: pd.DataFrame | None
-    source: str  # "yfinance" | "yfinance_cache" | "cache_stale" | "stooq" | "none"
+    source: str  # "yfinance" | "yfinance_cache" | "cache_stale" | "alphavantage" | "none"
     is_stale: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -86,7 +87,7 @@ class HistoryResult:
 @dataclass
 class QuoteResult:
     quote: dict | None
-    source: str  # "yfinance" | "stooq_eod" | "none"
+    source: str  # "yfinance" | "alphavantage_eod" | "none"
     is_delayed: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -142,9 +143,9 @@ def get_daily_history(
     # 3) cache VENCIDO (last-known-good). Aqui, e só aqui, a checagem cruzada
     #    tem os dois lados para comparar: um número velho que já andou é o
     #    caso mais perigoso da cadeia (alimenta stop e sizing parecendo
-    #    normal), e o Stooq é a única segunda opinião disponível.
+    #    normal), e a Alpha Vantage é a única segunda opinião disponível.
     #
-    #    O plano original chamava o cross-check no ramo do Stooq, passando
+    #    O plano original chamava o cross-check no ramo da Alpha Vantage, passando
     #    `cached_df` como referência — mas naquele ponto `cached_df` é
     #    necessariamente None (os dois `return` acima já teriam disparado),
     #    então a comparação nunca rodava. Aqui ela roda de verdade.
@@ -154,21 +155,21 @@ def get_daily_history(
         _conferir_cache_vencido(ticker, stale_df, period, warnings)
         return HistoryResult(df=stale_df, source="cache_stale", is_stale=True, warnings=warnings)
 
-    # 4) Stooq — fonte externa alternativa, sem custo. Marcado explicitamente
-    #    porque split/dividendo pode não bater com auto_adjust=True. Sem
-    #    referência local para conferir: se houvesse cache, teríamos servido
-    #    ele acima.
-    stooq_df = stooq_provider.fetch_daily_history(ticker, period)
-    if stooq_df is not None and not stooq_df.empty:
-        provider_health.record_success("stooq")
+    # 4) Alpha Vantage — fonte externa alternativa. Marcada explicitamente
+    #    porque TIME_SERIES_DAILY é "as traded": o ajuste de split/dividendo
+    #    pode não bater com auto_adjust=True. Sem referência local para
+    #    conferir: se houvesse cache, teríamos servido ele acima.
+    externo_df = alpha_vantage_provider.fetch_daily_history(ticker, period)
+    if externo_df is not None and not externo_df.empty:
+        provider_health.record_success("alphavantage")
         warnings.append(
-            "yfinance e cache indisponíveis — servindo Stooq "
+            "yfinance e cache indisponíveis — servindo Alpha Vantage "
             "(fallback externo, ajuste de split/dividendo não confirmado)"
         )
-        return HistoryResult(df=stooq_df, source="stooq", warnings=warnings)
-    provider_health.record_failure("stooq")
+        return HistoryResult(df=externo_df, source="alphavantage", warnings=warnings)
+    provider_health.record_failure("alphavantage")
 
-    warnings.append("Nenhuma fonte de histórico disponível (yfinance, cache e Stooq falharam)")
+    warnings.append("Nenhuma fonte de histórico disponível (yfinance, cache e Alpha Vantage falharam)")
     return HistoryResult(df=None, source="none", warnings=warnings)
 
 
@@ -191,16 +192,17 @@ def _load_stale_cache(ticker: str, period: str, auto_adjust: bool) -> pd.DataFra
 def _conferir_cache_vencido(
     ticker: str, stale_df: pd.DataFrame, period: str, warnings: list[str]
 ) -> None:
-    """Pede ao Stooq uma segunda opinião sobre o último fechamento do cache
+    """Pede à Alpha Vantage uma segunda opinião sobre o último fechamento do cache
     vencido que estamos prestes a servir.
 
-    Custa uma chamada HTTP num caminho raro (yfinance fora E cache fora do
-    TTL). Nunca bloqueia a entrega: qualquer falha do Stooq só significa
-    "sem segunda opinião", e o cache é servido do mesmo jeito — o que muda é
-    o relatório carregar ou não o aviso de divergência.
+    Custa uma chamada de cota num caminho raro (yfinance fora E cache fora do
+    TTL). Nunca bloqueia a entrega: falha da Alpha Vantage — inclusive cota do
+    dia esgotada — só significa "sem segunda opinião", e o cache é servido do
+    mesmo jeito; o que muda é o relatório carregar ou não o aviso de
+    divergência.
     """
     try:
-        referencia = stooq_provider.fetch_daily_history(ticker, period)
+        referencia = alpha_vantage_provider.fetch_daily_history(ticker, period)
     except Exception:
         return
     if referencia is None or referencia.empty:
@@ -263,19 +265,20 @@ def get_quote(ticker: str) -> QuoteResult:
             provider_health.record_failure("yfinance")
     else:
         # Mesmo aviso do histórico: quem consome precisa saber que a fonte
-        # primária nem foi tentada, senão "atrasado" parece falha do Stooq.
+        # primária nem foi tentada, senão "atrasado" parece falha da fonte
+        # externa quando o Yahoo é que nem chegou a ser consultado.
         warnings.append("yfinance em cooldown (falhas recentes) — pulado direto pro fallback")
 
-    fallback = stooq_provider.fetch_last_close(ticker)
+    fallback = alpha_vantage_provider.fetch_last_close(ticker)
     if fallback is not None:
-        provider_health.record_success("stooq")
+        provider_health.record_success("alphavantage")
         warnings.append(
             f"Cotação ao vivo indisponível — mostrando fechamento de "
-            f"{fallback['asOf']} (Stooq, atrasado)"
+            f"{fallback['asOf']} (Alpha Vantage, atrasado)"
         )
-        return QuoteResult(quote=fallback, source="stooq_eod", is_delayed=True, warnings=warnings)
+        return QuoteResult(quote=fallback, source="alphavantage_eod", is_delayed=True, warnings=warnings)
 
-    provider_health.record_failure("stooq")
+    provider_health.record_failure("alphavantage")
     warnings.append("Nenhuma fonte de cotação disponível")
     return QuoteResult(quote=None, source="none", warnings=warnings)
 
