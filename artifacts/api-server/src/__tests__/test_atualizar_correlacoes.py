@@ -176,3 +176,52 @@ def test_overlay_ausente_e_silencioso(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_CORR_OVERLAY", str(tmp_path / "nao_existe.json"))
     radar = _carregar_radar_fresco("radar_overlay_ausente_test")
     assert radar.correlacao("MU", "SNDK") == pytest.approx(0.82)
+
+
+# ── vol medida do overlay chega até o stop/sizing ─────────────────────────
+
+def test_vol_do_overlay_substitui_a_coleta_manual(tmp_path, monkeypatch):
+    """O ponto da feature: vol medida errada no snapshot contaminava stop e
+    contribuição de risco. Com o overlay, o valor medido prevalece e o
+    ticker deixa de ser marcado como estimativa."""
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    # NVDA no snapshot: 1.50%/sem (10.8% a.a., implausível). Medido: 6.0%.
+    ac.gravar_overlay({("MU", "SNDK"): 0.8}, path=destino, vols={"NVDA": 6.0})
+
+    radar = _carregar_radar_fresco("radar_vol_overlay_test")
+    assert radar.TEMA_IA["NVDA"]["vol_sem"] == pytest.approx(6.0)
+    assert radar.TEMA_IA["NVDA"]["est"] is False
+    assert radar.VOL_MEDIDA_APLICADA == 1
+
+
+def test_vol_do_overlay_ignora_ticker_fora_do_tema(tmp_path, monkeypatch):
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    ac.gravar_overlay({("MU", "SNDK"): 0.8}, path=destino, vols={"EWY": 3.0, "MU": 8.0})
+    radar = _carregar_radar_fresco("radar_vol_fora_tema_test")
+    assert "EWY" not in radar.TEMA_IA
+    assert radar.VOL_MEDIDA_APLICADA == 1  # só MU entrou
+
+
+def test_vol_invalida_no_overlay_mantem_a_manual(tmp_path, monkeypatch):
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    ac.gravar_overlay({("MU", "SNDK"): 0.8}, path=destino,
+                      vols={"MU": 0.0, "NVDA": -1.0})
+    radar = _carregar_radar_fresco("radar_vol_invalida_test")
+    assert radar.TEMA_IA["MU"]["vol_sem"] == pytest.approx(7.89)   # manual
+    assert radar.TEMA_IA["NVDA"]["vol_sem"] == pytest.approx(1.50)  # manual
+    assert radar.VOL_MEDIDA_APLICADA == 0
+
+
+def test_overlay_sem_vol_nao_mexe_no_tema(tmp_path, monkeypatch):
+    """Overlay antigo (gravado antes desta feature) não tem a chave -- não
+    pode quebrar nem zerar a vol existente."""
+    destino = str(tmp_path / "overlay.json")
+    monkeypatch.setenv("RADAR_CORR_OVERLAY", destino)
+    ac.gravar_overlay({("MU", "SNDK"): 0.61}, path=destino)  # vols=None
+    radar = _carregar_radar_fresco("radar_sem_vol_test")
+    assert radar.TEMA_IA["MU"]["vol_sem"] == pytest.approx(7.89)
+    assert radar.VOL_MEDIDA_APLICADA == 0
+    assert radar.correlacao("MU", "SNDK") == pytest.approx(0.61)  # correlação ok

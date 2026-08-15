@@ -33,6 +33,8 @@ interface CorrelacoesRefreshResult {
   erro?: string;
   pares?: number;
   tickers?: number;
+  vols?: number;
+  vol_divergencias?: Array<{ ticker: string; manual: number; medida: number; razao: number }>;
   sem_historico?: string[];
   novos?: number;
   mudancas_relevantes?: number;
@@ -81,10 +83,22 @@ export async function refreshRadarCorrelacoes(): Promise<void> {
     );
   }
 
+  // Vol medida discordando da coleta manual por 1.5x+ não é ruído de
+  // janela: é erro no dado manual, e essa vol é a base de stop e sizing.
+  // Sobe pra warn enquanto a divergência existir -- quando o snapshot for
+  // regravado com os valores medidos, isso se cala sozinho.
+  if (parsed.vol_divergencias?.length) {
+    logger.warn(
+      { tickers: parsed.vol_divergencias },
+      "Radar vol: medida diverge da coleta manual do snapshot -- a medida prevalece (afeta stop e sizing)",
+    );
+  }
+
   logger.info(
     {
       pares: parsed.pares,
       tickers: parsed.tickers,
+      vols: parsed.vols,
       novos: parsed.novos,
       mudancasRelevantes: parsed.mudancas_relevantes,
       semHistorico: parsed.sem_historico,
