@@ -206,3 +206,53 @@ def test_sem_pct_sma50_no_snapshot_nao_dispara():
     snap["technicals"]["ARM"]["pct_above_sma50"] = None
     rep = lint_veredito("Distribuição clara em ARM.", snap)
     assert not any(i.code == "DISTRIBUICAO_INVERTIDA" for i in rep.issues)
+
+
+# ── regra 7: concentração por correlação (Radar IA 2026) ────────────────────
+
+def _snap_concentracao():
+    """Carteira com MU e SNDK (corr 0.82 no radar) -- o par crítico do guia."""
+    return {
+        "as_of": "2026-08-14",
+        "quotes": {
+            "MU": {"price": 300.0, "previous_close": 298.0, "as_of": "2026-08-14"},
+            "SNDK": {"price": 200.0, "previous_close": 199.0, "as_of": "2026-08-14"},
+            "CEG": {"price": 250.0, "previous_close": 251.0, "as_of": "2026-08-14"},
+        },
+        "technicals": {},
+        "earnings": {},
+    }
+
+
+def test_concentracao_compra_dupla_no_mesmo_cluster_e_erro():
+    texto = ("Vale comprar MU na abertura pela força do HBM. "
+             "Também vale aumentar SNDK aproveitando o momento do NAND.")
+    rep = lint_veredito(texto, _snap_concentracao())
+    assert any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
+
+
+def test_concentracao_nao_dispara_se_texto_ja_menciona_correlacao():
+    texto = ("Vale comprar MU e também aumentar SNDK -- ciente da correlação "
+             "alta entre os dois (mesmo cluster de memória), sizing dividido.")
+    rep = lint_veredito(texto, _snap_concentracao())
+    assert not any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
+
+
+def test_concentracao_par_de_baixa_correlacao_nao_dispara():
+    texto = ("Vale comprar MU pela força do HBM. "
+             "Também vale aumentar CEG no tema de energia.")
+    rep = lint_veredito(texto, _snap_concentracao())
+    assert not any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
+
+
+def test_concentracao_negacao_antes_do_verbo_nao_conta_como_compra():
+    texto = ("Vale comprar MU na fraqueza. Em SNDK, não é hora de comprar -- "
+             "esperar o resultado antes de qualquer entrada.")
+    rep = lint_veredito(texto, _snap_concentracao())
+    assert not any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
+
+
+def test_concentracao_mencao_sem_verbo_de_compra_nao_conta():
+    texto = "MU segue pressionada e SNDK acompanha o cluster de memória."
+    rep = lint_veredito(texto, _snap_concentracao())
+    assert not any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
