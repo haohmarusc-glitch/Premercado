@@ -290,6 +290,32 @@ autenticado), com trava e cadência coordenadas por linha única no Postgres
 **yfinance é a espinha dorsal** — 24 módulos dependem dele: cotação, histórico,
 earnings, técnicos, vol, beta, fundamentos, opções.
 
+**Fallback de continuidade** (`market_data_provider.py`): se o Yahoo bloquear o
+IP do VPS ou mudar formato, existe uma cadeia de degradação explícita em vez de
+perder tudo ao mesmo tempo —
+
+```
+yfinance (retry curto)
+  → cache dentro do TTL
+  → cache VENCIDO, conferido contra o Stooq
+  → Stooq (gratuito, sem chave, marcado como tal)
+  → erro explícito (nunca dado inventado)
+```
+
+Um disjuntor por provedor (`provider_health.py`, arquivo em `/tmp` compartilhado
+entre os processos Python) abre após 3 falhas seguidas e evita que cada checker
+redescubra a queda pagando o timeout inteiro.
+
+> **O Stooq é fallback de continuidade, não fonte de verdade.** Ele devolve
+> OHLCV "as traded" e o ajuste de split/dividendo não foi confirmado contra
+> `auto_adjust=True`. Serve para indicador técnico e para a tela não ficar sem
+> gráfico; **nunca** para P&L, preço médio ou qualquer coisa que vire dinheiro.
+> A cotação por Stooq é sempre fechamento do dia anterior e vem com
+> `is_delayed=True` — a UI mostra "atrasado", nunca finge preço ao vivo.
+
+`provider_preflight.py` mede as duas fontes antes do deploy (`python -m
+agent.provider_preflight`, exit 0/1/2) e roda como passo informativo no CI.
+
 Fontes opcionais, todas **fail-open** (sem a chave, a seção some ou mostra como
 ativar, em vez de quebrar): FRED (macro), FMP (valuation/DCF), Finnhub e Alpha
 Vantage (notícias), Quiver (Congresso), Unusual Whales (dark pool), Form4API
@@ -336,6 +362,18 @@ Aprendidas de incidentes reais. Detalhamento em
 10. **Dado de fonte externa merece checagem cruzada.** A vol coletada à mão
     discordava da medição do próprio agente em 2,5× para o INTC, e isso
     contaminava stop e sizing em silêncio.
+11. **Existe um `agent.py` DENTRO do pacote `agent/`.** Inserir `src/agent/` no
+    `sys.path` (vários testes fazem, para `from brt import ...`) faz o nome
+    `agent` resolver para o módulo em vez do pacote, e todo
+    `from agent.x import y` coletado depois estoura. O sintoma engana: a suíte
+    inteira passa e o mesmo arquivo falha noutra ordem de coleta. O
+    `conftest.py` fixa o pacote em `sys.modules` antes de tudo — mas em teste
+    novo prefira import de pacote e não mexa no path.
+12. **Checagem cruzada só vale onde as duas pontas existem.** Na primeira
+    versão do `market_data_provider.py` a comparação de fechamento ficava no
+    ramo do Stooq, onde o cache é sempre `None` por construção — nunca rodava.
+    Guarda que não dispara é pior que guarda nenhuma: passa confiança sem dar
+    proteção.
 
 ---
 
@@ -391,6 +429,14 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #273 | Walk-forward com validação out-of-sample: otimiza no treino, mede na janela seguinte |
 | #275 | Campos de janela (treino/teste/objetivo) na tela — a rota já aceitava, a tela não enviava |
 | #276 | Salvar relatório e enviar por e-mail nas oito telas de análise |
+| #277 | Tabela do e-mail vira `<table>` com estilo inline (Gmail no celular ignora o `<style>`) |
+| #278 | Rótulo para todo grupo do Radar, com teste que lê o Python e pega a deriva |
+
+### Diversificação de fontes de dado (ago/2026)
+
+| PR | O que entregou |
+|---|---|
+| #279 | Cadeia de fallback (yfinance → cache → cache vencido → Stooq), disjuntor por provedor, preflight de deploy |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
