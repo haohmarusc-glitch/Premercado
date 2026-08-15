@@ -44,7 +44,16 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from itertools import combinations
 from typing import Any
+
+# radar_ia_2026 é stdlib-only (dados embutidos + funções puras), então não
+# quebra o contrato "sem dependências externas" deste módulo. Import dos
+# DOIS jeitos porque este arquivo também roda standalone (__main__ no fim).
+try:
+    from radar_ia_2026 import CORR_ALTA, correlacao
+except ImportError:
+    from agent.radar_ia_2026 import CORR_ALTA, correlacao
 
 # ---------------------------------------------------------------- config ---
 
@@ -231,6 +240,56 @@ _TICKER_FLAT = re.compile(
 )
 
 
+# Verbos de intenção de compra no veredito. Extração deliberadamente
+# CONSERVADORA (texto do veredito é prosa livre, sem rótulo estruturado):
+# exige o verbo na mesma frase do ticker e descarta quando há negação/
+# condicional logo antes do verbo ("não é hora de comprar", "evitar
+# aumentar") -- falso positivo aqui custa um retry de correção inteiro.
+_VERBOS_COMPRA = r"(comprar|compra|aumentar|adicionar|reforcar|iniciar entrada|entrar)"
+_NEGACAO = re.compile(
+    r"(nao|não|evitar|evite|sem|nem|adiar|esperar( pra| para)?|aguardar( pra| para)?)"
+    r"[\s\w]{0,20}$")
+
+
+def _tickers_com_intencao_de_compra(texto: str, universo: list[str]) -> list[str]:
+    """Tickers do universo (carteira do snapshot) que o texto recomenda
+    comprar/aumentar. Frase = trecho entre pontuações fortes; o verbo tem
+    que estar a até ~90 chars do ticker, sem negação imediatamente antes."""
+    achados: list[str] = []
+    norm = _norm(texto)
+    for tk in universo:
+        for m in re.finditer(rf"\b{tk.lower()}\b", norm):
+            ini, fim = max(0, m.start() - 90), m.end() + 90
+            trecho = norm[ini:fim]
+            corte_ini = trecho.rfind(".", 0, m.start() - ini)
+            corte_fim = trecho.find(".", m.end() - ini)
+            frase = trecho[corte_ini + 1: corte_fim if corte_fim != -1 else len(trecho)]
+            vm = re.search(_VERBOS_COMPRA, frase)
+            if not vm:
+                continue
+            antes = frase[:vm.start()]
+            if _NEGACAO.search(antes):
+                continue
+            achados.append(tk)
+            break
+    return achados
+
+
+def checar_concentracao_veredito(tickers_comprar: list[str]) -> list[str]:
+    """Passo 3 do guia Radar IA 2026: veredito que recomenda comprar 2+
+    nomes com corr >= CORR_ALTA é o mesmo trade contado duas vezes."""
+    erros = []
+    for a, b in combinations([t.upper() for t in tickers_comprar], 2):
+        c = correlacao(a, b)
+        if c and c >= CORR_ALTA:
+            erros.append(
+                f"CONCENTRAÇÃO: {a}+{b} têm correlação {c:.2f} (janela de 6 "
+                f"meses até 14/08/26) — recomendar compra dos dois sem citar "
+                f"a concentração é o mesmo trade 2x. Mencione a correlação e "
+                f"ajuste a recomendação (ou o sizing) explicitamente.")
+    return erros
+
+
 def lint_veredito(texto: str, snapshot: dict[str, Any],
                    year: int | None = None) -> ValidationReport:
     rep = ValidationReport()
@@ -373,6 +432,17 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                     f"(≤{DISTRIB_PCT_SMA50_MAX:.0f}%) são perfil de FUNDO — "
                     f"capitulação/teste de suporte, não topo. Distribuição "
                     f"pressupõe estar perto de uma máxima.", ticker=tk)
+
+    # 7) concentração por correlação (Radar IA 2026): veredito recomendando
+    # comprar/aumentar 2+ nomes com corr >= 0.70 SEM mencionar a concentração
+    # é o mesmo trade recomendado duas vezes como se fossem independentes
+    # (MU-SNDK 0.82). Só dispara quando o texto não fala de correlação/
+    # concentração -- se o veredito já nomeia o risco, a recomendação dupla
+    # é decisão consciente, não descuido.
+    if not re.search(r"correlac|concentrac|mesmo trade|mesmo cluster", norm_text):
+        compraveis = _tickers_com_intencao_de_compra(texto, list(quotes))
+        for erro in checar_concentracao_veredito(compraveis):
+            rep.add("ERROR", "CONCENTRACAO_CORRELACAO", erro)
 
     return rep
 

@@ -217,6 +217,57 @@ export interface EntryExitStudyNewsItem {
   relatedTickers?: string[] | null;
 }
 
+export interface RadarEarningsItem {
+  data: string;
+  /** @nullable */
+  quando?: string | null;
+  setor: string;
+  nota?: string;
+}
+
+export interface RadarMin52Item {
+  preco?: number;
+  min52?: number;
+  status?: string;
+}
+
+export interface RadarReacaoItem {
+  /** @nullable */
+  evr?: number | null;
+  /** @nullable */
+  move_impl_sem?: number | null;
+  /** @nullable */
+  move_impl_mes?: number | null;
+  /** @nullable */
+  vies?: string | null;
+}
+
+export interface RadarTemaIaItem {
+  /** @nullable */
+  ytd?: number | null;
+  /** @nullable */
+  vol_sem?: number | null;
+  /** @nullable */
+  beta?: number | null;
+  /** true = vol estimada de setor, nao medida */
+  est?: boolean;
+  grupo?: string;
+  driver?: string;
+}
+
+export interface RadarSnapshot {
+  /** YYYY-MM-DD do snapshot dos dados */
+  snapshot: string;
+  earnings: Record<string, RadarEarningsItem>;
+  min52: Record<string, RadarMin52Item>;
+  reacao_earnings: Record<string, RadarReacaoItem>;
+  riscos: Record<string, string[]>;
+  tema_ia: Record<string, RadarTemaIaItem>;
+  /** par 'A|B' -> correlacao medida (janela 13/02-14/08/26) */
+  correlacoes: Record<string, number>;
+  portfolio_default: string[];
+}
+
 export interface EntryExitStudyHistory {
   id: number;
   targetId: number;

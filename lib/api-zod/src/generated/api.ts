@@ -320,6 +320,41 @@ export const EntryExitStudyHistorySchema = zod.object({
   "createdAt": zod.string()
 })
 
+/**
+ * @summary Radar IA 2026 snapshot (earnings, correlacoes, tema IA, riscos)
+ */
+export const RadarSnapshotResponse = zod.object({
+  "snapshot": zod.string().describe('YYYY-MM-DD do snapshot dos dados'),
+  "earnings": zod.record(zod.string(), zod.object({
+    "data": zod.string(),
+    "quando": zod.string().nullish(),
+    "setor": zod.string(),
+    "nota": zod.string().optional(),
+  })),
+  "min52": zod.record(zod.string(), zod.object({
+    "preco": zod.coerce.number().optional(),
+    "min52": zod.coerce.number().optional(),
+    "status": zod.string().optional(),
+  })),
+  "reacao_earnings": zod.record(zod.string(), zod.object({
+    "evr": zod.coerce.number().nullish(),
+    "move_impl_sem": zod.coerce.number().nullish(),
+    "move_impl_mes": zod.coerce.number().nullish(),
+    "vies": zod.string().nullish(),
+  }).passthrough()),
+  "riscos": zod.record(zod.string(), zod.array(zod.string())),
+  "tema_ia": zod.record(zod.string(), zod.object({
+    "ytd": zod.coerce.number().nullish(),
+    "vol_sem": zod.coerce.number().nullish(),
+    "beta": zod.coerce.number().nullish(),
+    "est": zod.boolean().optional(),
+    "grupo": zod.string().optional(),
+    "driver": zod.string().optional(),
+  })),
+  "correlacoes": zod.record(zod.string(), zod.coerce.number()).describe("par 'A|B' -> correlacao medida"),
+  "portfolio_default": zod.array(zod.string()),
+})
+
 export const EntryExitStudyResolutionSchema = zod.object({
   "id": zod.coerce.number(),
   "targetId": zod.coerce.number(),

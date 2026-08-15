@@ -67,6 +67,7 @@ import type {
   PortfolioPurchaseCreate,
   PortfolioPurchaseUpdate,
   PriceAlert,
+  RadarSnapshot,
   Report,
   ScenarioAlertSettings,
   ScenarioAlertSettingsUpdate,
@@ -1433,6 +1434,80 @@ export function useListAlertFirings<TData = Awaited<ReturnType<typeof listAlertF
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListAlertFiringsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+export const getGetRadarUrl = () => {
+
+
+
+
+  return `/api/radar`
+}
+
+/**
+ * @summary Radar IA 2026 snapshot (earnings, correlacoes, tema IA, riscos)
+ */
+export const getRadar = async ( options?: RequestInit): Promise<RadarSnapshot> => {
+
+  return customFetch<RadarSnapshot>(getGetRadarUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRadarQueryKey = () => {
+    return [
+    `/api/radar`
+    ] as const;
+    }
+
+
+export const getGetRadarQueryOptions = <TData = Awaited<ReturnType<typeof getRadar>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRadar>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRadarQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRadar>>> = ({ signal }) => getRadar({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRadar>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetRadarQueryResult = NonNullable<Awaited<ReturnType<typeof getRadar>>>
+export type GetRadarQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Radar IA 2026 snapshot (earnings, correlacoes, tema IA, riscos)
+ */
+
+export function useGetRadar<TData = Awaited<ReturnType<typeof getRadar>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRadar>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetRadarQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
