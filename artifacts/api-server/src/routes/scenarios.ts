@@ -31,19 +31,25 @@ function scriptEnv(timeoutMs: number): NodeJS.ProcessEnv {
   return { ...process.env, AGENT_DEADLINE_TS: String(Date.now() + timeoutMs) };
 }
 
-export function runScript(scriptName: string, args: string[]): Promise<string> {
+// `timeoutMs` opcional: o default de 60s cobre os scripts chamados por rota
+// HTTP (onde o usuário está esperando). Jobs de background que varrem muitos
+// tickers de uma vez -- ex.: radar-correlacoes-checker, que baixa ~37
+// históricos numa tacada -- passam um teto maior; ninguém está esperando, e
+// um timeout ali significa semanas sem refresh, não um clique frustrado.
+export function runScript(scriptName: string, args: string[],
+                          timeoutMs: number = SCRIPT_TIMEOUT_MS): Promise<string> {
   return runExclusive(scriptName, () => new Promise((resolve, reject) => {
     const scriptPath = path.join(agentDir, "agent", scriptName);
-    const py = spawnPython(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(SCRIPT_TIMEOUT_MS) });
+    const py = spawnPython(getPythonBin(), [scriptPath, ...args], { env: scriptEnv(timeoutMs) });
     let out = "";
     let err = "";
     const timer = setTimeout(() => {
       py.kill("SIGTERM");
       const cauda = err.trim().slice(-2000);
       reject(new Error(cauda
-        ? `${scriptName} timeout (${SCRIPT_TIMEOUT_MS}ms). stderr: ${cauda}`
-        : `${scriptName} timeout (${SCRIPT_TIMEOUT_MS}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`));
-    }, SCRIPT_TIMEOUT_MS);
+        ? `${scriptName} timeout (${timeoutMs}ms). stderr: ${cauda}`
+        : `${scriptName} timeout (${timeoutMs}ms). Nenhum stderr -- o processo não chegou a imprimir nada.`));
+    }, timeoutMs);
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
     py.on("close", (code) => {

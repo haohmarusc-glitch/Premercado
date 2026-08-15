@@ -204,6 +204,42 @@ def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
         print("\nnenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
 
 
+def atualizar_e_gravar(meses: int = MESES_DEFAULT,
+                       min_pregoes: int = MIN_PREGOES) -> dict:
+    """Ciclo completo (baixar -> calcular -> gravar) numa chamada, pro
+    checker semanal (lib/radar-correlacoes-checker.ts) consumir como JSON.
+
+    Nunca levanta: devolve {"ok": false, "erro": ...} pra qualquer falha, no
+    mesmo espírito dos outros scripts chamados por checker -- um refresh que
+    não deu certo deixa o overlay anterior (ou o snapshot embutido) valendo,
+    que é sempre melhor que derrubar o ciclo de background."""
+    try:
+        tickers = universo()
+        fech = baixar_fechamentos(tickers, meses)
+        if fech.empty:
+            return {"ok": False, "erro": "yfinance não devolveu histórico"}
+        pares = correlacoes_de(fech, min_pregoes)
+        if not pares:
+            return {"ok": False, "erro": "nenhum par com pregões suficientes"}
+        res = resumo_mudancas(pares)
+        destino = gravar_overlay(pares, meses)
+        return {
+            "ok": True,
+            "pares": len(pares),
+            "tickers": len(tickers),
+            "sem_historico": sorted(set(tickers) - set(map(str, fech.columns))),
+            "novos": len(res["novos"]),
+            "mudancas_relevantes": len(res["grandes"]),
+            # Os que cruzaram 0.70 mudam dedup/contágio/concentração -- é o
+            # único item que merece log em nível de aviso do lado do Node.
+            "cruzaram_070": [{"par": [a, b], "de": antigo, "para": novo}
+                             for (a, b), antigo, novo in res["cruzaram_070"]],
+            "overlay": destino,
+        }
+    except Exception as e:
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         description="Recalcula as correlações do Radar IA a partir do yfinance")
@@ -211,7 +247,17 @@ def main(argv=None) -> int:
     p.add_argument("--meses", type=int, default=MESES_DEFAULT, metavar="N",
                    help=f"tamanho da janela em meses (default {MESES_DEFAULT})")
     p.add_argument("--min-pregoes", type=int, default=MIN_PREGOES, metavar="N")
+    p.add_argument("--json", action="store_true",
+                   help="ciclo completo, saída JSON (usado pelo checker semanal)")
     args = p.parse_args(argv)
+
+    if args.json:
+        # stdout fica EXCLUSIVO do JSON (o Node dá JSON.parse nele); o
+        # progresso humano abaixo vai todo pra stderr, mesmo padrão dos
+        # outros scripts spawnados.
+        saida = atualizar_e_gravar(args.meses, args.min_pregoes)
+        print(json.dumps(saida, ensure_ascii=False))
+        return 0 if saida.get("ok") else 1
 
     tickers = universo()
     print(f"baixando {len(tickers)} tickers ({args.meses} meses)...", file=sys.stderr)

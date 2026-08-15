@@ -68,18 +68,29 @@ MESES_COM_DOT_PLOT = {3, 6, 9, 12}
 # antecipado. Usar a correlação do ETF pra ler o movimento do índice é
 # aproximação deliberada: o ETF dilui o país (dezenas de nomes), então o
 # sinal real do índice tende a ser >= ao medido aqui.
+#
+# `composicao` descreve o que o índice CONTÉM -- fato estrutural, estável.
+# Deliberadamente NÃO diz qual proxy é o "melhor indicador": isso depende da
+# carteira e muda com o dado, então sai de melhor_proxy() sobre as
+# correlações vivas. A versão anterior afirmava que EWY era o melhor
+# indicador overnight; ao medir EWT/EWJ/FXI (ago/2026) o dado mostrou o
+# contrário pra uma carteira sem nomes de memória -- Taiwan lidera NVDA
+# (0.58 vs 0.52), ARM (0.66 vs 0.60) e AVGO (0.61 vs 0.58), porque a TSMC
+# fabrica pra eles. Descrição que faz ranking envelhece errado; a que
+# descreve composição, não.
 INDICADORES_GLOBAIS: dict[str, dict] = {
     "EWY": {"pais": "Coreia do Sul", "indice": "^KS11",
-            "leitura": "melhor indicador overnight do cluster de memória — "
-                       "Samsung pesa ~25-30% do ETF e é concorrente direta em HBM"},
+            "composicao": "Samsung ~25-30% do ETF; SK Hynix pesado — "
+                          "concentra o cluster de MEMÓRIA/HBM"},
     "EWT": {"pais": "Taiwan", "indice": "^TWII",
-            "leitura": "TSMC domina o índice — serve pra NVDA/AVGO e fundição"},
+            "composicao": "TSMC domina — FUNDIÇÃO, logo lidera quem fabrica "
+                          "lá (NVDA, ARM, AVGO, MRVL)"},
     "EWJ": {"pais": "Japão", "indice": "^N225",
-            "leitura": "sinal moderado; equipamento japonês (TEL, Advantest) "
-                       "conversa com AMAT/LRCX"},
+            "composicao": "amplo, não é puro-semi; equipamento japonês "
+                          "(TEL, Advantest) conversa com AMAT/LRCX"},
     "FXI": {"pais": "China", "indice": "000001.SS",
-            "leitura": "fator SEPARADO dos semis (quase não conversa com MU) — "
-                       "relevante pros ADRs chineses, não pro portfólio de IA"},
+            "composicao": "large caps chinesas, quase sem semis — fator "
+                          "próprio, relevante pros ADRs chineses"},
 }
 
 # Limiares de leitura do impacto estimado, em pontos percentuais.
@@ -156,6 +167,34 @@ def parametros_completos(ticker: str, ref: date | None = None) -> dict | None:
     return p
 
 
+def melhor_proxy(ticker: str) -> list[tuple[str, float]]:
+    """Proxies com correlação medida contra `ticker`, do mais forte pro mais
+    fraco. É isto -- e não texto fixo no módulo -- que responde "qual mercado
+    asiático antecipa melhor esta posição?", porque a resposta depende do
+    papel e muda quando as correlações são recalculadas."""
+    t = ticker.upper()
+    pares = [(p, correlacao(p, t)) for p in INDICADORES_GLOBAIS]
+    return sorted(((p, c) for p, c in pares if c is not None), key=lambda x: -x[1])
+
+
+def lideres_por_posicao(portfolio: list[str] | None = None) -> list[dict]:
+    """Pra cada posição, qual proxy lidera e por quanto sobre o segundo.
+    Margem pequena entre o 1º e o 2º significa que os dois mercados dizem
+    quase a mesma coisa -- não vale tratar o vencedor como sinal exclusivo."""
+    out = []
+    for t in [x.upper() for x in (portfolio or _carteira_default())]:
+        ranking = melhor_proxy(t)
+        if not ranking:
+            continue
+        lider, corr = ranking[0]
+        margem = corr - ranking[1][1] if len(ranking) > 1 else None
+        out.append({"posicao": t, "proxy": lider, "correlacao": corr,
+                    "indice": INDICADORES_GLOBAIS[lider]["indice"],
+                    "margem_sobre_2o": round(margem, 2) if margem is not None else None,
+                    "ranking": ranking})
+    return sorted(out, key=lambda x: -x["correlacao"])
+
+
 def sinal_overnight(fechamentos: dict[str, float],
                     portfolio: list[str] | None = None) -> list[dict]:
     """Impacto estimado por posição a partir do fechamento asiático.
@@ -224,7 +263,19 @@ def relatorio(ref: date | None = None) -> None:
         corrs = [(t, correlacao(proxy, t)) for t in carteira]
         txt = ", ".join(f"{t} {c:.2f}" for t, c in corrs if c is not None) or "sem correlação medida"
         print(f"  {proxy} ({info['pais']}, {info['indice']}): {txt}")
-        print(f"     -> {info['leitura']}")
+        print(f"     composição: {info['composicao']}")
+
+    print("\n--- Quem antecipa cada posição (do dado, não de texto fixo) ---")
+    lideres = lideres_por_posicao(carteira)
+    if not lideres:
+        print("  nenhuma posição com correlação medida contra os proxies")
+    for l in lideres:
+        margem = (f"  (+{l['margem_sobre_2o']:.2f} sobre o 2º)"
+                  if l["margem_sobre_2o"] is not None else "")
+        empatado = (l["margem_sobre_2o"] is not None and l["margem_sobre_2o"] < 0.05)
+        print(f"  {l['posicao']:<6} <- {l['proxy']} ({l['indice']}) "
+              f"corr {l['correlacao']:.2f}{margem}"
+              + ("  [praticamente empatado — olhar os dois]" if empatado else ""))
 
     print("\n--- Simulação: Ásia caiu forte (EWY -3%, EWT -2%) ---")
     for s in sinal_overnight({"EWY": -3.0, "EWT": -2.0}):
