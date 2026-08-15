@@ -28,10 +28,23 @@ REF_CALMA = date(2026, 8, 3)
 # ── classes e conversões ───────────────────────────────────────────────────
 
 def test_classe_vol_cobre_as_quatro_faixas():
-    assert pv.classe_vol(18.72) == "extrema"   # SNDK
-    assert pv.classe_vol(7.89) == "alta"       # MU
-    assert pv.classe_vol(4.40) == "media"      # INTC
-    assert pv.classe_vol(1.50) == "baixa"      # NVDA
+    # Valores em vol semanal %, com exemplos MEDIDOS (não a coleta manual,
+    # que subestimava): SNDK ~16.8, AMD ~10.7, NVDA ~5.5.
+    assert pv.classe_vol(16.8) == "extrema"
+    assert pv.classe_vol(10.7) == "alta"
+    assert pv.classe_vol(5.5) == "media"
+    assert pv.classe_vol(2.0) == "baixa"
+
+
+def test_classe_vol_nos_limites_exatos():
+    """Corte é inclusivo na borda de baixo -- fixar isso evita que uma
+    recalibração futura mude o comportamento de borda sem querer."""
+    assert pv.classe_vol(12.0) == "extrema"
+    assert pv.classe_vol(11.99) == "alta"
+    assert pv.classe_vol(8.0) == "alta"
+    assert pv.classe_vol(7.99) == "media"
+    assert pv.classe_vol(5.0) == "media"
+    assert pv.classe_vol(4.99) == "baixa"
 
 
 def test_conversoes_de_vol_usam_raiz_do_tempo():
@@ -42,12 +55,17 @@ def test_conversoes_de_vol_usam_raiz_do_tempo():
 # ── parametros por ticker ─────────────────────────────────────────────────
 
 def test_parametros_de_ticker_conhecido():
+    """Sem overlay de vol medida, `parametros` usa o valor embutido. Asserta
+    a RELAÇÃO (stop = vol × multiplicador da classe) em vez de fixar o nome
+    da classe: a classe depende dos cortes, que são recalibrados quando a
+    distribuição medida muda -- fixá-la aqui quebraria o teste a cada
+    recalibração sem apontar defeito nenhum."""
     p = pv.parametros("MU", REF_CALMA)
-    assert p["classe"] == "alta"
-    assert p["vol_semanal_pct"] == pytest.approx(7.89)
     assert p["modo"] == "normal"
-    # stop = vol operacional x multiplicador da classe
-    assert p["stop_sugerido_pct"] == pytest.approx(7.89 * pv.MULT_STOP["alta"], abs=0.01)
+    assert p["vol_semanal_pct"] == pytest.approx(7.89)
+    assert p["classe"] == pv.classe_vol(p["vol_operacional_pct"])
+    assert p["stop_sugerido_pct"] == pytest.approx(
+        p["vol_operacional_pct"] * pv.MULT_STOP[p["classe"]], abs=0.01)
 
 
 def test_parametros_de_ticker_fora_do_radar_e_none():

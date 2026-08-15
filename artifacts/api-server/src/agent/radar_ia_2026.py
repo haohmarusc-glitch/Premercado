@@ -382,6 +382,18 @@ def _aplicar_vol_medida(blob: dict) -> None:
             continue
         if v <= 0:
             continue
+        # Guarda o valor ORIGINAL da coleta manual antes de sobrescrever, e
+        # só na primeira vez (senão a segunda aplicação guardaria a medição
+        # da semana passada e o original se perderia).
+        #
+        # Sem isto o diagnóstico de divergência
+        # (atualizar_correlacoes.divergencias_de_vol) cega depois do primeiro
+        # refresh: ele compara a medição nova contra TEMA_IA, que já é a
+        # medição anterior -- razão ~1, nenhuma divergência, e o erro da
+        # coleta original some do relatório para sempre. Mesmo tipo de
+        # armadilha do rótulo "vs snapshot": baseline que se auto-sobrescreve.
+        if "vol_sem_snapshot" not in alvo:
+            alvo["vol_sem_snapshot"] = alvo.get("vol_sem")
         alvo["vol_sem"] = v
         alvo["est"] = False  # deixou de ser estimativa: foi medida
         VOL_MEDIDA_APLICADA += 1

@@ -258,15 +258,21 @@ def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
 
 
 def divergencias_de_vol(vols: dict[str, float], fator: float = 1.5) -> list[dict]:
-    """Tickers cuja vol MEDIDA difere da coleta manual do snapshot por mais
-    de `fator` (pra mais ou pra menos).
+    """Tickers cuja vol MEDIDA difere da coleta manual ORIGINAL por mais de
+    `fator` (pra mais ou pra menos).
 
     Existe pra tornar visível o problema que motivou medir a vol: quando a
     diferença é de 2-3x, não é ruído de janela -- é erro de dado, e vinha
-    contaminando stop e sizing em silêncio."""
+    contaminando stop e sizing em silêncio.
+
+    Compara contra `vol_sem_snapshot` (o valor manual preservado por
+    radar_ia_2026._aplicar_vol_medida) e não contra `vol_sem`, que a partir
+    do primeiro refresh já É a medição anterior -- comparar com ela daria
+    razão ~1 sempre e apagaria o diagnóstico depois de usá-lo uma vez."""
     fora = []
     for ticker, medida in vols.items():
-        manual = (TEMA_IA.get(ticker) or {}).get("vol_sem")
+        info = TEMA_IA.get(ticker) or {}
+        manual = info.get("vol_sem_snapshot", info.get("vol_sem"))
         if not manual or not medida:
             continue
         razao = medida / manual

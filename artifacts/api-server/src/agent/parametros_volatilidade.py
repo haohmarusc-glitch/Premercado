@@ -61,13 +61,28 @@ except ImportError:
     from agent.radar_ia_2026 import (CORR_ALTA, EARNINGS, PORTFOLIO_DEFAULT,
                                      REACAO_EARNINGS, TEMA_IA, correlacao)
 
-# Classes de vol semanal (%) -- cortes derivados da distribuição medida no
-# snapshot: mediana ~6.0%, topo 18.72 (SNDK), piso 1.50 (NVDA).
+# Classes de vol semanal (%). Cortes RECALIBRADOS em 15/08/2026 sobre a
+# distribuição realmente medida (yfinance, 6 meses, 32 tickers do tema).
+#
+# Os cortes anteriores (10/6/3) vinham da coleta manual, que subestimava a
+# vol de forma sistemática -- e pior, com gradiente: acertava os papéis mais
+# voláteis (SNDK x0.89, WDC x1.08) e errava por até 3.6x os menos voláteis
+# (NVDA 10.8% a.a. declarado contra 39.4% medido). Assinatura de metodologia
+# diferente (movimento típico/mediano em vez de desvio-padrão), não de
+# janela diferente.
+#
+# Aplicar os cortes velhos à vol real classificava 11 tickers como "extrema"
+# e 16 como "alta" -- metade do universo no rótulo que deveria marcar a
+# cauda, e o rótulo deixa de informar. Com os cortes abaixo a distribuição
+# medida fica 8 / 11 / 13 / 0, que descreve o universo de verdade.
+#
+# "baixa" fica vazia neste tema de propósito: numa cesta de IA/semis
+# ninguém é de baixa volatilidade -- a classe existe pra ticker de fora.
 CLASSES_VOL = [
-    (10.0, "extrema"),   # SNDK 18.72, SMCI 12.30, WDC 11.31
-    (6.0,  "alta"),      # STX 8.50, MU 7.89, CRWV 7.61, MRVL 6.58
-    (3.0,  "media"),     # INTC 4.40, KLAC 4.24, LRCX 3.32
-    (0.0,  "baixa"),     # ASML 2.40, NVDA 1.50
+    (12.0, "extrema"),   # SNDK 16.8, SMCI 15.9, CRWV 14.1, ARM 13.5, MRVL 13.6, MU 13.4, WDC 12.2, INTC 12.2
+    (8.0,  "alta"),      # AMD 10.7, STX 10.6, LRCX 10.4, AMAT 9.9, KLAC 9.8, PLTR 9.7, VRT 9.4, QCOM 9.2, HPE 8.9, ORCL 8.7, ANET 8.5
+    (5.0,  "media"),     # GEV 7.5, ASML 7.5, AVGO 6.8, VST 6.7, CEG 6.5, TSM 6.5, ETN 6.2, META 6.1, CSCO 5.5, NVDA 5.5, MSFT 5.4, AMZN 5.3, GOOGL 5.1
+    (0.0,  "baixa"),
 ]
 
 # Multiplicador do stop sobre a vol operacional, por classe. Repare que a
