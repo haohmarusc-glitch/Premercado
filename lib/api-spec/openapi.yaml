@@ -1555,6 +1555,8 @@ components:
       required: [snapshot, earnings, correlacoes, tema_ia, riscos, min52, reacao_earnings, portfolio_default]
       properties:
         snapshot: { type: string, description: "YYYY-MM-DD do snapshot dos dados" }
+        correlacoes_janela_fim: { type: string, description: "YYYY-MM-DD do fim da janela das correlacoes servidas (avanca com o overlay de atualizar_correlacoes.py)" }
+        correlacoes_atualizado_em: { type: ["string", "null"] }
         earnings:
           type: object
           description: "ticker -> {data, quando (BO|AC|null), setor, nota?}"
