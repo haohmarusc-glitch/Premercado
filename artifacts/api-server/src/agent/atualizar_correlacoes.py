@@ -1,26 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-atualizar_correlacoes.py — refresh das correlações do Radar IA 2026 via
-Alpha Vantage ANALYTICS_FIXED_WINDOW (CALCULATIONS=CORRELATION).
+atualizar_correlacoes.py — refresh das correlações do Radar IA 2026,
+calculadas localmente a partir do histórico do yfinance.
 
 O "ponto fraco" documentado no guia do radar: as correlações embutidas em
 radar_ia_2026.py são um snapshot de 14/08/2026. Este script recalcula a
-janela de 6 meses direto da Alpha Vantage e grava um OVERLAY JSON que
-radar_ia_2026.py carrega por cima do snapshot no import -- sem tabela no
-Postgres (Python não acessa o banco neste repo; a fonte de verdade continua
-no módulo, e rota/tela/alertas herdam o dado novo no próximo processo).
+janela de 6 meses e grava um OVERLAY JSON que radar_ia_2026.py carrega por
+cima do snapshot no import -- sem tabela no Postgres (Python não acessa o
+banco neste repo; a fonte de verdade continua no módulo, e rota/tela/
+alertas herdam o dado novo no próximo processo).
 
-Rate limit do plano free (por que o script é "lento" de propósito):
-  - 5 símbolos por request  -> os 12 lotes do guia cobrem o universo
-  - ~5 requests/min         -> pausa default de 15s entre lotes
-  - 25 requests/dia         -> 12 lotes cabem com folga (1 rodada/dia)
+## Por que yfinance e não a Alpha Vantage (mudança de 15/08/2026)
+
+A versão original chamava ANALYTICS_FIXED_WINDOW (CALCULATIONS=CORRELATION)
+em lotes de 5 símbolos. Em produção o endpoint devolveu 403 de forma
+persistente com chave free válida -- o mesmo key funcionava normalmente em
+GLOBAL_QUOTE, e o 403 continuou 6h depois do reset diário de cota, ou seja
+não era limite de requisições: a Analytics API é uma das "certain premium
+API functions" fora do plano gratuito.
+
+Calcular aqui é melhor que pagar por isso:
+  - sem chave, sem custo e sem rate limit -- pode rodar quantas vezes quiser
+  - MESMA fonte de preço que já alimenta vol/beta/estudos (get_scenario_params,
+    entry_exit_study, earnings_reaction_analysis) -- antes havia duas fontes
+    de dado diferentes descrevendo o mesmo universo
+  - uma dependência externa a menos pra virar paga de novo amanhã
+
+Correlação é calculada sobre RETORNOS diários (pct_change), não sobre o nível
+de preço: dois papéis em tendência de alta exibem correlação alta de nível
+mesmo sem nenhuma co-movimentação diária real, e o que os consumidores
+(alerta de contágio, dedup de sinal, regra de concentração do veredito)
+precisam saber é justamente "esses dois andam juntos no dia a dia?".
 
 Uso (no VPS, dentro do container):
-    export ALPHAVANTAGE_API_KEY=...   # ou ALPHA_VANTAGE_API_KEY
-    python -m agent.atualizar_correlacoes            # roda os 12 lotes e grava
-    python -m agent.atualizar_correlacoes --dry-run  # busca e mostra, não grava
-    python -m agent.atualizar_correlacoes --lotes 2  # só os N primeiros lotes
+    python -m agent.atualizar_correlacoes            # calcula e grava
+    python -m agent.atualizar_correlacoes --dry-run  # calcula e mostra, não grava
+    python -m agent.atualizar_correlacoes --meses 12 # janela maior
 
 O overlay vai em RADAR_CORR_OVERLAY (default
 /var/cache/premercado/radar_correlacoes.json). ATENÇÃO: um rebuild da
@@ -33,40 +49,27 @@ import argparse
 import json
 import os
 import sys
-import time
-from datetime import date, timedelta
+from datetime import timedelta
+
+import pandas as pd
+import yfinance as yf
 
 # Import dos DOIS jeitos, mesmo padrão dos outros scripts do agente que
 # rodam tanto standalone quanto como módulo do pacote.
 try:
-    from http_retry import SESSION
     from brt import today_brt
+    from radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
 except ImportError:
-    from agent.http_retry import SESSION
     from agent.brt import today_brt
+    from agent.radar_ia_2026 import CORRELACOES, PORTFOLIO_DEFAULT, TEMA_IA
 
-ANALYTICS_URL = "https://alphavantageapi.co/timeseries/analytics"
-RANGE = "6month"
+# Mínimo de pregões em comum pra um par valer. ~3 meses: abaixo disso a
+# correlação vira ruído (papel recém-listado, ADR com feriado diferente),
+# e um número ruim é pior que par ausente -- o consumidor sabe lidar com
+# `correlacao() -> None`, mas não tem como desconfiar de um 0.9 espúrio.
+MIN_PREGOES = 60
 
-# Lotes de 5 símbolos validados na coleta original (ver Passo 5 do guia) --
-# todos incluem uma âncora repetida (NVDA/MU/SNDK) de propósito, pra costurar
-# correlações entre lotes diferentes através do símbolo comum.
-LOTES: list[list[str]] = [
-    ["NVDA", "SNDK", "STX", "WDC", "MU"],
-    ["NVDA", "SMCI", "DELL", "HPE", "CRWV"],
-    ["NVDA", "AMD", "AVGO", "MRVL", "ARM"],
-    ["NVDA", "AMAT", "LRCX", "KLAC", "ASML"],
-    ["NVDA", "VRT", "GEV", "ETN", "ANET"],
-    ["NVDA", "CEG", "VST", "CSCO", "TSM"],
-    ["NVDA", "MSFT", "GOOGL", "AMZN", "META"],
-    ["NVDA", "PLTR", "ORCL", "QCOM", "INTC"],
-    ["MU", "SMCI", "ARM", "MRVL", "AVGO"],
-    ["SNDK", "AMAT", "DELL", "VRT", "TSM"],
-    ["MU", "LRCX", "SMCI", "CRWV", "CEG"],
-    ["EWY", "MU", "SNDK", "NVDA", "SMCI"],
-]
-
-PAUSA_DEFAULT_S = 15  # ~4 req/min, abaixo do teto de 5/min do plano free
+MESES_DEFAULT = 6
 
 OVERLAY_PATH_DEFAULT = "/var/cache/premercado/radar_correlacoes.json"
 
@@ -75,112 +78,81 @@ def _overlay_path() -> str:
     return os.environ.get("RADAR_CORR_OVERLAY") or OVERLAY_PATH_DEFAULT
 
 
-def _api_key() -> str | None:
-    return os.environ.get("ALPHAVANTAGE_API_KEY") or os.environ.get("ALPHA_VANTAGE_API_KEY")
+def universo() -> list[str]:
+    """Todos os tickers que o radar já descreve: os dois lados de cada par
+    medido, o tema IA e a carteira default. Assim o refresh cobre pelo menos
+    o que o snapshot cobria, sem lista paralela pra sair de sincronia."""
+    tickers: set[str] = set(PORTFOLIO_DEFAULT) | set(TEMA_IA)
+    for a, b in CORRELACOES:
+        tickers.add(a)
+        tickers.add(b)
+    return sorted(tickers)
 
 
-def _achar_matriz(obj) -> dict | None:
-    """Procura recursivamente o bloco {"index": [...], "correlation": [[...]]}
-    na resposta -- defensivo de propósito: o envelope exato da Analytics API
-    (payload/RETURNED_DATA/...) já variou entre exemplos da documentação, e
-    o que interessa é só a matriz com seu índice de símbolos."""
-    if isinstance(obj, dict):
-        idx, corr = obj.get("index"), obj.get("correlation")
-        if (isinstance(idx, list) and idx and all(isinstance(s, str) for s in idx)
-                and isinstance(corr, list) and corr):
-            return {"index": idx, "correlation": corr}
-        for v in obj.values():
-            achado = _achar_matriz(v)
-            if achado:
-                return achado
-    elif isinstance(obj, list):
-        for v in obj:
-            achado = _achar_matriz(v)
-            if achado:
-                return achado
-    return None
+def baixar_fechamentos(tickers: list[str], meses: int = MESES_DEFAULT) -> pd.DataFrame:
+    """Fechamentos diários ajustados de todos os tickers numa chamada só.
+
+    auto_adjust=True: split/dividendo cria um degrau artificial na série que
+    vira co-movimento falso no dia do evento (mesma razão pela qual o resto
+    do agente usa série ajustada pra retorno)."""
+    dados = yf.download(
+        tickers,
+        period=f"{meses}mo",
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        group_by="column",
+        threads=True,
+    )
+    if dados is None or dados.empty:
+        return pd.DataFrame()
+    # Um ticker só devolve colunas simples; vários devolvem MultiIndex.
+    if isinstance(dados.columns, pd.MultiIndex):
+        if "Close" not in dados.columns.get_level_values(0):
+            return pd.DataFrame()
+        fech = dados["Close"]
+    else:
+        if "Close" not in dados.columns:
+            return pd.DataFrame()
+        fech = dados[["Close"]]
+        fech.columns = tickers[:1]
+    return fech.dropna(axis=1, how="all")
 
 
-def extrair_correlacoes(resposta: dict) -> dict[tuple[str, str], float]:
-    """Extrai {(A, B): corr} (A < B) da resposta da Analytics API. Aceita
-    matriz completa (n x n) ou triangular inferior (linha i com i+1 colunas,
-    como a API costuma devolver). Ignora a diagonal (corr 1.0 consigo)."""
-    bloco = _achar_matriz(resposta)
-    if not bloco:
+def correlacoes_de(fechamentos: pd.DataFrame,
+                   min_pregoes: int = MIN_PREGOES) -> dict[tuple[str, str], float]:
+    """Matriz de correlação dos RETORNOS diários -> {(A, B): corr}, A < B.
+
+    Pares sem `min_pregoes` observações em comum ficam de fora (pandas
+    devolve NaN com min_periods, e NaN não vira par)."""
+    if fechamentos.empty or fechamentos.shape[1] < 2:
         return {}
-    index = [str(s).upper() for s in bloco["index"]]
-    matriz = bloco["correlation"]
+    retornos = fechamentos.pct_change().dropna(how="all")
+    matriz = retornos.corr(min_periods=min_pregoes)
     out: dict[tuple[str, str], float] = {}
-    for i, linha in enumerate(matriz):
-        if not isinstance(linha, list):
-            continue
-        for j, valor in enumerate(linha):
-            if j >= i or valor is None:  # triangular: só j < i interessa
+    colunas = list(matriz.columns)
+    for i, ca in enumerate(colunas):
+        for cb in colunas[i + 1:]:
+            valor = matriz.at[ca, cb]
+            if pd.isna(valor):
                 continue
-            try:
-                c = round(float(valor), 2)
-            except (TypeError, ValueError):
-                continue
-            a, b = sorted([index[i], index[j]])
-            out[(a, b)] = c
+            a, b = sorted([str(ca).upper(), str(cb).upper()])
+            out[(a, b)] = round(float(valor), 2)
     return out
 
 
-def buscar_lote(simbolos: list[str], api_key: str, timeout_s: int = 30) -> dict[tuple[str, str], float]:
-    """Uma chamada ANALYTICS_FIXED_WINDOW pra um lote de até 5 símbolos."""
-    resp = SESSION.get(ANALYTICS_URL, params={
-        "SYMBOLS": ",".join(simbolos),
-        "RANGE": RANGE,
-        "INTERVAL": "DAILY",
-        "OHLC": "close",
-        "CALCULATIONS": "CORRELATION",
-        "apikey": api_key,
-    }, timeout=timeout_s)
-    resp.raise_for_status()
-    dados = resp.json()
-    # Rate limit/erro vem como 200 com corpo de aviso em vez de HTTP != 2xx.
-    for chave in ("Note", "Information", "Error Message"):
-        if isinstance(dados, dict) and dados.get(chave):
-            raise RuntimeError(f"Alpha Vantage: {dados[chave]}")
-    pares = extrair_correlacoes(dados)
-    if not pares:
-        raise RuntimeError(f"resposta sem matriz de correlação pro lote {simbolos}")
-    return pares
-
-
-def atualizar(api_key: str, lotes: list[list[str]] | None = None,
-              pausa_s: float = PAUSA_DEFAULT_S) -> tuple[dict[tuple[str, str], float], list[str]]:
-    """Roda os lotes em sequência respeitando o rate limit. Devolve
-    (pares_acumulados, erros) -- resultado parcial vale mais que nada: um
-    lote que falhar (rate limit do dia estourado, símbolo delistado) não
-    derruba o que os anteriores já trouxeram."""
-    lotes = lotes if lotes is not None else LOTES
-    acumulado: dict[tuple[str, str], float] = {}
-    erros: list[str] = []
-    for i, lote in enumerate(lotes):
-        try:
-            pares = buscar_lote(lote, api_key)
-            acumulado.update(pares)
-            print(f"[{i + 1}/{len(lotes)}] {','.join(lote)}: {len(pares)} pares", file=sys.stderr)
-        except Exception as e:
-            erros.append(f"lote {','.join(lote)}: {e}")
-            print(f"[{i + 1}/{len(lotes)}] FALHOU: {e}", file=sys.stderr)
-        if i < len(lotes) - 1:
-            time.sleep(pausa_s)
-    return acumulado, erros
-
-
-def gravar_overlay(pares: dict[tuple[str, str], float], path: str | None = None) -> str:
+def gravar_overlay(pares: dict[tuple[str, str], float], meses: int = MESES_DEFAULT,
+                   path: str | None = None) -> str:
     """Grava o overlay que radar_ia_2026.py carrega no import. Escrita
     atômica (tmp + rename) pra um leitor concorrente nunca ver JSON pela
     metade."""
     destino = path or _overlay_path()
     hoje = today_brt()
     blob = {
-        "janela_inicio": (hoje - timedelta(days=182)).isoformat(),
+        "janela_inicio": (hoje - timedelta(days=int(meses * 30.4))).isoformat(),
         "janela_fim": hoje.isoformat(),
         "atualizado_em": hoje.isoformat(),
-        "fonte": "alpha_vantage_analytics",
+        "fonte": "yfinance_retornos_diarios",
         "correlacoes": {f"{a}|{b}": c for (a, b), c in sorted(pares.items())},
     }
     os.makedirs(os.path.dirname(destino), exist_ok=True)
@@ -191,57 +163,72 @@ def gravar_overlay(pares: dict[tuple[str, str], float], path: str | None = None)
     return destino
 
 
-def _resumo_mudancas(pares: dict[tuple[str, str], float]) -> None:
-    """Compara com o snapshot embutido e mostra o que mudou de verdade."""
-    try:
-        from radar_ia_2026 import CORRELACOES as EMBUTIDAS
-    except ImportError:
-        from agent.radar_ia_2026 import CORRELACOES as EMBUTIDAS
-    base = {tuple(sorted(k)): v for k, v in EMBUTIDAS.items()}
+def resumo_mudancas(pares: dict[tuple[str, str], float], corte: float = 0.15) -> dict:
+    """Compara com o snapshot embutido: pares novos, pares que sumiram e
+    mudanças relevantes (regime de correlação pode ter virado)."""
+    base = {tuple(sorted(k)): v for k, v in CORRELACOES.items()}
     novos = sorted(set(pares) - set(base))
+    ausentes = sorted(set(base) - set(pares))
     grandes = sorted(
         ((par, base[par], c) for par, c in pares.items()
-         if par in base and abs(c - base[par]) >= 0.15),
+         if par in base and abs(c - base[par]) >= corte),
         key=lambda x: -abs(x[2] - x[1]))
-    print(f"\npares medidos: {len(pares)} | novos vs snapshot: {len(novos)}")
-    if grandes:
-        print("mudanças >= 0.15 vs snapshot 14/08 (regime pode ter virado):")
-        for (a, b), antigo, novo in grandes[:15]:
+    # Mudanças que cruzam CORR_ALTA nos dois sentidos são as que realmente
+    # mexem no comportamento do agente (dedup, contágio, concentração).
+    cruzaram = [(par, antigo, novo) for par, antigo, novo in
+                (((a, b), base[(a, b)], c) for (a, b), c in pares.items() if (a, b) in base)
+                if (antigo >= 0.70) != (novo >= 0.70)]
+    return {"novos": novos, "ausentes": ausentes, "grandes": grandes, "cruzaram_070": cruzaram}
+
+
+def _imprimir_resumo(pares: dict[tuple[str, str], float], res: dict) -> None:
+    print(f"\npares calculados: {len(pares)} | novos vs snapshot: {len(res['novos'])} "
+          f"| do snapshot sem dado agora: {len(res['ausentes'])}")
+    if res["cruzaram_070"]:
+        print("\nCRUZARAM o limiar de 0.70 (muda dedup/contágio/concentração):")
+        for (a, b), antigo, novo in res["cruzaram_070"]:
+            direcao = "virou MESMO TRADE" if novo >= 0.70 else "deixou de ser mesmo trade"
+            print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}  ({direcao})")
+    if res["grandes"]:
+        print(f"\nmudanças >= 0.15 vs snapshot 14/08 ({len(res['grandes'])} pares, top 15):")
+        for (a, b), antigo, novo in res["grandes"][:15]:
             print(f"  {a}-{b}: {antigo:.2f} -> {novo:.2f}")
     else:
-        print("nenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
+        print("\nnenhuma mudança >= 0.15 vs o snapshot -- regime estável.")
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Atualiza correlações do Radar IA via Alpha Vantage")
-    p.add_argument("--dry-run", action="store_true", help="busca e mostra, não grava o overlay")
-    p.add_argument("--lotes", type=int, metavar="N", help="roda só os N primeiros lotes")
-    p.add_argument("--pausa", type=float, default=PAUSA_DEFAULT_S, metavar="SEG")
-    p.add_argument("--api-key", default=None, help="override de ALPHAVANTAGE_API_KEY")
+    p = argparse.ArgumentParser(
+        description="Recalcula as correlações do Radar IA a partir do yfinance")
+    p.add_argument("--dry-run", action="store_true", help="calcula e mostra, não grava o overlay")
+    p.add_argument("--meses", type=int, default=MESES_DEFAULT, metavar="N",
+                   help=f"tamanho da janela em meses (default {MESES_DEFAULT})")
+    p.add_argument("--min-pregoes", type=int, default=MIN_PREGOES, metavar="N")
     args = p.parse_args(argv)
 
-    api_key = args.api_key or _api_key()
-    if not api_key:
-        print("defina ALPHAVANTAGE_API_KEY (ou passe --api-key)", file=sys.stderr)
-        return 2
-
-    lotes = LOTES[: args.lotes] if args.lotes else LOTES
-    pares, erros = atualizar(api_key, lotes, args.pausa)
-    if not pares:
-        print("nenhum par obtido -- overlay NÃO gravado (o snapshot embutido continua valendo)",
-              file=sys.stderr)
+    tickers = universo()
+    print(f"baixando {len(tickers)} tickers ({args.meses} meses)...", file=sys.stderr)
+    fech = baixar_fechamentos(tickers, args.meses)
+    if fech.empty:
+        print("yfinance não devolveu histórico -- overlay NÃO gravado "
+              "(o snapshot embutido continua valendo)", file=sys.stderr)
         return 1
 
-    _resumo_mudancas(pares)
-    if erros:
-        print(f"\n{len(erros)} lote(s) falharam (resultado parcial gravado mesmo assim):", file=sys.stderr)
-        for e in erros:
-            print(f"  - {e}", file=sys.stderr)
+    faltando = sorted(set(tickers) - set(map(str, fech.columns)))
+    if faltando:
+        print(f"sem histórico para: {', '.join(faltando)}", file=sys.stderr)
+
+    pares = correlacoes_de(fech, args.min_pregoes)
+    if not pares:
+        print("nenhum par com pregões suficientes -- overlay NÃO gravado", file=sys.stderr)
+        return 1
+
+    _imprimir_resumo(pares, resumo_mudancas(pares))
 
     if args.dry_run:
         print("\n--dry-run: overlay não gravado.")
         return 0
-    destino = gravar_overlay(pares)
+    destino = gravar_overlay(pares, args.meses)
     print(f"\noverlay gravado em {destino} -- novos processos do radar já leem daqui.")
     return 0
 

@@ -64,8 +64,12 @@ function EarningsWatch({ data }: { data: RadarSnapshot }) {
   }
 
   return (
+    // min-w força a tabela a transbordar num celular em vez de espremer as
+    // colunas até o conteúdo sumir (visto em produção: a coluna de status
+    // ficava cortada fora da tela, sem rolagem) -- o overflow-x-auto do pai
+    // só rola de verdade quando o filho é MAIOR que ele.
     <div className="overflow-x-auto">
-      <table className="w-full font-mono text-sm">
+      <table className="w-full min-w-[680px] font-mono text-sm">
         <thead className="bg-secondary/20">
           <tr>
             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Data</th>
@@ -164,7 +168,7 @@ function TemaIA({ data }: { data: RadarSnapshot }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full font-mono text-sm">
+      <table className="w-full min-w-[720px] font-mono text-sm">
         <thead className="bg-secondary/20">
           <tr>
             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Ticker</th>
@@ -226,30 +230,41 @@ function RiscosEMinimas({ data }: { data: RadarSnapshot }) {
         <div className="text-[10px] font-mono text-muted-foreground uppercase mb-2 flex items-center gap-1">
           <TrendingDown className="h-3 w-3" /> Proximidade da mínima de 52 semanas (no snapshot)
         </div>
-        <table className="w-full font-mono text-sm border border-border/50 rounded">
-          <thead className="bg-secondary/20">
-            <tr>
-              <th className="text-left px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Ticker</th>
-              <th className="text-right px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Preço ref.</th>
-              <th className="text-right px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Mín. 52s</th>
-              <th className="text-left px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(data.min52).map(([t, m], idx) => (
-              <tr key={t} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
-                <td className="px-3 py-1.5 font-bold text-foreground">{t}</td>
-                <td className="px-3 py-1.5 text-right text-muted-foreground">{m.preco != null ? `$${m.preco.toFixed(2)}` : "—"}</td>
-                <td className="px-3 py-1.5 text-right text-muted-foreground">{m.min52 != null ? `$${m.min52.toFixed(2)}` : "—"}</td>
-                <td className="px-3 py-1.5">
-                  <Badge variant="outline" className={`font-mono text-[10px] ${m.status === "dentro" ? "border-green-500/40 text-green-400" : "border-yellow-500/40 text-yellow-400"}`}>
-                    {m.status ?? "—"}
-                  </Badge>
-                </td>
+        {/* Faltava o contêiner de rolagem aqui: num celular a coluna de
+            status ficava cortada fora da tela e não havia como alcançá-la. */}
+        <div className="overflow-x-auto border border-border/50 rounded">
+          <table className="w-full min-w-[460px] font-mono text-sm">
+            <thead className="bg-secondary/20">
+              <tr>
+                <th className="text-left px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Ticker</th>
+                <th className="text-right px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Preço ref.</th>
+                <th className="text-right px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Mín. 52s</th>
+                <th className="text-right px-3 py-1.5 text-[10px] text-muted-foreground uppercase" title="Distância do preço de referência até a mínima de 52 semanas">Dist.</th>
+                <th className="text-left px-3 py-1.5 text-[10px] text-muted-foreground uppercase">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {Object.entries(data.min52).map(([t, m], idx) => {
+                const dist = m.preco != null && m.min52 ? (m.preco / m.min52 - 1) * 100 : null;
+                return (
+                  <tr key={t} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
+                    <td className="px-3 py-1.5 font-bold text-foreground">{t}</td>
+                    <td className="px-3 py-1.5 text-right text-muted-foreground">{m.preco != null ? `$${m.preco.toFixed(2)}` : "—"}</td>
+                    <td className="px-3 py-1.5 text-right text-muted-foreground">{m.min52 != null ? `$${m.min52.toFixed(2)}` : "—"}</td>
+                    <td className={`px-3 py-1.5 text-right ${dist == null ? "text-muted-foreground" : dist <= 10 ? "text-green-400" : "text-muted-foreground"}`}>
+                      {dist != null ? `${dist >= 0 ? "+" : ""}${dist.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <Badge variant="outline" className={`font-mono text-[10px] whitespace-nowrap ${m.status === "dentro" ? "border-green-500/40 text-green-400" : "border-yellow-500/40 text-yellow-400"}`}>
+                        {m.status ?? "—"}
+                      </Badge>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         <p className="mt-2 font-mono text-[10px] text-muted-foreground/70">
           Preços de referência do snapshot ({fmtDateBR(data.snapshot)}) — conferir cotação atual antes de decidir.
         </p>
@@ -265,7 +280,7 @@ export default function RadarPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <RadarIcon className="h-5 w-5 text-primary" />
         <h1 className="text-lg font-mono font-bold text-foreground">Radar IA 2026</h1>
         {data && (
@@ -288,7 +303,7 @@ export default function RadarPage() {
       {data && (
         <>
           <section className="border border-border rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap">
               <CalendarClock className="h-4 w-4 text-muted-foreground" />
               <h2 className="font-mono text-sm font-bold text-foreground">Earnings no radar</h2>
             </div>
@@ -296,7 +311,7 @@ export default function RadarPage() {
           </section>
 
           <section className="border border-border rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2 mb-3">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap mb-3">
               <Link2 className="h-4 w-4 text-muted-foreground" />
               <h2 className="font-mono text-sm font-bold text-foreground">Correlações medidas</h2>
               <span className="font-mono text-[10px] text-muted-foreground">
@@ -312,7 +327,7 @@ export default function RadarPage() {
           </section>
 
           <section className="border border-border rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap">
               <Flame className="h-4 w-4 text-muted-foreground" />
               <h2 className="font-mono text-sm font-bold text-foreground">Tema IA — YTD, volatilidade e beta</h2>
             </div>
