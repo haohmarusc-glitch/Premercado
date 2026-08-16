@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { AvisoCotacaoAtrasada } from "@/components/aviso-cotacao-atrasada";
 
 function useFiringCount(): number {
   const { data: alerts } = useListAlerts({
@@ -461,6 +462,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
         <div className={cn("flex-1 overflow-y-auto", isMobile ? "p-4" : "p-8")}>
           <div className="max-w-6xl mx-auto">
+            <AvisoCotacaoAtrasada />
             {children}
           </div>
         </div>

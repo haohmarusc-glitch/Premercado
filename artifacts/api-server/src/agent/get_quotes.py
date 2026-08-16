@@ -88,8 +88,48 @@ def _empty_quote(symbol: str, error: str) -> dict:
         "postMarketPrice": None,
         "postMarketChangePct": None,
         "regularMarketPrice": None,
+        "isDelayed": False,
+        "source": "none",
+        "sourceWarnings": [],
         "error": error,
     }
+
+
+def _quote_do_fallback(symbol: str) -> dict | None:
+    """Monta uma cotação a partir da fonte externa (market_data_provider).
+
+    É EOD: só preço, fechamento anterior, variação e volume. `open`, máxima,
+    mínima, market cap e os campos de pré/pós-mercado ficam nulos porque a
+    fonte simplesmente não tem esse dado — preencher com o fechamento seria
+    inventar. `isDelayed=True` é o que impede a tela de mostrar fechamento de
+    ontem como preço ao vivo.
+
+    Import tardio de propósito: `market_data_provider` puxa pandas e o
+    ecossistema do yfinance, e este caminho quase nunca roda. O tempo de
+    import sai do mesmo orçamento do processo (ver bounded_parallel.py).
+    """
+    try:
+        from agent.market_data_provider import get_quote as _fallback_quote
+    except Exception as ex:  # noqa: BLE001
+        print(f"[get_quotes] fallback indisponível: {ex}", file=sys.stderr)
+        return None
+
+    r = _fallback_quote(symbol)
+    if r.quote is None:
+        return None
+
+    q = _empty_quote(symbol, None)
+    q.update({
+        "price": r.quote.get("price"),
+        "previousClose": r.quote.get("previousClose"),
+        "change": r.quote.get("change"),
+        "changePct": r.quote.get("changePct"),
+        "volume": r.quote.get("volume"),
+        "isDelayed": r.is_delayed,
+        "source": r.source,
+        "sourceWarnings": r.warnings,
+    })
+    return q
 
 
 def fetch_quote(symbol: str) -> dict:
@@ -146,11 +186,70 @@ def fetch_quote(symbol: str) -> dict:
             "postMarketPrice": e.get("postMarketPrice"),
             "postMarketChangePct": e.get("postMarketChangePct"),
             "regularMarketPrice": e.get("regularMarketPrice"),
+            "isDelayed": False,
+            "source": "yfinance",
+            "sourceWarnings": [],
             "error": None,
         }
     except Exception as ex:
         print(f"[get_quotes] {symbol}: {ex}", file=sys.stderr)
         return _empty_quote(symbol, friendly_error(ex))
+
+
+def aplicar_fallback(results: list[dict]) -> list[dict]:
+    """Decide, olhando o LOTE inteiro, se vale acionar a fonte externa.
+
+    A regra é deliberada: o fallback só entra quando NENHUM símbolo do lote
+    trouxe preço. Dois motivos, os dois concretos:
+
+    1. Um símbolo isolado sem preço quase sempre é o próprio símbolo
+       (deslistado, ticker digitado errado) — falharia em qualquer fonte, e
+       gastar cota da Alpha Vantage nele é jogar fora a cota que o feed de
+       notícias divide com a gente.
+    2. O lote inteiro sem preço é o sintoma do problema que este caminho
+       existe para cobrir: o Yahoo bloqueando ou fora do ar.
+
+    O registro no disjuntor também é UMA vez por lote, não por símbolo — um
+    ticker morto não pode penalizar o provedor inteiro (ver
+    provider_health.py, seção "O disjuntor é por PROVEDOR").
+    """
+    if not results:
+        return results
+
+    try:
+        from agent import provider_health
+    except Exception:  # noqa: BLE001 — nunca derruba a cotação
+        provider_health = None  # type: ignore[assignment]
+
+    sem_preco = [r for r in results if r.get("price") is None]
+    houve_sucesso = len(sem_preco) < len(results)
+
+    if provider_health is not None:
+        try:
+            if houve_sucesso:
+                provider_health.record_success("yfinance")
+            else:
+                provider_health.record_failure("yfinance")
+        except Exception:  # noqa: BLE001
+            pass
+
+    if houve_sucesso or not sem_preco:
+        return results
+
+    print(
+        f"[get_quotes] lote inteiro sem preço ({len(sem_preco)} símbolos) — "
+        "tentando fonte externa",
+        file=sys.stderr,
+    )
+    por_symbol = {r["symbol"]: r for r in results}
+    for r in sem_preco:
+        alternativo = _quote_do_fallback(r["symbol"])
+        if alternativo is not None:
+            # Preserva o erro original: a cotação veio, mas continua sendo
+            # útil saber por que a fonte primária não respondeu.
+            alternativo["error"] = r.get("error")
+            por_symbol[r["symbol"]] = alternativo
+    return list(por_symbol.values())
 
 
 if __name__ == "__main__":
@@ -175,4 +274,6 @@ if __name__ == "__main__":
     for symbol in symbols:
         if symbol not in fetched:
             results.append(_empty_quote(symbol, "Tempo esgotado buscando cotação"))
+
+    results = aplicar_fallback(results)
     exit_now(json.dumps(results) + "\n")

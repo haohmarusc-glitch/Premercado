@@ -327,6 +327,14 @@ redescubra a queda pagando o timeout inteiro.
 `provider_preflight.py` mede as duas fontes antes do deploy (`python -m
 agent.provider_preflight`, exit 0/1/2) e roda como passo informativo no CI.
 
+**Adoção**: `get_quotes.py` é o primeiro dos 24 módulos ligado à cadeia. O
+fallback é decidido por **lote, nunca por símbolo** — um ticker isolado sem
+preço quase sempre é o próprio ticker (deslistado, digitado errado) e falharia
+em qualquer fonte; o lote inteiro sem preço é o sintoma real de Yahoo fora do
+ar. O registro no disjuntor também é uma vez por lote. Quando o fallback entra,
+a resposta carrega `isDelayed`/`source`/`sourceWarnings`, e o layout mostra uma
+faixa de aviso — preço de ontem sem rótulo é pior que preço nenhum.
+
 Fontes opcionais, todas **fail-open** (sem a chave, a seção some ou mostra como
 ativar, em vez de quebrar): FRED (macro), FMP (valuation/DCF), Finnhub e Alpha
 Vantage (notícias), Quiver (Congresso), Unusual Whales (dark pool), Form4API
@@ -449,6 +457,8 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 |---|---|
 | #279 | Cadeia de fallback (yfinance → cache → cache vencido → fonte externa), disjuntor por provedor, preflight de deploy |
 | #280 | Stooq descartado (anti-bot) e trocado por Alpha Vantage, com teto diário de cota |
+| #281 | Teto de cota que não contava: dia gravado do relógio vs. dia por parâmetro |
+| #282 | `get_quotes.py` ligado à cadeia (fallback por lote) + `isDelayed` no contrato e na UI |
 
 ### Estudo de Entrada e Saída (ago/2026)
 

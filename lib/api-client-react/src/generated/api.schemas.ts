@@ -505,6 +505,15 @@ export interface TickerQuote {
      * @nullable
      */
   regularMarketPrice?: number | null;
+  /**
+     * true quando o preco NAO e ao vivo -- veio da fonte externa de fallback,
+     * que so tem fechamento diario. A UI precisa rotular.
+     */
+  isDelayed?: boolean;
+  /** Origem do preco: "yfinance" (ao vivo), "alphavantage_eod" (fallback) ou "none". */
+  source?: string;
+  /** Avisos da cadeia de fallback, prontos para exibicao. */
+  sourceWarnings?: string[];
   /** @nullable */
   error?: string | null;
 }
