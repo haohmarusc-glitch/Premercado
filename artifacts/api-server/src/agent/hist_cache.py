@@ -60,7 +60,14 @@ TTL_S = int(os.environ.get("AGENT_HIST_CACHE_TTL_S", "600"))
 
 # Períodos em que o candle de hoje não domina o resultado. O resto NÃO entra:
 # ver a seção "Só período longo" na docstring.
-PERIODOS_CACHEAVEIS = frozenset({"3mo", "6mo", "1y", "2y", "5y", "10y", "max"})
+#
+# "18mo" é o padrão do confluence_engine e ficou de fora quando esta lista foi
+# escrita -- ninguém usava esse período ainda. Pelo critério acima ele se
+# qualifica igual a 1y e 2y: um candle novo em 380 pregões não move EMA50 nem
+# banda de Bollinger. Sem ele o módulo baixava 18 meses do Yahoo em toda
+# avaliação, e a cadeia de fallback não tinha cache nenhum pra servir numa
+# queda.
+PERIODOS_CACHEAVEIS = frozenset({"3mo", "6mo", "1y", "18mo", "2y", "5y", "10y", "max"})
 
 
 def cacheavel(period: str, interval: str = "1d") -> bool:

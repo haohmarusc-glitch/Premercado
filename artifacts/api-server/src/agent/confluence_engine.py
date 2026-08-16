@@ -36,6 +36,10 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
 from security import sanitize_ticker
+try:  # import duplo: spawn por caminho e também como membro do pacote
+    from agent import market_data_provider
+except ImportError:
+    import market_data_provider
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +310,12 @@ def run_backtest(
     }
 
 
+# Fonte da última série buscada por _fetch_ohlcv, pro modo endpoint marcar
+# degradação na saída. Módulo-level porque _fetch_ohlcv já devolve (df, erro)
+# e mudar a assinatura mexeria no caminho de backtest sem necessidade.
+_ULTIMA_FONTE: Optional[str] = None
+
+
 def _fetch_ohlcv(
     ticker: str,
     period: str = "18mo",
@@ -314,12 +324,29 @@ def _fetch_ohlcv(
 ) -> tuple[Optional[pd.DataFrame], Optional[str]]:
     """start/end (formato "YYYY-MM-DD") têm prioridade sobre period quando
     informados -- útil pra testar um regime histórico específico (ex.:
-    correção/lateralização) em vez de só uma janela relativa a hoje."""
+    correção/lateralização) em vez de só uma janela relativa a hoje.
+
+    O caminho por PERÍODO passa pela cadeia de fallback; o de start/end não,
+    porque a cadeia trabalha em período e recortar uma janela arbitrária dela
+    seria reimplementar o filtro aqui. Esse caminho é de investigação manual
+    (backtest de um regime específico), não do ciclo automático -- falhar nele
+    quando o Yahoo cai é aceitável.
+
+    permitir_externa=False: a série é ajustada (auto_adjust=True) e a fonte
+    externa é "as traded" -- um split na janela viraria degrau de preço e
+    contaminaria EMA, Bollinger e a estrutura de voto.
+    """
+    global _ULTIMA_FONTE
+    _ULTIMA_FONTE = None
     import yfinance as yf
     if start or end:
         df = yf.Ticker(ticker).history(start=start, end=end, interval="1d", auto_adjust=True)
     else:
-        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+        resultado = market_data_provider.get_daily_history(
+            ticker, period, auto_adjust=True, permitir_externa=False
+        )
+        _ULTIMA_FONTE = resultado.source
+        df = resultado.df if resultado.ok else pd.DataFrame()
     if df.empty:
         return None, "Sem dados para o período"
     if hasattr(df.columns, "levels"):
@@ -422,6 +449,10 @@ if __name__ == "__main__":
 
             result = {
                 "symbol": symbol,
+                # Só aparece quando degradada: um "buy" calculado sobre série
+                # vencida tem que dizer isso. Campo ausente é o caso normal.
+                **({"fonteHistorico": _ULTIMA_FONTE}
+                   if _ULTIMA_FONTE not in (None, "yfinance", "yfinance_cache") else {}),
                 "asOf": str(df.index[-1])[:10],
                 "action": action,
                 "confidence": confidence,
