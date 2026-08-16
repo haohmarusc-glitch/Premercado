@@ -343,6 +343,14 @@ janela viraria degrau de preço, e RSI/médias sairiam com um salto que nunca
 existiu. O cache vencido continua valendo porque foi gravado do yfinance, já
 ajustado.
 
+`get_trend.py` entrou com a mesma regra, mais uma: quando o histórico vem
+degradado, o resultado sai **marcado** (`stale` + `fonteHistorico`). Sem isso a
+integração seria uma piora — o módulo já marcava resultado velho no
+stale-if-error, e calcular sobre série vencida devolvendo resultado "fresco"
+esconderia a degradação num campo que já existia para revelá-la. Um
+`sinal: compra` calculado sobre o fechamento de ontem, sem aviso, é o caso a
+evitar.
+
 **Fora da adoção, por decisão**: `get_historical_price.py` alimenta o
 `purchasePrice` dos lotes — base do preço médio e do P&L. Diferente de um
 indicador, que é recalculado no ciclo seguinte, o preço de compra é gravado no
@@ -485,6 +493,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #282 | `get_quotes.py` ligado à cadeia (fallback por lote) + `isDelayed` no contrato e na UI |
 | #283 | `market_alerts.py` ligado à cadeia (fallback por período) + alerta de dado degradado |
 | #284 | `get_technicals.py` na cadeia sem fonte externa (série ajustada); `get_historical_price.py` excluído por escrito |
+| #285 | `get_trend.py` na cadeia, com marcação de degradação propagada ao resultado |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
