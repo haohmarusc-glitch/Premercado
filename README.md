@@ -379,6 +379,16 @@ amanhã); recorte parcial nunca é gravado — o cache é compartilhado com
 `get_technicals`/`get_trend` e um frame com metade das colunas seria corrupção
 silenciosa.
 
+`get_scenario_params.py` fechou a fila: vol anual, beta setorial e momentum do
+benchmark vêm de um único `yf.download` em lote — a mesma forma do
+`risk_manager`, então a adoção foi só trocar a chamada por
+`get_daily_closes_batch` (série ajustada, fonte externa cortada) com o
+benchmark **deduplicado no mesmo lote**. São números que mudam devagar: servir
+cache de ontem numa queda do Yahoo é aceitável desde que rotulado
+(`fontesDegradadas` por ticker). O contrato de erro
+(`{params: {ticker: {error}}}`) não mudou — o checker que persiste o resultado
+não precisou mudar.
+
 **Fora da adoção, por decisão**: `get_historical_price.py` alimenta o
 `purchasePrice` dos lotes — base do preço médio e do P&L. Diferente de um
 indicador, que é recalculado no ciclo seguinte, o preço de compra é gravado no
@@ -525,6 +535,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #286 | `entry_exit_study.py`: histórico na cadeia, preço atual continua ao vivo |
 | #287 | `confluence_engine.py` na cadeia + `18mo` entra no conjunto cacheável |
 | #288 | `risk_manager.py` na cadeia via `get_daily_closes_batch` (lote com fallback por ticker) |
+| #289 | `get_scenario_params.py` na cadeia (último da fila) + sela a rede nos testes do risk_manager que derrubaram o CI do #288 |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
