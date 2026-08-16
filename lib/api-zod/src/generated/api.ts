@@ -500,6 +500,9 @@ export const GetTickerQuotesResponseItem = zod.object({
   "postMarketPrice": zod.coerce.number().nullish(),
   "postMarketChangePct": zod.coerce.number().nullish(),
   "regularMarketPrice": zod.coerce.number().nullish().describe('Preço do pregão regular explícito do Yahoo, separado de pré\/pós-mercado.'),
+  "isDelayed": zod.boolean().optional().describe('true quando o preço NÃO é ao vivo — veio da fonte externa de fallback, que só tem fechamento diário.'),
+  "source": zod.string().optional().describe('Origem do preço: "yfinance" (ao vivo), "alphavantage_eod" (fallback, atrasado) ou "none".'),
+  "sourceWarnings": zod.array(zod.string()).optional().describe('Avisos da cadeia de fallback, prontos para exibição.'),
   "error": zod.string().nullish()
 })
 export const GetTickerQuotesResponse = zod.array(GetTickerQuotesResponseItem)

@@ -1763,6 +1763,22 @@ components:
         regularMarketPrice:
           type: ["number", "null"]
           description: Preço do pregão regular explícito do Yahoo, separado de pré/pós-mercado.
+        isDelayed:
+          type: boolean
+          description: >-
+            true quando o preço NÃO é ao vivo — veio da fonte externa de
+            fallback, que só tem fechamento diário. A UI precisa rotular; um
+            fechamento de ontem exibido como preço atual é pior que nenhum preço.
+        source:
+          type: string
+          description: >-
+            Origem do preço: "yfinance" (ao vivo), "alphavantage_eod"
+            (fallback, atrasado) ou "none" (nenhuma fonte respondeu).
+        sourceWarnings:
+          type: array
+          items:
+            type: string
+          description: Avisos da cadeia de fallback, prontos para exibição.
         error:
           type: ["string", "null"]
 
