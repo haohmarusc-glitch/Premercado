@@ -27,6 +27,25 @@ _spec = importlib.util.spec_from_file_location("risk_manager", os.path.join(_AGE
 rm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rm)
 
+# risk_manager passou a buscar o lote via market_data_provider (a cadeia de
+# fallback) -- o mock de rede muda de lugar: é o yf.download DO PROVIDER que
+# precisa ser trocado, não o do risk_manager (que segue importado, mas só o
+# intraday_beta usa direto).
+from agent import hist_cache, provider_health  # noqa: E402
+from agent import market_data_provider as mdp  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolado(tmp_path, monkeypatch):
+    """O caminho novo grava no disjuntor e no hist_cache reais (/tmp) -- sem
+    isolar, um teste abriria o breaker pro seguinte e a ordem de coleta
+    passaria a decidir o resultado (visto na prática: 2 falhas numa ordem,
+    5 na outra)."""
+    monkeypatch.setattr(provider_health, "_PATH", str(tmp_path / "health.json"))
+    monkeypatch.setattr(hist_cache, "guardar", lambda *a, **k: None)
+    monkeypatch.setattr(hist_cache, "carregar", lambda *a, **k: None)
+    yield
+
 
 class TestPositionSize:
     def test_computes_shares_from_risk_amount(self):
@@ -79,7 +98,7 @@ class TestCorrelation:
             "BBB": a * 2,   # mesmo sinal, escala diferente -> corr = 1
             "CCC": -a,      # espelhado -> corr = -1
         })
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: frame)
 
         result = rm.correlation(["AAA", "BBB", "CCC"], period="6mo")
 
@@ -96,7 +115,7 @@ class TestCorrelation:
         rng = np.random.default_rng(7)
         a = rng.normal(0, 0.02, 60)
         frame = _make_close_frame({"AAA": a, "BBB": -a})  # corr = -1, |corr| >= 0.8
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: frame)
 
         result = rm.correlation(["AAA", "BBB"])
 
@@ -108,14 +127,14 @@ class TestCorrelation:
         a = rng.normal(0, 0.02, 60)
         b = rng.normal(0, 0.02, 60)
         frame = _make_close_frame({"AAA": a, "BBB": b})
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: frame)
 
         result = rm.correlation(["aaa", "AAA", "bbb"])
 
         assert result["tickers"] == ["AAA", "BBB"]
 
     def test_reports_error_when_download_returns_insufficient_data(self, monkeypatch):
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: pd.DataFrame())
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: pd.DataFrame())
         result = rm.correlation(["AAA", "BBB"])
         assert "error" in result
 
@@ -131,7 +150,7 @@ class TestPortfolioRiskMetrics:
         ret_a = rng.normal(0.001, 0.02, n)
         ret_b = rng.normal(-0.0005, 0.03, n)
         frame = _make_close_frame({"AAA": ret_a, "BBB": ret_b})
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: frame)
 
         positions = [
             {"ticker": "AAA", "investedAmount": 700.0},
@@ -167,7 +186,7 @@ class TestPortfolioRiskMetrics:
         rng = np.random.default_rng(1)
         a = rng.normal(0, 0.02, 60)
         frame = _make_close_frame({"AAA": a})
-        monkeypatch.setattr(rm.yf, "download", lambda *a_, **kw: frame)
+        monkeypatch.setattr(mdp.yf, "download", lambda *a_, **kw: frame)
 
         positions = [
             {"ticker": "AAA", "investedAmount": 500.0},

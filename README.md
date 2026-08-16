@@ -368,6 +368,17 @@ período quando a lista foi escrita. O caminho `start/end` do módulo continua
 direto no yfinance: a cadeia trabalha em período, e é caminho de investigação
 manual, não do ciclo automático.
 
+`risk_manager.py` trouxe o formato que faltava: `correlation` e
+`portfolio_risk_metrics` consomem VÁRIOS tickers numa chamada (`yf.download`
+em lote). `get_daily_closes_batch` no provider mantém o lote no caminho feliz
+(uma chamada de rede, como antes) e desce a cadeia **por ticker** quando o
+lote falha — `fontes` diz de onde veio cada coluna, e ticker sem fonte não
+vira coluna de NaN. No sucesso, cada recorte OHLCV **completo** do lote é
+gravado no `hist_cache` com a chave normal (o lote de hoje é o fallback de
+amanhã); recorte parcial nunca é gravado — o cache é compartilhado com
+`get_technicals`/`get_trend` e um frame com metade das colunas seria corrupção
+silenciosa.
+
 **Fora da adoção, por decisão**: `get_historical_price.py` alimenta o
 `purchasePrice` dos lotes — base do preço médio e do P&L. Diferente de um
 indicador, que é recalculado no ciclo seguinte, o preço de compra é gravado no
@@ -513,6 +524,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #285 | `get_trend.py` na cadeia, com marcação de degradação propagada ao resultado |
 | #286 | `entry_exit_study.py`: histórico na cadeia, preço atual continua ao vivo |
 | #287 | `confluence_engine.py` na cadeia + `18mo` entra no conjunto cacheável |
+| #288 | `risk_manager.py` na cadeia via `get_daily_closes_batch` (lote com fallback por ticker) |
 
 ### Estudo de Entrada e Saída (ago/2026)
 

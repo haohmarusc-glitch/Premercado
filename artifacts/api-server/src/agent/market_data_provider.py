@@ -257,6 +257,117 @@ def _cross_check_last_close(
         pass  # cross-check é bônus, nunca motivo de falha
 
 
+@dataclass
+class BatchClosesResult:
+    """Fechamentos de VÁRIOS tickers numa matriz larga (colunas = tickers).
+
+    `fontes` diz de onde veio a série de CADA ticker — num lote de fallback é
+    normal metade vir do cache e metade não vir de lugar nenhum, e o chamador
+    precisa saber quem é quem para marcar degradação com precisão.
+    """
+    closes: pd.DataFrame | None
+    fontes: dict[str, str] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.closes is not None and not self.closes.empty
+
+    @property
+    def degradadas(self) -> dict[str, str]:
+        """Só os tickers cuja série não veio do caminho normal."""
+        return {t: s for t, s in self.fontes.items()
+                if s not in ("yfinance", "yfinance_cache")}
+
+
+def _extrair_ohlcv_por_ticker(data: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+    """Recorta o OHLCV completo de UM ticker do resultado do yf.download em
+    lote (colunas MultiIndex campo×ticker). Devolve None se o recorte não
+    tiver as colunas todas — melhor não gravar do que gravar um frame parcial:
+    o hist_cache é compartilhado com get_technicals/get_trend, que esperam a
+    forma completa, e um cache com metade das colunas é corrupção silenciosa
+    (mesma classe da armadilha do auto_adjust na chave)."""
+    try:
+        if isinstance(data.columns, pd.MultiIndex):
+            df = data.xs(ticker, axis=1, level=1)
+        else:
+            df = data  # lote de 1 ticker: colunas já são planas
+        colunas = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(c in df.columns for c in colunas):
+            return None
+        df = df[colunas].dropna(how="all")
+        return df if not df.empty else None
+    except Exception:
+        return None
+
+
+def get_daily_closes_batch(
+    tickers: list[str], period: str = "1y", *,
+    auto_adjust: bool = False, permitir_externa: bool = True,
+) -> BatchClosesResult:
+    """Fechamentos diários de vários tickers, com fallback POR TICKER.
+
+    Caminho feliz: UM yf.download em lote (é o que o chamador já fazia — não
+    virar N chamadas quando a rede está saudável). No sucesso, cada recorte
+    por ticker é gravado no hist_cache com a chave normal, então o fallback
+    de amanhã se alimenta do lote de hoje.
+
+    Quando o lote falha (ou o disjuntor já está aberto), cada ticker desce a
+    cadeia individual de get_daily_history — que serve cache no TTL, cache
+    vencido e, se permitido, a fonte externa. O registro no disjuntor fica a
+    cargo dessas chamadas individuais: as primeiras falhas abrem o breaker e
+    as seguintes vão direto ao cache, então o custo de rede é autolimitado.
+
+    O resultado nunca mistura silenciosamente: `fontes` nomeia a origem de
+    cada coluna, e um ticker sem fonte nenhuma simplesmente não vira coluna.
+    """
+    limpos = [t for t in dict.fromkeys(tickers) if t]
+    if not limpos:
+        return BatchClosesResult(closes=None, warnings=["Lote vazio"])
+
+    warnings: list[str] = []
+
+    if not provider_health.is_open("yfinance"):
+        try:
+            data = yf.download(limpos, period=period, interval="1d",
+                               auto_adjust=auto_adjust, progress=False)
+        except Exception as ex:  # noqa: BLE001 — fonte externa, fail-open
+            print(f"[market_data_provider] yf.download lote: {ex}", file=sys.stderr)
+            data = None
+        if data is not None and not data.empty:
+            provider_health.record_success("yfinance")
+            closes = data["Close"] if "Close" in data else data
+            if not hasattr(closes, "columns"):
+                closes = closes.to_frame(name=limpos[0])
+            fontes = {t: "yfinance" for t in limpos if t in closes.columns}
+            for t in fontes:
+                recorte = _extrair_ohlcv_por_ticker(data, t)
+                if recorte is not None:
+                    hist_cache.guardar(t, period, recorte, auto_adjust=auto_adjust)
+            return BatchClosesResult(closes=closes, fontes=fontes)
+        provider_health.record_failure("yfinance")
+        warnings.append("yf.download em lote falhou — caindo para a cadeia por ticker")
+    else:
+        warnings.append("yfinance em cooldown (falhas recentes) — lote pulado, cadeia por ticker")
+
+    colunas: dict[str, pd.Series] = {}
+    fontes: dict[str, str] = {}
+    for t in limpos:
+        r = get_daily_history(t, period, auto_adjust=auto_adjust,
+                              permitir_externa=permitir_externa)
+        if r.ok and "Close" in r.df.columns:
+            serie = r.df["Close"].dropna()
+            if serie.index.tz is not None:
+                serie.index = serie.index.tz_localize(None)
+            colunas[t] = serie
+            fontes[t] = r.source
+    if not colunas:
+        warnings.append("Nenhuma fonte de histórico disponível para o lote inteiro")
+        return BatchClosesResult(closes=None, fontes=fontes, warnings=warnings)
+
+    return BatchClosesResult(closes=pd.DataFrame(colunas), fontes=fontes, warnings=warnings)
+
+
 def get_quote(ticker: str) -> QuoteResult:
     """Cotação com fallback. Diferente do histórico, aqui NÃO há como
     disfarçar a degradação: yfinance é a única fonte com pré-mercado/

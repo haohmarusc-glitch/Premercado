@@ -4,6 +4,10 @@ import numpy as np
 import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker
+try:  # import duplo: spawn por caminho e também como membro do pacote
+    from agent import market_data_provider
+except ImportError:
+    import market_data_provider
 
 def position_size(account_size: float, risk_pct: float, entry: float, stop: float) -> dict:
     if entry <= 0 or stop <= 0 or entry == stop:
@@ -38,7 +42,13 @@ def risk_reward(entry: float, stop: float, target: float) -> dict:
 def stop_distance(ticker: str, period: str = "3mo", atr_multiplier: float = 2.0) -> dict:
     try:
         ticker = sanitize_ticker(ticker)
-        df = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+        # Cadeia sem fonte externa: a série é ajustada, e um split na janela
+        # viraria degrau -- um ATR calculado sobre o degrau sugeriria um stop
+        # absurdo. O cache vencido serve (foi gravado do yfinance, ajustado).
+        resultado = market_data_provider.get_daily_history(
+            ticker, period, auto_adjust=True, permitir_externa=False
+        )
+        df = resultado.df if resultado.ok else pd.DataFrame()
         if df.empty or len(df) < 15:
             return {"error": "Insufficient data"}
         high = df["High"]
@@ -111,10 +121,12 @@ def correlation(tickers: list, period: str = "6mo") -> dict:
         if len(clean) < 2:
             return {"error": "Precisa de pelo menos 2 tickers válidos"}
 
-        data = yf.download(clean, period=period, interval="1d", auto_adjust=True, progress=False)
-        closes = data["Close"] if "Close" in data else data
-        if hasattr(closes, "columns") is False:
+        lote = market_data_provider.get_daily_closes_batch(
+            clean, period, auto_adjust=True, permitir_externa=False
+        )
+        if not lote.ok:
             return {"error": "Dados insuficientes"}
+        closes = lote.closes
 
         returns = closes.pct_change().dropna(how="all")
         available = [t for t in clean if t in returns.columns and returns[t].notna().sum() >= 20]
@@ -140,12 +152,16 @@ def correlation(tickers: list, period: str = "6mo") -> dict:
         high = [p for p in pairs if abs(p["correlation"]) >= 0.8]
 
         skipped = [t for t in clean if t not in available]
+        degradadas = {t: f for t, f in lote.degradadas.items() if t in available}
         return {
             "tickers": available,
             "matrix": matrix,
             "pairs": pairs,
             "highCorrelationPairs": high,
             "skipped": skipped,
+            # Só aparece quando alguma série veio degradada -- uma correlação
+            # calculada sobre cache de ontem continua útil, mas tem que dizer.
+            **({"fontesDegradadas": degradadas} if degradadas else {}),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -192,12 +208,12 @@ def portfolio_risk_metrics(positions: list, period: str = "1y", risk_free_rate: 
             return {"error": "Nenhuma posição válida"}
 
         tickers = [t for t, _ in clean]
-        data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False)
-        closes = data["Close"] if "Close" in data else data
-        # yf.download com 1 único ticker devolve Series em vez de DataFrame
-        # de 1 coluna -- normaliza pra sempre poder indexar por nome.
-        if not hasattr(closes, "columns"):
-            closes = closes.to_frame(name=tickers[0])
+        lote = market_data_provider.get_daily_closes_batch(
+            tickers, period, auto_adjust=True, permitir_externa=False
+        )
+        if not lote.ok:
+            return {"error": "Dados insuficientes para calcular métricas de risco"}
+        closes = lote.closes
 
         returns = closes.pct_change().dropna(how="all")
         available = [(t, w) for t, w in clean if t in returns.columns and returns[t].notna().sum() >= 20]
