@@ -1,6 +1,10 @@
 import sys, json
 import numpy as np
-import yfinance as yf
+
+try:  # import duplo: spawn por caminho (checker diário) e como membro do pacote
+    from agent import market_data_provider
+except ImportError:
+    import market_data_provider
 
 # Recalcula vol_annual/beta_sector de scenario_params (Painel de Cenários) a
 # partir do histórico real de preços, em vez dos valores fixos digitados à
@@ -44,18 +48,20 @@ def compute(tickers: list[str], benchmark: str) -> dict:
         return {"params": result, "sectorMomentum": None}
 
     all_symbols = list(dict.fromkeys(tickers + [benchmark]))
-    try:
-        data = yf.download(all_symbols, period=PERIOD, interval="1d", auto_adjust=True, progress=False)
-        closes = data["Close"] if "Close" in data else data
-        # yf.download com 1 único símbolo devolve Series em vez de DataFrame
-        # de 1 coluna -- normaliza pra sempre poder indexar por nome (mesmo
-        # ajuste de portfolio_risk_metrics em risk_manager.py).
-        if not hasattr(closes, "columns"):
-            closes = closes.to_frame(name=all_symbols[0])
-        returns = closes.pct_change().dropna(how="all")
-    except Exception as e:
-        err = str(e)
+    # Lote com fallback POR TICKER (get_daily_closes_batch): rede saudável
+    # continua sendo UM yf.download; numa queda do Yahoo cada símbolo desce a
+    # cadeia individual e vem do cache. permitir_externa=False porque a série
+    # é ajustada -- vol e beta calculados sobre o degrau de um split sairiam
+    # absurdos, e são exatamente os números que alimentam o Painel de
+    # Cenários e o Estudo de Entrada/Saída.
+    lote = market_data_provider.get_daily_closes_batch(
+        all_symbols, PERIOD, auto_adjust=True, permitir_externa=False
+    )
+    if not lote.ok:
+        err = "; ".join(lote.warnings) or "Sem dados de preço"
         return {"params": {t: {"error": err} for t in tickers}, "sectorMomentum": None}
+    closes = lote.closes
+    returns = closes.pct_change().dropna(how="all")
 
     if benchmark not in returns.columns or returns[benchmark].notna().sum() < MIN_DAYS:
         return {
@@ -95,7 +101,14 @@ def compute(tickers: list[str], benchmark: str) -> dict:
         except Exception as e:
             result[t] = {"error": str(e)}
 
-    return {"params": result, "sectorMomentum": _sector_momentum(closes, benchmark)}
+    saida = {"params": result, "sectorMomentum": _sector_momentum(closes, benchmark)}
+    # Só aparece quando alguma série veio degradada. Vol/beta sobre cache de
+    # ontem continuam úteis (mudam devagar), mas quem persiste o resultado
+    # (scenario-params-checker) e quem o consome no estudo tem que poder saber.
+    degradadas = lote.degradadas
+    if degradadas:
+        saida["fontesDegradadas"] = degradadas
+    return saida
 
 
 if __name__ == "__main__":
