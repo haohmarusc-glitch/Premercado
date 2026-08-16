@@ -1,8 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
   tabela, itens, pct, cabecalho, montarRelatorioSetor,
-  ROTULO_POR_MODO_EXPORTADO,
+  ROTULO_POR_MODO_EXPORTADO, nomeArquivoMarkdown,
 } from "@/components/exportar-relatorio";
+
+describe("nomeArquivoMarkdown", () => {
+  const dia = new Date("2026-08-16T12:00:00Z");
+
+  it("minúsculas, sem acento, hífens e data", () => {
+    expect(nomeArquivoMarkdown("Previsão de vol — INTC, PDD", dia))
+      .toBe("previsao-de-vol-intc-pdd-2026-08-16.md");
+  });
+
+  it("título vazio ou só símbolos cai no fallback", () => {
+    expect(nomeArquivoMarkdown("", dia)).toBe("relatorio-2026-08-16.md");
+    expect(nomeArquivoMarkdown("§§§", dia)).toBe("relatorio-2026-08-16.md");
+  });
+
+  it("título longo é cortado sem hífen pendurado", () => {
+    const nome = nomeArquivoMarkdown("a".repeat(40) + " " + "b".repeat(40), dia);
+    expect(nome.length).toBeLessThanOrEqual(60 + "-2026-08-16.md".length);
+    expect(nome).not.toContain("--");
+    expect(nome.replace("-2026-08-16.md", "")).not.toMatch(/-$/);
+  });
+});
 
 describe("tabela", () => {
   it("monta cabeçalho, separador e corpo", () => {
