@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, Satellite, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit, Target, Sparkles, Crosshair, ScanSearch } from "lucide-react";
+import { Activity, Satellite, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit, Target, Sparkles, Crosshair, ScanSearch, Waves } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -295,6 +295,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/earnings-reaction", <Gauge className="h-4 w-4" />, "Reação a Earnings")}
             {navLink("/radar-ia", <Satellite className="h-4 w-4" />, "Radar IA")}
             {navLink("/analise-rapida", <ScanSearch className="h-4 w-4" />, "Análise Rápida")}
+            {navLink("/previsao-vol", <Waves className="h-4 w-4" />, "Previsão de Vol")}
             {navLink("/backtest", <FlaskConical className="h-4 w-4" />, "Backtest")}
             {navLink("/calculadora", <Calculator className="h-4 w-4" />, "Calculadora")}
 

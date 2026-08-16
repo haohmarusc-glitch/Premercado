@@ -112,6 +112,10 @@ makeTickerRoute("/news", "get_news_feed.py", "news", { maxItems: 5 });
 // (QUIVER_API_KEY / UNUSUAL_WHALES_API_KEY); sem chave, volta
 // {configured: false} em vez de erro.
 makeTickerRoute("/alt-data", "get_alt_data.py", "alt-data");
+// Ciclo de volatilidade (tela Previsão de Vol): fase por ticker
+// (COMPRIMIDA/GATILHO/EXPANSAO/DECAIMENTO/NORMAL) + banda de amanhã.
+// Sem tickers na query cai na carteira (settings), como os demais.
+makeTickerRoute("/vol-cycle", "ciclo_volatilidade.py", "vol-cycle");
 
 // Retrato rápido de um ticker avulso (tela Análise Rápida): preço/52s/MMs ao
 // vivo + vol/beta vs benchmark via get_scenario_params. Um ticker por vez de
