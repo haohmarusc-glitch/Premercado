@@ -27,6 +27,7 @@ import yfinance as yf
 
 from .cache import cached
 from . import hist_cache
+from . import market_data_provider
 from .radar_ia_2026 import CORR_ALTA, alerta_contagio, correlacao, earnings_proximos
 from .parametros_macro import INDICADORES_GLOBAIS, sinal_overnight
 
@@ -352,8 +353,14 @@ def _intraday_1m(ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 
+# Fontes usadas pelo histórico neste processo, para o check de dado degradado
+# no fim do ciclo. {"cache_stale": 3, "alphavantage": 1, ...} -- "yfinance" e
+# "yfinance_cache" não entram: são o caminho normal.
+_FONTES_DEGRADADAS: dict[str, int] = {}
+
+
 def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
-    """Histórico diário, com dois níveis de cache.
+    """Histórico diário, com dois níveis de cache e fallback de fonte.
 
     _HIST_CACHE (memória) resolve o mesmo ticker pedido várias vezes DENTRO do
     processo. Ele não ajuda entre processos, e é aí que estava o desperdício:
@@ -362,6 +369,22 @@ def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
 
     hist_cache (disco) cobre esse vão -- e só pra período longo, onde o candle
     de hoje não domina o indicador. Ver a docstring de hist_cache.py.
+
+    A cadeia de fallback (market_data_provider) entra SÓ nos períodos que o
+    hist_cache considera cacheáveis, e a razão é a cota, não a pureza:
+
+    - Períodos curtos (5d, 1mo, 2mo) não têm cache em disco, então uma queda do
+      Yahoo os mandaria direto pra fonte externa. Como o `5d` é pedido em laço
+      por ticker (variação do dia, curva de juros), eles drenariam sozinhos as
+      15 chamadas do orçamento diário -- que é compartilhado com o feed de
+      notícias -- e sobraria zero para o 6mo/1y, que é o que alimenta RSI,
+      médias e tendência.
+    - Períodos longos têm cache em disco, então na prática a fonte externa quase
+      nunca é acionada: um ticker acompanhado a cada 5 min sempre tem um cache
+      vencido para servir, e o vencido vem ANTES da fonte externa na cadeia.
+
+    O critério é `hist_cache.cacheavel()`, o mesmo do cache -- reaproveitado de
+    propósito para os dois nunca divergirem.
     """
     key = f"{ticker}:{period}"
     if key in _HIST_CACHE:
@@ -372,12 +395,26 @@ def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
         _HIST_CACHE[key] = do_disco
         return do_disco
 
+    if hist_cache.cacheavel(period):
+        # market_data_provider grava no hist_cache sozinho quando o yfinance
+        # responde, então não repetimos o guardar() aqui.
+        resultado = market_data_provider.get_daily_history(
+            ticker, period, auto_adjust=False
+        )
+        if resultado.source not in ("yfinance", "yfinance_cache", "none"):
+            _FONTES_DEGRADADAS[resultado.source] = _FONTES_DEGRADADAS.get(resultado.source, 0) + 1
+        for aviso in resultado.warnings:
+            print(f"[market_alerts] {ticker} {period}: {aviso}", file=sys.stderr)
+        if not resultado.ok:
+            return None
+        _HIST_CACHE[key] = resultado.df
+        return resultado.df
+
     try:
         df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
         if df is None or df.empty:
             return None
         _HIST_CACHE[key] = df
-        hist_cache.guardar(ticker, period, df, auto_adjust=False)
         return df
     except Exception as e:
         print(f"[market_alerts] erro ao baixar {ticker}: {e}", file=sys.stderr)
@@ -1113,6 +1150,44 @@ def check_overnight_asia(tickers: list[str]) -> list[Alert]:
     return alerts
 
 
+_ROTULO_FONTE = {
+    "cache_stale": "cache vencido (último dado bom conhecido)",
+    "alphavantage": "Alpha Vantage (fonte externa, sem ajuste de split confirmado)",
+}
+
+
+def check_dado_degradado() -> list[Alert]:
+    """Avisa quando os indicadores do ciclo saíram de dado degradado.
+
+    Sem isto a degradação é invisível onde mais importa: RSI, médias e padrões
+    de candle continuam saindo, com números plausíveis, calculados sobre uma
+    série que pode ser de ontem ou de outra fonte. Um alerta técnico silencioso
+    sobre dado velho é pior que alerta nenhum -- quem lê não tem como saber.
+
+    Vai junto dos outros alertas de propósito: é o canal que já chega ao
+    e-mail, à tela e ao prompt do agente. Severidade ATENCAO, não CRITICO: o
+    sistema está funcionando, só não com a fonte primária.
+    """
+    if not _FONTES_DEGRADADAS:
+        return []
+    detalhe = ", ".join(
+        f"{_ROTULO_FONTE.get(fonte, fonte)}: {n} série(s)"
+        for fonte, n in sorted(_FONTES_DEGRADADAS.items())
+    )
+    total = sum(_FONTES_DEGRADADAS.values())
+    return [Alert(
+        ticker="—",
+        category=Category.TECNICO,
+        severity=Severity.ATENCAO,
+        title="Indicadores calculados sobre dado degradado",
+        detail=(f"A fonte primária de histórico não respondeu neste ciclo. {detalhe}. "
+                f"RSI, médias e padrões abaixo continuam válidos como leitura, mas "
+                f"podem não refletir o pregão de hoje -- confira a cotação antes de "
+                f"agir sobre qualquer um deles."),
+        value=float(total),
+    )]
+
+
 def check_sinais_correlacionados(alerts: list[Alert]) -> list[Alert]:
     """Dedup de sinal por cluster (Radar IA 2026): se DOIS tickers com
     correlação >= 0.70 dispararam alerta relevante no MESMO ciclo, é um sinal
@@ -1775,6 +1850,9 @@ def run_all_alerts(tickers: list[str],
     # Passa por ÚLTIMO, sobre o conjunto completo do ciclo -- precisa ver
     # todos os alertas pra apontar pares do mesmo cluster (radar).
     alerts += check_sinais_correlacionados(alerts)
+    # Também por último: só depois de todos os checks dá pra saber se algum
+    # indicador do ciclo saiu de dado degradado.
+    alerts += check_dado_degradado()
 
     order = {Severity.CRITICO: 0, Severity.ATENCAO: 1, Severity.INFO: 2}
     alerts.sort(key=lambda a: order[a.severity])
