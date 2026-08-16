@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Activity, Gauge, ScanSearch, TrendingUp } from "lucide-react";
+import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
+import { MarkdownContent } from "@/components/markdown";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
 // agora como três botões sobre um ticker avulso. Cada botão bate numa rota que
@@ -166,6 +167,7 @@ export default function AnaliseRapidaPage() {
   const [tech, setTech] = useState<TechItem | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
+  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[] } | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
 
@@ -174,7 +176,9 @@ export default function AnaliseRapidaPage() {
       const data = (await getJson(`/api/trend?tickers=${encodeURIComponent(ticker)}`)) as { items: TrendItem[] };
       return data.items[0] ?? { ticker, error: "Sem resultado" };
     },
-    onSuccess: setTrend,
+    // Dados novos invalidam a leitura da IA — texto antigo sobre painel novo
+    // seria análise de outro retrato.
+    onSuccess: (d) => { setTrend(d); setAnaliseIA(null); },
   });
 
   const runTech = useMutation({
@@ -182,7 +186,7 @@ export default function AnaliseRapidaPage() {
       const data = (await getJson(`/api/technicals?tickers=${encodeURIComponent(ticker)}`)) as { items: TechItem[] };
       return data.items[0] ?? { ticker, error: "Sem resultado" };
     },
-    onSuccess: setTech,
+    onSuccess: (d) => { setTech(d); setAnaliseIA(null); },
   });
 
   const runNiveis = useMutation({
@@ -213,7 +217,29 @@ export default function AnaliseRapidaPage() {
     onSuccess: ({ snap, reac }) => {
       setSnapshot(snap);
       setReaction(reac);
+      setAnaliseIA(null);
     },
+  });
+
+  // A IA só transforma número em leitura — precisa de painel coletado antes,
+  // e cada clique custa tokens (o custo volta na resposta e aparece na tela).
+  const runIA = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/analise-rapida/ia", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker,
+          benchmark: benchmark.trim().toUpperCase() || "SMH",
+          trend, technicals: tech, snapshot, reaction,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
+      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[] };
+    },
+    onSuccess: setAnaliseIA,
   });
 
   const temDados = Boolean(trend || tech || snapshot || reaction);
@@ -284,6 +310,10 @@ export default function AnaliseRapidaPage() {
       }
     }
 
+    if (analiseIA) {
+      blocos.push("## Análise com IA\n\n" + analiseIA.markdown);
+    }
+
     return blocos.join("\n\n");
   }
 
@@ -335,10 +365,18 @@ export default function AnaliseRapidaPage() {
           <button onClick={() => runNiveis.mutate()} disabled={!ticker || runNiveis.isPending} className={botao}>
             {runNiveis.isPending ? spinner : <Gauge className="h-4 w-4" />} Níveis &amp; Reações
           </button>
+          <button
+            onClick={() => runIA.mutate()}
+            disabled={!ticker || !temDados || runIA.isPending}
+            title={temDados ? "Gera uma leitura em texto dos painéis coletados — consome tokens (custo aparece no resultado)" : "Rode ao menos um painel primeiro"}
+            className={botao}
+          >
+            {runIA.isPending ? spinner : <Sparkles className="h-4 w-4" />} Análise com IA
+          </button>
         </div>
-        {(runTrend.isError || runTech.isError || runNiveis.isError) && (
+        {(runTrend.isError || runTech.isError || runNiveis.isError || runIA.isError) && (
           <p className="text-sm text-red-400 font-mono">
-            {String(runTrend.error ?? runTech.error ?? runNiveis.error)}
+            {String(runTrend.error ?? runTech.error ?? runNiveis.error ?? runIA.error)}
           </p>
         )}
         {temDados && (
@@ -352,6 +390,20 @@ export default function AnaliseRapidaPage() {
           </div>
         )}
       </div>
+
+      {analiseIA && (
+        <Painel titulo={`Análise com IA — ${ticker}`}>
+          <p className="font-mono text-[10px] text-muted-foreground/70">
+            Leitura gerada sobre os painéis coletados
+            {analiseIA.fontes?.length
+              ? ` + camada fundamental: ${analiseIA.fontes.join(", ")}`
+              : " (camada fundamental indisponível nesta análise)"}
+            . Não é recomendação de compra ou venda.
+            {analiseIA.usage?.total_cost_usd != null && ` · custo desta análise: ~$${analiseIA.usage.total_cost_usd.toFixed(4)}`}
+          </p>
+          <MarkdownContent content={analiseIA.markdown} />
+        </Painel>
+      )}
 
       {trend && (
         <Painel titulo={`Tendência — ${trend.ticker}`}>

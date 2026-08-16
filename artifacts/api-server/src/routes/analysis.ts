@@ -67,6 +67,59 @@ function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
   })));
 }
 
+// Síntese com IA da tela Análise Rápida. Mesmo contexto de pacote do
+// runMarketAlertsSnapshot (provider.py tem import relativo). POST porque o
+// corpo carrega os painéis já coletados pela tela — o script não refaz
+// nenhuma busca de mercado, só transforma número em leitura.
+function runAnaliseRapidaIA(payload: object): Promise<unknown> {
+  return coalescer(`analise_rapida_ia:${JSON.stringify(payload)}`, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
+    const py = spawnPython(getPythonBin(), ["-m", "agent.analise_rapida_ia"], {
+      cwd: agentDir,
+      env: { ...process.env, PYTHONPATH: agentDir },
+    });
+    py.stdin.write(JSON.stringify(payload));
+    py.stdin.end();
+    let out = "";
+    let err = "";
+    py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    // Uma chamada de LLM tier full + fallback de provedores: 90s cobre o
+    // pior caso da cadeia sem segurar a vaga de Python pra sempre.
+    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 90_000);
+    py.on("close", (code) => {
+      clearTimeout(t);
+      if (code !== 0) return reject(new Error(err || "Script failed"));
+      try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
+    });
+  })));
+}
+
+// Teto do corpo aceito — os painéis da tela cabem com folga; payload maior
+// que isso é anomalia, não uso legítimo (e viraria custo de token).
+const LIMITE_CORPO_IA = 64 * 1024;
+
+router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
+  try {
+    const ticker = String(req.body?.ticker ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9.^-]{1,10}$/.test(ticker)) { res.status(400).json({ error: "ticker inválido" }); return; }
+    if (JSON.stringify(req.body).length > LIMITE_CORPO_IA) {
+      res.status(400).json({ error: "payload grande demais" }); return;
+    }
+    const data = await runAnaliseRapidaIA({
+      ticker,
+      benchmark: String(req.body?.benchmark ?? "").trim().toUpperCase() || "SMH",
+      trend: req.body?.trend ?? null,
+      technicals: req.body?.technicals ?? null,
+      snapshot: req.body?.snapshot ?? null,
+      reaction: req.body?.reaction ?? null,
+    });
+    res.json(data);
+  } catch (err) {
+    logger.error({ err }, "Failed: /analise-rapida/ia");
+    res.status(500).json({ error: "Falha na análise com IA" });
+  }
+});
+
 async function resolveTickers(raw: string): Promise<string[]> {
   const trimmed = raw.trim();
   if (trimmed) return trimmed.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
