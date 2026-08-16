@@ -44,6 +44,12 @@ def _isolado(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_health, "_PATH", str(tmp_path / "health.json"))
     monkeypatch.setattr(hist_cache, "guardar", lambda *a, **k: None)
     monkeypatch.setattr(hist_cache, "carregar", lambda *a, **k: None)
+    # Sela TAMBÉM o caminho por ticker da cadeia. Sem isto, um teste que mocka
+    # só o yf.download do lote deixa o fallback vivo -- e no runner do CI, que
+    # tem rede de verdade, "AAA"/"BBB" são tickers REAIS: o Yahoo respondeu e
+    # o teste que esperava erro recebeu uma matriz de correlação. Localmente
+    # passou porque o sandbox bloqueia o Yahoo -- o proxy fez o papel do mock.
+    monkeypatch.setattr(mdp, "_yf_history_with_retry", lambda *a, **k: None)
     yield
 
 
