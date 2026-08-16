@@ -51,6 +51,10 @@ import yfinance as yf
 
 from bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
 from security import sanitize_ticker
+try:  # import duplo: spawn por caminho e também como membro do pacote
+    from agent import market_data_provider
+except ImportError:
+    import market_data_provider
 from brt import today_brt
 from get_scenario_params import compute as compute_scenario_params
 from get_earnings import get_earnings
@@ -140,12 +144,27 @@ def _study_for(spec: dict) -> dict:
     if days_until < 1:
         return {"ticker": ticker, "error": "targetDate precisa ser no futuro"}
 
+    # Duas buscas com riscos bem diferentes, por isso separadas.
+    #
+    # O HISTÓRICO alimenta as mínimas (níveis de entrada). É série não
+    # ajustada, então aceita a cadeia inteira, fonte externa inclusive: uma
+    # média de mínimas calculada sobre dado de ontem continua útil.
+    #
+    # O PREÇO ATUAL é outra história: ele entra em log(alvo/preço), ou seja,
+    # define a distância até o alvo e portanto a probabilidade inteira. Servir
+    # o fechamento de ontem como "preço atual" muda a resposta sem mudar a
+    # pergunta -- num papel que andou 5% hoje, a probabilidade sai
+    # materialmente errada. Continua vindo do yfinance, e se ele não
+    # responder o estudo FALHA em vez de calcular sobre um preço velho
+    # disfarçado de atual.
     try:
-        tk = yf.Ticker(ticker)
-        hist = tk.history(period="1y", auto_adjust=False)
-        if hist.empty:
+        resultado_hist = market_data_provider.get_daily_history(
+            ticker, "1y", auto_adjust=False
+        )
+        if not resultado_hist.ok:
             return {"ticker": ticker, "error": "sem histórico de preço"}
-        current_price = float(tk.fast_info.last_price)
+        hist = resultado_hist.df
+        current_price = float(yf.Ticker(ticker).fast_info.last_price)
     except Exception as e:
         return {"ticker": ticker, "error": f"falha ao buscar preço/histórico: {type(e).__name__}: {e}"}
 
@@ -248,6 +267,11 @@ def _study_for(spec: dict) -> dict:
         "probReachTargetMomentum": prob_reach_target_momentum,
         "momentumAnnualPct": momentum_annual_pct,
         "news": news_items,
+        # Marca de onde veio a SÉRIE (não o preço atual, que é sempre ao
+        # vivo). Só aparece quando degradada: campo ausente é o caso normal,
+        # e assim nenhum consumidor precisa mudar para continuar funcionando.
+        **({"fonteHistorico": resultado_hist.source}
+           if resultado_hist.source not in ("yfinance", "yfinance_cache") else {}),
     }
 
 

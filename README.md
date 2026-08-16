@@ -351,6 +351,14 @@ esconderia a degradação num campo que já existia para revelá-la. Um
 `sinal: compra` calculado sobre o fechamento de ontem, sem aviso, é o caso a
 evitar.
 
+`entry_exit_study.py` é o caso mais delicado, porque tem DUAS buscas com
+riscos diferentes. O **histórico** (mínimas, níveis de entrada) usa a cadeia
+inteira — série não ajustada, e média de mínimas sobre dado de ontem continua
+útil. O **preço atual** continua exigindo yfinance ao vivo: ele entra em
+`log(alvo/preço)` e define a probabilidade inteira, então servir o fechamento
+de ontem como "preço atual" mudaria a resposta sem mudar a pergunta. Se o
+preço ao vivo não vier, o estudo falha — de propósito.
+
 **Fora da adoção, por decisão**: `get_historical_price.py` alimenta o
 `purchasePrice` dos lotes — base do preço médio e do P&L. Diferente de um
 indicador, que é recalculado no ciclo seguinte, o preço de compra é gravado no
@@ -494,6 +502,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #283 | `market_alerts.py` ligado à cadeia (fallback por período) + alerta de dado degradado |
 | #284 | `get_technicals.py` na cadeia sem fonte externa (série ajustada); `get_historical_price.py` excluído por escrito |
 | #285 | `get_trend.py` na cadeia, com marcação de degradação propagada ao resultado |
+| #286 | `entry_exit_study.py`: histórico na cadeia, preço atual continua ao vivo |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
