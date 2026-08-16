@@ -327,7 +327,16 @@ redescubra a queda pagando o timeout inteiro.
 `provider_preflight.py` mede as duas fontes antes do deploy (`python -m
 agent.provider_preflight`, exit 0/1/2) e roda como passo informativo no CI.
 
-**Adoção**: `get_quotes.py` é o primeiro dos 24 módulos ligado à cadeia. O
+**Adoção**: `get_quotes.py` e `market_alerts.py` são os primeiros dos 24
+módulos ligados à cadeia. Em `market_alerts` o critério não é lote e sim
+**período**: só os cacheáveis (3mo+) vão para a cadeia. Os curtos (`5d`,
+`1mo`, `2mo`) são pedidos em laço por ticker e drenariam sozinhos a cota do
+dia antes do 6mo/1y, que é o que alimenta RSI, médias e tendência. Quando um
+indicador sai de dado degradado, o ciclo emite um alerta `ATENCAO` dizendo de
+qual fonte veio — indicador silencioso sobre série velha é pior que indicador
+nenhum.
+
+Em `get_quotes.py`: O
 fallback é decidido por **lote, nunca por símbolo** — um ticker isolado sem
 preço quase sempre é o próprio ticker (deslistado, digitado errado) e falharia
 em qualquer fonte; o lote inteiro sem preço é o sintoma real de Yahoo fora do
@@ -459,6 +468,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #280 | Stooq descartado (anti-bot) e trocado por Alpha Vantage, com teto diário de cota |
 | #281 | Teto de cota que não contava: dia gravado do relógio vs. dia por parâmetro |
 | #282 | `get_quotes.py` ligado à cadeia (fallback por lote) + `isDelayed` no contrato e na UI |
+| #283 | `market_alerts.py` ligado à cadeia (fallback por período) + alerta de dado degradado |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
