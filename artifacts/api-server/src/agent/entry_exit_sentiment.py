@@ -33,7 +33,7 @@ from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_i
 
 _probe_boot()
 
-from agent.provider import get_client
+from agent.provider import get_client, texto_da_resposta
 from agent.security import sanitize_for_llm
 
 _probe_imports()
@@ -108,10 +108,12 @@ def analisar(studies: list[dict]) -> dict:
         tools=[],
         messages=[{"role": "user", "content": f"Manchetes de hoje:\n\n{prompt}"}],
     )
-    texto = " ".join(
-        b.get("text", "") for b in resp.content
-        if isinstance(b, dict) and b.get("type") == "text"
-    )
+    # Extração tolerante ao formato do bloco: provider.py devolve dataclasses
+    # TextBlock (acesso por atributo) nos DOIS caminhos, então a checagem
+    # antiga por `isinstance(b, dict)` extraía string vazia sempre — e como
+    # este módulo engole a falha ({"sentiments": {}}), o sentimento sumia
+    # sem erro nenhum no log.
+    texto = texto_da_resposta(resp)
     bruto = _extrair_json(texto)
 
     # Valida cada entrada -- rótulo fora do vocabulário ou ticker que o modelo

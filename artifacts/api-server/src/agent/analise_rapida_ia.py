@@ -48,7 +48,7 @@ _probe_boot()
 
 import yfinance as yf
 
-from agent.provider import get_client, get_run_usage
+from agent.provider import get_client, get_run_usage, texto_da_resposta
 from agent.security import sanitize_for_llm
 from agent import tools
 
@@ -206,10 +206,7 @@ def analisar(dados: dict) -> dict:
             "content": f"Dados calculados para {ticker}:\n\n{_compactar(dados)}",
         }],
     )
-    texto = " ".join(
-        b.get("text", "") for b in resp.content
-        if isinstance(b, dict) and b.get("type") == "text"
-    ).strip()
+    texto = texto_da_resposta(resp)
     if len(texto) < 200:
         # Modelo fraco da cadeia devolvendo tocos é falha conhecida (ver
         # playbook §4) — melhor erro explícito que "análise" de uma linha.

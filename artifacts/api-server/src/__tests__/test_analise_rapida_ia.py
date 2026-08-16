@@ -14,11 +14,16 @@ import json
 import pytest
 
 from agent import analise_rapida_ia as ia
+from agent.provider import TextBlock, ToolUseBlock, texto_da_resposta
 
 
 class _Resp:
+    """Resposta no formato REAL do provider.py: dataclasses TextBlock, com
+    acesso por atributo. Fixado assim de propósito — a versão anterior deste
+    teste usava dicts, que o provider nunca devolve, e por isso não pegou a
+    extração vazia que quebrou a tela em produção (16/08)."""
     def __init__(self, texto):
-        self.content = [{"type": "text", "text": texto}]
+        self.content = [TextBlock(text=texto)]
 
 
 class _Client:
@@ -134,6 +139,38 @@ def test_payload_gigante_e_truncado(monkeypatch):
     ia.analisar(_dados(technicals={"lixo": "x" * 50_000}))
     prompt = visto["messages"][0]["content"]
     assert len(prompt) < ia.MAX_DADOS_CHARS + 200  # teto + moldura do prompt
+
+
+# ── extração do texto (o bug de 16/08) ──────────────────────────────────────
+
+class _RespObjs:
+    def __init__(self, blocos):
+        self.content = blocos
+
+
+def test_extrai_texto_de_textblock():
+    """Formato real dos DOIS caminhos de provider.py. Era o caso que faltava:
+    quem checava `isinstance(b, dict)` extraía "" e a tela dizia 'resposta
+    curta demais' com o modelo tendo respondido normalmente."""
+    resp = _RespObjs([TextBlock(text="parte um"), TextBlock(text="parte dois")])
+    assert texto_da_resposta(resp) == "parte um parte dois"
+
+
+def test_extrai_texto_de_dict_e_string():
+    """Tolerância a formatos alternativos — se a normalização mudar, o
+    consumidor não quebra de novo."""
+    assert texto_da_resposta(_RespObjs([{"type": "text", "text": "oi"}])) == "oi"
+    assert texto_da_resposta(_RespObjs(["cru"])) == "cru"
+
+
+def test_ignora_blocos_que_nao_sao_texto():
+    resp = _RespObjs([ToolUseBlock(name="x"), TextBlock(text="só isto")])
+    assert texto_da_resposta(resp) == "só isto"
+
+
+def test_resposta_sem_conteudo_nao_explode():
+    assert texto_da_resposta(_RespObjs([])) == ""
+    assert texto_da_resposta(object()) == ""
 
 
 # ── camada fundamental ──────────────────────────────────────────────────────

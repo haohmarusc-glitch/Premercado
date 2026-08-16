@@ -20,11 +20,18 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from agent import entry_exit_sentiment as ees  # noqa: E402
+from agent.provider import TextBlock  # noqa: E402
 
 
 class _FakeResponse:
+    """Formato REAL do provider.py: dataclasses TextBlock (acesso por
+    atributo). Este teste usava dicts — forma que o provider nunca devolve —
+    e por isso ficou verde enquanto o sentimento saía vazio em produção: a
+    extração antiga filtrava por `isinstance(b, dict)` e nunca achava texto,
+    e o módulo engole a falha devolvendo {"sentiments": {}}. Descoberto em
+    16/08 pela tela Análise com IA, que ao menos reclamava em vez de calar."""
     def __init__(self, text):
-        self.content = [{"type": "text", "text": text}]
+        self.content = [TextBlock(text=text)]
 
 
 class _FakeClient:
