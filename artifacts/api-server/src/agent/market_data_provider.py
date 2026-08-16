@@ -111,12 +111,24 @@ def _yf_history_with_retry(ticker: str, period: str, auto_adjust: bool) -> pd.Da
 
 
 def get_daily_history(
-    ticker: str, period: str = "6mo", *, auto_adjust: bool = False
+    ticker: str, period: str = "6mo", *, auto_adjust: bool = False,
+    permitir_externa: bool = True,
 ) -> HistoryResult:
     """Histórico diário com fallback. Sempre retorna um `HistoryResult` — nunca
     lança exceção; `ok=False` é o sinal de "sem dado utilizável em fonte
     nenhuma", que o chamador já sabe tratar (mesmo contrato de erro explícito
     que o resto do repo usa, ex.: `get_quotes._empty_quote`).
+
+    `permitir_externa=False` corta a cadeia no cache vencido, sem nunca tocar a
+    fonte externa. Serve a quem pede série AJUSTADA (`auto_adjust=True`): a
+    externa devolve preço "as traded", e um desdobramento dentro da janela
+    apareceria como salto de preço — RSI, médias e tendência sairiam com um
+    degrau que nunca existiu. O cache continua valendo porque foi gravado a
+    partir do yfinance, já ajustado.
+
+    O parâmetro existe para essa regra virar CÓDIGO. Ela já estava escrita no
+    plano ("nunca migrar o que usa auto_adjust=True"), e regra que mora só em
+    documento é regra que alguém integra sem querer daqui a três meses.
     """
     warnings: list[str] = []
 
@@ -154,6 +166,13 @@ def get_daily_history(
         warnings.append("yfinance indisponível — servindo cache VENCIDO (last-known-good)")
         _conferir_cache_vencido(ticker, stale_df, period, warnings)
         return HistoryResult(df=stale_df, source="cache_stale", is_stale=True, warnings=warnings)
+
+    if not permitir_externa:
+        warnings.append(
+            "Fonte externa não usada: série ajustada foi pedida, e a externa é "
+            "\"as traded\" (um split na janela viraria degrau de preço)"
+        )
+        return HistoryResult(df=None, source="none", warnings=warnings)
 
     # 4) Alpha Vantage — fonte externa alternativa. Marcada explicitamente
     #    porque TIME_SERIES_DAILY é "as traded": o ajuste de split/dividendo
