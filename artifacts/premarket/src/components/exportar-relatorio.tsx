@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileDown, Mail, Check } from "lucide-react";
+import { FileDown, Mail, Check, Download } from "lucide-react";
 
 // Modos aceitos por POST /reports/export. Espelha MODOS_EXPORTAVEIS em
 // routes/reports.ts — os dois têm que andar juntos, senão a tela manda um modo
@@ -48,9 +48,47 @@ interface Props {
   pronto?: boolean;
 }
 
+/**
+ * Nome de arquivo seguro a partir do título: minúsculas, sem acento, hífens.
+ * Exportado separado do componente porque é regra pura — testável sem DOM.
+ */
+export function nomeArquivoMarkdown(titulo: string, data: Date = new Date()): string {
+  const slug = titulo
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-+|-+$)/g, "")
+    .slice(0, 60)
+    .replace(/-+$/, "");
+  const dia = data.toISOString().slice(0, 10);
+  return `${slug || "relatorio"}-${dia}.md`;
+}
+
 export function ExportarRelatorio({ titulo, mode, tickers, construir, pronto = true }: Props) {
   const queryClient = useQueryClient();
   const [aviso, setAviso] = useState<{ texto: string; tom: "ok" | "erro" } | null>(null);
+
+  // Download local: gera o .md no navegador, sem tocar no servidor — o
+  // arquivo cai na pasta de downloads do dispositivo (celular incluso).
+  function baixarMarkdown() {
+    setAviso(null);
+    const markdown = construir();
+    if (!markdown) {
+      setAviso({ texto: "Nada para exportar — rode a análise primeiro.", tom: "erro" });
+      return;
+    }
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivoMarkdown(titulo);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setAviso({ texto: "Arquivo .md baixado no dispositivo.", tom: "ok" });
+  }
 
   const exportar = useMutation({
     mutationFn: async (enviar: boolean) => {
@@ -103,6 +141,15 @@ export function ExportarRelatorio({ titulo, mode, tickers, construir, pronto = t
         className="px-4 py-2 border border-border rounded font-mono text-xs font-bold text-foreground disabled:opacity-50 flex items-center gap-2 hover:border-primary/50"
       >
         <Mail className="h-3.5 w-3.5" /> Enviar por e-mail
+      </button>
+      <button
+        type="button"
+        onClick={baixarMarkdown}
+        disabled={ocupado || !temDados}
+        title={temDados ? "Baixa o relatório como arquivo .md no dispositivo" : "Rode a análise antes de exportar"}
+        className="px-4 py-2 border border-border rounded font-mono text-xs font-bold text-foreground disabled:opacity-50 flex items-center gap-2 hover:border-primary/50"
+      >
+        <Download className="h-3.5 w-3.5" /> Baixar .md
       </button>
       {ocupado && (
         <span className="font-mono text-xs text-muted-foreground flex items-center gap-2">
