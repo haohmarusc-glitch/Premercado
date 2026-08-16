@@ -115,8 +115,8 @@ describe("montarRelatorioSetor", () => {
 });
 
 describe("ROTULO_POR_MODO_EXPORTADO", () => {
-  it("cobre as nove telas de análise", () => {
-    expect(Object.keys(ROTULO_POR_MODO_EXPORTADO)).toHaveLength(9);
+  it("cobre as dez telas de análise", () => {
+    expect(Object.keys(ROTULO_POR_MODO_EXPORTADO)).toHaveLength(10);
   });
 
   it("usa o prefixo tela_ em todos os modos, que é o que o Histórico filtra", () => {

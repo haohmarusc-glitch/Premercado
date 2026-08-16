@@ -23,6 +23,7 @@ export const MODOS_EXPORTAVEIS = [
   "tela_sector_ai",
   "tela_sector_coal",
   "tela_analise_rapida",
+  "tela_previsao_vol",
 ] as const;
 
 /**

@@ -537,6 +537,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #288 | `risk_manager.py` na cadeia via `get_daily_closes_batch` (lote com fallback por ticker) |
 | #289 | `get_scenario_params.py` na cadeia (último da fila) + sela a rede nos testes do risk_manager que derrubaram o CI do #288 |
 | #290 | Tela Análise Rápida: tendência, técnica e níveis/reações de um ticker avulso (3 botões, sem SSH) + rota `/ticker-snapshot` |
+| #291 | Tela Previsão de Vol: ciclo de volatilidade por ticker (COMPRIMIDA→GATILHO→EXPANSAO→DECAIMENTO), EWMA λ=0.94, banda de amanhã |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
