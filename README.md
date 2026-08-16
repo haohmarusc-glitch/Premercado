@@ -539,6 +539,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #290 | Tela Análise Rápida: tendência, técnica e níveis/reações de um ticker avulso (3 botões, sem SSH) + rota `/ticker-snapshot` |
 | #291 | Tela Previsão de Vol: ciclo de volatilidade por ticker (COMPRIMIDA→GATILHO→EXPANSAO→DECAIMENTO), EWMA λ=0.94, banda de amanhã |
 | #292 | Botão "Baixar .md" no ExportarRelatorio — download local do relatório, nas 10 telas de uma vez |
+| #293 | Botão "Análise com IA" na Análise Rápida: números viram leitura em texto, com camada fundamental (alvos de analistas, DCF/múltiplos, manchetes) e custo visível |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
