@@ -29,6 +29,7 @@ import JournalPage from "@/pages/journal";
 import ExitPlanPage from "@/pages/exit-plan";
 import EarningsPage from "@/pages/earnings";
 import EarningsReactionPage from "@/pages/earnings-reaction";
+import AnaliseRapidaPage from "@/pages/analise-rapida";
 import PerformancePage from "@/pages/performance";
 import BacktestPage from "@/pages/backtest";
 import TechnicalsPage from "@/pages/technicals";
@@ -81,6 +82,7 @@ function Router() {
         <Route path="/plano-saida" component={ExitPlanPage} />
         <Route path="/earnings" component={EarningsPage} />
         <Route path="/earnings-reaction" component={EarningsReactionPage} />
+        <Route path="/analise-rapida" component={AnaliseRapidaPage} />
         <Route path="/performance" component={PerformancePage} />
         <Route path="/backtest" component={BacktestPage} />
         <Route path="/tecnicos" component={TechnicalsPage} />

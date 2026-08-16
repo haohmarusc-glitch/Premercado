@@ -132,8 +132,8 @@ describe("parseExportBody — tickers", () => {
 });
 
 describe("MODOS_EXPORTAVEIS", () => {
-  it("cobre as oito telas de análise", () => {
-    expect(MODOS_EXPORTAVEIS).toHaveLength(8);
+  it("cobre as nove telas de análise", () => {
+    expect(MODOS_EXPORTAVEIS).toHaveLength(9);
   });
 
   it("usa o prefixo tela_, que separa export manual de relatório do agente", () => {

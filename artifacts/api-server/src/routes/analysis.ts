@@ -113,6 +113,28 @@ makeTickerRoute("/news", "get_news_feed.py", "news", { maxItems: 5 });
 // {configured: false} em vez de erro.
 makeTickerRoute("/alt-data", "get_alt_data.py", "alt-data");
 
+// Retrato rápido de um ticker avulso (tela Análise Rápida): preço/52s/MMs ao
+// vivo + vol/beta vs benchmark via get_scenario_params. Um ticker por vez de
+// propósito — a tela é de investigação pontual, não de varredura.
+const TICKER_RE = /^[A-Z0-9.^-]{1,10}$/;
+router.get("/ticker-snapshot", async (req, res): Promise<void> => {
+  try {
+    const ticker = String(req.query.ticker ?? "").trim().toUpperCase();
+    const benchmark = String(req.query.benchmark ?? "").trim().toUpperCase() || "SMH";
+    if (!TICKER_RE.test(ticker)) { res.status(400).json({ error: "ticker inválido" }); return; }
+    if (!TICKER_RE.test(benchmark)) { res.status(400).json({ error: "benchmark inválido" }); return; }
+    const key = `${ticker}:${benchmark}`;
+    const hit = cached("ticker-snapshot", key);
+    if (hit) { res.json(hit); return; }
+    const data = await runPython("get_ticker_snapshot.py", { ticker, benchmark });
+    setCache("ticker-snapshot", key, data);
+    res.json(data);
+  } catch (err) {
+    logger.error({ err }, "Failed: /ticker-snapshot");
+    res.status(500).json({ error: "Failed to fetch ticker snapshot" });
+  }
+});
+
 // Macro — no tickers, single cache
 router.get("/macro", async (_req, res): Promise<void> => {
   try {

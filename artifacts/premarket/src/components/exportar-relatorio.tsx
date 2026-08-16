@@ -14,6 +14,7 @@ export const ROTULO_POR_MODO_EXPORTADO: Record<string, string> = {
   tela_entry_exit_study: "estudo",
   tela_sector_ai: "setor ia",
   tela_sector_coal: "setor carvão",
+  tela_analise_rapida: "análise rápida",
 };
 
 interface RespostaExport {
