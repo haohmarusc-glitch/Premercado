@@ -130,6 +130,33 @@ class TextBlock:
     text: str = ""
 
 
+def texto_da_resposta(resp) -> str:
+    """Concatena os blocos de texto de uma NormalizedResponse.
+
+    Mora aqui porque o formato do bloco é detalhe DESTE módulo: os dois
+    caminhos (_call_anthropic e _openai_response_to_normalized) montam
+    dataclasses TextBlock, com acesso por ATRIBUTO. Consumidor que checava
+    `isinstance(b, dict)` extraía string vazia sempre — e extração vazia não
+    parece bug, parece "o modelo não respondeu" (foi o que aconteceu com o
+    sentimento do Estudo, que engole a falha, e com a Análise com IA, que ao
+    menos avisava "resposta curta demais").
+
+    Aceita os três formatos plausíveis (dataclass, dict e string crua) para
+    que uma futura mudança de normalização aqui não quebre os consumidores
+    de novo.
+    """
+    partes = []
+    for b in getattr(resp, "content", None) or []:
+        if isinstance(b, str):
+            partes.append(b)
+        elif isinstance(b, dict):
+            if b.get("type") == "text":
+                partes.append(str(b.get("text") or ""))
+        elif getattr(b, "type", None) == "text":
+            partes.append(str(getattr(b, "text", "") or ""))
+    return " ".join(p for p in partes if p).strip()
+
+
 @dataclass
 class NormalizedResponse:
     content: list
