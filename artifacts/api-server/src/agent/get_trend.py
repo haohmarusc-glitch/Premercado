@@ -14,8 +14,14 @@ Output (stdout JSON): {"items": [{ticker, trend, score, components, news, conflu
 import sys, json, os, time
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker, friendly_error
-from http_retry import SESSION
+try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
+    from agent.security import sanitize_ticker, friendly_error
+    from agent.http_retry import SESSION
+    from agent import market_data_provider
+except ImportError:
+    from security import sanitize_ticker, friendly_error
+    from http_retry import SESSION
+    import market_data_provider
 
 # ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
 #    então não pode importar agent/cache.py que usa import relativo).
@@ -175,7 +181,16 @@ def for_ticker(ticker: str) -> dict:
     except ValueError as e:
         return {"ticker": str(ticker), "error": str(e)}
     try:
-        hist = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
+        # permitir_externa=False: a série é AJUSTADA e a fonte externa é "as
+        # traded" -- um split dentro do ano viraria degrau de preço, e
+        # estrutura/médias/MACD sairiam com um salto que nunca existiu. O
+        # cache vencido continua valendo: foi gravado do yfinance, ajustado.
+        resultado = market_data_provider.get_daily_history(
+            ticker, "1y", auto_adjust=True, permitir_externa=False
+        )
+        if not resultado.ok:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
+        hist = resultado.df
         if hist.empty or len(hist) < 60:
             return {"ticker": ticker, "error": "Dados insuficientes"}
         if hasattr(hist.columns, "levels"):
@@ -257,7 +272,7 @@ def for_ticker(ticker: str) -> dict:
         else:
             sinal, sinal_motivo = "aguardar", ("divergência técnico × notícias" if tech_dir != 0 and news_dir != 0 and tech_dir != news_dir else "sinais insuficientes")
 
-        return {
+        saida = {
             "ticker": ticker,
             "price": round(price, 2),
             "trend": trend,
@@ -268,6 +283,18 @@ def for_ticker(ticker: str) -> dict:
             "sinal": sinal,
             "sinalMotivo": sinal_motivo,
         }
+        # Reaproveita o campo `stale` que o módulo já emite no stale-if-error
+        # do __main__, em vez de inventar um segundo vocabulário de
+        # degradação: quem consome já sabe tratá-lo.
+        #
+        # Sem isto a cadeia seria uma PIORA de honestidade: hoje um resultado
+        # velho vem marcado; calculado sobre série vencida ele viria fresco e
+        # sem marca -- e um sinal de compra em cima do fechamento de ontem,
+        # sem aviso, é exatamente o que não pode acontecer.
+        if resultado.is_stale or resultado.source not in ("yfinance", "yfinance_cache"):
+            saida["stale"] = True
+            saida["fonteHistorico"] = resultado.source
+        return saida
     except Exception as e:
         print(f"[get_trend] {ticker}: {e}", file=sys.stderr)
         return {"ticker": ticker, "error": friendly_error(e)}
