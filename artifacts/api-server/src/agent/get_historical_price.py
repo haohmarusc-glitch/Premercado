@@ -5,6 +5,25 @@ Output (stdout JSON): {"prices": {"2026-03-20": 121.4, "2026-05-18": 134.2}}
 
 For each requested date, returns the close of that day, or the most recent
 trading day on/before it (handles weekends/holidays).
+
+## NÃO integrar com market_data_provider (a cadeia de fallback)
+
+Este script alimenta o `purchasePrice` dos lotes da carteira
+(`routes/portfolio.ts`: backfill ao inserir, `/backfill-prices`, e a consulta
+de preço por data). Ou seja: é a base do preço médio e de todo o P&L.
+
+Dois motivos para ficar de fora, e o segundo é o que decide:
+
+1. A fonte externa devolve preço "as traded", sem ajuste de split/dividendo
+   confirmado. Custo de aquisição errado por fator de split não é ruído — é
+   um P&L errado.
+2. Diferente de um indicador, que é recalculado no ciclo seguinte, o preço de
+   compra é **gravado no banco** e nunca mais recalculado da fonte. Um número
+   ruim aqui não se corrige sozinho: fica.
+
+Se o yfinance estiver fora, o certo é FALHAR e deixar o usuário informar o
+preço à mão (o fluxo já existe, `priceManuallyEdited`) — não preencher com
+uma aproximação que ninguém vai auditar depois.
 """
 import sys, json, re
 from datetime import datetime, timedelta

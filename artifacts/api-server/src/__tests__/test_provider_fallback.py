@@ -443,3 +443,48 @@ def test_av_last_close_calcula_variacao(monkeypatch):
     assert q["change"] == 2.0
     assert round(q["changePct"], 2) == 2.02
     assert q["asOf"] == _ONTEM
+
+
+# ── corte da fonte externa para série ajustada ──────────────────────────────
+
+def test_permitir_externa_false_para_no_cache_vencido(monkeypatch, _yf_morto):
+    """Quem pede série AJUSTADA não pode receber "as traded": um split na
+    janela viraria degrau de preço, e RSI/médias sairiam com um salto que
+    nunca existiu. O cache vencido continua valendo — foi gravado do yfinance,
+    já ajustado."""
+    monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
+    monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: _fake_df([50.0]))
+    monkeypatch.setattr(mdp, "_conferir_cache_vencido", lambda *a, **k: None)
+
+    r = mdp.get_daily_history("NVDA", period="6mo", auto_adjust=True, permitir_externa=False)
+
+    assert r.ok
+    assert r.source == "cache_stale"
+
+
+def test_permitir_externa_false_nao_chama_a_fonte_externa(monkeypatch, _yf_morto):
+    monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
+    monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mdp.alpha_vantage_provider, "fetch_daily_history",
+        lambda *a, **k: pytest.fail("série ajustada não pode usar a fonte externa"),
+    )
+
+    r = mdp.get_daily_history("NVDA", period="6mo", auto_adjust=True, permitir_externa=False)
+
+    assert not r.ok
+    assert r.source == "none"
+    assert any("as traded" in w for w in r.warnings)
+
+
+def test_permitir_externa_true_e_o_padrao(monkeypatch, _yf_morto):
+    """O corte é opt-in: quem não pede continua com a cadeia inteira."""
+    monkeypatch.setattr(mdp.hist_cache, "carregar", lambda *a, **k: None)
+    monkeypatch.setattr(mdp, "_load_stale_cache", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mdp.alpha_vantage_provider, "fetch_daily_history", lambda *a, **k: _fake_df([100.0]),
+    )
+
+    r = mdp.get_daily_history("NVDA", period="6mo")
+
+    assert r.source == "alphavantage"

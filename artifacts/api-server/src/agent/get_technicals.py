@@ -24,6 +24,10 @@ import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker, friendly_error
 import hist_cache
+try:
+    from agent import market_data_provider
+except ImportError:  # execução standalone (sys.path[0] = src/agent)
+    import market_data_provider
 
 def technicals(ticker: str, period: str = "6mo") -> dict:
     try:
@@ -35,10 +39,21 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         # PROCESSO À PARTE e baixava o mesmo 6mo dos mesmos tickers que o
         # run_checkers acabara de baixar, a cada 5 minutos. auto_adjust=True
         # aqui (contra False lá) faz parte da chave -- as séries diferem.
-        hist = hist_cache.carregar(ticker, period, auto_adjust=True)
-        if hist is None:
-            hist = yf.Ticker(ticker).history(period=period, auto_adjust=True)
-            hist_cache.guardar(ticker, period, hist, auto_adjust=True)
+        #
+        # permitir_externa=False de propósito: aqui a série é AJUSTADA, e a
+        # fonte externa devolve "as traded". Um desdobramento dentro dos 6
+        # meses viraria um degrau de preço, e RSI/médias/tendência sairiam
+        # com um salto que nunca existiu -- pior que ficar sem indicador,
+        # porque o número errado tem cara de número certo. O cache vencido
+        # continua valendo: foi gravado do yfinance, já ajustado.
+        resultado = market_data_provider.get_daily_history(
+            ticker, period, auto_adjust=True, permitir_externa=False
+        )
+        if not resultado.ok:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
+        hist = resultado.df
+        if resultado.source not in ("yfinance", "yfinance_cache"):
+            print(f"[get_technicals] {ticker}: fonte {resultado.source}", file=sys.stderr)
         if hist.empty or len(hist) < 30:
             return {"ticker": ticker, "error": "Dados insuficientes"}
         if hasattr(hist.columns, "levels"):

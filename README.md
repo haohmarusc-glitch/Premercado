@@ -336,6 +336,21 @@ indicador sai de dado degradado, o ciclo emite um alerta `ATENCAO` dizendo de
 qual fonte veio — indicador silencioso sobre série velha é pior que indicador
 nenhum.
 
+`get_technicals.py` entrou com a regra mais restritiva: pede série **ajustada**
+(`auto_adjust=True`), então a cadeia vai até o cache vencido e **para**
+(`permitir_externa=False`). A fonte externa é "as traded" — um split dentro da
+janela viraria degrau de preço, e RSI/médias sairiam com um salto que nunca
+existiu. O cache vencido continua valendo porque foi gravado do yfinance, já
+ajustado.
+
+**Fora da adoção, por decisão**: `get_historical_price.py` alimenta o
+`purchasePrice` dos lotes — base do preço médio e do P&L. Diferente de um
+indicador, que é recalculado no ciclo seguinte, o preço de compra é gravado no
+banco e nunca mais recalculado. Se o yfinance estiver fora, o certo é falhar e
+deixar o usuário informar o preço à mão (o fluxo já existe), não preencher com
+uma aproximação que ninguém vai auditar depois. A exclusão está escrita na
+docstring do próprio módulo.
+
 Em `get_quotes.py`: O
 fallback é decidido por **lote, nunca por símbolo** — um ticker isolado sem
 preço quase sempre é o próprio ticker (deslistado, digitado errado) e falharia
@@ -469,6 +484,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #281 | Teto de cota que não contava: dia gravado do relógio vs. dia por parâmetro |
 | #282 | `get_quotes.py` ligado à cadeia (fallback por lote) + `isDelayed` no contrato e na UI |
 | #283 | `market_alerts.py` ligado à cadeia (fallback por período) + alerta de dado degradado |
+| #284 | `get_technicals.py` na cadeia sem fonte externa (série ajustada); `get_historical_price.py` excluído por escrito |
 
 ### Estudo de Entrada e Saída (ago/2026)
 
