@@ -304,6 +304,30 @@ def test_orcamento_zera_na_virada_do_dia():
     assert provider_health.consumir_orcamento_diario("alphavantage", 3, hoje="2026-08-16") is True
 
 
+def test_orcamento_conta_mesmo_com_dia_diferente_do_relogio():
+    """Regressão do bug que quebrou o CI à meia-noite UTC.
+
+    A primeira versão gravava o dia derivando do relógio real e comparava com
+    o dia PASSADO por parâmetro. Bastava os dois discordarem — teste rodando
+    às 00:00 UTC com `hoje` de ontem — para o contador zerar a cada chamada e
+    o teto nunca segurar nada. Um dia qualquer que não seja hoje tem que
+    contar igual.
+    """
+    ontem = (today_brt() - datetime.timedelta(days=1)).isoformat()
+    for _ in range(2):
+        assert provider_health.consumir_orcamento_diario("alphavantage", 2, hoje=ontem) is True
+    assert provider_health.consumir_orcamento_diario("alphavantage", 2, hoje=ontem) is False
+
+
+def test_orcamento_usa_o_dia_em_brt_por_padrao(monkeypatch):
+    """Sem `hoje` explícito, o dia é o de Brasília — `date.today()` cru usaria
+    o fuso do processo (UTC no container) e viraria 3h cedo demais, zerando a
+    cota no meio da noite de quem opera aqui."""
+    provider_health.consumir_orcamento_diario("alphavantage", 5)
+    st = provider_health._load()["_orcamento:alphavantage"]  # noqa: SLF001
+    assert st.orcamento_dia == today_brt().isoformat()
+
+
 def test_orcamento_e_por_provedor():
     provider_health.consumir_orcamento_diario("alphavantage", 1)
     assert provider_health.consumir_orcamento_diario("alphavantage", 1) is False

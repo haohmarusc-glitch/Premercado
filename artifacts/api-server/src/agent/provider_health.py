@@ -46,6 +46,11 @@ import os
 import time
 from dataclasses import asdict, dataclass
 
+try:
+    from .brt import today_brt
+except ImportError:  # execução standalone
+    from brt import today_brt
+
 _PATH = os.environ.get(
     "AGENT_PROVIDER_HEALTH_PATH", "/tmp/premercado_provider_health.json"
 )
@@ -68,6 +73,12 @@ class _ProviderState:
     last_success_ts: float = 0.0
     total_failures: int = 0
     total_successes: int = 0
+    # Dia (YYYY-MM-DD, BRT) a que o contador de orçamento se refere. String
+    # explícita, não derivada de timestamp: a primeira versão gravava o dia a
+    # partir do relógio real e comparava com o dia PASSADO por parâmetro, então
+    # bastava os dois discordarem — o CI rodando 00:00 UTC — para o contador
+    # zerar a cada chamada e o teto nunca segurar nada.
+    orcamento_dia: str = ""
 
 
 def _load() -> dict[str, _ProviderState]:
@@ -133,22 +144,20 @@ def consumir_orcamento_diario(provider: str, limite: int, *, hoje: str | None = 
     parcial por duas.
 
     O contador vive no mesmo arquivo do disjuntor (compartilhado entre os
-    processos Python) e zera na virada do dia. Falha aberta como o resto do
-    módulo: se o arquivo não puder ser lido, a chamada é AUTORIZADA — perder
-    dado por causa de um contador quebrado seria pior que estourar a cota.
+    processos Python) e zera na virada do dia em BRT — nunca `date.today()`
+    cru, que usa o fuso do processo (UTC no container) e viraria o dia 3h cedo
+    demais. Falha aberta como o resto do módulo: se o arquivo não puder ser
+    lido, a chamada é AUTORIZADA — perder dado por causa de um contador
+    quebrado seria pior que estourar a cota.
     """
-    hoje = hoje or time.strftime("%Y-%m-%d")
+    hoje = hoje or today_brt().isoformat()
     chave = f"_orcamento:{provider}"
     try:
         state = _load()
         st = state.get(chave, _ProviderState())
-        # `last_failure_ts` guarda o dia corrente codificado; `total_failures`,
-        # o consumo. Reaproveitar o dataclass evita migrar o formato do arquivo
-        # e quebrar a leitura de um processo que ainda roda a versão anterior.
-        dia_gravado = time.strftime("%Y-%m-%d", time.localtime(st.last_failure_ts)) if st.last_failure_ts else ""
-        if dia_gravado != hoje:
+        if st.orcamento_dia != hoje:
             st.total_failures = 0
-            st.last_failure_ts = time.time()
+            st.orcamento_dia = hoje
         if st.total_failures >= limite:
             return False
         st.total_failures += 1
@@ -162,9 +171,7 @@ def consumir_orcamento_diario(provider: str, limite: int, *, hoje: str | None = 
 def orcamento_usado(provider: str) -> int:
     """Quantas chamadas do dia já foram reservadas (debug/preflight)."""
     st = _load().get(f"_orcamento:{provider}")
-    if st is None or not st.last_failure_ts:
-        return 0
-    if time.strftime("%Y-%m-%d", time.localtime(st.last_failure_ts)) != time.strftime("%Y-%m-%d"):
+    if st is None or st.orcamento_dia != today_brt().isoformat():
         return 0
     return st.total_failures
 
