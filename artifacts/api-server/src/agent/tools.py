@@ -823,6 +823,35 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 # ── Indicadores técnicos ──────────────────────────────────────────────────────
 
 
+# Volume intradiário NÃO é uniforme: a distribuição é em U, com o leilão de
+# abertura concentrando muito mais volume por minuto que o miolo do pregão. O
+# rvol divide o volume de hoje por `base20 * fração_do_pregão_decorrida`, uma
+# aproximação que assume uniformidade -- e nos primeiros minutos ela
+# superestima grosseiramente.
+#
+# Visto em produção (NBIS, 17/08/2026 10:37 BRT, sete minutos de pregão): rvol
+# 5,81 rotulado "alto", e a análise com IA leu como "volume muito acima do
+# normal, típico de realização de lucro". Com ~2,6% da sessão decorrida e
+# tipicamente 8-12% do volume diário já negociado, o número sai inflado em 3-4x
+# só pela forma da curva -- a conclusão foi construída sobre um artefato.
+#
+# O número cru continua saindo (quem souber o que ele é pode usar); o que não
+# pode é virar "alto"/"baixo", rótulo que o prompt e a tela tratam como
+# convicção de mercado. Corrigir de verdade exigiria uma curva de volume
+# intradiário calibrada, que este repo não tem -- e inventar uma sem dado
+# seria trocar um viés conhecido por um desconhecido.
+#
+# Duplicado em get_technicals.py (que roda por spawn e não importa do pacote);
+# test_rvol_abertura.py amarra as duas cópias.
+_RVOL_FRACAO_MINIMA = 6 / 78  # ~30min do pregão nominal de 6.5h
+
+
+def _rvol_signal(rvol: float, fraction_elapsed: float) -> str:
+    if fraction_elapsed < _RVOL_FRACAO_MINIMA:
+        return "indefinido_abertura"
+    return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+
+
 @cached("technicals:{0}:{1}", ttl=300)
 def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     """Calcula RSI-14, MACD, Bollinger Bands, EMA 8/21, SMA 50/200, ATR-14,
@@ -992,7 +1021,7 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                     expected_vol_so_far = vol_base20 * fraction_elapsed
                     rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
                     if rvol is not None:
-                        rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+                        rvol_signal = _rvol_signal(rvol, fraction_elapsed)
 
                 typical_price = (intraday["High"] + intraday["Low"] + intraday["Close"]) / 3
                 vol_sum = float(intraday_volume.sum())

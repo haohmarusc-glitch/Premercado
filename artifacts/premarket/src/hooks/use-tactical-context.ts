@@ -22,7 +22,7 @@ export interface TechnicalSnapshot {
   pctAboveSma200?: number | null;
   volumeRatio?: number | null;
   rvol?: number | null;
-  rvolSignal?: "alto" | "baixo" | "normal" | null;
+  rvolSignal?: "alto" | "baixo" | "normal" | "indefinido_abertura" | null;
   vwap?: number | null;
   priceVsVwapPct?: number | null;
   vwapSignal?: "acima" | "abaixo" | "no vwap" | null;
