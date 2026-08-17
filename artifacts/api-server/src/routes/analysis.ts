@@ -113,7 +113,30 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
-      try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
+      // Parse resiliente. O contrato é "stdout é só o JSON final", mas basta
+      // UMA biblioteca imprimir em stdout durante o import para o JSON.parse
+      // do bloco inteiro falhar e a análise (já gerada e já paga) ser jogada
+      // fora com um "Parse error" que não diz nada.
+      //
+      // 1ª tentativa: o bloco todo, o caso normal.
+      // 2ª: a última linha não-vazia — o JSON final é sempre o último print,
+      //     então lixo ANTES dele deixa de ser fatal.
+      // Falhando as duas, o log leva as pontas do stdout: sem isso não há
+      // como saber o que poluiu o pipe.
+      try {
+        return resolve(JSON.parse(out));
+      } catch {
+        const ultimaLinha = out.split("\n").filter((l) => l.trim()).pop() ?? "";
+        try {
+          return resolve(JSON.parse(ultimaLinha));
+        } catch {
+          logger.error(
+            { stdoutHead: out.slice(0, 500), stdoutTail: out.slice(-500), bytes: out.length },
+            "analise_rapida_ia: stdout não é JSON",
+          );
+          return reject(new Error("Parse error"));
+        }
+      }
     });
   })));
 }

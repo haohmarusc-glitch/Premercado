@@ -1049,6 +1049,33 @@ class FallbackClient:
             flush=True,
         )
 
+    def pular_provedor_atual(self, motivo: str) -> bool:
+        """Avança para o próximo provedor SEM condenar o atual.
+
+        Diferente de `_condenar`: um toco (resposta curta demais, tool-call
+        alucinado como texto) não é falha permanente. O provedor respondeu --
+        respondeu mal DESTA vez. Condená-lo tiraria da cadeia, pelo resto do
+        processo, alguém que provavelmente funciona no próximo pedido, e o
+        disjuntor existe para erro que não volta (modelo inexistente, conta
+        sem saldo), não para qualidade ruim pontual.
+
+        Devolve False quando não há próximo provedor disponível -- aí quem
+        chamou precisa desistir com erro legível em vez de repetir o mesmo.
+        """
+        atual = self.provider_name
+        for idx in range(self._current_idx + 1, len(self._order)):
+            nome = self._order[idx]
+            if nome in self._mortos:
+                continue
+            self._current_idx = idx
+            print(f"[provider] pulando {atual} ({motivo}) -> {nome}", flush=True)
+            return True
+        print(
+            f"[provider] pulando {atual} ({motivo}) -- sem próximo provedor disponível",
+            flush=True,
+        )
+        return False
+
     @property
     def provider_name(self) -> str:
         return (
