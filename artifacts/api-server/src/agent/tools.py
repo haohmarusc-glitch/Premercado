@@ -845,8 +845,9 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
     swing/day trade). sma50/sma200/macro_trend_filter servem só de filtro de
     tendência maior (ex.: só considerar long se macro_trend_filter="alta").
 
-    rvol = volume de hoje até agora / volume médio esperado pra essa mesma
-    fração do pregão (baseado na média diária dos últimos 20 dias) --
+    rvol = volume de hoje até agora / volume esperado pra essa mesma fração
+    do pregão (baseado na MEDIANA diária dos últimos 20 pregões -- média
+    seria distorcida por um único dia de earnings, ver comentário abaixo) --
     confirma se um movimento de preço tem força real por trás (RSI esticado
     com rvol baixo é sinal fraco, ignorável; RSI esticado com rvol alto é
     convicção de mercado). Aproximação (78 barras de 5min = pregão nominal de
@@ -902,13 +903,25 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         else:
             rsi_oversold, rsi_overbought = 25.0, 75.0
 
-        # RSI 14 — quando os 14 dias não têm nenhuma queda, avg_loss = 0 e a
+        # RSI 14 de WILDER (suavização exponencial alpha=1/14), a mesma
+        # metodologia de get_trend.rsi_wilder / confluence_engine /
+        # backtest._rsi_wilder_series.
+        #
+        # Era `rolling(14).mean()` aqui -- que é a variante de Cutler, um
+        # indicador DIFERENTE, não um arredondamento do mesmo. Como as duas
+        # telas chamam o resultado de "RSI", o mesmo ticker no mesmo instante
+        # aparecia com dois números (visto em produção, NBIS 17/08/2026: 64,6
+        # no painel Tendência, vindo daqui 67,2 no painel Técnica) sem nada
+        # sinalizando que eram contas distintas. Wilder é o cálculo canônico
+        # e já era maioria no repo, então é ele que fica.
+        #
+        # Quando os 14 períodos não têm nenhuma queda, avg_loss = 0 e a
         # divisão vira NaN; json.dumps serializa isso como o token `NaN`, que
         # não é JSON válido em quem for reparsear estritamente. RSI=100 é o
         # valor tecnicamente correto pra essa condição (só alta).
         delta = close.diff()
-        avg_gain = delta.clip(lower=0).rolling(14).mean()
-        avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
+        avg_gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14).mean()
+        avg_loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14).mean()
         avg_gain_last = float(avg_gain.iloc[-1])
         avg_loss_last = float(avg_loss.iloc[-1])
         if avg_loss_last == 0:
@@ -950,9 +963,18 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         def _pct_diff(a, b):
             return round((a - b) / b * 100, 2) if a and b else None
 
-        vol_avg20 = float(volume.rolling(20).mean().iloc[-1])
+        # MEDIANA, não média: a base de comparação de volume tem que resistir
+        # a um único pregão-evento. Um dia de earnings costuma negociar 2-3x o
+        # normal e, entrando numa MÉDIA de 20 pregões, inflava o denominador
+        # por um mês inteiro -- o rvol de todos os pregões seguintes saía
+        # artificialmente baixo, bem no período em que o papel está mais
+        # ativo. Visto em produção (NBIS, 14/08/2026): +8,88% no dia com
+        # rvol 1,01 ("normal") porque o balanço de 12/08 tinha negociado
+        # 63,5M contra ~24,5M de mediana; pela mediana o rvol era 1,18.
+        # A mediana ignora o outlier sem precisar detectar o evento.
+        vol_base20 = float(volume.rolling(20).median().iloc[-1])
         vol_5d_avg = float(volume.iloc[-5:].mean())
-        vol_ratio = round(vol_5d_avg / vol_avg20, 2) if vol_avg20 > 0 else None
+        vol_ratio = round(vol_5d_avg / vol_base20, 2) if vol_base20 > 0 else None
 
         # RVOL + VWAP intradiários -- precisam de barras de HOJE (interval=5m),
         # separado do histórico diário acima. Numa falha (mercado fechado, sem
@@ -966,8 +988,8 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                 vol_today_so_far = float(intraday_volume.sum())
                 # Pregão nominal de 6.5h (9h30-16h ET) em barras de 5min = 78.
                 fraction_elapsed = min(1.0, len(intraday) / 78)
-                if vol_avg20 > 0 and fraction_elapsed > 0:
-                    expected_vol_so_far = vol_avg20 * fraction_elapsed
+                if vol_base20 > 0 and fraction_elapsed > 0:
+                    expected_vol_so_far = vol_base20 * fraction_elapsed
                     rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
                     if rvol is not None:
                         rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"

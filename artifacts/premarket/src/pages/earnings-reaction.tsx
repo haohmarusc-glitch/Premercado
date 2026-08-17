@@ -31,6 +31,12 @@ interface RunupSummary {
   descontado_reacao_media?: number | null;
   runup_atual_pct?: number;
   estado_atual?: "esticado" | "descontado" | "neutro";
+  // A janela de RUNUP_PREGOES termina HOJE, então logo após um balanço ela
+  // engole o pregão de reação: runup_atual_pct deixa de medir antecipação.
+  // Quando isso acontece, estado_atual passa a sair do ex-evento.
+  janela_contem_earnings?: boolean;
+  pregoes_desde_earnings?: number;
+  runup_atual_ex_evento_pct?: number;
 }
 
 interface ReactionSummary {
@@ -176,9 +182,21 @@ function interpretResult(r: ReactionResult): string[] {
       : ru.estado_atual === "descontado"
       ? "DESCONTADO — historicamente o estado com mais espaço pra surpresa positiva"
       : "neutro";
-    notes.push(
-      `Estado atual do papel: run-up de ${fmtPct(ru.runup_atual_pct)} no último mês → ${rotulo}.`,
-    );
+    if (ru.janela_contem_earnings) {
+      // Sem esta ressalva a frase lê "o papel chega esticado ao balanço" logo
+      // DEPOIS de um balanço — o run-up bruto aqui é a reação já ocorrida.
+      notes.push(
+        `O último balanço foi há ${ru.pregoes_desde_earnings} pregão(ões), DENTRO da janela de run-up: ` +
+        `os ${fmtPct(ru.runup_atual_pct)} do mês incluem o próprio salto da reação. ` +
+        (ru.runup_atual_ex_evento_pct != null
+          ? `Descontando o pregão do evento, o run-up é ${fmtPct(ru.runup_atual_ex_evento_pct)} → ${rotulo}.`
+          : `O estado abaixo desconsidera o pregão do evento.`),
+      );
+    } else {
+      notes.push(
+        `Estado atual do papel: run-up de ${fmtPct(ru.runup_atual_pct)} no último mês → ${rotulo}.`,
+      );
+    }
   }
 
   if (s.n_events < 4) {
@@ -218,20 +236,33 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
       ["Desvio-padrão do fechamento", s.close_pct_std != null ? `${s.close_pct_std.toFixed(2)}%` : "—"],
       ["Amplitude intradiária média", `${s.intraday_range_pct_mean.toFixed(2)}%`],
       ["Razão de volume", s.volume_ratio_mean != null ? `${s.volume_ratio_mean.toFixed(2)}x` : "—"],
-      ["Resistências", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
-      ["Suportes", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
-    ]));
+      // Bandas estatísticas (preço ± reação histórica), NÃO suporte/resistência
+      // de gráfico — o rótulo antigo ("Resistências"/"Suportes") fazia o texto
+      // exportado ser lido como estrutura de preço, inclusive pela análise com IA.
+      ["Banda de reação · alta", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
+      ["Banda de reação · baixa", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
+    ]) + "\n\n_R1/R2/S1/S2 projetam a volatilidade histórica de earnings sobre o preço atual — não são suporte/resistência técnico._");
 
     const ru = s.runup;
     if (ru) {
-      blocos.push(`### Run-up prévio (${r.ticker})\n\n` + itens([
+      const linhasRunup: [string, string | number | null | undefined][] = [
         ["Janela", `${ru.runup_pregoes} pregões · corte de esticado em ${ru.esticado_corte_pct}%`],
         ["Eventos com run-up medido", ru.n_com_runup],
         ["Correlação run-up × reação", ru.corr_runup_reacao != null ? ru.corr_runup_reacao.toFixed(2) : "—"],
         ["Esticado", ru.esticado_n != null ? `${ru.esticado_caiu_n ?? 0} de ${ru.esticado_n} caíram · reação média ${pct(ru.esticado_reacao_media)}` : "—"],
         ["Descontado", ru.descontado_n != null ? `${ru.descontado_subiu_n ?? 0} de ${ru.descontado_n} subiram · reação média ${pct(ru.descontado_reacao_media)}` : "—"],
         ["Run-up atual", ru.runup_atual_pct != null ? `${pct(ru.runup_atual_pct)} (${ru.estado_atual ?? "—"})` : "—"],
-      ]));
+      ];
+      // Janela contaminada: o run-up bruto engloba o próprio salto do balanço,
+      // então o número sozinho induz a leitura errada ("chegou esticado" para
+      // um evento que já passou). O ex-evento vem junto, sempre.
+      if (ru.janela_contem_earnings) {
+        linhasRunup.push(
+          ["Balanço dentro da janela", `sim — há ${ru.pregoes_desde_earnings} pregão(ões), o run-up bruto inclui a reação`],
+          ["Run-up ex-evento", ru.runup_atual_ex_evento_pct != null ? `${pct(ru.runup_atual_ex_evento_pct)} (é este que define o estado)` : "—"],
+        );
+      }
+      blocos.push(`### Run-up prévio (${r.ticker})\n\n` + itens(linhasRunup));
     }
 
     if (r.events?.length) {
@@ -385,7 +416,7 @@ export default function EarningsReactionPage() {
                           <div className="text-green-400/80 font-bold">{fmtUsd(r.summary.r1_price)}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] text-muted-foreground uppercase">S1 · suporte médio</div>
+                          <div className="text-[10px] text-muted-foreground uppercase">S1 · queda média</div>
                           <div className="text-red-400/80 font-bold">{fmtUsd(r.summary.s1_price)}</div>
                         </div>
                         <div>
