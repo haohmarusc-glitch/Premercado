@@ -40,7 +40,39 @@ Output (stdout JSON):
   {"markdown": "...", "usage": {...}}  ou  {"error": "..."}
 """
 import json
+import os
 import sys
+import time
+
+# ── Orçamento de tempo: MENOR que o timeout do Node ─────────────────────────
+#
+# Playbook §3: nenhuma camada interna pode ter orçamento MAIOR que o timeout
+# externo -- senão o Node só descobre o problema matando o processo, e o
+# usuário recebe um 500 genérico em vez de um erro legível.
+#
+# Era exatamente esse o caso aqui. Defaults do provider.py, por PROVEDOR:
+#   API_TIMEOUT_SECONDS=60 × AGENT_MAX_RETRIES=1 (2 tentativas do SDK)
+#   × AGENT_TRANSIENT_RETRIES=1 (2 tentativas do fallback) + backoff
+#   = até ~245s, contra 90s de teto em routes/analysis.ts.
+#
+# Visto em produção (17/08/2026): uma análise levou 57,5s e passou; as duas
+# seguintes bateram 90s cravados e viraram 500 ("Failed: /analise-rapida/ia").
+# Os 57,5s já eram sintoma -- encostavam no timeout de 60s da própria API.
+#
+# Aqui o processo é dedicado a UMA análise interativa, então fixamos o
+# orçamento em vez de herdar o do agente (que roda em janela de 10 min):
+# uma tentativa por provedor, sem retry no mesmo, deixando a cadeia de
+# fallback trocar de provedor em vez de insistir num que está lento.
+_LLM_TIMEOUT_S = float(os.environ.get("ANALISE_IA_LLM_TIMEOUT_S", "55"))
+os.environ["API_TIMEOUT_SECONDS"] = str(_LLM_TIMEOUT_S)
+os.environ["AGENT_MAX_RETRIES"] = "0"
+os.environ["AGENT_TRANSIENT_RETRIES"] = "0"
+
+# Teto do processo inteiro, incluindo imports, camada fundamental e LLM.
+# Tem que caber no timeout do Node com folga -- test_orcamento_analise_ia.py
+# lê os dois e falha se a invariante quebrar.
+_ORCAMENTO_TOTAL_S = float(os.environ.get("ANALISE_IA_ORCAMENTO_S", "135"))
+_INICIO = time.monotonic()
 
 from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
 
@@ -98,6 +130,12 @@ SYSTEM = (
     "Regras invioláveis:\n"
     "- Cite SOMENTE números presentes no JSON. Não invente preço, data, "
     "resultado ou estatística. Campo ausente ou null = não mencione.\n"
+    "- NÍVEIS: `niveisOrdenados` já vem do MAIOR para o menor, com a distância "
+    "de cada um até o preço e de que lado dele está. Use SEMPRE essa lista para "
+    "qualquer afirmação de posição relativa ('X fica entre Y e Z', 'o suporte "
+    "mais próximo', 'acima da média'). Não ordene de cabeça: ordenar três ou "
+    "mais números é onde a análise erra, e o erro sai com cara de fato "
+    "verificado pelo sistema.\n"
     "- NÃO CALCULE números novos. Percentual, razão ou posição que não esteja "
     "no JSON não deve virar número no texto — descreva em palavras. Ex.: se o "
     "JSON traz preço e a faixa de 52 semanas mas NÃO traz a posição dentro "
@@ -258,6 +296,56 @@ def _preco_canonico(dados: dict) -> dict | None:
     return out
 
 
+def _niveis_ordenados(dados: dict, preco: float | None) -> list[dict] | None:
+    """Todos os níveis do retrato ordenados do MAIOR para o menor, cada um com
+    a distância até o preço atual.
+
+    Existe porque ordenar três ou mais números é onde o modelo erra. Visto em
+    produção (NBIS, 17/08/2026): "a MM200 (US$ 146,46) fica ENTRE S1 e S2
+    (US$ 189,07)" -- a MM200 está abaixo das duas. Os três valores estavam
+    corretos no JSON; o que falhou foi a comparação, justamente a única
+    operação que a regra de "não calcule" permite.
+
+    Mesmo princípio do veredito_validator: recalcular ANTES do prompt e
+    entregar como fato, em vez de pedir que o LLM deduza. Aqui ele descreve
+    uma lista já ordenada, não ordena.
+
+    MM50/MM200/52 semanas vêm do snapshot (fast_info, a mesma fonte do preço
+    canônico); MM20 e VWAP só existem na Técnica. Nível ausente simplesmente
+    não entra na lista.
+    """
+    tec = dados.get("technicals") or {}
+    snap = dados.get("snapshot") or {}
+    resumo = (dados.get("reaction") or {}).get("summary") or {}
+
+    candidatos = [
+        ("máxima 52 semanas", snap.get("yearHigh")),
+        ("mínima 52 semanas", snap.get("yearLow")),
+        ("MM20", tec.get("sma20")),
+        ("MM50", snap.get("sma50") if snap.get("sma50") is not None else tec.get("sma50")),
+        ("MM200", snap.get("sma200") if snap.get("sma200") is not None else tec.get("sma200")),
+        ("VWAP", tec.get("vwap")),
+        ("R2 (banda de reação)", resumo.get("r2_price")),
+        ("R1 (banda de reação)", resumo.get("r1_price")),
+        ("S1 (banda de reação)", resumo.get("s1_price")),
+        ("S2 (banda de reação)", resumo.get("s2_price")),
+    ]
+
+    niveis = []
+    for rotulo, valor in candidatos:
+        if not isinstance(valor, (int, float)) or valor <= 0:
+            continue
+        item = {"rotulo": rotulo, "valor": round(float(valor), 2)}
+        if preco:
+            item["distanciaPct"] = round((float(valor) / preco - 1) * 100, 2)
+            item["ladoDoPreco"] = "acima" if valor > preco else "abaixo"
+        niveis.append(item)
+
+    if not niveis:
+        return None
+    return sorted(niveis, key=lambda n: n["valor"], reverse=True)
+
+
 def _compactar(dados: dict) -> str:
     """JSON dos painéis com manchetes sanitizadas e teto de tamanho."""
     trend = dados.get("trend") or None
@@ -271,12 +359,14 @@ def _compactar(dados: dict) -> str:
                 for d in destaques[:6]
             ],
         }
+    preco_canonico = _preco_canonico(dados)
     payload = {
         "ticker": dados.get("ticker"),
         "benchmark": dados.get("benchmark"),
         # Primeiro campo de propósito: é o preço que o texto inteiro deve
         # citar, e vir no topo ajuda o modelo a ancorar nele.
-        "precoAtual": _preco_canonico(dados),
+        "precoAtual": preco_canonico,
+        "niveisOrdenados": _niveis_ordenados(dados, (preco_canonico or {}).get("valor")),
         "tendencia": trend,
         "tecnica": dados.get("technicals") or None,
         "niveis": dados.get("snapshot") or None,
@@ -299,6 +389,18 @@ def analisar(dados: dict) -> dict:
     fundamento, fontes = _buscar_fundamento(ticker)
     if fundamento:
         dados = {**dados, "_fundamento": fundamento}
+
+    # A camada fundamental é rede: yfinance.info, FMP e notícias. Numa fonte
+    # lenta ela sozinha pode comer o orçamento, e aí chamar o LLM é garantir
+    # que o Node mate o processo no meio -- o usuário paga os tokens e não
+    # recebe nada. Melhor devolver um erro legível com o tempo já gasto.
+    gasto = time.monotonic() - _INICIO
+    if gasto + _LLM_TIMEOUT_S > _ORCAMENTO_TOTAL_S:
+        return {"error": (
+            f"A coleta de dados levou {gasto:.0f}s e não sobra tempo para a "
+            f"análise dentro do orçamento de {_ORCAMENTO_TOTAL_S:.0f}s. "
+            f"Tente de novo em alguns minutos — alguma fonte externa está lenta."
+        )}
 
     client = get_client()
     resp = client.create(

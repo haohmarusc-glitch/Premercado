@@ -84,9 +84,32 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    // Uma chamada de LLM tier full + fallback de provedores: 90s cobre o
-    // pior caso da cadeia sem segurar a vaga de Python pra sempre.
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 90_000);
+    // Orçamento externo. Tem que ser MAIOR que o interno do Python, senão o
+    // Node descobre o problema matando o processo e o usuário recebe um 500
+    // genérico (playbook §3).
+    //
+    // Incidente 17/08/2026: aqui eram 90s, e o Python herdava os defaults do
+    // agente -- API_TIMEOUT_SECONDS=60 × AGENT_MAX_RETRIES=1 ×
+    // AGENT_TRANSIENT_RETRIES=1 = até ~245s por provedor. Uma análise passou
+    // em 57,5s (já encostando no timeout de 60s da API) e as seguintes
+    // bateram 90s cravados: "Failed: /analise-rapida/ia", 500 na tela.
+    //
+    // Agora o Python fixa o próprio orçamento (ver analise_rapida_ia.py):
+    // 55s por chamada, uma tentativa por provedor. Duas tentativas de
+    // provedor + coleta fundamental cabem em 135s; 150s aqui deixa margem.
+    // test_orcamento_analise_ia.py lê os dois lados e falha se a invariante
+    // (interno < externo) quebrar.
+    const t = setTimeout(() => {
+      py.kill("SIGTERM");
+      // O stderr acumulado tem as linhas [provider] com qual provedor foi
+      // tentado e por quê falhou -- descartá-las, como antes, deixava o
+      // diagnóstico impossível: o log só dizia "timeout".
+      logger.error(
+        { stderr: err.slice(-2000), stdoutParcial: out.length },
+        "analise_rapida_ia: estourou o orçamento de tempo",
+      );
+      reject(new Error("timeout"));
+    }, 150_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
