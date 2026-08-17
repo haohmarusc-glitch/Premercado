@@ -172,6 +172,18 @@ def test_teto_de_tokens_cobre_a_extensao_pedida():
     assert ia.MAX_TOKENS >= 4000
 
 
+def test_limite_de_tamanho_esta_no_topo_do_prompt():
+    """2500 e 4500 foram cortados no mesmo ponto: o modelo escrevia até o
+    teto, qualquer que fosse, porque as '400 a 700 palavras' estavam no
+    ÚLTIMO item de uma lista de regras. O limite passou a abrir o prompt,
+    com limite por seção e o motivo (o corte) explicado — se alguém mover
+    de volta pro fim, este teste avisa."""
+    topo = ia.SYSTEM[:900]
+    assert "TAMANHO" in topo
+    assert "2 parágrafos" in topo
+    assert "400 e 700 palavras" in topo
+
+
 # ── extração do texto (o bug de 16/08) ──────────────────────────────────────
 
 class _RespObjs:

@@ -60,12 +60,17 @@ REC_LABELS = {
     "sell": "venda", "strongSell": "venda forte",
 }
 
-# 2500 cortava a análise no meio da frase em produção (16/08, INTC: o texto
-# parou em "a leitura correta é: os fundamentos"). O modelo escreve mais que
-# as 400-700 palavras pedidas, e em português cada palavra custa mais token
-# que em inglês. 4500 cobre com folga; quando ainda assim estourar, o corte
-# é MARCADO em vez de entregue como se fosse o texto inteiro.
-MAX_TOKENS = 4500
+# Teto de SEGURANÇA, não de projeto. Histórico: 2500 cortou (16/08, INTC);
+# 4500 cortou de novo no mesmo ponto — porque o modelo escrevia até o teto,
+# fosse ele qual fosse, ignorando as "400 a 700 palavras" enterradas no fim
+# da lista de regras. A correção real foi o SYSTEM (limite por seção, no
+# topo, com o motivo); este número só existe para o caso de o modelo
+# desobedecer mesmo assim, e aí o corte vai MARCADO (truncado=true).
+#
+# Não subir mais sem antes checar o texto: teto alto com prompt fraco vira
+# custo alto (4500 tokens de saída ≈ US$ 0,045 por análise, contra ~0,015
+# de uma análise no tamanho pedido).
+MAX_TOKENS = 6000
 # Teto do JSON de dados no prompt — a tela manda o que coletou, mas um
 # payload anômalo não pode virar um prompt gigante cobrado por token.
 MAX_DADOS_CHARS = 14_000
@@ -80,6 +85,13 @@ SYSTEM = (
     "run-up, eventos passados). Quando disponíveis, também recebe a camada "
     "fundamental: alvos de analistas (consenso, alvo médio/alto/baixo, upside), "
     "valuation (DCF, P/L, P/VP, ROE, EV/EBITDA) e manchetes recentes.\n\n"
+    "TAMANHO — a regra mais importante, e a que os modelos mais desrespeitam:\n"
+    "cada seção tem NO MÁXIMO 2 parágrafos, e cada parágrafo NO MÁXIMO 4 "
+    "linhas. O texto inteiro fica entre 400 e 700 palavras. Não é sugestão: "
+    "análise que passa disso é cortada pelo sistema no meio da frase e chega "
+    "truncada ao leitor. Prefira cortar adjetivo e repetição a cortar "
+    "conteúdo; se faltar espaço, elimine a paráfrase dos números (o leitor "
+    "vê a tabela ao lado) e mantenha os cruzamentos.\n\n"
     "Escreva uma análise em markdown com EXATAMENTE estas seções:\n"
     "## Quadro geral\n## Fundamento e valuation\n## Leitura técnica\n"
     "## Níveis que importam\n## Earnings e volatilidade\n## Síntese\n\n"
@@ -98,7 +110,8 @@ SYSTEM = (
     "consenso vs tendência do gráfico; DCF acima do preço vs papel abaixo da "
     "MM200) — é onde a análise ganha valor.\n"
     "- Sem juridiquês, sem disclaimer genérico no fim — o leitor sabe o que é.\n"
-    "- Extensão alvo: 400 a 700 palavras."
+    "- Releia o limite de tamanho antes de escrever a Síntese: ela é a seção "
+    "que mais importa e é a primeira a ser perdida se o texto esticar."
 )
 
 
