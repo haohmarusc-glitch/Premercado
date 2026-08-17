@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+// Link do wouter, não <a href>: <a> recarrega a página inteira e o SPA perde
+// todo o estado da simulação (posições travadas, sliders, valores editados).
+import { Link } from "wouter";
 import {
   useGetNews, getGetNewsQueryKey,
   useGetScenarioAlertSettings, getGetScenarioAlertSettingsQueryKey, useUpdateScenarioAlertSettings,
@@ -329,6 +332,8 @@ export default function PainelCenarios() {
         button:focus-visible,input:focus-visible{outline:2px solid ${C.channel};outline-offset:2px}
         @media (prefers-reduced-motion:no-preference){.pc-anim{transition:width .25s ease,fill .25s ease}}
         .pc-news-link:hover{text-decoration:underline;color:${C.channel}}
+        .pc-link{color:${C.channel};text-decoration:none}
+        .pc-link:hover{text-decoration:underline}
       `}</style>
 
       {/* ---- cabeçalho ---- */}
@@ -502,7 +507,15 @@ export default function PainelCenarios() {
 
       {/* ---- posições ---- */}
       <div className="pc-card">
-        <p className="pc-eyebrow">Posições · marque para vender agora</p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <p className="pc-eyebrow" style={{ marginBottom: 10 }}>Posições · marque para vender agora</p>
+          {/* O painel só enxerga o que está na carteira. Investigar um papel
+              que ainda NÃO está nela era: sair da tela, achar a Análise
+              Rápida no menu, digitar o ticker. Daqui é um toque. */}
+          <Link href="/analise-rapida" className="pc-link" style={{ fontSize: 11 }}>
+            Investigar outro ticker →
+          </Link>
+        </div>
         {lista.map((p) => {
           const v = valores[p.t] ?? p.value;
           const res = p.cost > 0 ? ((v - p.cost) / p.cost) * 100 : 0;
@@ -520,7 +533,17 @@ export default function PainelCenarios() {
               >{on ? "✓" : ""}</button>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="pc-num" style={{ fontSize: 13, fontWeight: 600, color: on ? C.faint : C.text }}>
-                  {p.t}
+                  {/* O ticker é o link: quem estranha um número desta linha
+                      quer investigar ESTE papel, não abrir a tela em branco.
+                      O ?ticker= já deixa a Análise Rápida preenchida. */}
+                  <Link
+                    href={`/analise-rapida?ticker=${encodeURIComponent(p.t)}`}
+                    className="pc-link"
+                    style={{ color: "inherit" }}
+                    title={`Abrir ${p.t} na Análise Rápida`}
+                  >
+                    {p.t}
+                  </Link>
                   <span style={{ fontFamily: SANS, fontSize: 10, color: C.faint, marginLeft: 7, letterSpacing: ".04em" }}>
                     β{p.beta.toFixed(2)} · {p.evento}
                     {salto && <span style={{ color: C.lamp }}> · salto de balanço</span>}

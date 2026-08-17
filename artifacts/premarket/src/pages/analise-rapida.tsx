@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 import { MarkdownContent } from "@/components/markdown";
@@ -174,6 +175,7 @@ const TOM_TENDENCIA: Record<string, string> = {
 };
 
 export default function AnaliseRapidaPage() {
+  const search = useSearch();
   const [tickerInput, setTickerInput] = useState("");
   const [benchmark, setBenchmark] = useState("SMH");
   // Enquanto o usuário não editar o benchmark, ele acompanha o ticker.
@@ -188,6 +190,26 @@ export default function AnaliseRapidaPage() {
   const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean } | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
+
+  // Prefill via ?ticker= -- é o que faz o "Investigar" do Painel de Cenários
+  // ser um toque só em vez de "abre a tela, digita o papel de novo". Mesma
+  // convenção de /grafico?ticker= e /alerts?symbol=.
+  //
+  // Guarda o último ticker aplicado num ref, e não "só preenche se o campo
+  // estiver vazio": navegando de /cenarios pra cá duas vezes seguidas com
+  // tickers diferentes o wouter não desmonta o componente, então a segunda
+  // navegação seria ignorada. O ref também é o que impede a URL de
+  // sobrescrever o que o usuário digitou por cima depois.
+  const ultimoTickerDaUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const daUrl = new URLSearchParams(search).get("ticker")?.trim().toUpperCase() || null;
+    if (!daUrl || daUrl === ultimoTickerDaUrlRef.current) return;
+    ultimoTickerDaUrlRef.current = daUrl;
+    setTickerInput(daUrl);
+    // O benchmark acompanha o ticker novo pela mesma regra do campo de
+    // digitação: sugestão automática até o usuário assumir o controle.
+    if (!benchmarkManual) setBenchmark(benchmarkSugerido(daUrl));
+  }, [search, benchmarkManual]);
 
   const runTrend = useMutation({
     mutationFn: async () => {
