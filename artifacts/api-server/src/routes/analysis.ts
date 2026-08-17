@@ -2,12 +2,13 @@ import { Router, type IRouter } from "express";
 import { coalescer } from "../lib/em-voo";
 import path from "path";
 import { desc, gte } from "drizzle-orm";
-import { db, intradaySpikesTable, type IntradaySpike } from "@workspace/db";
+import { db, intradaySpikesTable, agentRunsTable, type IntradaySpike } from "@workspace/db";
 import { getPythonBin, agentDir } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
+import { linhaDeGasto, type UsoLlm } from "../lib/ai-spend-record";
 
 const router: IRouter = Router();
 
@@ -98,9 +99,27 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
 // que isso é anomalia, não uso legítimo (e viraria custo de token).
 const LIMITE_CORPO_IA = 64 * 1024;
 
-router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
+// Toda chamada de LLM tem que aparecer na tela Gastos com IA — que lê de
+// agent_runs/chat_messages. Sem este registro, a análise cobrava tokens e
+// sumia da contabilidade: o custo aparecia só na tela, no momento do clique,
+// e nunca mais. Falha aqui não derruba a resposta (o texto já foi gerado e
+// pago); perder o registro é ruim, perder a análise seria pior.
+async function registrarGastoIA(
+  ticker: string, usage: UsoLlm | undefined, durationMs: number, erro?: string,
+): Promise<void> {
+  const linha = linhaDeGasto(`analise_rapida_ia:${ticker}`, usage, durationMs, erro);
+  if (!linha) return;
   try {
-    const ticker = String(req.body?.ticker ?? "").trim().toUpperCase();
+    await db.insert(agentRunsTable).values(linha);
+  } catch (err) {
+    logger.warn({ err }, "analise-rapida/ia: falha ao registrar gasto");
+  }
+}
+
+router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
+  const inicio = Date.now();
+  const ticker = String(req.body?.ticker ?? "").trim().toUpperCase();
+  try {
     if (!/^[A-Z0-9.^-]{1,10}$/.test(ticker)) { res.status(400).json({ error: "ticker inválido" }); return; }
     if (JSON.stringify(req.body).length > LIMITE_CORPO_IA) {
       res.status(400).json({ error: "payload grande demais" }); return;
@@ -112,10 +131,15 @@ router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
       technicals: req.body?.technicals ?? null,
       snapshot: req.body?.snapshot ?? null,
       reaction: req.body?.reaction ?? null,
-    });
+    }) as { usage?: UsoLlm; error?: string };
+    // O script devolve {error} para falhas de conteúdo (resposta curta,
+    // sem painel) — nesses casos o provedor pode já ter sido cobrado, então
+    // o registro vale igual, marcado como failed.
+    await registrarGastoIA(ticker, data.usage, Date.now() - inicio, data.error);
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /analise-rapida/ia");
+    await registrarGastoIA(ticker, undefined, Date.now() - inicio, String(err));
     res.status(500).json({ error: "Falha na análise com IA" });
   }
 });
