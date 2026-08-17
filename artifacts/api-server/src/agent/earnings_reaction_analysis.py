@@ -30,8 +30,10 @@ import json
 # do pacote. Só stdlib dentro dele, então o import flat é seguro.
 try:
     from bounded_parallel import deadline_exceeded
+    import earnings_dates as _earnings_dates
 except ImportError:
     from agent.bounded_parallel import deadline_exceeded
+    from agent import earnings_dates as _earnings_dates
 
 import sys
 
@@ -84,12 +86,18 @@ def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | Non
 def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     t = yf.Ticker(ticker)
 
-    try:
-        earnings = t.get_earnings_dates(limit=lookback_events + 6)
-    except Exception as e:
-        return {"ticker": ticker, "error": f"falha ao buscar earnings dates: {type(e).__name__}: {e}"}
-
-    if earnings is None or earnings.empty:
+    # get_earnings_dates é a chamada mais instável do yfinance e não passa pela
+    # cadeia de fallback (que cuida de série de PREÇO). Sem retry nem cache, uma
+    # resposta vazia passageira derrubava o painel inteiro -- visto em produção
+    # (NBIS, 17/08/2026 11:36 BRT) minutos depois do MESMO script funcionar no
+    # terminal. Ver agent/earnings_dates.py.
+    _limite = lookback_events + 6
+    earnings, _fonte_datas, _erro_datas = _earnings_dates.buscar(
+        ticker, lambda: t.get_earnings_dates(limit=_limite), limit=_limite
+    )
+    if earnings is None:
+        return {"ticker": ticker, "error": f"falha ao buscar earnings dates: {_erro_datas}"}
+    if earnings.empty:
         return {"ticker": ticker, "error": "sem histórico de earnings dates disponível (ticker muito novo?)"}
 
     now = pd.Timestamp.now(tz=earnings.index.tz)
@@ -192,7 +200,14 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
 
     summary["runup"] = _runup_summary(df, hist, _ultimo_earnings_pos(hist, past_earnings.index))
 
-    return {"ticker": ticker, "summary": summary, "events": events}
+    saida = {"ticker": ticker, "summary": summary, "events": events}
+    # Mesmo vocabulário de degradação de get_trend.py: dado servido de cópia
+    # vencida vem MARCADO. O silêncio é que seria a piora -- um painel completo
+    # e sem aviso, calculado sobre uma agenda velha, não se distingue do bom.
+    if _fonte_datas == "cache_vencido":
+        saida["stale"] = True
+        saida["fonteDatasEarnings"] = _fonte_datas
+    return saida
 
 
 def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
