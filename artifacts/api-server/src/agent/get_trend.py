@@ -11,7 +11,7 @@ Filosofia: calculadora, não decisor — expõe os componentes, não dá ordem d
 Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
-import sys, json, os, time, datetime
+import sys, json, os, re, time, datetime
 import yfinance as yf
 import pandas as pd
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
@@ -89,6 +89,26 @@ NEGATIVE = [
     "bearish", "warning", "warns", "layoffs", "slump", "tumbles", "fraud",
 ]
 
+# Casamento por PALAVRA INTEIRA, não por substring.
+#
+# `"gains" in title` era substring: "against" contém "gains" (a-G-A-I-N-S-t), o
+# que dava ponto POSITIVO para toda manchete com "bet against", "case against",
+# "lawsuit against". "stops" contém "tops"; "commission"/"mission"/"permission"
+# contêm "miss"; "praised" contém "raised". Numa cobertura de infraestrutura de
+# IA, "mission-critical" aparece o tempo todo.
+#
+# O erro nem sempre virava rótulo errado -- muitas vezes empatava p e n, e o
+# empate faz a manchete ser DESCARTADA (nem positiva nem negativa). Ou seja,
+# ele apagava notícias em silêncio, que é pior que classificá-las mal: some do
+# `analisadas` × `positivas`/`negativas` sem deixar rastro.
+#
+# Efeito colateral bem-vindo: singular e plural na lista ("beat"/"beats",
+# "surge"/"surges") contavam DOIS pontos para a mesma palavra no texto. Com
+# \b cada ocorrência casa só a entrada exata, e o `set` mantém a contagem por
+# termo distinto, como era a intenção original.
+_POSITIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in POSITIVE) + r")\b")
+_NEGATIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in NEGATIVE) + r")\b")
+
 # ── Tradução via endpoint gratuito do Google Translate (sem API key) ─────────
 # Mesma abordagem de get_news_feed.py — só as headlines destacadas (ao usuário)
 # são traduzidas; a classificação de sentimento usa o título original em inglês.
@@ -136,8 +156,8 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
                 ts = int(pd.Timestamp(pub).timestamp() * 1000)
         except Exception:
             ts = None
-        p = sum(1 for w in POSITIVE if w in title)
-        n = sum(1 for w in NEGATIVE if w in title)
+        p = len(set(_POSITIVE_RE.findall(title)))
+        n = len(set(_NEGATIVE_RE.findall(title)))
         if p > n:
             pos += 1
             scored.append({"title": raw_title[:120], "tone": "positivo", "ts": ts})
