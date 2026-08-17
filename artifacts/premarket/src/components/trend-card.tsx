@@ -8,6 +8,7 @@ import { useStaggerReady } from "@/hooks/use-stagger-ready";
 
 interface TrendComponents {
   maCruzamento?: string | null;
+  maCruzamentoNota?: string | null;
   precoVsSma200?: string | null;
   estrutura?: string | null;
   macd?: string | null;
@@ -170,7 +171,9 @@ export function TrendCard({ symbol }: { symbol: string }) {
           <ComponentPill
             label="SMA20 × SMA50"
             value={c.maCruzamento ?? "—"}
-            good={c.maCruzamento ? c.maCruzamento === "alta" : null}
+            // Nota presente = nível e direção discordam; sem cor, para não
+            // afirmar uma direção que o próprio componente não sustenta.
+            good={c.maCruzamentoNota ? null : c.maCruzamento ? c.maCruzamento === "alta" : null}
           />
           <ComponentPill
             label="Preço × SMA200"

@@ -190,6 +190,71 @@ def price_structure(close: pd.Series, lookback: int = 60, window: int = 3) -> st
             return "baixa"
     return "indefinida"
 
+# ── Cruzamento de médias: NÍVEL e DIREÇÃO juntos ────────────────────────────
+#
+# "SMA20 acima ou abaixo da SMA50" é uma leitura ATRASADA quando tomada
+# sozinha. Depois de uma queda forte seguida de recuperação em V, a SMA20 fica
+# abaixo da SMA50 por semanas enquanto o preço já subiu muito -- o
+# "cruzamento de baixa" descreve o tombo passado, não a tendência atual.
+#
+# Visto em produção (NBIS, ago/2026): o papel caiu 48% em julho e recuperou 87%
+# em 12 pregões. Com o preço 21,7% ACIMA da SMA50 e as duas médias subindo, o
+# componente ainda marcava "baixa" e tirava 25 dos 100 pontos do score --
+# levando 65 para 40 e rebaixando "alta forte" para "alta". A análise com IA
+# repetia isso como "divergência interna que vale monitorar", quando era
+# defasagem mecânica de um evento já superado.
+#
+# A correção não é ignorar o cruzamento: é exigir que nível e direção
+# concordem. Quando discordam (nível diz baixa, inclinação diz alta), o
+# honesto é pontuar ZERO -- não há informação de tendência ali, nem pra um
+# lado nem pro outro. O mesmo vale do outro lado: um cruzamento de alta se
+# desfazendo também deixa de valer +25. Tratar só o caso de baixa embutiria
+# viés altista permanente no score.
+#
+# Duplicado em backtest.py::_classificar_cruzamento, que roda por spawn e não
+# importa do pacote -- test_backtest_confluencia.py amarra as duas cópias.
+CRUZAMENTO_JANELA = 5  # pregões para medir inclinação e fechamento do gap
+
+
+def classificar_cruzamento(sma20, sma50, sma20_antes, sma50_antes):
+    """(estado, nota, pontos) do componente SMA20 × SMA50.
+
+    `*_antes` são os valores de CRUZAMENTO_JANELA pregões atrás. Sem eles
+    (None/NaN, histórico curto), cai no comportamento antigo de dois estados.
+    """
+    acima = sma20 > sma50
+    tem_antes = (
+        sma20_antes is not None and sma50_antes is not None
+        and sma20_antes == sma20_antes and sma50_antes == sma50_antes  # descarta NaN
+        and sma50_antes != 0
+    )
+    if not tem_antes:
+        return ("alta" if acima else "baixa", None, 25 if acima else -25)
+
+    gap = (sma20 - sma50) / sma50
+    gap_antes = (sma20_antes - sma50_antes) / sma50_antes
+    sobe20 = sma20 > sma20_antes
+
+    if acima:
+        # Gap positivo encolhendo com a MM20 caindo: a alta está se desfazendo.
+        if not sobe20 and gap < gap_antes:
+            return ("alta",
+                    "cruzamento de alta ENFRAQUECENDO — MM20 caindo e encostando "
+                    "na MM50; nível e direção discordam",
+                    0)
+        return ("alta", None, 25)
+
+    # Gap negativo encolhendo (indo em direção a zero) com a MM20 subindo:
+    # o cruzamento é resíduo de uma queda anterior, não sinal atual.
+    if sobe20 and gap > gap_antes:
+        return ("baixa",
+                "cruzamento de baixa EM REVERSÃO — MM20 abaixo da MM50 mas subindo "
+                "e fechando a distância; defasagem da queda anterior, não "
+                "confirmação de baixa",
+                0)
+    return ("baixa", None, -25)
+
+
 # ── RSI de Wilder (igual metodologia já usada no projeto) ────────────────────
 def rsi_wilder(close: pd.Series, period: int = 14) -> float | None:
     delta = close.diff()
@@ -227,9 +292,18 @@ def for_ticker(ticker: str) -> dict:
         close = hist["Close"].dropna()
         price = float(close.iloc[-1])
 
-        sma20 = float(close.rolling(20).mean().iloc[-1])
-        sma50 = float(close.rolling(50).mean().iloc[-1])
+        sma20_serie = close.rolling(20).mean()
+        sma50_serie = close.rolling(50).mean()
+        sma20 = float(sma20_serie.iloc[-1])
+        sma50 = float(sma50_serie.iloc[-1])
         sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else None
+        # Valores de CRUZAMENTO_JANELA pregões atrás, para medir a direção das
+        # médias (ver classificar_cruzamento). None quando o histórico não alcança.
+        if len(sma20_serie) > CRUZAMENTO_JANELA:
+            sma20_antes = float(sma20_serie.iloc[-1 - CRUZAMENTO_JANELA])
+            sma50_antes = float(sma50_serie.iloc[-1 - CRUZAMENTO_JANELA])
+        else:
+            sma20_antes = sma50_antes = None
 
         ema12 = close.ewm(span=12).mean()
         ema26 = close.ewm(span=26).mean()
@@ -242,8 +316,13 @@ def for_ticker(ticker: str) -> dict:
         score = 0
         comp = {}
 
-        comp["maCruzamento"] = "alta" if sma20 > sma50 else "baixa"
-        score += 25 if sma20 > sma50 else -25
+        cruz_estado, cruz_nota, cruz_pontos = classificar_cruzamento(
+            sma20, sma50, sma20_antes, sma50_antes
+        )
+        comp["maCruzamento"] = cruz_estado
+        if cruz_nota:
+            comp["maCruzamentoNota"] = cruz_nota
+        score += cruz_pontos
 
         if sma200 is not None:
             comp["precoVsSma200"] = "acima" if price > sma200 else "abaixo"
