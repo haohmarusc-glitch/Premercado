@@ -18,6 +18,9 @@ interface TrendItem {
   score?: number;
   components?: {
     maCruzamento?: string;
+    // Presente só quando nível e direção das médias discordam (cruzamento
+    // em reversão / enfraquecendo). Ver get_trend.classificar_cruzamento.
+    maCruzamentoNota?: string;
     precoVsSma200?: string;
     estrutura?: string;
     macd?: string;
@@ -266,7 +269,9 @@ export default function AnaliseRapidaPage() {
     if (trend && !trend.error) {
       blocos.push("## Tendência\n\n" + itens([
         ["Tendência", `${trend.trend ?? "—"} (score ${trend.score ?? "—"})`],
-        ["Cruzamento de médias", trend.components?.maCruzamento ?? "—"],
+        ["Cruzamento de médias", trend.components?.maCruzamento
+          ? `${trend.components.maCruzamento}${trend.components.maCruzamentoNota ? ` — ${trend.components.maCruzamentoNota}` : ""}`
+          : "—"],
         ["Preço vs MM200", trend.components?.precoVsSma200 ?? "—"],
         ["Estrutura", trend.components?.estrutura ?? "—"],
         ["MACD", trend.components?.macd ?? "—"],
@@ -469,7 +474,12 @@ export default function AnaliseRapidaPage() {
                 )}
               </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <Metric label="Médias" value={trend.components?.maCruzamento ?? "—"} tone={trend.components?.maCruzamento === "alta" ? "pos" : trend.components?.maCruzamento === "baixa" ? "neg" : undefined} />
+                <Metric label="Médias" value={trend.components?.maCruzamento ?? "—"} sub={trend.components?.maCruzamentoNota}
+                  // Sem tom quando nível e direção discordam: pintar de vermelho um
+                  // cruzamento que já está revertendo é o próprio erro que a nota corrige.
+                  tone={trend.components?.maCruzamentoNota ? undefined
+                    : trend.components?.maCruzamento === "alta" ? "pos"
+                    : trend.components?.maCruzamento === "baixa" ? "neg" : undefined} />
                 <Metric label="vs MM200" value={trend.components?.precoVsSma200 ?? "—"} tone={trend.components?.precoVsSma200 === "acima" ? "pos" : trend.components?.precoVsSma200 === "abaixo" ? "neg" : undefined} />
                 <Metric label="Estrutura" value={trend.components?.estrutura ?? "—"} tone={trend.components?.estrutura === "alta" ? "pos" : trend.components?.estrutura === "baixa" ? "neg" : undefined} />
                 <Metric label="MACD" value={trend.components?.macd ?? "—"} tone={trend.components?.macd === "bullish" ? "pos" : trend.components?.macd === "bearish" ? "neg" : undefined} />

@@ -93,6 +93,24 @@ class TestEquivalenceWithGetTrend:
             scalar_val = get_trend.rsi_wilder(s)
             assert series_val == pytest.approx(scalar_val, abs=0.01)
 
+    def test_classificar_cruzamento_bate_com_get_trend(self):
+        """As duas cópias da regra de cruzamento (get_trend e backtest) têm que
+        devolver estado, nota e pontos idênticos. backtest.py roda por spawn e
+        não pode importar do pacote, então a cópia é inevitável -- o teste é o
+        que impede a divergência silenciosa (playbook §2b)."""
+        casos = [
+            # (sma20, sma50, sma20_antes, sma50_antes)
+            (110.0, 100.0, 105.0, 100.0),   # alta consolidando
+            (110.0, 100.0, 115.0, 100.0),   # alta enfraquecendo
+            (95.0, 100.0, 90.0, 100.0),     # baixa em reversão
+            (95.0, 100.0, 98.0, 100.0),     # baixa confirmada
+            (95.0, 100.0, None, None),      # sem histórico
+            (100.0, 100.0, 99.0, 100.0),    # empate exato
+        ]
+        for args in casos:
+            assert bt._classificar_cruzamento(*args) == get_trend.classificar_cruzamento(*args), args
+        assert bt.CRUZAMENTO_JANELA == get_trend.CRUZAMENTO_JANELA
+
     def test_estrategia_rsi_usa_o_mesmo_wilder_da_confluencia(self):
         """A estratégia "rsi" do backtest calculava Cutler (rolling(14).mean)
         enquanto a "confluencia", no mesmo arquivo, usava Wilder -- e o
