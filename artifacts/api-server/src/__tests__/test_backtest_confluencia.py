@@ -93,6 +93,17 @@ class TestEquivalenceWithGetTrend:
             scalar_val = get_trend.rsi_wilder(s)
             assert series_val == pytest.approx(scalar_val, abs=0.01)
 
+    def test_estrategia_rsi_usa_o_mesmo_wilder_da_confluencia(self):
+        """A estratégia "rsi" do backtest calculava Cutler (rolling(14).mean)
+        enquanto a "confluencia", no mesmo arquivo, usava Wilder -- e o
+        sistema opera Wilder ao vivo. Um backtest de RSI que mede outro
+        indicador não modela a estratégia que ele diz testar."""
+        for s in (_sawtooth_uptrend(120), _sawtooth_downtrend(120), _flat_choppy(120)):
+            rsi = bt._rsi_wilder_series(s).fillna(50)
+            entradas, saidas = bt._build_signals(s, "rsi", rsi_oversold=30.0, rsi_overbought=70.0)
+            assert entradas.equals(rsi < 30.0)
+            assert saidas.equals(rsi > 70.0)
+
 
 class TestConfluenceSignals:
     # Sem teste de "nenhum sinal em mercado choppy": SMA20/50, MACD e a

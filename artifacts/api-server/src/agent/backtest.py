@@ -105,11 +105,13 @@ def _fetch_warmed_close(ticker, start, end):
 
 def _build_signals(close_full, strategy, rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
     if strategy == "rsi":
-        delta = close_full.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = gain / loss.where(loss != 0, other=float("nan"))
-        rsi = 100 - (100 / (1 + rs))
+        # _rsi_wilder_series, a MESMA conta que a estratégia "confluencia"
+        # logo abaixo já usava -- e que get_trend/get_technicals/tools usam ao
+        # vivo. Era `rolling(14).mean()` (Cutler) aqui: um backtest da
+        # estratégia de RSI media um indicador que o sistema não opera, então
+        # o resultado não modelava a estratégia real. Dentro deste arquivo as
+        # duas estratégias também discordavam entre si.
+        rsi = _rsi_wilder_series(close_full)
         return rsi.fillna(50) < rsi_oversold, rsi.fillna(50) > rsi_overbought
     elif strategy == "confluencia":
         return _confluence_signals(close_full, score_threshold)

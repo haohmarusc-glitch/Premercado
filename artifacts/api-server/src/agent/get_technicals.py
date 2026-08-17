@@ -65,13 +65,24 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         prev = float(close.iloc[-2]) if len(close) >= 2 else price
         change_pct = round((price - prev) / prev * 100, 2) if prev else None
 
-        # RSI 14 — quando os 14 dias não têm nenhuma queda, avg_loss = 0 e a
+        # RSI 14 de WILDER (ewm alpha=1/14) -- mesma conta de
+        # get_trend.rsi_wilder, confluence_engine e tools.py.
+        #
+        # Era `rolling(14).mean()` (variante de Cutler, indicador DIFERENTE) e
+        # este script é quem serve /api/technicals: o painel "Técnica" da
+        # Análise Rápida mostrava um RSI e o painel "Tendência", que usa
+        # get_trend, mostrava outro -- mesmo ticker, mesmo instante (visto em
+        # produção, NBIS 17/08/2026: 64,6 contra 67,2). A #298 unificou a
+        # cópia de tools.py, que é a ferramenta do AGENTE, e não esta, que é a
+        # da TELA -- por isso a divergência sobreviveu à primeira correção.
+        #
+        # Quando os 14 períodos não têm nenhuma queda, avg_loss = 0 e a
         # divisão vira NaN; json.dumps serializa isso como o token `NaN`, que
         # não é JSON válido (quebra o JSON.parse do Node). RSI=100 é o valor
         # tecnicamente correto pra essa condição (só alta, máximo sobrecomprado).
         delta = close.diff()
-        avg_gain = delta.clip(lower=0).rolling(14).mean()
-        avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
+        avg_gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14).mean()
+        avg_loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14).mean()
         avg_gain_last = float(avg_gain.iloc[-1])
         avg_loss_last = float(avg_loss.iloc[-1])
         if avg_loss_last == 0:
@@ -97,9 +108,13 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         def _pct_diff(a, b):
             return round((a - b) / b * 100, 2) if a and b else None
 
-        vol_avg20 = float(volume.rolling(20).mean().iloc[-1])
+        # MEDIANA, não média -- mesma correção de tools.py: um dia de earnings
+        # negocia 2-3x o normal e, numa MÉDIA de 20 pregões, inflava a base por
+        # um mês inteiro, deprimindo rvol e volumeRatio justo no período mais
+        # ativo do papel. A mediana ignora o outlier sem precisar detectá-lo.
+        vol_base20 = float(volume.rolling(20).median().iloc[-1])
         vol_5d_avg = float(volume.iloc[-5:].mean())
-        vol_ratio = round(vol_5d_avg / vol_avg20, 2) if vol_avg20 > 0 else None
+        vol_ratio = round(vol_5d_avg / vol_base20, 2) if vol_base20 > 0 else None
 
         # RVOL + VWAP intradiários -- mesma lógica de agent/tools.py::get_technical_indicators
         # (não extraído pra função compartilhada porque esse arquivo roda em
@@ -113,8 +128,8 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
                 intraday_volume = intraday["Volume"]
                 vol_today_so_far = float(intraday_volume.sum())
                 fraction_elapsed = min(1.0, len(intraday) / 78)  # 78 barras de 5min = pregão nominal de 6.5h
-                if vol_avg20 > 0 and fraction_elapsed > 0:
-                    expected_vol_so_far = vol_avg20 * fraction_elapsed
+                if vol_base20 > 0 and fraction_elapsed > 0:
+                    expected_vol_so_far = vol_base20 * fraction_elapsed
                     rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
                     if rvol is not None:
                         rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
@@ -143,7 +158,7 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             "pctAboveSma50": _pct_diff(price, sma50),
             "pctAboveSma200": _pct_diff(price, sma200),
             "volumeRatio": vol_ratio,
-            "volAvg20": round(vol_avg20) if vol_avg20 > 0 else None,
+            "volAvg20": round(vol_base20) if vol_base20 > 0 else None,
             "rvol": rvol,
             "rvolSignal": rvol_signal,
             "vwap": vwap,
