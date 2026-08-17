@@ -87,6 +87,11 @@ from agent import tools
 _probe_imports()
 
 MAX_NOTICIAS = 6
+# Abaixo disto não é análise, é toco: o texto pedido tem 6 seções e 400-700
+# palavras. Serve de gatilho para trocar de provedor, não de validação de
+# qualidade — um texto de 250 chars também é ruim, mas aí o problema é o
+# prompt, não o provedor.
+MIN_TEXTO_CHARS = 200
 REC_LABELS = {
     "strongBuy": "compra forte", "buy": "compra", "hold": "manter",
     "sell": "venda", "strongSell": "venda forte",
@@ -403,21 +408,55 @@ def analisar(dados: dict) -> dict:
         )}
 
     client = get_client()
-    resp = client.create(
-        model=client.models["full"],
-        max_tokens=MAX_TOKENS,
-        system=SYSTEM,
-        tools=[],
-        messages=[{
-            "role": "user",
-            "content": f"Dados calculados para {ticker}:\n\n{_compactar(dados)}",
-        }],
-    )
-    texto = texto_da_resposta(resp)
-    if len(texto) < 200:
-        # Modelo fraco da cadeia devolvendo tocos é falha conhecida (ver
-        # playbook §4) — melhor erro explícito que "análise" de uma linha.
-        return {"error": "O modelo devolveu uma resposta curta demais; tente de novo"}
+    conteudo = f"Dados calculados para {ticker}:\n\n{_compactar(dados)}"
+
+    # Modelo fraco da cadeia devolvendo TOCO (resposta de uma linha) é falha
+    # conhecida — playbook §4. Antes isso virava erro na tela e o usuário
+    # clicava de novo, caindo no MESMO provedor: o toco não condena ninguém,
+    # então a cadeia nunca avançava sozinha e o botão simplesmente não
+    # funcionava enquanto aquele provedor estivesse ruim.
+    #
+    # Agora o toco faz a cadeia andar. Não usamos _condenar de propósito:
+    # responder mal uma vez não é falha permanente (ver
+    # FallbackClient.pular_provedor_atual).
+    texto = ""
+    while True:
+        resp = client.create(
+            model=client.models["full"],
+            max_tokens=MAX_TOKENS,
+            system=SYSTEM,
+            tools=[],
+            messages=[{"role": "user", "content": conteudo}],
+        )
+        texto = texto_da_resposta(resp)
+        if len(texto) >= MIN_TEXTO_CHARS:
+            break
+
+        provedor, modelo = client.provider_name, client.models["full"]
+        # stderr: o stdout deste script é EXCLUSIVO do JSON final (o Node
+        # parseia). Diagnóstico aqui nunca pode vazar para lá.
+        print(
+            f"[analise_rapida_ia] {provedor}/{modelo} devolveu toco "
+            f"({len(texto)} chars): {texto[:120]!r}",
+            file=sys.stderr, flush=True,
+        )
+
+        # Orçamento antes de tentar outro: sem esta checagem a troca de
+        # provedor levaria o processo além do teto e o Node o mataria no meio
+        # (playbook §3), trocando um erro legível por um 500 genérico.
+        gasto = time.monotonic() - _INICIO
+        if gasto + _LLM_TIMEOUT_S > _ORCAMENTO_TOTAL_S:
+            return {"error": (
+                f"{provedor}/{modelo} devolveu resposta curta demais "
+                f"({len(texto)} chars) e não sobra tempo no orçamento "
+                f"({gasto:.0f}s de {_ORCAMENTO_TOTAL_S:.0f}s) para tentar outro provedor."
+            )}
+
+        if not client.pular_provedor_atual(f"resposta curta demais ({len(texto)} chars)"):
+            return {"error": (
+                f"Todos os provedores devolveram resposta curta demais. "
+                f"Último: {provedor}/{modelo} com {len(texto)} chars."
+            )}
 
     saida = {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}
     # Texto cortado por teto de tokens tem que ser DITO: uma análise que para

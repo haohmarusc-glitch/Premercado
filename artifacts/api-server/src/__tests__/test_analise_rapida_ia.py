@@ -27,17 +27,40 @@ class _Resp:
 
 
 class _Client:
-    def __init__(self, texto, visto, stop="end_turn"):
+    """Dublê do FallbackClient.
+
+    `texto` aceita uma lista para simular a cadeia: o 1º create() devolve o 1º
+    item, o 2º devolve o 2º, e o último se repete. É o que permite testar o
+    caminho "toco -> pula provedor -> resposta boa" sem rede.
+    """
+
+    def __init__(self, texto, visto, stop="end_turn", *, provedores=("anthropic",)):
         self.models = {"full": "modelo-full", "flash": "modelo-flash"}
-        self._texto = texto
+        self._textos = texto if isinstance(texto, list) else [texto]
+        self._i = 0
         self._visto = visto
         self._stop = stop
+        self._provedores = list(provedores)
+        self._p = 0
+        self.pulos: list[str] = []
+
+    @property
+    def provider_name(self):
+        return self._provedores[self._p]
 
     def create(self, **kwargs):
         self._visto.update(kwargs)
-        r = _Resp(self._texto)
+        r = _Resp(self._textos[min(self._i, len(self._textos) - 1)])
+        self._i += 1
         r.raw_stop_reason = self._stop
         return r
+
+    def pular_provedor_atual(self, motivo):
+        self.pulos.append(motivo)
+        if self._p + 1 < len(self._provedores):
+            self._p += 1
+            return True
+        return False
 
 
 TEXTO_OK = "## Quadro geral\n" + ("análise " * 60)
@@ -119,11 +142,54 @@ def test_sem_nenhum_painel_e_erro_sem_gastar_token(monkeypatch):
     assert visto == {}  # get_client nem foi usado — clique vazio não custa
 
 
-def test_resposta_curta_vira_erro(monkeypatch):
-    _mock(monkeypatch, texto="ok.")
+def test_toco_faz_a_cadeia_avancar_em_vez_de_falhar(monkeypatch):
+    """Antes, um toco virava erro na tela; o usuário clicava de novo e caía no
+    MESMO provedor, porque toco não condena ninguém. Agora o toco empurra a
+    cadeia e a análise sai pelo provedor seguinte."""
+    visto = {}
+    cliente = _Client(["ok.", TEXTO_OK], visto, provedores=("anthropic", "gemini"))
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+
     out = ia.analisar(_dados())
+
+    assert "error" not in out
+    assert out["markdown"] == TEXTO_OK.strip()  # texto_da_resposta apara as pontas
+    assert len(cliente.pulos) == 1
+    assert "curta" in cliente.pulos[0]
+
+
+def test_toco_em_todos_os_provedores_vira_erro_nomeando_o_ultimo(monkeypatch):
+    """Sem próximo provedor, desistir — mas dizendo QUEM devolveu o quê. Erro
+    genérico aqui deixava o operador sem saber qual provedor investigar."""
+    cliente = _Client("ok.", {}, provedores=("anthropic",))
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+
+    out = ia.analisar(_dados())
+
     assert "error" in out
-    assert "curta" in out["error"]
+    assert "anthropic" in out["error"] and "modelo-full" in out["error"]
+    assert "3 chars" in out["error"]
+
+
+def test_toco_nao_tenta_outro_provedor_sem_orcamento(monkeypatch):
+    """Trocar de provedor custa mais uma chamada inteira. Sem tempo para ela,
+    o certo é erro legível agora — não estourar o teto e ser morto pelo Node
+    (playbook §3)."""
+    cliente = _Client("ok.", {}, provedores=("anthropic", "gemini"))
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_ORCAMENTO_TOTAL_S", 0.0)
+
+    out = ia.analisar(_dados())
+
+    assert "error" in out
+    assert "orçamento" in out["error"]
+    assert cliente.pulos == []  # nem tentou pular
 
 
 def test_manchetes_sao_sanitizadas_no_prompt(monkeypatch):
