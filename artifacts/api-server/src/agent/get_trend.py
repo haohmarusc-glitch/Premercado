@@ -11,7 +11,7 @@ Filosofia: calculadora, não decisor — expõe os componentes, não dá ordem d
 Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
-import sys, json, os, time
+import sys, json, os, time, datetime
 import yfinance as yf
 import pandas as pd
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
@@ -29,6 +29,35 @@ except ImportError:
 #    candle diário não muda a cada minuto, e o Yahoo rate-limita IP do Replit.
 _CACHE_PATH = os.environ.get("TREND_CACHE_PATH", "/tmp/premercado_trend_cache.json")
 _TTL_SECONDS = int(os.environ.get("TREND_CACHE_TTL", "1800"))
+
+# Abertura do pregão americano em UTC. 9h30 ET = 13h30 UTC no horário de verão
+# (EDT) e 14h30 UTC fora dele (EST). Usamos SEMPRE 13h30, o limite mais cedo:
+# fora do horário de verão isso só invalida o cache uma hora antes do
+# necessário -- um recálculo a mais por dia, contra o risco de servir dado
+# pré-abertura depois do pregão começar. Constante em UTC de propósito, sem
+# zoneinfo: este script roda por spawn num container slim, e depender do banco
+# de fusos do sistema para uma regra de cache seria trocar um problema barato
+# por uma falha de import.
+_ABERTURA_UTC = datetime.time(13, 30)
+
+
+def _cruzou_abertura(gravado_em: float, agora: float) -> bool:
+    """A abertura do pregão ficou ENTRE a gravação do cache e agora?
+
+    Visto em produção (NBIS, 17/08/2026 10:37 BRT): o painel Tendência trazia
+    o fechamento de sexta ($277,68) enquanto os outros três painéis já
+    mostravam o preço ao vivo ($269,87) -- a entrada tinha sido gravada antes
+    da abertura e o TTL de 30min ainda não a tinha vencido. A análise com IA
+    citou o preço velho como "o preço atual" e abriu o texto dizendo que o
+    papel estava colado na máxima, num dia em que ele caía 2,66%.
+
+    TTL sozinho não resolve: o problema não é a entrada ser ANTIGA, é ela ser
+    de OUTRO regime de dado (pré-abertura contra pregão em curso).
+    """
+    gravado = datetime.datetime.utcfromtimestamp(gravado_em)
+    atual = datetime.datetime.utcfromtimestamp(agora)
+    abertura_de_hoje = datetime.datetime.combine(atual.date(), _ABERTURA_UTC)
+    return gravado < abertura_de_hoje <= atual
 
 def _cache_load() -> dict:
     try:
@@ -309,8 +338,11 @@ if __name__ == "__main__":
     for t in tickers:
         key = f"trend:{str(t).upper()}"
         entry = cache.get(key)
-        # 1) Cache fresco → usa direto, sem tocar no Yahoo
-        if entry and (now - entry[0]) < _TTL_SECONDS:
+        # 1) Cache fresco → usa direto, sem tocar no Yahoo.
+        #    "Fresco" = dentro do TTL E do mesmo lado da abertura do pregão:
+        #    uma entrada gravada no pré-mercado não vale depois que o pregão
+        #    começou, por mais nova que seja (ver _cruzou_abertura).
+        if entry and (now - entry[0]) < _TTL_SECONDS and not _cruzou_abertura(entry[0], now):
             items.append(entry[1])
             continue
         # 2) Busca ao vivo

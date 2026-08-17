@@ -4,6 +4,7 @@ import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react"
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
+import { rotuloRvol } from "@/lib/indicators";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
 // agora como três botões sobre um ticker avulso. Cada botão bate numa rota que
@@ -281,7 +282,7 @@ export default function AnaliseRapidaPage() {
         ["MM20 / MM50", `${fmtUsd(tech.sma20)} / ${fmtUsd(tech.sma50)}`],
         ["Distância da MM50", fmtPct(tech.pctAboveSma50)],
         ["VWAP", `${fmtUsd(tech.vwap)} (${tech.vwapSignal ?? "—"})`],
-        ["RVOL", tech.rvol != null ? `${tech.rvol.toFixed(2)} (${tech.rvolSignal ?? "—"})` : "—"],
+        ["RVOL", tech.rvol != null ? `${tech.rvol.toFixed(2)} (${rotuloRvol(tech.rvolSignal)})` : "—"],
       ]));
     }
 
@@ -504,7 +505,7 @@ export default function AnaliseRapidaPage() {
               <Metric label="Preço" value={fmtUsd(tech.price)} sub={`${fmtPct(tech.changePct)} no dia`} tone={(tech.changePct ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="RSI" value={tech.rsi != null ? tech.rsi.toFixed(1) : "—"} sub={tech.rsiSignal} />
               <Metric label="MACD" value={tech.macdTrend ?? "—"} sub={tech.macdHistogram != null ? `hist ${tech.macdHistogram.toFixed(3)}` : undefined} tone={tech.macdTrend === "bullish" ? "pos" : tech.macdTrend === "bearish" ? "neg" : undefined} />
-              <Metric label="RVOL" value={tech.rvol != null ? tech.rvol.toFixed(2) : "—"} sub={tech.rvolSignal} />
+              <Metric label="RVOL" value={tech.rvol != null ? tech.rvol.toFixed(2) : "—"} sub={rotuloRvol(tech.rvolSignal)} />
               <Metric label="MM20" value={fmtUsd(tech.sma20)} />
               <Metric label="MM50" value={fmtUsd(tech.sma50)} sub={tech.pctAboveSma50 != null ? `${fmtPct(tech.pctAboveSma50)} de distância` : undefined} tone={(tech.pctAboveSma50 ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="VWAP" value={fmtUsd(tech.vwap)} sub={tech.vwapSignal} />

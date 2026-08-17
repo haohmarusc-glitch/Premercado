@@ -29,6 +29,20 @@ try:
 except ImportError:  # execução standalone (sys.path[0] = src/agent)
     import market_data_provider
 
+# Cópia de tools.py::_rvol_signal -- ver o comentário longo lá para o porquê
+# (volume intradiário é em U, a fração linear superestima o rvol na abertura;
+# NBIS 17/08/2026 saiu com rvol 5,81 "alto" aos sete minutos de pregão).
+# Duplicado porque este arquivo roda por spawn e não importa do pacote;
+# test_rvol_abertura.py garante que as duas cópias não divirjam.
+_RVOL_FRACAO_MINIMA = 6 / 78  # ~30min do pregão nominal de 6.5h
+
+
+def _rvol_signal(rvol: float, fraction_elapsed: float) -> str:
+    if fraction_elapsed < _RVOL_FRACAO_MINIMA:
+        return "indefinido_abertura"
+    return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+
+
 def technicals(ticker: str, period: str = "6mo") -> dict:
     try:
         ticker = sanitize_ticker(ticker)
@@ -132,7 +146,7 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
                     expected_vol_so_far = vol_base20 * fraction_elapsed
                     rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
                     if rvol is not None:
-                        rvol_signal = "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+                        rvol_signal = _rvol_signal(rvol, fraction_elapsed)
 
                 typical_price = (intraday["High"] + intraday["Low"] + intraday["Close"]) / 3
                 vol_sum = float(intraday_volume.sum())

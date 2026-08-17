@@ -100,6 +100,17 @@ SYSTEM = (
     "resultado ou estatística. Campo ausente ou null = não mencione.\n"
     "- MOEDA: são ativos listados em bolsa dos EUA. Todo valor monetário é "
     "DÓLAR — escreva US$ 277,68 ou $277,68, nunca R$. Não converta para real.\n"
+    "- PREÇO: cite como preço atual APENAS `precoAtual.valor`. Os painéis "
+    "trazem preços próprios, buscados em instantes diferentes, e misturá-los "
+    "produz texto que se contradiz. Se `precoAtual.divergenciaPct` existir, os "
+    "painéis discordam mais do que o intervalo entre as buscas explica: diga "
+    "isso em uma linha na Leitura técnica, citando `porPainel`, e trate os "
+    "indicadores do painel mais distante com ressalva — provavelmente ele "
+    "está defasado.\n"
+    "- RVOL: se `rvolSignal` for `indefinido_abertura`, o pregão tem menos de "
+    "30 minutos e o RVOL está inflado pelo leilão de abertura. NÃO o use como "
+    "sinal de convicção nem conclua nada sobre força compradora ou realização "
+    "de lucro a partir dele; se mencionar, diga que ainda não é conclusivo.\n"
     "- Os níveis R1/R2/S1/S2 NÃO são suporte e resistência técnicos: são "
     "bandas estatísticas de volatilidade (o preço atual ± a reação histórica "
     "média a earnings). Não os descreva como 'zona de defesa', 'piso' ou "
@@ -190,6 +201,56 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
     return fundamento, fontes
 
 
+# Divergência a partir da qual os painéis não estão mais "só" defasados por
+# segundos de fetch: 1% num papel de US$270 é US$2,70, muito acima do que a
+# diferença de timing entre quatro requisições explica.
+_DIVERGENCIA_PRECO_PCT = 1.0
+
+
+def _preco_canonico(dados: dict) -> dict | None:
+    """UM preço para o texto inteiro citar, com as divergências expostas.
+
+    Os quatro painéis buscam preço de forma independente -- get_trend e
+    get_technicals do último candle diário, o snapshot do fast_info ao vivo, a
+    reação a earnings do próprio histórico. Com o mercado aberto eles NÃO
+    coincidem, e o modelo escolhia qualquer um.
+
+    Visto em produção (NBIS, 17/08/2026 10:37 BRT): quatro preços no mesmo
+    retrato -- $270,28 na Técnica, $269,87 nos Níveis, $269,98 na reação e
+    $277,68 na Tendência (cache pré-abertura). A análise abriu o "Quadro
+    geral" com os $277,68 dizendo que o papel estava colado na máxima, e a
+    "Leitura técnica" três parágrafos abaixo disse que ele caía 2,66% a
+    $270,28. O leitor do primeiro parágrafo sai com a impressão oposta à
+    realidade.
+
+    Canônico é o snapshot (`fast_info.last_price`): é o único buscado ao vivo
+    de propósito, o painel que responde "onde o papel está AGORA" (ver a
+    docstring de get_ticker_snapshot.py). Sem ele, cai para a Técnica, depois
+    a reação, e a Tendência por último -- justamente a que pode vir de cache.
+    """
+    candidatos = [
+        ("niveis", ((dados.get("snapshot") or {}).get("price"))),
+        ("tecnica", ((dados.get("technicals") or {}).get("price"))),
+        ("reacaoEarnings", (((dados.get("reaction") or {}).get("summary") or {}).get("current_price"))),
+        ("tendencia", ((dados.get("trend") or {}).get("price"))),
+    ]
+    validos = [(fonte, float(p)) for fonte, p in candidatos
+               if isinstance(p, (int, float)) and p > 0]
+    if not validos:
+        return None
+
+    fonte, valor = validos[0]
+    out: dict = {"valor": round(valor, 2), "fonte": fonte}
+
+    precos = [p for _, p in validos]
+    if len(precos) > 1:
+        espalhamento = (max(precos) - min(precos)) / min(precos) * 100
+        if espalhamento >= _DIVERGENCIA_PRECO_PCT:
+            out["divergenciaPct"] = round(espalhamento, 2)
+            out["porPainel"] = {f: round(p, 2) for f, p in validos}
+    return out
+
+
 def _compactar(dados: dict) -> str:
     """JSON dos painéis com manchetes sanitizadas e teto de tamanho."""
     trend = dados.get("trend") or None
@@ -206,6 +267,9 @@ def _compactar(dados: dict) -> str:
     payload = {
         "ticker": dados.get("ticker"),
         "benchmark": dados.get("benchmark"),
+        # Primeiro campo de propósito: é o preço que o texto inteiro deve
+        # citar, e vir no topo ajuda o modelo a ancorar nele.
+        "precoAtual": _preco_canonico(dados),
         "tendencia": trend,
         "tecnica": dados.get("technicals") or None,
         "niveis": dados.get("snapshot") or None,
