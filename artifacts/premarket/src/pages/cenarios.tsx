@@ -6,7 +6,9 @@ import {
 } from "@workspace/api-client-react";
 import {
   RHO, diasAteAlvo, temSaltoNoHorizonte, probEmpateIndividual, computeScenarioMetrics,
-  type ScenarioPosition, type ScenarioMetrics,
+  volModeloSemanalPct, classificarPremio, distribuicaoBimodal,
+  type ScenarioPosition, type ScenarioMetrics, type ReacaoEarnings, type MoveImplicito,
+  type SeloPremio,
 } from "@workspace/scenario-math";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AGENDA } from "@/lib/eventos";
@@ -81,6 +83,41 @@ async function fetchSectorMomentum(): Promise<SectorMomentum | null> {
   if (!r.ok) throw new Error("Failed to load sector momentum");
   return r.json();
 }
+
+// Modo earnings -- ver o bloco "as três volatilidades" em @workspace/scenario-math.
+interface JanelaEarnings {
+  ticker: string;
+  proximoEarnings: string | null;
+  naJanela: boolean;
+  reacao?: ReacaoEarnings;
+  implicito?: MoveImplicito | null;
+  fonteDatas?: string;
+  error?: string;
+}
+
+async function fetchJanelaEarnings(ate: string): Promise<JanelaEarnings[]> {
+  const r = await fetch(`/api/scenarios/earnings-window?ate=${encodeURIComponent(ate)}`, {
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error("Failed to load earnings window");
+  const blob = await r.json();
+  return blob.items ?? [];
+}
+
+const SELO_TEXTO: Record<SeloPremio, { rot: string; nota: string }> = {
+  vol_barata: {
+    rot: "vol barata",
+    nota: "as opções estão pedindo menos do que este papel costuma andar no balanço",
+  },
+  premio_caro: {
+    rot: "prêmio caro",
+    nota: "as opções estão pedindo mais do que este papel costuma andar no balanço",
+  },
+  alinhadas: {
+    rot: "alinhadas",
+    nota: "implícita e realizada dentro da mesma faixa — sem desalinhamento a explorar",
+  },
+};
 
 // O relatório registra os PARÂMETROS junto do resultado (data-alvo, movimento
 // de setor, multiplicador de vol, quais posições foram marcadas como vendidas).
@@ -157,6 +194,9 @@ export default function PainelCenarios() {
     staleTime: 60 * 60_000, // atualiza só 1x/dia no backend, não vale ficar refazendo fetch
   });
 
+  // Carregado à parte de /scenarios/positions de propósito: este caminho
+  // busca cadeia de opções e histórico de earnings por ticker e é lento. O
+  // painel desenha a distribuição sem esperar; o card entra quando chegar.
   const [dataAlvoStr, setDataAlvoStr] = useState(DEFAULT_DATA_ALVO);
   const [vendidas, setVendidas] = useState<Record<string, boolean>>({});
   const [setor, setSetorRaw] = useState(0); // movimento do setor até a data-alvo, %
@@ -210,6 +250,16 @@ export default function PainelCenarios() {
 
   const dataAlvo = useMemo(() => new Date(dataAlvoStr + "T00:00:00"), [dataAlvoStr]);
   const dias = diasAteAlvo(dataAlvo);
+
+  // Só busca o modo earnings depois que as posições chegaram: sem carteira o
+  // endpoint devolveria lista vazia e a chamada seria pura latência.
+  const { data: janelaEarnings } = useQuery({
+    queryKey: ["scenario-earnings-window", dataAlvoStr],
+    queryFn: () => fetchJanelaEarnings(dataAlvoStr),
+    enabled: !!posicoes?.length,
+    staleTime: 30 * 60_000, // cadeia de opções e datas de balanço mudam devagar
+    retry: false, // 503 aqui significa "modo indisponível", não erro transitório
+  });
 
   // Extrapolação simples (momentum × fração do ano até a data-alvo) -- é uma
   // sugestão, não previsão. O usuário sempre pode ignorar e arrastar o
@@ -402,6 +452,15 @@ export default function PainelCenarios() {
         </div>
       </div>
 
+      {/* ---- semana de earnings ---- */}
+      {(janelaEarnings ?? [])
+        .filter((j) => j.naJanela && j.reacao)
+        .map((j) => {
+          const pos = lista.find((p) => p.t === j.ticker);
+          if (!pos) return null;
+          return <CardEarnings key={j.ticker} janela={j} volAnual={pos.vol} />;
+        })}
+
       {/* ---- premissas ---- */}
       <div className="pc-card">
         <p className="pc-eyebrow">Premissas</p>
@@ -556,6 +615,124 @@ export default function PainelCenarios() {
         difusão são estimativas históricas, não implícitas de mercado. Ferramenta de dimensionamento
         de risco — não é recomendação de compra ou venda.
       </p>
+    </div>
+  );
+}
+
+/* ---------- semana de earnings ---------- */
+/* As três vols lado a lado quando o balanço cai dentro da janela do cenário.
+   A regra do selo e o teste de bimodalidade moram em @workspace/scenario-math
+   -- a tela só desenha o que eles decidem. */
+function CardEarnings({ janela, volAnual }: { janela: JanelaEarnings; volAnual: number }) {
+  const r = janela.reacao!;
+  const modelo = volModeloSemanalPct(volAnual);
+  const realizada = r.close_pct_abs_mean;
+  const implicita = janela.implicito?.pct ?? null;
+  const selo = classificarPremio(implicita, realizada);
+  const bimodal = distribuicaoBimodal(r);
+  const dataBr = janela.proximoEarnings?.split("-").reverse().join("/") ?? "—";
+  const vies = r.close_pct_mean;
+
+  const corSelo = selo === "premio_caro" ? C.port : selo === "vol_barata" ? C.starboard : C.dim;
+
+  return (
+    <div className="pc-card">
+      <p className="pc-eyebrow">
+        Semana de earnings · {janela.ticker} · balanço em {dataBr}
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        {([
+          ["Modelo · semanal", `±${modelo.toFixed(1)}%`, C.dim,
+            "Vol de difusão do painel escalada pra uma semana. Simétrica e sem drift — dilui o dia do balanço."],
+          ["Realizada · earnings", `±${realizada.toFixed(1)}%`, C.text,
+            `Magnitude média das reações nos últimos ${r.n_events} balanços deste papel.`],
+          ["Implícita · opções",
+            implicita != null ? `±${implicita.toFixed(1)}%` : "n/d",
+            implicita != null ? C.channel : C.faint,
+            implicita != null
+              ? "O que as opções cobram hoje pra atravessar o evento (straddle no dinheiro)."
+              : "Sem cadeia de opções utilizável e sem coleta manual pra este ticker."],
+        ] as const).map(([rot, val, cor, dica]) => (
+          <div key={rot} style={{ background: C.raised, borderRadius: 2, padding: "9px 10px" }} title={dica}>
+            <div className="pc-eyebrow" style={{ margin: "0 0 4px", fontSize: 9 }}>{rot}</div>
+            <div className="pc-num" style={{ fontSize: 14, color: cor }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* O viés vive separado das magnitudes porque responde outra pergunta:
+          as três vols dizem QUANTO o papel anda, o viés diz PRA QUAL LADO.
+          Foi o que o modelo errou em 8 p.p. no PDD — a lognormal não tem
+          onde guardar um centro deslocado. */}
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: C.dim }}>
+          Centro histórico da reação:{" "}
+          <span className="pc-num" style={{ color: vies < 0 ? C.port : C.starboard }}>{pct(vies)}</span>
+          <span style={{ color: C.faint }}> · o modelo assume 0</span>
+        </span>
+        {selo && (
+          <span
+            title={SELO_TEXTO[selo].nota}
+            style={{
+              fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+              color: corSelo, border: `1px solid ${corSelo}`, borderRadius: 2,
+              padding: "2px 7px", fontWeight: 700,
+            }}
+          >
+            {SELO_TEXTO[selo].rot}
+          </span>
+        )}
+      </div>
+
+      {/* Níveis projetados — mesma escada R2/R1/S1/S2 do painel de Reação a
+          Earnings. Não são suporte/resistência técnicos: saem da magnitude
+          histórica da reação aplicada sobre o preço de hoje. */}
+      {r.current_price != null && r.r1_price != null && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginTop: 10 }}>
+          {([
+            ["S2", r.s2_price, C.port], ["S1", r.s1_price, C.port],
+            ["Hoje", r.current_price, C.text],
+            ["R1", r.r1_price, C.starboard], ["R2", r.r2_price, C.starboard],
+          ] as const).map(([rot, v, cor]) => (
+            <div key={rot} style={{ textAlign: "center" }}>
+              <div className="pc-eyebrow" style={{ margin: "0 0 2px", fontSize: 9 }}>{rot}</div>
+              <div className="pc-num" style={{ fontSize: 11.5, color: cor }}>
+                {v != null ? "$" + v.toFixed(2) : "—"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {bimodal && (
+        <p style={{ fontSize: 11, color: C.lamp, margin: "10px 0 0", lineHeight: 1.5 }}>
+          ⚠ Distribuição histórica bimodal (desvio {r.close_pct_std?.toFixed(1)}pp maior que a
+          magnitude média {realizada.toFixed(1)}pp) — este papel alterna salto grande e quase nada,
+          e a lognormal subestima as duas caudas ao concentrar massa num centro que ele não frequenta.
+        </p>
+      )}
+
+      {/* Procedência da implícita: número manual sem a data ao lado é
+          indistinguível de número vivo, que é o erro que a auditoria pegou. */}
+      {janela.implicito?.fonte === "manual" && (
+        <p style={{ fontSize: 10, color: C.faint, margin: "8px 0 0" }}>
+          Implícita de coleta manual ({janela.implicito.fonteNome ?? "fonte não identificada"})
+          {janela.implicito.coletadoEm && ` em ${janela.implicito.coletadoEm.split("-").reverse().join("/")}`}
+          {janela.implicito.idadeDias != null && ` · há ${janela.implicito.idadeDias} dia(s)`}
+          {" — a cadeia de opções ao vivo não respondeu."}
+        </p>
+      )}
+      {janela.implicito?.fonte === "straddle_atm" && janela.implicito.vencimento && (
+        <p style={{ fontSize: 10, color: C.faint, margin: "8px 0 0" }}>
+          Implícita do straddle no dinheiro, vencimento {janela.implicito.vencimento.split("-").reverse().join("/")}.
+        </p>
+      )}
+      {janela.fonteDatas === "cache_vencido" && (
+        <p style={{ fontSize: 10, color: C.lamp, margin: "6px 0 0" }}>
+          ⚠ Data do balanço vem de cópia em cache vencida — pode ter sido reagendada.
+        </p>
+      )}
     </div>
   );
 }
