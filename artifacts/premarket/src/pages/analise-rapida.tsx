@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 import { MarkdownContent } from "@/components/markdown";
+import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
 // agora como três botões sobre um ticker avulso. Cada botão bate numa rota que
@@ -168,6 +169,11 @@ const TOM_TENDENCIA: Record<string, string> = {
 export default function AnaliseRapidaPage() {
   const [tickerInput, setTickerInput] = useState("");
   const [benchmark, setBenchmark] = useState("SMH");
+  // Enquanto o usuário não editar o benchmark, ele acompanha o ticker.
+  // Depois de uma edição manual, para de mudar sozinho — comparar NVDA
+  // contra XLK é uma escolha legítima, e a tela não pode desfazê-la a cada
+  // letra digitada no campo do ticker.
+  const [benchmarkManual, setBenchmarkManual] = useState(false);
   const [trend, setTrend] = useState<TrendItem | null>(null);
   const [tech, setTech] = useState<TechItem | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -352,7 +358,11 @@ export default function AnaliseRapidaPage() {
             <input
               type="text"
               value={tickerInput}
-              onChange={(e) => setTickerInput(e.target.value)}
+              onChange={(e) => {
+                const novo = e.target.value;
+                setTickerInput(novo);
+                if (!benchmarkManual) setBenchmark(benchmarkSugerido(novo));
+              }}
               placeholder="ex: INTC"
               className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
@@ -362,10 +372,23 @@ export default function AnaliseRapidaPage() {
             <input
               type="text"
               value={benchmark}
-              onChange={(e) => setBenchmark(e.target.value)}
+              onChange={(e) => { setBenchmark(e.target.value); setBenchmarkManual(true); }}
               placeholder="SMH, KWEB, ITB..."
               className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
+            {!benchmarkManual && temSugestaoConhecida(ticker) ? (
+              <span className="text-[10px] font-mono text-muted-foreground/70">
+                sugerido para {ticker} · pode trocar
+              </span>
+            ) : benchmarkManual ? (
+              <button
+                type="button"
+                onClick={() => { setBenchmarkManual(false); setBenchmark(benchmarkSugerido(ticker)); }}
+                className="text-[10px] font-mono text-primary/80 hover:text-primary text-left"
+              >
+                voltar ao sugerido
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap gap-3">
