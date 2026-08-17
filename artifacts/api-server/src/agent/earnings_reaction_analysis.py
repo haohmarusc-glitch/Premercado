@@ -244,7 +244,7 @@ def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: in
     #
     # ARMADILHA (visto em produção, NBIS 17/08/2026): essa janela olha pra
     # trás a partir de HOJE, então logo depois de um balanço ela ENGOLE o
-    # próprio pregão de reação. NBIS reportou em 12/08 e saltou +34,14%; três
+    # próprio pregão de reação. NBIS reportou em 12/08 e saltou +34,14%; DOIS
     # pregões depois o "run-up atual" saía +61,66% e o papel era classificado
     # "esticado" -- mas isso é a REAÇÃO já ocorrida, não a antecipação que o
     # indicador se propõe a medir (ex-evento o run-up era ~+20,5%). Qualquer
