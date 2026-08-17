@@ -87,6 +87,9 @@ interface SessionMove {
 interface ReactionResult {
   ticker: string;
   error?: string;
+  // Datas de balanço servidas de cache vencido (rede fora). Mesmo vocabulário
+  // de degradação do painel Tendência — ver agent/earnings_dates.py.
+  stale?: boolean;
   summary?: {
     n_events: number;
     gap_pct_mean: number;
@@ -561,6 +564,13 @@ export default function AnaliseRapidaPage() {
               <p className="font-mono text-sm text-muted-foreground">⚠ Reação a earnings: {reaction.error}</p>
             ) : reaction.summary ? (
               <>
+                {/* Datas de balanço de cópia vencida: painel completo e sem
+                    aviso não se distingue de um calculado sobre agenda atual. */}
+                {reaction.stale && (
+                  <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/40 text-yellow-400">
+                    datas de balanço de cache — rede instável
+                  </span>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Metric label="Eventos" value={String(reaction.summary.n_events)} sub={`threshold ±${reaction.summary.suggested_threshold_pct.toFixed(1)}%`} />
                   <Metric label="Fech. médio" value={fmtPct(reaction.summary.close_pct_mean)} sub={`|média| ${reaction.summary.close_pct_abs_mean.toFixed(2)}%`} tone={reaction.summary.close_pct_mean >= 0 ? "pos" : "neg"} />
