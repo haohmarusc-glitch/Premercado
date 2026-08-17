@@ -472,13 +472,13 @@ Aprendidas de incidentes reais. Detalhamento em
 # Deploy (VPS)
 cd /opt/premercado && git pull origin main && docker compose up -d --build
 
-# Qualidade (não há CI — rodar antes de cada PR)
+# Qualidade — os MESMOS comandos que a CI roda (.github/workflows/ci.yml)
 pnpm run typecheck
-pytest artifacts/api-server/src/__tests__      # ~762 testes
-pnpm --filter @workspace/api-server test       # vitest
-pnpm --filter @workspace/premarket test
+pnpm -r --if-present run test -- --run    # vitest de TODOS os pacotes
+pytest                                     # coleta via pytest.ini, sem exclusão
 
-# Ferramentas do radar (dentro do container)
+# Ferramentas do radar (dentro do container, a partir de /opt/premercado)
+cd /opt/premercado
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.atualizar_correlacoes < /dev/null
 docker compose exec -T -w /app/artifacts/api-server/src app \
@@ -486,6 +486,11 @@ docker compose exec -T -w /app/artifacts/api-server/src app \
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.earnings_reaction_analysis --tickers NVDA < /dev/null
 ```
+
+> O `cd /opt/premercado` não é decoração: `docker compose` procura o
+> `docker-compose.yml` no diretório atual e, rodado do `~` do root, falha com
+> `no configuration file provided: not found` — que parece container fora do ar
+> e não é.
 
 > `< /dev/null` é necessário: os scripts detectam "chamado pelo Node" testando
 > `stdin.isatty()`, e `docker compose exec -T` deixa o stdin aberto sem TTY —
