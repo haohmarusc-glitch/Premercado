@@ -1570,13 +1570,30 @@ components:
               nota: { type: string }
         min52:
           type: object
-          description: "ticker -> {preco, min52, status (dentro|borderline)}"
+          description: "ticker -> {preco, min52, max52?, status (dentro|borderline|fora), fonte?}. preco/min52/max52 vem vivos do market_data_provider quando a fonte responde; `fonte` diz de onde (yfinance, cache, snapshot...)."
           additionalProperties:
             type: object
             properties:
               preco: { type: number }
               min52: { type: number }
+              max52: { type: number }
               status: { type: string }
+              fonte: { type: string, description: "Origem do dado desta linha. Ausente = snapshot manual nao atualizado." }
+        overridesColetadoEm: { type: string, description: "YYYY-MM-DD da coleta humana dos dados de reacao_earnings (OptionSlam nao tem API)." }
+        overridesFonte: { type: string, description: "De onde os dados manuais vieram, para auditoria." }
+        overridesIdadeDias: { type: integer, description: "Dias desde overridesColetadoEm. O frontend usa para avisar que o dado envelheceu." }
+        min52Atualizados:
+          type: array
+          description: "Tickers cuja faixa de 52 semanas foi atualizada ao vivo nesta resposta."
+          items: { type: string }
+        min52Avisos:
+          type: array
+          description: "Inconsistencias detectadas (preco abaixo da minima etc.). Dado vivo impossivel e recusado e o snapshot preservado."
+          items: { type: string }
+        fontesDegradadas:
+          type: object
+          description: "ticker -> motivo. Degradacao nunca e silenciosa: quem nao atualizou aparece aqui."
+          additionalProperties: { type: string }
         reacao_earnings:
           type: object
           description: "ticker -> {evr?, move_impl_sem?, move_impl_mes?, vies?, ultima_reacao?}"

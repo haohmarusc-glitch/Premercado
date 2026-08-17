@@ -336,6 +336,8 @@ export const RadarSnapshotResponse = zod.object({
   "min52": zod.record(zod.string(), zod.object({
     "preco": zod.coerce.number().optional(),
     "min52": zod.coerce.number().optional(),
+    "max52": zod.coerce.number().optional(),
+    "fonte": zod.string().optional(),
     "status": zod.string().optional(),
   })),
   "reacao_earnings": zod.record(zod.string(), zod.object({
@@ -355,6 +357,15 @@ export const RadarSnapshotResponse = zod.object({
   })),
   "correlacoes": zod.record(zod.string(), zod.coerce.number()).describe("par 'A|B' -> correlacao medida"),
   "portfolio_default": zod.array(zod.string()),
+  // Procedencia. zod.object() sem passthrough DESCARTA chave desconhecida em
+  // silencio -- se estes campos ficarem de fora aqui, o aviso de degradacao
+  // some antes de chegar na tela, que e exatamente o bug que a tarefa corrige.
+  "overridesColetadoEm": zod.string().nullish().describe('YYYY-MM-DD da coleta manual de EVR/move implicito'),
+  "overridesFonte": zod.string().nullish(),
+  "overridesIdadeDias": zod.coerce.number().nullish(),
+  "min52Atualizados": zod.array(zod.string()).optional(),
+  "min52Avisos": zod.array(zod.string()).optional(),
+  "fontesDegradadas": zod.record(zod.string(), zod.string()).optional(),
 })
 
 export const EntryExitStudyResolutionSchema = zod.object({
