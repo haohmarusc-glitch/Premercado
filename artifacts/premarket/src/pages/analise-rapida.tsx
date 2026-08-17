@@ -109,6 +109,11 @@ interface ReactionResult {
       descontado_n?: number;
       descontado_subiu_n?: number;
       descontado_reacao_media?: number | null;
+      // Ver earnings-reaction.tsx: a janela de run-up termina hoje, então
+      // logo após um balanço ela inclui o próprio pregão de reação.
+      janela_contem_earnings?: boolean;
+      pregoes_desde_earnings?: number;
+      runup_atual_ex_evento_pct?: number;
     };
   };
   events?: { earnings_date: string; runup_pct?: number | null; announcement_day: SessionMove | null; next_day: SessionMove | null }[];
@@ -298,10 +303,18 @@ export default function AnaliseRapidaPage() {
         ["Fechamento médio", pct(s.close_pct_mean)],
         ["Média absoluta", `${s.close_pct_abs_mean.toFixed(2)}%`],
         ["Threshold sugerido", `±${s.suggested_threshold_pct.toFixed(2)}%`],
-        ["Resistências", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
-        ["Suportes", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
+        // Bandas de volatilidade, não estrutura de preço — ver comentário
+        // equivalente em earnings-reaction.tsx.
+        ["Banda de reação · alta", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
+        ["Banda de reação · baixa", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
         ["Run-up atual", s.runup?.runup_atual_pct != null ? `${pct(s.runup.runup_atual_pct)} (${s.runup.estado_atual ?? "—"})` : "—"],
-      ]));
+        ...(s.runup?.janela_contem_earnings
+          ? ([
+              ["Balanço dentro da janela", `sim — há ${s.runup.pregoes_desde_earnings} pregão(ões), o run-up bruto inclui a reação`],
+              ["Run-up ex-evento", s.runup.runup_atual_ex_evento_pct != null ? `${pct(s.runup.runup_atual_ex_evento_pct)} (é este que define o estado)` : "—"],
+            ] as [string, string | number | null | undefined][])
+          : []),
+      ]) + "\n\n_R1/R2/S1/S2 projetam a volatilidade histórica de earnings sobre o preço atual — não são suporte/resistência técnico._");
       if (reaction.events?.length) {
         blocos.push("### Eventos\n\n" + tabela(
           ["Data", "Run-up", "Gap dia", "Fech. dia", "Fech. D+1"],
@@ -550,8 +563,8 @@ export default function AnaliseRapidaPage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Metric label="Eventos" value={String(reaction.summary.n_events)} sub={`threshold ±${reaction.summary.suggested_threshold_pct.toFixed(1)}%`} />
                   <Metric label="Fech. médio" value={fmtPct(reaction.summary.close_pct_mean)} sub={`|média| ${reaction.summary.close_pct_abs_mean.toFixed(2)}%`} tone={reaction.summary.close_pct_mean >= 0 ? "pos" : "neg"} />
-                  <Metric label="R1 / R2" value={`${fmtUsd(reaction.summary.r1_price)} / ${fmtUsd(reaction.summary.r2_price)}`} tone="pos" />
-                  <Metric label="S1 / S2" value={`${fmtUsd(reaction.summary.s1_price)} / ${fmtUsd(reaction.summary.s2_price)}`} tone="neg" />
+                  <Metric label="R1 / R2" value={`${fmtUsd(reaction.summary.r1_price)} / ${fmtUsd(reaction.summary.r2_price)}`} sub="banda de reação" tone="pos" />
+                  <Metric label="S1 / S2" value={`${fmtUsd(reaction.summary.s1_price)} / ${fmtUsd(reaction.summary.s2_price)}`} sub="banda de reação" tone="neg" />
                 </div>
                 {reaction.summary.runup?.estado_atual && (
                   <p className="font-mono text-xs text-muted-foreground">
@@ -559,6 +572,13 @@ export default function AnaliseRapidaPage() {
                     <span className="text-foreground font-bold uppercase">{reaction.summary.runup.estado_atual}</span>
                     {reaction.summary.runup.corr_runup_reacao != null &&
                       ` · correlação run-up × reação ${reaction.summary.runup.corr_runup_reacao.toFixed(2)}`}
+                    {reaction.summary.runup.janela_contem_earnings && (
+                      <span className="block text-amber-400/80">
+                        ⚠ balanço há {reaction.summary.runup.pregoes_desde_earnings} pregão(ões), dentro da janela — o run-up bruto inclui a reação
+                        {reaction.summary.runup.runup_atual_ex_evento_pct != null &&
+                          ` · ex-evento ${fmtPct(reaction.summary.runup.runup_atual_ex_evento_pct)}`}
+                      </span>
+                    )}
                   </p>
                 )}
                 {reaction.events && reaction.events.length > 0 && (

@@ -190,12 +190,23 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     summary["s1_price"] = round(current_price * (1 - avg_frac), 2)
     summary["s2_price"] = round(current_price * (1 - extreme_frac), 2)
 
-    summary["runup"] = _runup_summary(df, hist)
+    summary["runup"] = _runup_summary(df, hist, _ultimo_earnings_pos(hist, past_earnings.index))
 
     return {"ticker": ticker, "summary": summary, "events": events}
 
 
-def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame) -> dict:
+def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
+    """Posição em `hist` do pregão de reação do earnings mais RECENTE.
+    None quando nenhum earnings passado casa com um pregão do histórico."""
+    posicoes = []
+    for ts in earnings_index:
+        pos = hist.index.searchsorted(ts.tz_localize(None).normalize())
+        if 0 < pos < len(hist.index):
+            posicoes.append(int(pos))
+    return max(posicoes) if posicoes else None
+
+
+def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: int | None = None) -> dict:
     """Estatística do padrão "bom não é bom o suficiente": o run-up do mês
     pré-earnings previu a direção da reação nos balanços passados deste
     ticker? E em qual estado (esticado/descontado/neutro) o papel está AGORA?
@@ -230,15 +241,47 @@ def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame) -> dict:
     # Estado ATUAL: mesmo run-up de RUNUP_PREGOES pregões, terminando no
     # último fechamento -- é o que permite dizer "o papel está chegando
     # esticado no próximo balanço".
+    #
+    # ARMADILHA (visto em produção, NBIS 17/08/2026): essa janela olha pra
+    # trás a partir de HOJE, então logo depois de um balanço ela ENGOLE o
+    # próprio pregão de reação. NBIS reportou em 12/08 e saltou +34,14%; três
+    # pregões depois o "run-up atual" saía +61,66% e o papel era classificado
+    # "esticado" -- mas isso é a REAÇÃO já ocorrida, não a antecipação que o
+    # indicador se propõe a medir (ex-evento o run-up era ~+20,5%). Qualquer
+    # snapshot tirado logo após um earnings classificava o ticker como
+    # esticado por construção, e a análise com IA lia isso como "o papel
+    # chega esticado ao balanço" -- de um evento que já tinha acontecido.
     if len(hist) > RUNUP_PREGOES:
-        base = float(hist["Close"].iloc[-1 - RUNUP_PREGOES])
+        ini = len(hist) - 1 - RUNUP_PREGOES
+        base = float(hist["Close"].iloc[ini])
         atual = float(hist["Close"].iloc[-1])
         if base and not pd.isna(base):
             runup_atual = round((atual / base - 1) * 100, 2)
             out["runup_atual_pct"] = runup_atual
+
+            # A janela cobre o pregão de reação do último balanço?
+            contaminada = ultimo_earnings_pos is not None and ultimo_earnings_pos >= ini
+            out["janela_contem_earnings"] = bool(contaminada)
+
+            base_estado = runup_atual
+            if contaminada:
+                out["pregoes_desde_earnings"] = len(hist) - 1 - ultimo_earnings_pos
+                # Run-up "limpo": remove SÓ o retorno do pregão de reação da
+                # variação acumulada da janela (composição, não subtração).
+                ret_evento = float(hist["Close"].iloc[ultimo_earnings_pos]) / float(
+                    hist["Close"].iloc[ultimo_earnings_pos - 1]
+                )
+                if ret_evento:
+                    ex_evento = round(((atual / base) / ret_evento - 1) * 100, 2)
+                    out["runup_atual_ex_evento_pct"] = ex_evento
+                    base_estado = ex_evento
+
+            # estado_atual sempre sai do número LIMPO -- é ele que responde
+            # "o papel está esticado?" de forma comparável com os eventos
+            # históricos, que por construção medem só o pré-balanço.
             out["estado_atual"] = (
-                "esticado" if runup_atual >= RUNUP_ESTICADO_PCT
-                else "descontado" if runup_atual <= 0
+                "esticado" if base_estado >= RUNUP_ESTICADO_PCT
+                else "descontado" if base_estado <= 0
                 else "neutro"
             )
 
@@ -280,6 +323,14 @@ def _print_report(results: list[dict]) -> None:
                 print(f"    correlação run-up × reação: {ru['corr_runup_reacao']:+.2f} (amostra pequena, indício)")
         if ru.get("runup_atual_pct") is not None:
             print(f"  Estado atual: {ru['estado_atual']} (run-up de {ru['runup_atual_pct']:+.2f}% no último mês)")
+            if ru.get("janela_contem_earnings"):
+                print(
+                    f"    ⚠ a janela inclui o balanço de {ru['pregoes_desde_earnings']} pregão(ões) atrás"
+                    + (
+                        f" -- ex-evento: {ru['runup_atual_ex_evento_pct']:+.2f}% (é este que define o estado)"
+                        if ru.get("runup_atual_ex_evento_pct") is not None else ""
+                    )
+                )
         print("  Últimos eventos (run-up prévio → dia do anúncio | dia seguinte):")
         for e in r["events"][:6]:
             a = e["announcement_day"]

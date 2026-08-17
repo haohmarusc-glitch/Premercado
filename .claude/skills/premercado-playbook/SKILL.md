@@ -197,16 +197,30 @@ Ao adicionar um campo novo numa resposta de API, editar TODOS: `lib/api-spec/ope
 TS em `api-client-react/src/generated/api.schemas.ts`. Nenhum desses se atualiza sozinho a
 partir do outro.
 
-## 11. Workflow de git/PR deste repo (aprendido nesta sessão, não documentado em código)
+## 11. Workflow de git/PR deste repo
 
 - A branch de desenvolvimento designada é reaproveitada entre tarefas — depois que uma PR
   dela é mergeada, a branch local FICA VELHA (ainda aponta pro commit pré-merge). Antes de
   começar um novo trabalho: `git fetch origin main && git checkout -B <branch> origin/main`
   (com qualquer trabalho novo guardado via `git stash` antes, e reaplicado depois) — nunca
   empilhar commits novos em cima de uma branch cuja PR anterior já foi mergeada.
-- Sem CI configurada neste repo — a barra de qualidade é rodar `pnpm run typecheck`
-  (monorepo inteiro) + `pnpm --filter @workspace/api-server test` (vitest) +
-  `pytest src/__tests__` (excluindo os poucos arquivos com erro de import pré-existente
-  não relacionado, ex.: `test_backtest_confluencia.py`) manualmente antes de cada PR.
+- **Existe CI** (`.github/workflows/ci.yml`), disparada em PR pra `main` e em push na
+  `main`. São dois jobs, ambos bloqueantes:
+  - `Typecheck + Vitest (TS/JS)`: `pnpm install --frozen-lockfile` → `pnpm run typecheck`
+    → `pnpm -r --if-present run test -- --run` (roda o vitest de TODOS os pacotes, não só
+    o do api-server: `premarket` também).
+  - `Pytest (agente Python)`: `pip install -r requirements.txt` → `pytest` puro, que pelo
+    `pytest.ini` coleta `artifacts/api-server/src/__tests__` inteiro, **sem exclusão
+    nenhuma**. Uma versão anterior desta seção mandava pular
+    `test_backtest_confluencia.py` por erro de import pré-existente — isso já foi
+    corrigido e a suíte passa completa (982 testes em ago/2026); não exclua nada.
+  - Há ainda um passo `Preflight das fontes de dado`, `continue-on-error: true` de
+    propósito: rede fora do ar no runner não diz nada sobre produção. Ele não reprova a
+    PR, mas o log dele é o aviso de que o Yahoo mudou algo (olhe o `source_used`).
+- A CI não substitui rodar localmente antes de abrir a PR — ela leva ~2min e só te conta
+  o que você já poderia saber em 1min. Rode os mesmos três comandos (`pnpm run typecheck`,
+  `pnpm -r --if-present run test -- --run`, `pytest`) e abra a PR já verde.
 - PRs sempre em draft, com subscribe automático de atividade e check-in agendado
-  (~1h) pra acompanhar merge/CI sem precisar de polling ativo.
+  (~1h) pra acompanhar merge/CI sem precisar de polling ativo. Se a PR for mergeada antes
+  do check-in disparar, apague o trigger (`delete_trigger`) em vez de deixá-lo acordar a
+  sessão à toa.
