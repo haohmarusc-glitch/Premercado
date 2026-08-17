@@ -167,7 +167,7 @@ export default function AnaliseRapidaPage() {
   const [tech, setTech] = useState<TechItem | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
-  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[] } | null>(null);
+  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean } | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
 
@@ -237,7 +237,7 @@ export default function AnaliseRapidaPage() {
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
-      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[] };
+      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean };
     },
     onSuccess: setAnaliseIA,
   });
@@ -401,6 +401,11 @@ export default function AnaliseRapidaPage() {
             . Não é recomendação de compra ou venda.
             {analiseIA.usage?.total_cost_usd != null && ` · custo desta análise: ~$${analiseIA.usage.total_cost_usd.toFixed(4)}`}
           </p>
+          {analiseIA.truncado && (
+            <p className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
+              ⚠ O texto bateu o limite de tamanho e terminou no meio — rode de novo para uma versão completa.
+            </p>
+          )}
           <MarkdownContent content={analiseIA.markdown} />
         </Painel>
       )}
