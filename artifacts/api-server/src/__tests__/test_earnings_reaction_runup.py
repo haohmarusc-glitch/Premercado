@@ -102,3 +102,63 @@ def test_runup_summary_sem_eventos_com_runup_so_devolve_estado_atual():
     out = _runup_summary(df, HIST_NEUTRO)
     assert out["n_com_runup"] == 0
     assert "esticado_n" not in out
+
+
+# ── janela de run-up contaminada pelo próprio earnings ──────────────────────
+#
+# A janela de RUNUP_PREGOES termina no ÚLTIMO fechamento, então logo depois de
+# um balanço ela engole o pregão de reação. Visto em produção (NBIS,
+# 17/08/2026): balanço em 12/08 com +34,14% e, três pregões depois, "run-up
+# atual +61,66% (esticado)" -- que é a reação já ocorrida, não a antecipação
+# que o indicador mede. Ex-evento o run-up era ~+20,5%.
+
+def _hist_com_earnings_no_fim(salto: float, depois: float, planos: float = 100.0):
+    """Histórico plano em `planos`, um pregão de earnings multiplicando por
+    `salto`, e mais 3 pregões em `depois`. O earnings cai dentro da janela."""
+    closes = [planos] * (RUNUP_PREGOES + 5) + [planos * salto] + [depois] * 3
+    hist = _hist_com_precos(closes)
+    return hist, len(closes) - 4  # posição do pregão de earnings
+
+
+def test_runup_atual_sinaliza_quando_a_janela_engole_o_earnings():
+    hist, pos_earnings = _hist_com_earnings_no_fim(salto=1.3414, depois=161.66)
+    out = _runup_summary(_df_reacoes([]), hist, pos_earnings)
+
+    assert out["janela_contem_earnings"] is True
+    assert out["pregoes_desde_earnings"] == 3
+    # Bruto continua sendo reportado (é o número que a janela realmente deu)…
+    assert out["runup_atual_pct"] == pytest.approx(61.66, abs=0.01)
+    # …mas o ex-evento remove SÓ o retorno do pregão do balanço, por composição.
+    assert out["runup_atual_ex_evento_pct"] == pytest.approx(20.52, abs=0.05)
+
+
+def test_estado_atual_sai_do_runup_limpo_nao_do_bruto():
+    """O caso que mais importa: sem o balanço, o papel NÃO está esticado.
+    Antes da correção o bruto (+34,14%) mandava e saía 'esticado'."""
+    hist, pos_earnings = _hist_com_earnings_no_fim(salto=1.3414, depois=134.14)
+    out = _runup_summary(_df_reacoes([]), hist, pos_earnings)
+
+    assert out["runup_atual_pct"] == pytest.approx(34.14, abs=0.01)
+    assert out["runup_atual_ex_evento_pct"] == pytest.approx(0.0, abs=0.01)
+    assert out["estado_atual"] == "descontado"  # e não "esticado"
+
+
+def test_earnings_fora_da_janela_mantem_o_comportamento_antigo():
+    # Sobe 15% nos últimos RUNUP_PREGOES pregões; o earnings é bem antigo.
+    closes = [100.0] * 10 + [100.0] + [115.0] * RUNUP_PREGOES
+    out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes), ultimo_earnings_pos=2)
+
+    assert out["janela_contem_earnings"] is False
+    assert "runup_atual_ex_evento_pct" not in out
+    assert "pregoes_desde_earnings" not in out
+    assert out["estado_atual"] == "esticado"
+    assert out["runup_atual_pct"] == pytest.approx(15.0)
+
+
+def test_sem_earnings_conhecido_nao_quebra():
+    """Ticker sem earnings casado com pregão: o argumento chega None e o
+    cálculo tem que seguir igual ao de antes."""
+    closes = [100.0] * 10 + [100.0] + [115.0] * RUNUP_PREGOES
+    out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes), None)
+    assert out["janela_contem_earnings"] is False
+    assert out["estado_atual"] == "esticado"
