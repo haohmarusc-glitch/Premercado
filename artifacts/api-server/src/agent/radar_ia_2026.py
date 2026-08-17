@@ -37,6 +37,7 @@ Adaptações feitas na integração ao Premercado (vs. o pacote original):
 from __future__ import annotations
 import argparse
 import json
+import os
 import sys
 from datetime import date, timedelta
 from itertools import combinations
@@ -46,8 +47,10 @@ from itertools import combinations
 # mesmo padrão documentado em earnings_reaction_analysis.py.
 try:
     from brt import today_brt
+    import market_data_provider
 except ImportError:
     from agent.brt import today_brt
+    from agent import market_data_provider
 
 HOJE_SNAPSHOT = date(2026, 8, 14)  # data de referência dos dados
 
@@ -137,37 +140,168 @@ MIN52 = {
     "HD":   {"preco": 341.70, "min52": 289.10, "status": "borderline"},
 }
 
+# --- Busca viva de preço e faixa de 52 semanas -------------------------------
+#
+# Os valores acima são o SNAPSHOT de 12-14/08/2026 e servem só de fallback.
+# Deixá-los como única fonte produziu o erro que a auditoria de 17/08/2026
+# pegou: PDD com preco 84,5 ABAIXO da própria min52 87,11 -- impossível por
+# construção, e a min52 real era 71,94. Dado velho não erra só de magnitude;
+# erra de forma, e forma impossível passa despercebida quando ninguém olha.
+#
+# auto_adjust=True e permitir_externa=False pela mesma razão de get_trend e
+# get_technicals: a série é ajustada, a fonte externa devolve "as traded", e
+# um desdobramento dentro da janela viraria uma mínima de 52 semanas que nunca
+# existiu.
+#
+# Extremos vêm de Low/High (intradiário), não do fechamento -- é a definição
+# que fast_info.year_low usa e que o resto do app já mostra. Usar fechamento
+# aqui daria dois "min52" diferentes com o mesmo nome nas telas.
+MIN52_PERIODO = "1y"
+MIN52_DENTRO_PCT = 10.0      # <= 10% acima da mínima
+MIN52_BORDERLINE_PCT = 20.0  # 10-20%
+
+
+def _status_min52(preco: float, min52: float) -> str:
+    # round antes de comparar: 110/100-1 dá 0.10000000000000009 em float, e
+    # sem isso um papel EXATAMENTE a +10% da mínima cai em "borderline" quando
+    # a regra escrita é "<= 10% = dentro". Erro de uma casa em ponto flutuante
+    # decidindo classificação é o tipo de coisa que ninguém encontra olhando o
+    # número final.
+    acima = round((preco / min52 - 1) * 100, 6)
+    if acima <= MIN52_DENTRO_PCT:
+        return "dentro"
+    return "borderline" if acima <= MIN52_BORDERLINE_PCT else "fora"
+
+
+def validar_min52(linha: dict) -> list[str]:
+    """Inconsistências que não podem existir num dado bom.
+
+    Mesma ideia do veredito_validator: conferir ANTES de servir, porque um
+    número impossível com cara de número calculado não levanta suspeita em
+    quem lê.
+    """
+    avisos = []
+    preco, mn, mx = linha.get("preco"), linha.get("min52"), linha.get("max52")
+    if preco is not None and mn is not None and preco < mn:
+        avisos.append(f"preço {preco} abaixo da mínima de 52 semanas {mn}")
+    if preco is not None and mx is not None and preco > mx:
+        avisos.append(f"preço {preco} acima da máxima de 52 semanas {mx}")
+    if mn is not None and mx is not None and mn > mx:
+        avisos.append(f"mínima {mn} maior que a máxima {mx}")
+    return avisos
+
+
+def atualizar_min52_vivo(tickers: list[str] | None = None) -> dict:
+    """Substitui preço/mínima/máxima do snapshot por valores vivos.
+
+    Devolve `{"atualizados": [...], "fontesDegradadas": {...}, "avisos": [...]}`.
+    Ticker cuja série não vier NÃO é sobrescrito: mantém o valor do snapshot,
+    mas entra em fontesDegradadas. Degradar em silêncio para o valor velho é
+    exatamente o que se está corrigindo aqui.
+    """
+    alvos = tickers or list(MIN52)
+    resultado: dict = {"atualizados": [], "fontesDegradadas": {}, "avisos": []}
+
+    # Aquece o hist_cache com UMA chamada em lote antes do laço. Os tickers do
+    # screening (PDD, XPEV, ULTA, HD...) não estão na carteira, então nenhum
+    # outro checker os deixou no cache -- sem isto seriam ~10 downloads
+    # sequenciais, e o custo cairia inteiro no primeiro acesso pós-deploy.
+    #
+    # O lote devolve só fechamentos; os extremos precisam de Low/High. Por isso
+    # ele serve de aquecimento (get_daily_closes_batch grava o OHLCV completo
+    # por ticker no hist_cache) e a leitura real vem do get_daily_history
+    # abaixo, que então acerta o cache quente.
+    try:
+        market_data_provider.get_daily_closes_batch(
+            alvos, MIN52_PERIODO, auto_adjust=True, permitir_externa=False
+        )
+    except Exception as e:  # noqa: BLE001 — aquecimento é otimização, não requisito
+        print(f"[radar] lote de aquecimento falhou ({type(e).__name__}); "
+              f"seguindo ticker a ticker", file=sys.stderr, flush=True)
+
+    for t in alvos:
+        try:
+            r = market_data_provider.get_daily_history(
+                t, MIN52_PERIODO, auto_adjust=True, permitir_externa=False
+            )
+        except Exception as e:  # noqa: BLE001 — fonte fora do ar não derruba o radar
+            resultado["fontesDegradadas"][t] = f"erro: {type(e).__name__}"
+            continue
+
+        if not r.ok or r.df.empty:
+            resultado["fontesDegradadas"][t] = "sem série utilizável"
+            continue
+
+        df = r.df
+        try:
+            preco = round(float(df["Close"].iloc[-1]), 2)
+            mn = round(float(df["Low"].min()), 2)
+            mx = round(float(df["High"].max()), 2)
+        except (KeyError, IndexError, ValueError) as e:
+            resultado["fontesDegradadas"][t] = f"série incompleta: {type(e).__name__}"
+            continue
+
+        linha = {"preco": preco, "min52": mn, "max52": mx,
+                 "status": _status_min52(preco, mn), "fonte": r.source}
+        avisos = validar_min52(linha)
+        if avisos:
+            # Dado vivo inconsistente é pior que dado velho: não sobrescreve,
+            # avisa. O snapshot ao menos é reconhecidamente antigo.
+            resultado["avisos"].extend(f"{t}: {a}" for a in avisos)
+            resultado["fontesDegradadas"][t] = "dado vivo inconsistente, mantido o snapshot"
+            continue
+
+        if r.is_stale or r.source not in ("yfinance", "yfinance_cache"):
+            resultado["fontesDegradadas"][t] = r.source
+
+        MIN52[t] = linha
+        resultado["atualizados"].append(t)
+
+    return resultado
+
+
 # ============================================================================
-# 3. REAÇÃO HISTÓRICA A EARNINGS (OptionSlam, snapshot 14/08/2026)
-#    evr: Earnings Volatility Rating 0-10 | move_impl_*: move implícito %
+# 3. REAÇÃO HISTÓRICA A EARNINGS (coleta MANUAL, OptionSlam)
 # ============================================================================
-REACAO_EARNINGS = {
-    "LOW":  {"evr": 1.5, "move_impl_sem": 5.54, "move_impl_mes": 8.59,
-             "ultima_reacao": {"data": "2026-05-20", "abriu": -2.01, "fechou": +1.22},
-             "vies": "recupera no dia"},
-    "NTES": {"evr": 2.7, "move_impl_sem": 6.89, "move_impl_mes": 10.88,
-             "ultima_reacao": {"data": "2026-05-21", "fechou": -2.12, "min_intraday": -9.21},
-             "vies": "negativo; mínima 52sem foi setada no dia do último earnings"},
-    "XPEV": {"evr": 3.5, "move_impl_sem": 10.61, "move_impl_mes": 15.37,
-             "ultima_reacao": {"data": "2026-05-28", "abriu": +1.51, "fechou": -0.06},
-             "vies": "neutro/leve negativo"},
-    "PDD":  {"evr": 4.4, "move_impl_sem": 7.38, "move_impl_mes": 9.80,
-             "ultima_reacao": {"data": "2026-05-27", "fechou": -10.37, "min_intraday": -13.48},
-             "vies": "muito negativo"},
-    "SNPS": {"evr": None, "move_impl_sem": 3.9, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-05-27", "nota": "beat de 12.4% mas caiu"},
-             "vies": "beats não seguram o papel — overhang estrutural de IA"},
-    "ADSK": {"evr": None, "move_impl_sem": 4.9, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-05-28", "nota": "beat de 10.7%"},
-             "vies": "positivo recente; mediana de move 3.6% em 8 tris"},
-    "ULTA": {"evr": 3.9, "move_impl_sem": 9.64, "move_impl_mes": 11.46,
-             "ultima_reacao": {"data": "2026-06-02", "abriu": -3.25, "fechou": -4.78},
-             "vies": "duas últimas reações negativas"},
-    "AOSL": {"evr": None, "move_impl_sem": None, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-08-12", "fechou_dia": +4.13,
-                               "premkt_seguinte": -10.47},
-             "vies": "média histórica -12.28% no dia seguinte (AMC)"},
-}
+# Estes números não têm API: alguém abre o OptionSlam e transcreve. Antes eles
+# viviam embutidos aqui, indistinguíveis do resto -- dado manual disfarçado de
+# vivo, que envelhece em silêncio.
+#
+# Agora moram em dados/radar_overrides.json, versionados e com `coletado_em`
+# obrigatório, e o relatório imprime a idade. A auditoria de 17/08/2026 pegou o
+# custo de não fazer isso: o snapshot de 13/08 seguia sendo servido como se
+# fosse de hoje.
+_OVERRIDES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "dados", "radar_overrides.json")
+
+
+def _carregar_overrides() -> tuple[dict, str | None, str | None]:
+    """(reacao_earnings, coletado_em, fonte). Falha aberta: sem o arquivo o
+    radar segue funcionando com o resto dos dados, apenas sem EVR/move
+    implícito -- melhor um relatório parcial que nenhum."""
+    try:
+        with open(_OVERRIDES_PATH, "r", encoding="utf-8") as f:
+            blob = json.load(f)
+        return (blob.get("reacao_earnings") or {},
+                blob.get("coletado_em"), blob.get("fonte"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[radar] overrides indisponíveis ({e}); seguindo sem EVR/move implícito",
+              file=sys.stderr, flush=True)
+        return {}, None, None
+
+
+REACAO_EARNINGS, OVERRIDES_COLETADO_EM, OVERRIDES_FONTE = _carregar_overrides()
+
+
+def idade_overrides_dias(ref: date | None = None) -> int | None:
+    """Há quantos dias os dados manuais foram coletados. None sem carimbo."""
+    if not OVERRIDES_COLETADO_EM:
+        return None
+    try:
+        return ((ref or today_brt()) - date.fromisoformat(OVERRIDES_COLETADO_EM)).days
+    except ValueError:
+        return None
+
 
 # ============================================================================
 # 4. RISCOS POR TICKER (dos 7 priorizados + AOSL)
@@ -630,10 +764,37 @@ def _fmt_pct(v):
     return f"{v:+.1f}%" if v is not None else "n/d"
 
 
+def _linha_procedencia(viva: dict) -> None:
+    """Uma linha dizendo de onde veio cada coisa. O radar mistura dado vivo
+    (preço/52s), manual (EVR/move implícito) e embutido (correlações); sem
+    isso o leitor trata tudo como igualmente fresco."""
+    idade = idade_overrides_dias()
+    if OVERRIDES_COLETADO_EM:
+        quando = "hoje" if idade == 0 else f"há {idade} dia(s)"
+        print(f"  EVR/move implícito: coleta manual ({OVERRIDES_FONTE or 'n/d'}) "
+              f"{quando}, em {OVERRIDES_COLETADO_EM}")
+    else:
+        print("  EVR/move implícito: SEM carimbo de coleta — idade desconhecida")
+
+    if viva["atualizados"]:
+        print(f"  preço e faixa de 52 semanas: vivos ({len(viva['atualizados'])} tickers)")
+    if viva["fontesDegradadas"]:
+        print("  ATENÇÃO — não atualizados, servindo o snapshot de "
+              f"{HOJE_SNAPSHOT.isoformat()}:")
+        for t, motivo in sorted(viva["fontesDegradadas"].items()):
+            print(f"    {t}: {motivo}")
+    for aviso in viva["avisos"]:
+        print(f"  INCONSISTÊNCIA: {aviso}")
+
+
 def relatorio_completo():
+    viva = atualizar_min52_vivo()
+
     print("=" * 72)
-    print("RADAR IA 2026 — snapshot 14/08/2026 (dados estáticos, revalidar)")
+    print("RADAR IA 2026")
     print("=" * 72)
+    print("\n--- PROCEDÊNCIA DOS DADOS ---")
+    _linha_procedencia(viva)
 
     print("\n--- EARNINGS PRÓXIMOS 14 DIAS ---")
     for e in earnings_proximos(14):
@@ -671,8 +832,16 @@ def relatorio_completo():
 
 
 def exportar_json():
+    viva = atualizar_min52_vivo()
     blob = {
         "snapshot": HOJE_SNAPSHOT.isoformat(),
+        # Procedência explícita: o consumidor (tela Radar IA) precisa saber o
+        # que é vivo, o que é manual e há quanto tempo.
+        "overridesColetadoEm": OVERRIDES_COLETADO_EM,
+        "overridesFonte": OVERRIDES_FONTE,
+        "overridesIdadeDias": idade_overrides_dias(),
+        "min52Atualizados": viva["atualizados"],
+        "min52Avisos": viva["avisos"],
         # Janela real das correlações servidas: igual ao snapshot quando só
         # há o embutido; avança quando o overlay de atualizar_correlacoes.py
         # foi aplicado no import.
@@ -686,6 +855,10 @@ def exportar_json():
         "correlacoes": {f"{a}|{b}": c for (a, b), c in CORRELACOES.items()},
         "portfolio_default": PORTFOLIO_DEFAULT,
     }
+    # Mesmo nome de campo que get_scenario_params/get_ticker_snapshot já usam
+    # para degradação — um vocabulário só em todo o app.
+    if viva["fontesDegradadas"]:
+        blob["fontesDegradadas"] = viva["fontesDegradadas"]
     print(json.dumps(blob, ensure_ascii=False, indent=2))
 
 

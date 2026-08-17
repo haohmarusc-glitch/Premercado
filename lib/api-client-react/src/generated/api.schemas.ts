@@ -228,7 +228,11 @@ export interface RadarEarningsItem {
 export interface RadarMin52Item {
   preco?: number;
   min52?: number;
+  /** maxima de 52 semanas -- so vem quando a linha foi atualizada ao vivo */
+  max52?: number;
   status?: string;
+  /** origem da serie quando o valor e vivo (yfinance, yfinance_cache, ...) */
+  fonte?: string;
 }
 
 export interface RadarReacaoItem {
@@ -262,6 +266,17 @@ export interface RadarSnapshot {
   correlacoes_janela_fim?: string;
   /** @nullable */
   correlacoes_atualizado_em?: string | null;
+  /** YYYY-MM-DD da coleta MANUAL de EVR/move implicito (OptionSlam) */
+  overridesColetadoEm?: string | null;
+  overridesFonte?: string | null;
+  /** ha quantos dias os dados manuais foram coletados */
+  overridesIdadeDias?: number | null;
+  /** tickers cujo preco/52s foi atualizado ao vivo nesta resposta */
+  min52Atualizados?: string[];
+  /** inconsistencias detectadas no dado vivo (preco < min52 etc.) */
+  min52Avisos?: string[];
+  /** ticker -> motivo, quando a serie nao veio do caminho normal */
+  fontesDegradadas?: Record<string, string>;
   earnings: Record<string, RadarEarningsItem>;
   min52: Record<string, RadarMin52Item>;
   reacao_earnings: Record<string, RadarReacaoItem>;

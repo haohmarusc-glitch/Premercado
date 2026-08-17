@@ -1,0 +1,58 @@
+{
+  "_comentario": [
+    "Dados MANUAIS do Radar IA — coleta humana de fonte externa (OptionSlam).",
+    "Não há API: alguém abre o site e transcreve. Por isso vive aqui, versionado",
+    "e com carimbo de data, em vez de embutido no .py disfarçado de dado vivo.",
+    "",
+    "`coletado_em` é OBRIGATÓRIO. O radar imprime a idade em todo relatório —",
+    "dado manual com carimbo é honesto; dado manual sem carimbo envelhece em",
+    "silêncio e vira o erro que a auditoria de 17/08/2026 pegou.",
+    "",
+    "Ao atualizar: troque `coletado_em` junto com os números. Um sem o outro é",
+    "pior que não atualizar."
+  ],
+  "coletado_em": "2026-08-14",
+  "fonte": "OptionSlam",
+  "reacao_earnings": {
+    "LOW": {
+      "evr": 1.5, "move_impl_sem": 5.54, "move_impl_mes": 8.59,
+      "ultima_reacao": {"data": "2026-05-20", "abriu": -2.01, "fechou": 1.22},
+      "vies": "recupera no dia"
+    },
+    "NTES": {
+      "evr": 2.7, "move_impl_sem": 6.89, "move_impl_mes": 10.88,
+      "ultima_reacao": {"data": "2026-05-21", "fechou": -2.12, "min_intraday": -9.21},
+      "vies": "negativo; mínima 52sem foi setada no dia do último earnings"
+    },
+    "XPEV": {
+      "evr": 3.5, "move_impl_sem": 10.61, "move_impl_mes": 15.37,
+      "ultima_reacao": {"data": "2026-05-28", "abriu": 1.51, "fechou": -0.06},
+      "vies": "neutro/leve negativo"
+    },
+    "PDD": {
+      "evr": 4.4, "move_impl_sem": 7.38, "move_impl_mes": 9.80,
+      "ultima_reacao": {"data": "2026-05-27", "fechou": -10.37, "min_intraday": -13.48},
+      "vies": "muito negativo"
+    },
+    "SNPS": {
+      "evr": null, "move_impl_sem": 3.9, "move_impl_mes": null,
+      "ultima_reacao": {"data": "2026-05-27", "nota": "beat de 12.4% mas caiu"},
+      "vies": "beats não seguram o papel — overhang estrutural de IA"
+    },
+    "ADSK": {
+      "evr": null, "move_impl_sem": 4.9, "move_impl_mes": null,
+      "ultima_reacao": {"data": "2026-05-28", "nota": "beat de 10.7%"},
+      "vies": "positivo recente; mediana de move 3.6% em 8 tris"
+    },
+    "ULTA": {
+      "evr": 3.9, "move_impl_sem": 9.64, "move_impl_mes": 11.46,
+      "ultima_reacao": {"data": "2026-06-02", "abriu": -3.25, "fechou": -4.78},
+      "vies": "duas últimas reações negativas"
+    },
+    "AOSL": {
+      "evr": null, "move_impl_sem": null, "move_impl_mes": null,
+      "ultima_reacao": {"data": "2026-08-12", "fechou_dia": 4.13, "premkt_seguinte": -10.47},
+      "vies": "média histórica -12.28% no dia seguinte (AMC)"
+    }
+  }
+}
