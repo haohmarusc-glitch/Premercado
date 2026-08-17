@@ -1581,10 +1581,15 @@ def check_squeeze_setup(ticker: str, headlines: list | None = None) -> dict:
             else "baixo"
         )
 
-        # ── RSI (série completa, pra divergência) + candle patterns ──
+        # ── RSI de Wilder (série completa, pra divergência) + candle patterns ──
+        # Wilder (ewm alpha=1/14), igual a get_technical_indicators acima e ao
+        # resto do repo. Era Cutler (`rolling(14).mean()`) só aqui, o que fazia
+        # o MESMO arquivo devolver dois RSIs diferentes conforme a função
+        # chamada -- e a divergência de RSI que o squeeze procura ficava
+        # medida numa régua que nenhuma outra tela usava.
         delta = close.diff()
-        avg_gain = delta.clip(lower=0).rolling(14).mean()
-        avg_loss = (-delta.clip(upper=0)).rolling(14).mean()
+        avg_gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14).mean()
+        avg_loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14).mean()
         rsi = 100 - 100 / (1 + avg_gain / avg_loss.replace(0, float("nan")))
         rsi = rsi.where(avg_loss != 0, 100.0)
         rsi_now = round(float(rsi.iloc[-1]), 2) if not pd.isna(rsi.iloc[-1]) else None
