@@ -60,7 +60,12 @@ REC_LABELS = {
     "sell": "venda", "strongSell": "venda forte",
 }
 
-MAX_TOKENS = 2500
+# 2500 cortava a análise no meio da frase em produção (16/08, INTC: o texto
+# parou em "a leitura correta é: os fundamentos"). O modelo escreve mais que
+# as 400-700 palavras pedidas, e em português cada palavra custa mais token
+# que em inglês. 4500 cobre com folga; quando ainda assim estourar, o corte
+# é MARCADO em vez de entregue como se fosse o texto inteiro.
+MAX_TOKENS = 4500
 # Teto do JSON de dados no prompt — a tela manda o que coletou, mas um
 # payload anômalo não pode virar um prompt gigante cobrado por token.
 MAX_DADOS_CHARS = 14_000
@@ -211,7 +216,14 @@ def analisar(dados: dict) -> dict:
         # Modelo fraco da cadeia devolvendo tocos é falha conhecida (ver
         # playbook §4) — melhor erro explícito que "análise" de uma linha.
         return {"error": "O modelo devolveu uma resposta curta demais; tente de novo"}
-    return {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}
+
+    saida = {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}
+    # Texto cortado por teto de tokens tem que ser DITO: uma análise que para
+    # no meio da frase, sem aviso, parece conclusão do modelo. Anthropic diz
+    # "max_tokens"; a camada OpenAI-compat diz "length".
+    if str(getattr(resp, "raw_stop_reason", "")).lower() in ("max_tokens", "length"):
+        saida["truncado"] = True
+    return saida
 
 
 if __name__ == "__main__":

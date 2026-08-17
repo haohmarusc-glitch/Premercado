@@ -27,14 +27,17 @@ class _Resp:
 
 
 class _Client:
-    def __init__(self, texto, visto):
+    def __init__(self, texto, visto, stop="end_turn"):
         self.models = {"full": "modelo-full", "flash": "modelo-flash"}
         self._texto = texto
         self._visto = visto
+        self._stop = stop
 
     def create(self, **kwargs):
         self._visto.update(kwargs)
-        return _Resp(self._texto)
+        r = _Resp(self._texto)
+        r.raw_stop_reason = self._stop
+        return r
 
 
 TEXTO_OK = "## Quadro geral\n" + ("análise " * 60)
@@ -139,6 +142,34 @@ def test_payload_gigante_e_truncado(monkeypatch):
     ia.analisar(_dados(technicals={"lixo": "x" * 50_000}))
     prompt = visto["messages"][0]["content"]
     assert len(prompt) < ia.MAX_DADOS_CHARS + 200  # teto + moldura do prompt
+
+
+# ── corte por teto de tokens ────────────────────────────────────────────────
+
+def test_texto_completo_nao_marca_truncado(monkeypatch):
+    _mock(monkeypatch)
+    assert "truncado" not in ia.analisar(_dados())
+
+
+@pytest.mark.parametrize("motivo", ["max_tokens", "length"])
+def test_corte_por_teto_e_marcado(monkeypatch, motivo):
+    """Visto em produção (16/08, INTC): o texto parou em 'a leitura correta
+    é: os fundamentos'. Análise que morre no meio da frase sem aviso parece
+    conclusão do modelo — tem que ser dito. Anthropic diz 'max_tokens', a
+    camada OpenAI-compat diz 'length'."""
+    visto = {}
+    monkeypatch.setattr(ia, "get_client", lambda: _Client(TEXTO_OK, visto, stop=motivo))
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 1, "total_cost_usd": 0.01})
+    monkeypatch.setattr(ia.yf, "Ticker", _Tk)
+    monkeypatch.setattr(ia.tools, "get_fundamentals_valuation", lambda t: {"configured": False})
+    monkeypatch.setattr(ia.tools, "get_news", lambda ts, max_items=None: {})
+    assert ia.analisar(_dados())["truncado"] is True
+
+
+def test_teto_de_tokens_cobre_a_extensao_pedida():
+    """O prompt pede 400-700 palavras; em português cada palavra custa mais
+    token que em inglês. 2500 cortava — o teto tem que ter folga sobre isso."""
+    assert ia.MAX_TOKENS >= 4000
 
 
 # ── extração do texto (o bug de 16/08) ──────────────────────────────────────
