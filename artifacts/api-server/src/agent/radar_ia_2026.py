@@ -48,9 +48,11 @@ from itertools import combinations
 try:
     from brt import today_brt
     import market_data_provider
+    import radar_overrides as _radar_overrides
 except ImportError:
     from agent.brt import today_brt
     from agent import market_data_provider
+    from agent import radar_overrides as _radar_overrides
 
 HOJE_SNAPSHOT = date(2026, 8, 14)  # data de referência dos dados
 
@@ -271,36 +273,17 @@ def atualizar_min52_vivo(tickers: list[str] | None = None) -> dict:
 # obrigatório, e o relatório imprime a idade. A auditoria de 17/08/2026 pegou o
 # custo de não fazer isso: o snapshot de 13/08 seguia sendo servido como se
 # fosse de hoje.
-_OVERRIDES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "dados", "radar_overrides.json")
-
-
-def _carregar_overrides() -> tuple[dict, str | None, str | None]:
-    """(reacao_earnings, coletado_em, fonte). Falha aberta: sem o arquivo o
-    radar segue funcionando com o resto dos dados, apenas sem EVR/move
-    implícito -- melhor um relatório parcial que nenhum."""
-    try:
-        with open(_OVERRIDES_PATH, "r", encoding="utf-8") as f:
-            blob = json.load(f)
-        return (blob.get("reacao_earnings") or {},
-                blob.get("coletado_em"), blob.get("fonte"))
-    except Exception as e:  # noqa: BLE001
-        print(f"[radar] overrides indisponíveis ({e}); seguindo sem EVR/move implícito",
-              file=sys.stderr, flush=True)
-        return {}, None, None
-
-
-REACAO_EARNINGS, OVERRIDES_COLETADO_EM, OVERRIDES_FONTE = _carregar_overrides()
+#
+# A leitura em si vive em radar_overrides.py: o earnings_window também precisa
+# destes números (fallback do move implícito quando a cadeia de opções não
+# responde), e duas cópias da leitura divergiriam na primeira mudança de
+# formato -- o padrão de bug do playbook §2b.
+REACAO_EARNINGS, OVERRIDES_COLETADO_EM, OVERRIDES_FONTE = _radar_overrides.carregar()
 
 
 def idade_overrides_dias(ref: date | None = None) -> int | None:
     """Há quantos dias os dados manuais foram coletados. None sem carimbo."""
-    if not OVERRIDES_COLETADO_EM:
-        return None
-    try:
-        return ((ref or today_brt()) - date.fromisoformat(OVERRIDES_COLETADO_EM)).days
-    except ValueError:
-        return None
+    return _radar_overrides.idade_dias(OVERRIDES_COLETADO_EM, ref)
 
 
 # ============================================================================

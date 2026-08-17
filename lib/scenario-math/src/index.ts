@@ -201,3 +201,101 @@ export function pctConfirmacao(snapshots: { pEmpate: number }[], thresholdPct: n
 export function cicloBateu(valorFinal: number, custoTotal: number): boolean {
   return valorFinal >= custoTotal;
 }
+
+/* ============================================================
+Modo earnings — as três volatilidades
+
+Mora aqui, e não na tela, porque a leitura tem que ser a MESMA nos dois
+lados: o card de /cenarios e o resumo servido pela rota
+(/api/scenarios/earnings-window) precisam concordar sobre o que é
+"prêmio caro". Duas cópias da regra divergiriam na primeira calibragem.
+
+O ponto do modo: quando a janela do cenário contém um balanço, a vol de
+difusão do painel não é uma aproximação -- é o número errado. Ela é
+simétrica (não tem viés), não tem drift e dilui o dia do evento entre 251
+dias comuns. Medido na auditoria de 17/08/2026:
+
+  PDD   modelo ±4,7%/sem vs realizado 10,3% com centro -8,2%
+  XPEV  modelo ±7,7% vs realizado 6,7% (em linha) -- mas implícita 10,6%
+  MRVL  modelo ±11% vs realizado 13,4%, e distribuição bimodal
+
+O modo não substitui a lognormal: põe as três leituras lado a lado e
+deixa o desalinhamento visível, que é onde está a informação.
+============================================================ */
+
+export type SeloPremio = "vol_barata" | "premio_caro" | "alinhadas";
+
+// Fonte da vol implícita, em ordem de preferência. "manual" carrega
+// carimbo de coleta -- ver dados/radar_overrides.json.
+export type FonteImplicito = "straddle_atm" | "manual";
+
+export interface MoveImplicito {
+  pct: number;
+  fonte: FonteImplicito;
+  vencimento?: string | null;
+  fonteNome?: string | null;
+  coletadoEm?: string | null;
+  idadeDias?: number | null;
+}
+
+// Subconjunto do `summary` de earnings_reaction_analysis.py que este
+// módulo usa. Nomes em snake_case porque vêm do Python sem tradução --
+// renomear no meio do caminho só criaria um segundo vocabulário.
+export interface ReacaoEarnings {
+  n_events: number;
+  close_pct_mean: number;
+  close_pct_abs_mean: number;
+  close_pct_std: number | null;
+  suggested_threshold_pct: number;
+  current_price?: number;
+  r1_price?: number;
+  r2_price?: number;
+  s1_price?: number;
+  s2_price?: number;
+}
+
+// Banda de "alinhadas": ±25% em torno da realizada, simétrica em log
+// (1/0,8 = 1,25). Não é arbitrária -- com ~8 eventos o erro-padrão da
+// própria média realizada já fica na casa de 30%, então uma banda mais
+// estreita estaria rotulando ruído amostral como sinal.
+export const PREMIO_RATIO_BARATA = 0.8;
+export const PREMIO_RATIO_CARA = 1.25;
+
+// Vol de difusão anual -> desvio de uma semana, em pontos percentuais.
+// √(7/365) e não √(5/252): o painel inteiro conta o horizonte em dias
+// CORRIDOS (ver diasAteAlvo e T = dias/365), e misturar as duas
+// convenções aqui faria a coluna "modelo" discordar do resto da tela.
+export function volModeloSemanalPct(volAnual: number): number {
+  return volAnual * Math.sqrt(7 / 365) * 100;
+}
+
+// A comparação que dá o selo: o que as opções cobram HOJE contra o que o
+// papel realmente fez nos últimos balanços.
+//
+// null quando falta um dos dois lados. Deliberado: um selo comparando
+// contra um número ausente é pior que nenhum selo -- ele parece uma
+// leitura e não é.
+export function classificarPremio(
+  implicitaPct: number | null | undefined,
+  realizadaPct: number | null | undefined,
+): SeloPremio | null {
+  if (implicitaPct == null || realizadaPct == null) return null;
+  if (!(realizadaPct > 0) || !(implicitaPct > 0)) return null;
+  const razao = implicitaPct / realizadaPct;
+  if (razao <= PREMIO_RATIO_BARATA) return "vol_barata";
+  if (razao >= PREMIO_RATIO_CARA) return "premio_caro";
+  return "alinhadas";
+}
+
+// Indício de bimodalidade tipo MRVL: quando o desvio-padrão das reações
+// supera a magnitude média delas, a série não tem um "movimento típico"
+// -- ela alterna entre saltos grandes e quase nada. A lognormal concentra
+// massa justamente no centro que esse papel não frequenta, e o efeito é
+// subestimar as duas caudas ao mesmo tempo.
+//
+// Precisa de >= 3 eventos: com dois, o desvio-padrão é a distância entre
+// eles e o teste dispara por construção.
+export function distribuicaoBimodal(r: ReacaoEarnings | null | undefined): boolean {
+  if (!r || r.close_pct_std == null || r.n_events < 3) return false;
+  return r.close_pct_std > r.close_pct_abs_mean;
+}

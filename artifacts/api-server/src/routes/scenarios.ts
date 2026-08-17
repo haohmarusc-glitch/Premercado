@@ -100,7 +100,12 @@ function toBrShortDate(iso: string | null | undefined): string {
 // checker de alerta em background (lib/scenario-alert-checker.ts), que
 // precisa dos mesmos dados (preço, custo, vol/beta, salto de earnings) sem
 // depender de uma sessão HTTP.
-export async function buildScenarioPositions(userId: number): Promise<ScenarioPosition[]> {
+// Posições ativas do usuário, com quantity/investedAmount recalculados dos
+// lotes abertos. Extraída de buildScenarioPositions porque o modo earnings
+// (/scenarios/earnings-window) precisa exatamente da mesma lista de tickers --
+// e uma segunda derivação de "o que está ativo" divergiria da primeira no dia
+// em que a regra dos lotes mudar (playbook §2b).
+async function posicoesAtivas(userId: number) {
   const rows = await db
     .select()
     .from(portfolioPositionsTable)
@@ -151,6 +156,11 @@ export async function buildScenarioPositions(userId: number): Promise<ScenarioPo
       return { p, derived };
     })
     .filter(({ p, derived }) => isPositionActiveFromLots(derived.quantity, lotsByPosition.get(p.id) ?? []));
+  return active;
+}
+
+export async function buildScenarioPositions(userId: number): Promise<ScenarioPosition[]> {
+  const active = await posicoesAtivas(userId);
   if (!active.length) return [];
 
   const tickers = [...new Set(active.map(({ p }) => p.ticker))];
@@ -223,6 +233,68 @@ router.get("/scenarios/positions", async (req, res): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "Failed to build scenario positions");
     res.status(500).json({ error: "Failed to load scenario positions" });
+  }
+});
+
+/**
+ * GET /scenarios/earnings-window?ate=YYYY-MM-DD
+ *
+ * Modo earnings: para cada posição ativa cujo PRÓXIMO balanço cai até a
+ * data-alvo, devolve a reação histórica medida e a vol implícita das opções.
+ * A terceira leitura -- a vol do modelo -- não vem daqui: ela já está em
+ * /scenarios/positions (campo `vol`), e a tela escala com volModeloSemanalPct.
+ * Servir o mesmo número por duas rotas só criaria uma chance de discordarem.
+ *
+ * Rota separada de /scenarios/positions de propósito: este caminho busca
+ * cadeia de opções e histórico de earnings por ticker, é lento, e o painel
+ * principal não pode ficar refém disso pra desenhar a distribuição. A tela
+ * carrega os dois em paralelo e o card aparece quando chegar.
+ *
+ * Ticker sem balanço na janela volta com naJanela=false -- não é erro, é o
+ * caso comum, e é o que faz o card não aparecer.
+ *
+ * Fora do openapi.yaml de propósito, seguindo as duas rotas irmãs deste
+ * arquivo (/scenarios/positions e /scenarios/sector-momentum): elas são
+ * consumidas por fetch direto em cenarios.tsx, não pelo cliente gerado. Só o
+ * que passa pelo cliente é documentado no spec -- documentar esta sozinha
+ * geraria um hook que ninguém chama e mais um arquivo "gerado" à mão para
+ * manter em dia (playbook §10).
+ */
+router.get("/scenarios/earnings-window", async (req, res): Promise<void> => {
+  const ate = String(req.query.ate ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ate)) {
+    res.status(400).json({ error: "Parâmetro `ate` obrigatório no formato YYYY-MM-DD" });
+    return;
+  }
+  try {
+    const active = await posicoesAtivas(req.userId!);
+    const tickers = [...new Set(active.map(({ p }) => p.ticker))];
+    if (!tickers.length) { res.json({ items: [] }); return; }
+
+    // 25s por ticker: cada um paga datas de balanço (com retry), histórico de
+    // preço e a cadeia de opções. O script consulta AGENT_DEADLINE_TS entre um
+    // ticker e o outro e imprime o que já tem (ver bounded_parallel.
+    // deadline_exceeded), então estourar o teto degrada em resultado parcial,
+    // não em resposta vazia. Teto absoluto porque uma carteira grande não pode
+    // deixar a requisição pendurada por minutos.
+    const timeoutMs = Math.min(150_000, 25_000 * tickers.length);
+    const out = await runStdinScript("earnings_window.py", { tickers, ate }, timeoutMs);
+
+    let parsed: { items?: unknown[] };
+    try {
+      parsed = JSON.parse(out);
+    } catch (err) {
+      logger.error({ err, stdoutHead: out.slice(0, 500), bytes: out.length },
+        "Earnings window: stdout imparseável");
+      res.status(502).json({ error: "Resposta inválida do earnings_window.py" });
+      return;
+    }
+    res.json({ items: parsed.items ?? [] });
+  } catch (err) {
+    // Falha aqui NÃO derruba o painel: a tela trata ausência do card como
+    // "sem modo earnings" e segue mostrando a distribuição lognormal.
+    logger.warn({ err }, "Earnings window: falha ao rodar earnings_window.py");
+    res.status(503).json({ error: "Modo earnings indisponível no momento" });
   }
 });
 
