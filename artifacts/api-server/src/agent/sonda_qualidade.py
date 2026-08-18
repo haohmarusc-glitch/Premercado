@@ -82,7 +82,13 @@ CASOS = [
         ),
         "dados": {"ticker": "NVDA", "snapshot": {"price": 180.0}},
         "exige": [
-            (r"não (est(á|ao)|há|foi|vieram|é possível)|indispon|ausen|sem dado",
+            # Largo de propósito. A primeira versão cobrava "não está/não há/
+            # não foi" e reprovava "NENHUM indicador técnico foi calculado, o
+            # que IMPEDE qualquer leitura" -- que é a frase certa, escrita pelo
+            # anthropic. Cobrar uma forma de dizer em vez do conteúdo dito é
+            # transformar a sonda em corretor de estilo.
+            (r"nenhum|indispon|ausen|sem dado|impede|"
+             r"não (est|h|foi|for|vier|é|consta|dispon)",
              "dizer que o dado não veio"),
         ],
         "proibe": [
@@ -100,16 +106,48 @@ CASOS = [
 ]
 
 
-def _checar(texto: str, caso: dict) -> list[str]:
-    falhas = []
+# Marcas de negação. Um `proibe` casa a PALAVRA, e a mesma palavra aparece nas
+# duas frases opostas:
+#
+#   "O RSI mostra o papel em SOBRECOMPRA."               <- erro real
+#   "Não é possível avaliar momentum ou SOBRECOMPRA."    <- texto certo
+#
+# A segunda não é hipotética: o anthropic escreveu exatamente isso em 18/08/2026,
+# e teria reprovado pelo motivo errado. Reprovar texto correto é pior que deixar
+# passar um errado -- sonda que dá alarme falso é desligada, e aí ela não pega
+# mais nada.
+_NEGACAO_RE = re.compile(
+    r"\b(não|nao|sem|ausen|indispon|impede|impossív|impossiv|nenhum|faltam?|"
+    r"não há|inexist)\w*", re.I,
+)
+
+
+def _frase(texto: str, pos: int) -> str:
+    """A sentença ao redor do achado. É a evidência do veredito: sem ela, quem
+    lê o ✗ não tem como saber se o modelo errou ou se a regex é burra -- e
+    sonda que não deixa auditar o próprio veredito não serve para decidir."""
+    ini = max(texto.rfind(".", 0, pos), texto.rfind("\n", 0, pos)) + 1
+    fim = texto.find(".", pos)
+    fim = len(texto) if fim < 0 else fim + 1
+    return " ".join(texto[ini:fim].split())
+
+
+def _checar(texto: str, caso: dict) -> tuple[list[str], list[str]]:
+    """Devolve (falhas, ignorados). O segundo existe para que a decisão de
+    NÃO reprovar também apareça: descarte silencioso é como uma sonda começa a
+    aprovar tudo sem ninguém notar."""
+    falhas, ignorados = [], []
     for padrao, descricao in caso["exige"]:
         if not re.search(padrao, texto, re.I):
             falhas.append(f"não {descricao}")
     for padrao, descricao in caso["proibe"]:
-        achado = re.search(padrao, texto, re.I)
-        if achado:
-            falhas.append(f"{descricao} ({achado.group(0)!r})")
-    return falhas
+        for achado in re.finditer(padrao, texto, re.I):
+            frase = _frase(texto, achado.start())
+            if _NEGACAO_RE.search(frase):
+                ignorados.append(f"{descricao}? negado na frase: \u201c{frase}\u201d")
+                continue
+            falhas.append(f"{descricao}: \u201c{frase}\u201d")
+    return falhas, ignorados
 
 
 def main() -> int:
@@ -118,6 +156,13 @@ def main() -> int:
 
     reprovados = 0
     for caso in CASOS:
+        # `_INICIO` é constante de MÓDULO, fixada no import -- correto em
+        # produção, onde cada análise é um processo novo. A sonda roda vários
+        # casos no mesmo processo, então sem zerar aqui o orçamento acumula:
+        # medido em 18/08/2026, a "coleta" do 3º caso apareceu como 75,2s dos
+        # 135s (a real foi 2s), e um 4º caso teria abortado com uma mensagem
+        # falsa sobre uma lentidão que não existiu.
+        mod._INICIO = time.monotonic()
         t0 = time.monotonic()
         try:
             saida = mod.analisar(dict(caso["dados"]))
@@ -133,7 +178,7 @@ def main() -> int:
             continue
 
         texto = saida.get("markdown") or ""
-        falhas = _checar(texto, caso)
+        falhas, ignorados = _checar(texto, caso)
         marca = "✓" if not falhas else "✗"
         print(f"{marca} {caso['nome']}  {gasto:.1f}s  {len(texto)} chars", file=sys.stderr)
         if falhas:
@@ -141,6 +186,8 @@ def main() -> int:
             print(f"    porquê: {caso['porque']}", file=sys.stderr)
             for f in falhas:
                 print(f"    - {f}", file=sys.stderr)
+        for i in ignorados:
+            print(f"    ~ {i}", file=sys.stderr)
 
     print(f"\n{len(CASOS) - reprovados}/{len(CASOS)} casos ok", file=sys.stderr)
     return 1 if reprovados else 0
