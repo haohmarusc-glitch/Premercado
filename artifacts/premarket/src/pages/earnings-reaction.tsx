@@ -39,21 +39,35 @@ interface RunupSummary {
   runup_atual_ex_evento_pct?: number;
 }
 
+// `number | null` em TODO campo numérico, e não só nos dois que já eram.
+//
+// O backend serializa por json_seguro desde 18/08/2026: qualquer valor
+// não-finito vira `null` em vez de `NaN`, porque `NaN` não é JSON válido e
+// derrubava a resposta inteira no JSON.parse do Node.
+//
+// A consequência aqui é que o tipo ANTIGO virou mentira -- declarava `number`
+// para campos que chegam nulos. E tipo mentiroso não é neutro: ele silencia
+// justamente o `valor.toFixed()` que quebra em runtime. Foi o que aconteceu:
+// a tela ficou PRETA, sem cabeçalho e sem mensagem, porque um throw no render
+// desmonta a árvore React inteira.
+//
+// Declarar a verdade faz o compilador enumerar cada ponto de uso -- que é
+// muito melhor que revisar trinta chamadas a olho.
 interface ReactionSummary {
   n_events: number;
-  gap_pct_mean: number;
-  gap_pct_abs_mean: number;
-  close_pct_mean: number;
-  close_pct_abs_mean: number;
+  gap_pct_mean: number | null;
+  gap_pct_abs_mean: number | null;
+  close_pct_mean: number | null;
+  close_pct_abs_mean: number | null;
   close_pct_std: number | null;
-  intraday_range_pct_mean: number;
+  intraday_range_pct_mean: number | null;
   volume_ratio_mean: number | null;
-  suggested_threshold_pct: number;
-  current_price: number;
-  r1_price: number;
-  r2_price: number;
-  s1_price: number;
-  s2_price: number;
+  suggested_threshold_pct: number | null;
+  current_price: number | null;
+  r1_price: number | null;
+  r2_price: number | null;
+  s1_price: number | null;
+  s2_price: number | null;
   runup?: RunupSummary;
 }
 
@@ -66,12 +80,28 @@ interface ReactionResult {
 
 const DEFAULT_TICKERS = "NVDA,SMCI,AVGO,SKHY,ARM";
 
-function fmtPct(v: number): string {
+// Traço em vez de exceção. "—" é o que a tela já mostra para indicador que
+// não pôde ser calculado; um throw aqui apaga a página inteira.
+const SEM_DADO = "—";
+
+export function temNumero(v: number | null | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+export function fmtPct(v: number | null | undefined): string {
+  if (!temNumero(v)) return SEM_DADO;
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
-function fmtUsd(v: number): string {
+export function fmtUsd(v: number | null | undefined): string {
+  if (!temNumero(v)) return SEM_DADO;
   return `$${v.toFixed(2)}`;
+}
+
+/** Número solto, com casas configuráveis e sufixo opcional ("%", "x"). */
+export function fmtNum(v: number | null | undefined, casas = 2, sufixo = ""): string {
+  if (!temNumero(v)) return SEM_DADO;
+  return `${v.toFixed(casas)}${sufixo}`;
 }
 
 function SessionCell({ move }: { move: SessionMove | null }) {
@@ -88,29 +118,37 @@ function SessionCell({ move }: { move: SessionMove | null }) {
 // Interpretação em texto puro, calculada em cima dos mesmos campos de summary/events
 // já retornados pelo backend -- nenhuma chamada de LLM, só regras diretas (mesmo
 // princípio "não usa LLM" da análise em si).
-function interpretResult(r: ReactionResult): string[] {
+export function interpretResult(r: ReactionResult): string[] {
   if (!r.summary) return [];
   const s = r.summary;
   const notes: string[] = [];
 
-  if (s.suggested_threshold_pct >= 8) {
+  // Cada bloco abaixo só fala quando TEM o número. Sem o guarda, um campo
+  // nulo cairia no `else` e a tela afirmaria "volatilidade histórica baixa"
+  // a partir de dado ausente -- pior que não dizer nada, porque a frase tem
+  // a mesma cara de uma conclusão medida.
+  if (!temNumero(s.suggested_threshold_pct)) {
+    notes.push("Volatilidade histórica: sem dado suficiente para classificar.");
+  } else if (s.suggested_threshold_pct >= 8) {
     notes.push(
-      `Volatilidade histórica alta: as reações passadas chegam a mover o preço ±${s.suggested_threshold_pct.toFixed(1)}% no extremo — vale reduzir o tamanho da posição e usar stops mais largos.`,
+      `Volatilidade histórica alta: as reações passadas chegam a mover o preço ±${fmtNum(s.suggested_threshold_pct, 1)}% no extremo — vale reduzir o tamanho da posição e usar stops mais largos.`,
     );
   } else if (s.suggested_threshold_pct >= 4) {
     notes.push(
-      `Volatilidade histórica moderada: espere oscilações de até ±${s.suggested_threshold_pct.toFixed(1)}% em torno do resultado.`,
+      `Volatilidade histórica moderada: espere oscilações de até ±${fmtNum(s.suggested_threshold_pct, 1)}% em torno do resultado.`,
     );
   } else {
     notes.push(
-      `Volatilidade histórica baixa: as reações passadas ficaram dentro de ±${s.suggested_threshold_pct.toFixed(1)}%, sinal de que o mercado já precifica bem os resultados desse papel.`,
+      `Volatilidade histórica baixa: as reações passadas ficaram dentro de ±${fmtNum(s.suggested_threshold_pct, 1)}%, sinal de que o mercado já precifica bem os resultados desse papel.`,
     );
   }
 
-  if (Math.abs(s.close_pct_mean) >= 1) {
+  if (!temNumero(s.close_pct_mean)) {
+    notes.push("Viés direcional: sem dado suficiente para avaliar.");
+  } else if (Math.abs(s.close_pct_mean) >= 1) {
     const dir = s.close_pct_mean > 0 ? "positivo (alta)" : "negativo (queda)";
     notes.push(
-      `Viés histórico ${dir}: em média o papel fechou ${fmtPct(s.close_pct_mean)} na janela de reação, com desvio de ${s.close_pct_std != null ? s.close_pct_std.toFixed(2) : "N/A"}pp — não é garantia de repetição.`,
+      `Viés histórico ${dir}: em média o papel fechou ${fmtPct(s.close_pct_mean)} na janela de reação, com desvio de ${fmtNum(s.close_pct_std)}pp — não é garantia de repetição.`,
     );
   } else {
     notes.push(
@@ -118,19 +156,24 @@ function interpretResult(r: ReactionResult): string[] {
     );
   }
 
-  if (s.gap_pct_abs_mean > 0 && s.close_pct_abs_mean > s.gap_pct_abs_mean * 1.3) {
+  // Este par não ganha frase de "sem dado": ele é uma observação OPCIONAL
+  // sobre a forma do movimento. Faltando um dos dois, o silêncio é a leitura
+  // correta -- não há nada a dizer sobre a relação entre eles.
+  if (temNumero(s.gap_pct_abs_mean) && temNumero(s.close_pct_abs_mean)
+      && s.gap_pct_abs_mean > 0 && s.close_pct_abs_mean > s.gap_pct_abs_mean * 1.3) {
     notes.push(
-      `O movimento tende a se ampliar ao longo do pregão: o gap médio de abertura (${s.gap_pct_abs_mean.toFixed(2)}%) é bem menor que a variação até o fechamento (${s.close_pct_abs_mean.toFixed(2)}%).`,
+      `O movimento tende a se ampliar ao longo do pregão: o gap médio de abertura (${fmtNum(s.gap_pct_abs_mean)}%) é bem menor que a variação até o fechamento (${fmtNum(s.close_pct_abs_mean)}%).`,
     );
-  } else if (s.gap_pct_abs_mean > 0 && s.gap_pct_abs_mean > s.close_pct_abs_mean * 1.3) {
+  } else if (temNumero(s.gap_pct_abs_mean) && temNumero(s.close_pct_abs_mean)
+             && s.gap_pct_abs_mean > 0 && s.gap_pct_abs_mean > s.close_pct_abs_mean * 1.3) {
     notes.push(
-      `A maior parte do movimento historicamente acontece já na abertura: o gap médio (${s.gap_pct_abs_mean.toFixed(2)}%) é próximo ou maior que a variação até o fechamento (${s.close_pct_abs_mean.toFixed(2)}%).`,
+      `A maior parte do movimento historicamente acontece já na abertura: o gap médio (${fmtNum(s.gap_pct_abs_mean)}%) é próximo ou maior que a variação até o fechamento (${fmtNum(s.close_pct_abs_mean)}%).`,
     );
   }
 
   if (s.volume_ratio_mean != null && s.volume_ratio_mean >= 1.5) {
     notes.push(
-      `O volume nos dias de reação costuma ser ${s.volume_ratio_mean.toFixed(1)}x a média do período — confirma que o mercado reage com convicção a esses resultados.`,
+      `O volume nos dias de reação costuma ser ${fmtNum(s.volume_ratio_mean, 1)}x a média do período — confirma que o mercado reage com convicção a esses resultados.`,
     );
   }
 
@@ -161,7 +204,7 @@ function interpretResult(r: ReactionResult): string[] {
 
   const ru = s.runup;
   if (ru && ru.esticado_n != null && ru.esticado_n > 0) {
-    const frase = `Padrão "chegou esticado": em ${ru.esticado_caiu_n} de ${ru.esticado_n} balanços em que o papel subiu ≥${ru.esticado_corte_pct.toFixed(0)}% no mês anterior, a reação foi de QUEDA` +
+    const frase = `Padrão "chegou esticado": em ${ru.esticado_caiu_n} de ${ru.esticado_n} balanços em que o papel subiu ≥${fmtNum(ru.esticado_corte_pct, 0)}% no mês anterior, a reação foi de QUEDA` +
       (ru.esticado_reacao_media != null ? ` (média ${fmtPct(ru.esticado_reacao_media)})` : "") + `.`;
     notes.push(frase);
   }
@@ -173,7 +216,7 @@ function interpretResult(r: ReactionResult): string[] {
   }
   if (ru && ru.corr_runup_reacao != null) {
     notes.push(
-      `Correlação run-up × reação: ${ru.corr_runup_reacao >= 0 ? "+" : ""}${ru.corr_runup_reacao.toFixed(2)} — amostra pequena, trate como indício, não prova.`,
+      `Correlação run-up × reação: ${ru.corr_runup_reacao >= 0 ? "+" : ""}${fmtNum(ru.corr_runup_reacao)} — amostra pequena, trate como indício, não prova.`,
     );
   }
   if (ru && ru.runup_atual_pct != null && ru.estado_atual) {
@@ -227,20 +270,20 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
     const s = r.summary;
     blocos.push(`## ${r.ticker}\n\n` + itens([
       ["Eventos analisados", s.n_events],
-      ["Threshold sugerido", `±${s.suggested_threshold_pct.toFixed(2)}%`],
-      ["Preço atual", `$${s.current_price.toFixed(2)}`],
+      ["Threshold sugerido", `±${fmtNum(s.suggested_threshold_pct)}%`],
+      ["Preço atual", fmtUsd(s.current_price)],
       ["Gap médio", pct(s.gap_pct_mean)],
-      ["Gap médio absoluto", `${s.gap_pct_abs_mean.toFixed(2)}%`],
+      ["Gap médio absoluto", `${fmtNum(s.gap_pct_abs_mean)}%`],
       ["Fechamento médio", pct(s.close_pct_mean)],
-      ["Fechamento médio absoluto", `${s.close_pct_abs_mean.toFixed(2)}%`],
-      ["Desvio-padrão do fechamento", s.close_pct_std != null ? `${s.close_pct_std.toFixed(2)}%` : "—"],
-      ["Amplitude intradiária média", `${s.intraday_range_pct_mean.toFixed(2)}%`],
-      ["Razão de volume", s.volume_ratio_mean != null ? `${s.volume_ratio_mean.toFixed(2)}x` : "—"],
+      ["Fechamento médio absoluto", `${fmtNum(s.close_pct_abs_mean)}%`],
+      ["Desvio-padrão do fechamento", fmtNum(s.close_pct_std, 2, "%")],
+      ["Amplitude intradiária média", fmtNum(s.intraday_range_pct_mean, 2, "%")],
+      ["Razão de volume", fmtNum(s.volume_ratio_mean, 2, "x")],
       // Bandas estatísticas (preço ± reação histórica), NÃO suporte/resistência
       // de gráfico — o rótulo antigo ("Resistências"/"Suportes") fazia o texto
       // exportado ser lido como estrutura de preço, inclusive pela análise com IA.
-      ["Banda de reação · alta", `R1 $${s.r1_price.toFixed(2)} · R2 $${s.r2_price.toFixed(2)}`],
-      ["Banda de reação · baixa", `S1 $${s.s1_price.toFixed(2)} · S2 $${s.s2_price.toFixed(2)}`],
+      ["Banda de reação · alta", `R1 ${fmtUsd(s.r1_price)} · R2 ${fmtUsd(s.r2_price)}`],
+      ["Banda de reação · baixa", `S1 ${fmtUsd(s.s1_price)} · S2 ${fmtUsd(s.s2_price)}`],
     ]) + "\n\n_R1/R2/S1/S2 projetam a volatilidade histórica de earnings sobre o preço atual — não são suporte/resistência técnico._");
 
     const ru = s.runup;
@@ -248,7 +291,7 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
       const linhasRunup: [string, string | number | null | undefined][] = [
         ["Janela", `${ru.runup_pregoes} pregões · corte de esticado em ${ru.esticado_corte_pct}%`],
         ["Eventos com run-up medido", ru.n_com_runup],
-        ["Correlação run-up × reação", ru.corr_runup_reacao != null ? ru.corr_runup_reacao.toFixed(2) : "—"],
+        ["Correlação run-up × reação", fmtNum(ru.corr_runup_reacao)],
         ["Esticado", ru.esticado_n != null ? `${ru.esticado_caiu_n ?? 0} de ${ru.esticado_n} caíram · reação média ${pct(ru.esticado_reacao_media)}` : "—"],
         ["Descontado", ru.descontado_n != null ? `${ru.descontado_subiu_n ?? 0} de ${ru.descontado_n} subiram · reação média ${pct(ru.descontado_reacao_media)}` : "—"],
         ["Run-up atual", ru.runup_atual_pct != null ? `${pct(ru.runup_atual_pct)} (${ru.estado_atual ?? "—"})` : "—"],
@@ -273,7 +316,7 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
           e.runup_pct != null ? pct(e.runup_pct) : "—",
           e.announcement_day ? pct(e.announcement_day.gap_pct) : "—",
           e.announcement_day ? pct(e.announcement_day.close_pct) : "—",
-          e.announcement_day ? `${e.announcement_day.intraday_range_pct.toFixed(2)}%` : "—",
+          e.announcement_day ? fmtNum(e.announcement_day.intraday_range_pct, 2, "%") : "—",
           e.next_day ? pct(e.next_day.close_pct) : "—",
         ]),
       ));
@@ -372,7 +415,7 @@ export default function EarningsReactionPage() {
                 <span className="font-mono font-bold text-primary">{r.ticker}</span>
                 {r.summary && (
                   <span className="font-mono text-xs text-muted-foreground">
-                    {r.summary.n_events} evento(s) · threshold sugerido ±{r.summary.suggested_threshold_pct.toFixed(2)}%
+                    {r.summary.n_events} evento(s) · threshold sugerido ±{fmtNum(r.summary.suggested_threshold_pct)}%
                   </span>
                 )}
               </div>
@@ -383,10 +426,10 @@ export default function EarningsReactionPage() {
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
                     {[
-                      { label: "Gap médio", value: fmtPct(r.summary.gap_pct_mean), sub: `|média| ${r.summary.gap_pct_abs_mean.toFixed(2)}%` },
-                      { label: "Fechamento médio", value: fmtPct(r.summary.close_pct_mean), sub: `desvio ${r.summary.close_pct_std?.toFixed(2) ?? "N/A"}` },
-                      { label: "Range intradiário", value: `${r.summary.intraday_range_pct_mean.toFixed(2)}%`, sub: "" },
-                      { label: "Volume vs média", value: r.summary.volume_ratio_mean ? `${r.summary.volume_ratio_mean.toFixed(2)}x` : "N/A", sub: "" },
+                      { label: "Gap médio", value: fmtPct(r.summary.gap_pct_mean), sub: `|média| ${fmtNum(r.summary.gap_pct_abs_mean)}%` },
+                      { label: "Fechamento médio", value: fmtPct(r.summary.close_pct_mean), sub: `desvio ${fmtNum(r.summary.close_pct_std)}` },
+                      { label: "Range intradiário", value: fmtNum(r.summary.intraday_range_pct_mean, 2, "%"), sub: "" },
+                      { label: "Volume vs média", value: fmtNum(r.summary.volume_ratio_mean, 2, "x"), sub: "" },
                     ].map(({ label, value, sub }) => (
                       <div key={label} className="border border-border/60 rounded-lg bg-background p-3">
                         <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>

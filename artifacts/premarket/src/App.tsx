@@ -1,4 +1,5 @@
 import { Switch, Route, Router as WouterRouter } from "wouter";
+import { ErroNaTela } from "@/components/erro-na-tela";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
@@ -58,6 +59,16 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Layout>
+      {/* Barreira por rota. Uma exceção no render desmonta a árvore React
+          INTEIRA -- em 18/08/2026 um `null.toFixed()` num card deixou a tela
+          de Reação a Earnings PRETA, sem cabeçalho e sem mensagem. O bug foi
+          corrigido, mas o modo de falhar é o que precisa mudar: erro numa
+          tela não pode apagar o aplicativo, e silêncio é indistinguível de
+          "ainda carregando".
+
+          Fica DENTRO do Layout de propósito: o menu continua desenhado, então
+          dá para navegar para outra tela sem recarregar a página. */}
+      <ErroNaTela>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/dashboard" component={Dashboard} />
@@ -99,6 +110,7 @@ function Router() {
         <Route path="/cripto" component={CryptoPage} />
         <Route component={NotFound} />
       </Switch>
+      </ErroNaTela>
     </Layout>
   );
 }
