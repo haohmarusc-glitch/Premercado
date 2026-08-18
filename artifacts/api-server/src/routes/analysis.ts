@@ -72,8 +72,59 @@ function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
 // runMarketAlertsSnapshot (provider.py tem import relativo). POST porque o
 // corpo carrega os painéis já coletados pela tela — o script não refaz
 // nenhuma busca de mercado, só transforma número em leitura.
+//
+// ── Guardar o resultado pronto ──────────────────────────────────────────────
+//
+// A análise leva ~58s (medido em produção: um 200 com responseTime 58608), e
+// nesse tempo a conexão do celular cai. Quando cai, o servidor NÃO cancela o
+// Python: o trabalho termina, os tokens são cobrados, e a resposta é escrita
+// num socket que não existe mais. O usuário pagou e não viu nada.
+//
+// A resposta certa não é evitar a queda -- rede móvel vai cair -- é fazer com
+// que ela não custe nada. Com o resultado guardado, o segundo clique devolve
+// a análise pronta na hora, de graça.
+//
+// 10min: a análise é um RETRATO dos painéis que a tela mandou no corpo, e a
+// chave é o corpo inteiro. Painel novo = chave nova = análise nova. O TTL só
+// existe para o retrato não envelhecer indefinidamente na memória; ele nunca
+// serve leitura de dados diferentes dos que foram pedidos.
+const CACHE_IA_TTL_MS = 10 * 60_000;
+const cacheIA = new Map<string, { valor: unknown; em: number }>();
+
+function guardarIA(chave: string, valor: unknown): void {
+  // Resposta de erro não entra: o erro é do momento (provedor fora do ar,
+  // orçamento estourado), e guardá-lo transformaria uma falha passageira em
+  // dez minutos de falha garantida.
+  if (valor && typeof valor === "object" && "error" in valor) return;
+  cacheIA.set(chave, { valor, em: Date.now() });
+  // Varre os vencidos no write. Sem isso o Map cresce sem teto -- cada análise
+  // guarda o payload inteiro dos painéis como chave.
+  for (const [k, v] of cacheIA) {
+    if (Date.now() - v.em > CACHE_IA_TTL_MS) cacheIA.delete(k);
+  }
+}
+
+// Idade máxima para entrar de carona numa análise em andamento. Ver o
+// comentário de `coalescer`: embarcar num trabalho que já gastou o orçamento
+// não é economia, é herdar uma morte marcada.
+//
+// 60s contra o teto de 150s da rota: quem chega depois disso não teria tempo
+// nem para UMA passada completa (a análise que deu certo levou 58s).
+const IDADE_MAX_CARONA_MS = 60_000;
+
 function runAnaliseRapidaIA(payload: object): Promise<unknown> {
-  return coalescer(`analise_rapida_ia:${JSON.stringify(payload)}`, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
+  const chave = `analise_rapida_ia:${JSON.stringify(payload)}`;
+
+  const guardado = cacheIA.get(chave);
+  if (guardado && Date.now() - guardado.em <= CACHE_IA_TTL_MS) {
+    logger.info(
+      { idadeMs: Date.now() - guardado.em },
+      "analise_rapida_ia: devolvendo análise já calculada (mesmos painéis)",
+    );
+    return Promise.resolve(guardado.valor);
+  }
+
+  return coalescer(chave, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
     const py = spawnPython(getPythonBin(), ["-m", "agent.analise_rapida_ia"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
@@ -180,7 +231,12 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
         }
       }
     });
-  })));
+  })), IDADE_MAX_CARONA_MS).then((valor) => {
+    // Guarda DEPOIS de resolver, e independentemente de quem estava ouvindo:
+    // o caso que importa é justamente aquele em que o cliente já foi embora.
+    guardarIA(chave, valor);
+    return valor;
+  });
 }
 
 // Teto do corpo aceito — os painéis da tela cabem com folga; payload maior

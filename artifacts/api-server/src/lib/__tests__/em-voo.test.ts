@@ -128,4 +128,94 @@ describe("coalescer", () => {
     expect(await segunda).toBe("mesma resposta");
     expect(tarefa).toHaveBeenCalledTimes(1);
   });
+
+  // ── idade máxima da carona ────────────────────────────────────────────────
+  //
+  // "Quem entrou de carona teria falhado do mesmo jeito rodando sozinho" só
+  // vale para carona em trabalho NOVO. Produção 18/08/2026: a conexão caiu aos
+  // 56s, o usuário clicou de novo, o segundo clique colou no trabalho antigo e
+  // morreu com ele no teto de 150s. O log mostrou o absurdo -- uma requisição
+  // de 68s morrendo por um timeout de 150s -- quando 58s bastavam.
+
+  it("retardatário NÃO entra de carona em busca velha demais", async () => {
+    vi.useFakeTimers();
+    try {
+      const { promessa, resolver } = controlada<string>();
+      const primeiraTarefa = vi.fn(() => promessa);
+      const segundaTarefa = vi.fn(() => Promise.resolve("nova"));
+
+      const primeira = coalescer("k", primeiraTarefa, 1_000);
+      vi.setSystemTime(Date.now() + 5_000);          // busca envelheceu
+
+      const segunda = coalescer("k", segundaTarefa, 1_000);
+
+      expect(segundaTarefa).toHaveBeenCalledTimes(1);  // rodou por fora
+      expect(await segunda).toBe("nova");
+
+      resolver("velha");
+      expect(await primeira).toBe("velha");            // a antiga segue dona da chave
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dentro da idade máxima a carona continua valendo", async () => {
+    vi.useFakeTimers();
+    try {
+      const { promessa, resolver } = controlada<string>();
+      const tarefa = vi.fn(() => promessa);
+
+      const primeira = coalescer("k", tarefa, 10_000);
+      vi.setSystemTime(Date.now() + 1_000);           // ainda nova
+      const segunda = coalescer("k", tarefa, 10_000);
+
+      expect(tarefa).toHaveBeenCalledTimes(1);
+      resolver("mesma");
+      expect(await primeira).toBe("mesma");
+      expect(await segunda).toBe("mesma");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sem idadeMaxMs o comportamento antigo é preservado", async () => {
+    // Os outros consumidores (chart, market_alerts) não passam o parâmetro e
+    // não podem mudar de comportamento por causa desta rota.
+    vi.useFakeTimers();
+    try {
+      const { promessa, resolver } = controlada<string>();
+      const tarefa = vi.fn(() => promessa);
+
+      const primeira = coalescer("k", tarefa);
+      vi.setSystemTime(Date.now() + 600_000);         // dez minutos depois
+      const segunda = coalescer("k", tarefa);
+
+      expect(tarefa).toHaveBeenCalledTimes(1);        // ainda pega carona
+      resolver("mesma");
+      expect(await primeira).toBe("mesma");
+      expect(await segunda).toBe("mesma");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("o retardatário que roda por fora não rouba nem apaga a chave alheia", async () => {
+    // Se ele apagasse a entrada ao terminar, a busca original ficaria órfã e a
+    // próxima chamada abriria uma TERCEIRA execução do mesmo trabalho.
+    vi.useFakeTimers();
+    try {
+      const { promessa, resolver } = controlada<string>();
+      const primeira = coalescer("k", () => promessa, 1_000);
+      vi.setSystemTime(Date.now() + 5_000);
+
+      await coalescer("k", () => Promise.resolve("por fora"), 1_000);
+
+      expect(emVooAgora()).toBe(1);                   // a original continua lá
+      resolver("original");
+      await primeira;
+      expect(emVooAgora()).toBe(0);                   // e só ela limpa
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
