@@ -206,3 +206,107 @@ def test_o_custo_estimado_do_orcamento_bate_com_o_teto_real():
     # API_TIMEOUT_SECONDS -- que agora chega aos dois clientes.
     import os
     assert float(os.environ["API_TIMEOUT_SECONDS"]) == pytest.approx(mod._LLM_TIMEOUT_S)
+
+
+# ── de quem é o tempo ───────────────────────────────────────────────────────
+#
+# Produção 18/08/2026, forçando a entrada pelo deepseek:
+#
+#   [provider] deepseek failed: Request timed out.
+#   [provider] switched to anthropic
+#   anthropic/claude-sonnet-5 respondeu em 91.5s
+#
+# O anthropic NÃO levou 91,5s -- levou ~40s, o mesmo do run sem fallback. Os
+# outros ~52s foram o deepseek sendo cortado pelo teto de 55s.
+#
+# A causa é estrutural: quem chama só consegue cronometrar o `create()`, e o
+# `create()` percorre a cadeia por dentro. O nome impresso vem de
+# `client.provider_name`, que depois da troca já é o provedor NOVO -- então o
+# tempo de todo mundo cai no colo de quem respondeu, que é justamente o único
+# que não tem culpa. Log assim manda investigar o inocente.
+
+def _fazer_cadeia(cadeia, monkeypatch, roteiro: dict):
+    """roteiro: nome -> ('ok'|'falha', segundos_de_espera)."""
+    class _Cliente:
+        def __init__(self, nome):
+            self.models = {"full": f"modelo-{nome}"}
+            self._nome = nome
+
+        def create(self, **_kw):
+            acao, espera = roteiro[self._nome]
+            time.sleep(espera)
+            if acao == "falha":
+                raise RuntimeError(f"{self._nome} estourou o teto")
+            return f"resposta de {self._nome}"
+
+    monkeypatch.setattr(cadeia, "_get_client", lambda nome: _Cliente(nome))
+
+
+def test_o_tempo_registrado_e_do_vencedor_nao_da_cadeia(cadeia, monkeypatch):
+    """O caso da produção em miniatura: o primeiro provedor queima tempo e
+    falha, o segundo responde rápido. O número gravado tem que ser o do
+    segundo."""
+    _fazer_cadeia(cadeia, monkeypatch, {
+        "anthropic": ("falha", 0.30),
+        "gemini": ("ok", 0.02),
+    })
+
+    inicio = time.monotonic()
+    assert _chamar(cadeia) == "resposta de gemini"
+    cadeia_s = time.monotonic() - inicio
+
+    vencedor_s = cadeia.ultimo_tempo_provedor_s
+    assert vencedor_s is not None
+    # O gemini respondeu em ~0,02s dentro de uma cadeia de ~0,32s. Gravar o
+    # tempo da cadeia aqui é exatamente o bug -- seria 15x o custo real dele.
+    assert vencedor_s < 0.15
+    assert cadeia_s - vencedor_s > 0.2
+
+
+def test_sem_fallback_os_dois_numeros_praticamente_coincidem(cadeia, monkeypatch):
+    """Quando o primeiro responde não há nada a separar, e o log não deve
+    inventar uma distinção que não existe (ver o guarda de 0,5s no script)."""
+    _fazer_cadeia(cadeia, monkeypatch, {"anthropic": ("ok", 0.05)})
+
+    inicio = time.monotonic()
+    _chamar(cadeia)
+    cadeia_s = time.monotonic() - inicio
+
+    assert abs(cadeia_s - cadeia.ultimo_tempo_provedor_s) < 0.05
+
+
+def test_a_linha_de_falha_diz_quanto_o_provedor_custou(cadeia, monkeypatch, capsys):
+    """"deepseek failed" sem número não distingue recusa imediata (chave ruim,
+    milissegundos) de teto estourado (55s) -- e as duas pedem investigações
+    opostas."""
+    _fazer_cadeia(cadeia, monkeypatch, {
+        "anthropic": ("falha", 0.10),
+        "gemini": ("ok", 0.01),
+    })
+    _chamar(cadeia)
+
+    assert "anthropic failed after 0.1s" in capsys.readouterr().err
+
+
+def test_o_relogio_zera_a_cada_chamada(cadeia, monkeypatch):
+    """Valor grudado da chamada anterior seria pior que valor nenhum: o log
+    pareceria medido e estaria descrevendo outro pedido."""
+    _fazer_cadeia(cadeia, monkeypatch, {"anthropic": ("ok", 0.20)})
+    _chamar(cadeia)
+    primeiro = cadeia.ultimo_tempo_provedor_s
+
+    _fazer_cadeia(cadeia, monkeypatch, {"anthropic": ("ok", 0.01)})
+    _chamar(cadeia)
+
+    assert cadeia.ultimo_tempo_provedor_s < primeiro / 2
+
+
+def test_o_script_imprime_os_dois_relogios():
+    """Ter o número e não usá-lo deixaria o log mentindo igual."""
+    import pathlib
+    from agent import analise_rapida_ia as mod
+
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    assert any("ultimo_tempo_provedor_s" in l for l in codigo)
+    assert any("cadeia inteira" in l for l in codigo)

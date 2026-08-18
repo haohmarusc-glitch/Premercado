@@ -532,9 +532,28 @@ def analisar(dados: dict) -> dict:
             messages=[{"role": "user", "content": conteudo}],
         )
         texto = texto_da_resposta(resp)
+        # DOIS relógios, porque são duas perguntas diferentes.
+        #
+        # `_llm_s` mede o create() inteiro -- e o create() percorre a cadeia por
+        # dentro, sem devolver o controle. Atribuir esse tempo a
+        # `client.provider_name` (que já é o provedor NOVO depois da troca)
+        # carimba no vencedor o tempo gasto por quem falhou antes dele.
+        #
+        # Produção 18/08/2026, com AGENT_PROVIDER=deepseek:
+        #
+        #   [provider] deepseek failed: Request timed out.
+        #   anthropic/claude-sonnet-5 respondeu em 91.5s
+        #
+        # O anthropic levou ~40s (bateu com o run anterior, sem fallback); os
+        # outros ~52s foram o deepseek sendo cortado pelo timeout. Quem lesse
+        # isso amanhã iria investigar o anthropic, que era o único inocente.
         _llm_s = time.monotonic() - _antes_llm
+        _provedor_s = getattr(client, "ultimo_tempo_provedor_s", None)
+        _tempo = (f"respondeu em {_provedor_s:.1f}s (cadeia inteira: {_llm_s:.1f}s)"
+                  if _provedor_s is not None and _llm_s - _provedor_s >= 0.5
+                  else f"respondeu em {_llm_s:.1f}s")
         print(f"[analise_rapida_ia] {client.provider_name}/{client.models['full']} "
-              f"respondeu em {_llm_s:.1f}s ({len(texto)} chars)",
+              f"{_tempo} ({len(texto)} chars)",
               file=sys.stderr, flush=True)
         if len(texto) >= MIN_TEXTO_CHARS:
             break
