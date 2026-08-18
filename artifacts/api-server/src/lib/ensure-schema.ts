@@ -9,6 +9,27 @@ import { logger } from "./logger";
 // 0009_alerts_technical_indicator.sql.
 export async function ensureSchema(): Promise<void> {
   try {
+    // Tabela nova (migration 0038). Criada aqui também para o boot não depender
+    // do `db push` ter rodado -- mesma postura das colunas abaixo. A declaração
+    // correspondente em lib/db/src/schema/premarket.ts NÃO é opcional: sem ela
+    // o push propõe DROP da tabela (ver o comentário do checkerLeaseTable).
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS macro_risk_snapshots (
+      id serial PRIMARY KEY,
+      snapshot_date text NOT NULL UNIQUE,
+      evaluated_at timestamptz NOT NULL DEFAULT now(),
+      aggregate_score integer,
+      coverage_pct integer NOT NULL DEFAULT 0,
+      active_flags jsonb NOT NULL DEFAULT '[]'::jsonb,
+      degraded_sources jsonb NOT NULL DEFAULT '{}'::jsonb,
+      raw jsonb NOT NULL DEFAULT '{}'::jsonb
+    )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_macro_risk_date ON macro_risk_snapshots(snapshot_date DESC)`);
+    logger.info("Schema check ok (macro_risk_snapshots)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (macro_risk_snapshots)");
+  }
+
+  try {
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_real numeric(15,4) NOT NULL DEFAULT 0`);
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_simulated numeric(15,4) NOT NULL DEFAULT 0`);
     logger.info("Schema check ok (settings.cash_real/cash_simulated)");

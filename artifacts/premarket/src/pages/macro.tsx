@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Globe, RefreshCw, Building2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RiscoMacro } from "@/components/risco-macro";
 
 interface FearGreed {
   score?: number | null;
@@ -88,6 +89,11 @@ export default function MacroPage() {
           {isFetching ? "ATUALIZANDO..." : "ATUALIZAR"}
         </button>
       </div>
+
+      {/* Risco macro vem PRIMEIRO: é o pano de fundo que contextualiza o resto
+          da página. Fear & Greed e setores lidos sem saber que há choque de
+          juros em curso contam meia história. */}
+      <RiscoMacro />
 
       {isLoading ? (
         <div className="p-12 text-center text-muted-foreground font-mono text-sm">Carregando...</div>

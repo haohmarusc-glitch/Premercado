@@ -199,3 +199,57 @@ def test_todo_script_de_rota_serializa_sem_nan():
         "scripts servidos por rota sem json_seguro (um NaN derruba a resposta "
         f"inteira): {faltando}"
     )
+
+
+# ── escalares do numpy ──────────────────────────────────────────────────────
+#
+# Produção 18/08/2026, primeira coleta do risco macro:
+#
+#     [macro_risk] cobertura 100% | score 0 | 0 fonte(s) com erro
+#     {"error": "Object of type bool is not JSON serializable"}
+#
+# As seis fontes responderam e a resposta morreu na serialização. A assimetria
+# que esconde o problema: `np.float64` É subclasse de `float` -- por isso a
+# limpeza de NaN funcionou sem ninguém pensar em numpy -- mas `np.bool_` NÃO é
+# subclasse de `bool`, nem `np.int64` de `int`.
+#
+# Basta uma comparação sobre valor vindo do pandas (`kospi_pct <= -6`) para o
+# resultado virar np.bool_ e derrubar o payload inteiro.
+
+def test_np_bool_vira_bool_de_verdade():
+    import numpy as np
+    saida = json.loads(json_seguro.dumps({"active": np.bool_(True)}))
+    assert saida["active"] is True
+
+
+def test_np_int_vira_int():
+    import numpy as np
+    assert json.loads(json_seguro.dumps({"n": np.int64(7)}))["n"] == 7
+
+
+def test_np_float_continua_funcionando_inclusive_com_nan():
+    """np.float64 já passava por ser subclasse de float. O que não pode é a
+    normalização nova atropelar a limpeza de não-finitos."""
+    import numpy as np
+    saida = json.loads(json_seguro.dumps({"a": np.float64(-8.0), "b": np.float64("nan")}))
+    assert saida == {"a": -8.0, "b": None}
+
+
+def test_a_assimetria_que_escondia_o_bug():
+    """Fixa o motivo do helper existir. Se um dia o numpy fizer np.bool_ herdar
+    de bool, este teste falha e a normalização pode ser reavaliada."""
+    import numpy as np
+    assert isinstance(np.float64(1.5), float)       # por isso o NaN funcionou
+    assert not isinstance(np.bool_(True), bool)     # por isso o bool quebrou
+
+
+def test_array_de_varios_elementos_nao_explode():
+    """`.item()` levanta em array com mais de um elemento. O saneador nunca
+    pode derrubar a resposta -- ele existe para o contrário."""
+    import numpy as np
+    json_seguro.limpar_nao_finitos({"arr": np.array([1.0, 2.0])})   # não levanta
+
+
+def test_string_nao_e_confundida_com_escalar():
+    saida = json.loads(json_seguro.dumps({"t": "NVDA", "b": b"x".decode()}))
+    assert saida == {"t": "NVDA", "b": "x"}

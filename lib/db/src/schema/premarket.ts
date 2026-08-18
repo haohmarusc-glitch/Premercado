@@ -724,3 +724,36 @@ export const checkerLeaseTable = pgTable("checker_lease", {
   lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
 });
 export type CheckerLease = typeof checkerLeaseTable.$inferSelect;
+
+/**
+ * Retrato diário do risco macro setorial (IA/semis) — uma linha por pregão,
+ * upsert por `snapshotDate`. Alimentada por agent/macro_risk_snapshot.py e lida
+ * pela seção de risco macro em /macro.
+ *
+ * Declarada aqui, e não só no ensure-schema.ts, pelo motivo documentado logo
+ * acima em checkerLeaseTable: o `db push` compara o banco com ESTE arquivo, e
+ * tabela criada só por SQL cru em runtime vira candidata a DROP.
+ *
+ * `aggregateScore` é NULLABLE de propósito. Abaixo da cobertura mínima não há
+ * score, e gravar 0 diria "sem risco" sobre um dia que o sistema não conseguiu
+ * medir — o oposto do que aconteceu. A coluna nullable é o que força quem lê a
+ * tratar o caso em vez de somar um zero falso.
+ */
+export const macroRiskSnapshotsTable = pgTable("macro_risk_snapshots", {
+  id: serial("id").primaryKey(),
+  // YYYY-MM-DD como texto, mesmo padrão de earnings_date: o retrato é do
+  // PREGÃO, e converter para timestamp arrastaria fuso para uma data que não
+  // tem hora.
+  snapshotDate: text("snapshot_date").notNull().unique(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow(),
+  aggregateScore: integer("aggregate_score"),
+  coveragePct: integer("coverage_pct").notNull().default(0),
+  activeFlags: jsonb("active_flags").$type<string[]>().notNull().default([]),
+  // nome da fonte -> motivo. Degradação anunciada, mesma convenção do Radar.
+  degradedSources: jsonb("degraded_sources").$type<Record<string, string>>().notNull().default({}),
+  // Payload completo do evaluate(): os seis sinais com severidade e detalhes.
+  // Guardado inteiro porque os thresholds vão mudar, e revisar um threshold
+  // sem os dados brutos do dia é adivinhação.
+  raw: jsonb("raw").$type<Record<string, unknown>>().notNull().default({}),
+});
+export type MacroRiskSnapshot = typeof macroRiskSnapshotsTable.$inferSelect;
