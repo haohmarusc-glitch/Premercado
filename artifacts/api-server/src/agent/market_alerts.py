@@ -414,6 +414,15 @@ def _history(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
         df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
         if df is None or df.empty:
             return None
+        # A barra do DIA CORRENTE vem sem Close antes do fechamento e é a
+        # ÚLTIMA linha. Este helper alimenta ~8 checagens que fazem
+        # `df["Close"].iloc[-1]` (fade, gap, momentum, rompimento...), e todas
+        # pegariam NaN -- alerta que não dispara, ou dispara com número
+        # inexistente. Filtrar AQUI conserta as oito de uma vez, e é o motivo
+        # de o cache guardar a série já limpa.
+        df = market_data_provider.sem_barra_incompleta(df)
+        if df.empty:
+            return None
         _HIST_CACHE[key] = df
         return df
     except Exception as e:

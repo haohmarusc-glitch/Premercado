@@ -181,3 +181,58 @@ def test_earnings_reaction_limpa_o_proprio_historico():
     assert i_preco >= 0, "não achei o uso do preço -- teste desatualizado?"
     # Filtrar DEPOIS de ler o preço não serviria de nada.
     assert i_filtro < i_preco
+
+
+# ── a varredura dos chamadores diretos ──────────────────────────────────────
+#
+# Onze arquivos chamam yf.Ticker().history() ou yf.download() sem passar pelo
+# provider. Revisados um a um, e o resultado NÃO foi "aplicar em todos" -- em
+# dois deles o filtro INTRODUZIRIA erro. É o motivo de esta varredura ter sido
+# feita à mão, e não como substituição mecânica.
+
+def _fonte(nome: str) -> str:
+    import pathlib
+    return (pathlib.Path(mdp.__file__).parent / nome).read_text(encoding="utf-8")
+
+
+def test_market_alerts_filtra_no_helper_central():
+    """_hist() alimenta ~8 checagens que fazem `df["Close"].iloc[-1]` (fade,
+    gap, momentum, rompimento). Filtrar no helper conserta as oito de uma vez,
+    e é por isso que o cache guarda a série já limpa."""
+    fonte = _fonte("market_alerts.py")
+    assert "sem_barra_incompleta(df)" in fonte
+
+
+def test_confluence_filtra_juros_e_petroleo():
+    """Os dois vetos macro leem iloc[-1] de série crua de 5d/1mo. Com NaN, o
+    veto sumia em silêncio -- o pior modo de falha para um freio."""
+    fonte = _fonte("confluence_engine.py")
+    assert fonte.count("sem_barra_incompleta(") >= 2
+
+
+def test_agent_filtra_o_candle_diario():
+    fonte = _fonte("agent.py")
+    assert "sem_barra_incompleta(hist)" in fonte
+
+
+# ── e as duas que NÃO podem ser filtradas ───────────────────────────────────
+
+def test_get_performance_NAO_filtra_a_barra_de_hoje():
+    """A decisão mais importante da varredura, e a contraintuitiva.
+
+    get_performance lê `iloc[-2]` como "fechamento anterior" -- e isso só está
+    certo PORQUE a barra de hoje é a última. Filtrando, iloc[-2] passaria a ser
+    o fechamento de ANTEONTEM, e eu teria introduzido um erro de preço tentando
+    consertar outro.
+
+    Este teste existe para alguém que vier "completar a varredura" parar e ler
+    antes de aplicar o filtro aqui."""
+    fonte = _fonte("get_performance.py")
+    assert "sem_barra_incompleta" not in fonte
+    assert 'hist["Close"].iloc[-2]' in fonte   # o uso que depende da barra de hoje
+
+
+def test_get_quotes_NAO_filtra_pelo_mesmo_motivo():
+    fonte = _fonte("get_quotes.py")
+    assert "sem_barra_incompleta" not in fonte
+    assert 'hist["Close"].iloc[-2]' in fonte
