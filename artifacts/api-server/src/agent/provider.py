@@ -609,19 +609,37 @@ class ProviderClient:
         # OpenAI-compatível) para não ter dois orçamentos de retry divergentes.
         sdk_max_retries = int(os.environ.get("AGENT_MAX_RETRIES", "1"))
 
+        # Timeout nos DOIS clientes. Até 18/08/2026 só o Anthropic o recebia, e
+        # o SDK da OpenAI default é 600s -- ou seja, todo provedor menos um
+        # rodava praticamente sem teto.
+        #
+        # O estrago não era só a espera: `definir_orcamento` decide se cabe
+        # outra tentativa usando o custo ESTIMADO de uma chamada. Com o teto
+        # valendo para um provedor só, essa estimativa era mentira para os
+        # outros cinco, e a proteção de orçamento passava a autorizar chamadas
+        # que ela não tinha como limitar.
+        #
+        # Medido em produção: anthropic estourou os 55s, a cadeia caiu para o
+        # deepseek -- e o deepseek respondeu em 142,2s. O orçamento total era
+        # de 135s.
+        sdk_timeout = float(os.environ.get("API_TIMEOUT_SECONDS", "60"))
+
         if self.provider_name == "anthropic":
             import anthropic
 
             self._anthropic = anthropic.Anthropic(
                 api_key=api_key,
-                timeout=float(os.environ.get("API_TIMEOUT_SECONDS", "60")),
+                timeout=sdk_timeout,
                 max_retries=sdk_max_retries,
             )
             self._openai = None
         else:
             from openai import OpenAI
 
-            self._openai = OpenAI(api_key=api_key, base_url=cfg["base_url"], max_retries=sdk_max_retries)
+            self._openai = OpenAI(
+                api_key=api_key, base_url=cfg["base_url"],
+                timeout=sdk_timeout, max_retries=sdk_max_retries,
+            )
             self._anthropic = None
 
     def create(
