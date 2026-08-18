@@ -292,29 +292,28 @@ PROVIDERS = {
             # V4 (oficial 2026). Pro = melhor qualidade/raciocínio; Flash =
             # forte em agent/tool-calling e bem mais barato (atualizado 31/07).
             #
-            # `full` era o v4-pro até 18/08/2026. Ele é modo THINKING, e o
-            # raciocínio conta contra o max_tokens: em produção gastou 17.806
-            # chars pensando e devolveu 0 char de resposta visível, em 142s.
-            # Depois que o teto de 55s passou a valer (ver sdk_timeout abaixo),
-            # o padrão virou timeout puro -- 3 tentativas medidas em 18/08, 3
-            # estouros, o último cronometrado em 55,8s.
+            # OS DOIS RACIOCINAM, e o raciocínio conta contra o max_tokens.
+            # Medido em produção 18/08/2026, mesmo prompt da Análise com IA:
             #
-            # O deepseek é o PRIMEIRO fallback (_DEFAULT_ORDER), então esses 55s
-            # saíam do orçamento de quem tem prazo: com o anthropic falhando
-            # antes, a Análise com IA chegava em 110s dos 135s e o orçamento
-            # recusava o gemini por não caber outra tentativa. O segundo slot da
-            # cadeia estava sendo gasto com quem menos entrega.
+            #   modelo     teto      tempo   resposta
+            #   v4-pro     12.000   142,2s   0 chars   (17.806 chars de raciocínio)
+            #   v4-flash    6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
             #
-            # O flash não casa com _MODELO_PENSA_RE, então não queima o teto
-            # raciocinando. Ele responde pior -- e responder pior RÁPIDO é o que
-            # se quer de um fallback: um toco em segundos faz a cadeia andar
-            # (pular_provedor_atual) com orçamento de sobra, enquanto um timeout
-            # de 55s faz a cadeia andar sem orçamento nenhum.
+            # Dobrar o teto dobrou o tempo e não produziu resposta: o raciocínio
+            # se expande para preencher o orçamento que existir. Por isso NÃO
+            # adianta pôr o flash no _MODELO_PENSA_RE para dar-lhe folga -- isso
+            # o levaria a ~110s para continuar entregando 0 char.
             #
-            # O agente diário também usa este tier. Lá a janela é de 10 min e
-            # não há prazo definido, então a troca custa um pouco de qualidade
-            # num fallback que ele raramente alcança -- e evita que uma cadeia
-            # lenta coma a janela dele pelo mesmo motivo.
+            # `full` era o v4-pro até 18/08. A troca para o flash não resolveu
+            # (era a hipótese de que só o pro raciocinava, refutada pela medição
+            # acima) mas fica: pelo mesmo resultado, o flash custa 1/3 do preço
+            # e gasta metade do tempo do orçamento antes de a cadeia andar.
+            #
+            # O conserto real foi na ORDEM -- ver _DEFAULT_ORDER. Num prompt
+            # trivial os dois respondem em 1-2s, então o problema não é a rede
+            # nem a API: é este prompt específico fazendo o modelo raciocinar
+            # sem convergir. Se algum dia isso for investigado a fundo, começar
+            # pelo SYSTEM de analise_rapida_ia.py, não pelo provedor.
             "full": "deepseek-v4-flash",
             "flash": "deepseek-v4-flash",
             "chat": "deepseek-v4-flash",
@@ -854,7 +853,33 @@ class ProviderClient:
 # Regra do projeto, sem exceção: stdout é do resultado, stderr é do diagnóstico.
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"]
+#
+# A ordem é por TEMPO ATÉ RESPOSTA ÚTIL, não por qualidade do modelo: quem tem
+# prazo (Análise com IA, 135s) paga o custo de cada tentativa que falha antes da
+# que funciona. Um provedor lento na 2ª posição consome o orçamento do 3º.
+#
+# Medido em produção 18/08/2026, cada provedor isolado com o mesmo prompt
+# (AGENT_PROVIDER_ORDER=<um só>, sem fallback para mascarar):
+#
+#   anthropic    36-43s   3.400-3.600 chars   ok
+#   gemini       16,4s    3.567 chars         ok  <- o mais rápido
+#   deepseek     54,2s    0 chars             esgota o teto raciocinando
+#   openrouter    ~1s     404                 slug ':free' aposentado
+#   openai        1,8s    429                 insufficient_quota
+#   kimi          2,0s    429                 conta suspensa por saldo
+#
+# O gemini subiu para primeiro fallback por causa dessa tabela: ele responde em
+# menos da METADE do tempo do anthropic. Antes o deepseek ocupava essa posição e
+# gastava 54s para não entregar nada -- com o anthropic falhando antes dele, a
+# Análise com IA chegava a ~110s dos 135s e o orçamento recusava o gemini por
+# não caber outra tentativa. O provedor mais rápido da cadeia era barrado pelo
+# tempo que o mais lento já tinha queimado.
+#
+# Os três últimos estão fora por conta/plano, não por código -- ficam na lista
+# porque são condenados em ~2s (ver _condenar) e voltam sozinhos quando as
+# contas forem resolvidas. Se ainda estiverem assim numa próxima revisão, aí
+# vale removê-los em vez de pagar o round-trip.
+_DEFAULT_ORDER = ["anthropic", "gemini", "deepseek", "openrouter", "openai", "kimi"]
 
 
 def _provider_order() -> list[str]:
