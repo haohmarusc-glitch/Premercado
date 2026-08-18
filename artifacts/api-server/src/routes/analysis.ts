@@ -123,12 +123,33 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
       //     então lixo ANTES dele deixa de ser fatal.
       // Falhando as duas, o log leva as pontas do stdout: sem isso não há
       // como saber o que poluiu o pipe.
+      // O script pode sair com codigo 0 E um {"error": ...} valido -- e o que
+      // ele faz desde a Tarefa 0, quando nenhum provedor produz texto. Sem
+      // registrar o stderr AQUI, todo o diagnostico ([provider] pulando ...,
+      // stop_reason, tamanho do raciocinio) morre nesta variavel: trocar um
+      // 500 mudo por um erro elegante nao pode significar trocar um erro
+      // legivel por um erro bonito e inauditavel. Visto em producao
+      // (18/08/2026): a tela mostrou "0 chars" e o log do container nao tinha
+      // uma linha sequer sobre a causa.
+      const registrarSeErro = (parsed: unknown): void => {
+        if (parsed && typeof parsed === "object" && "error" in parsed) {
+          logger.warn(
+            { erro: (parsed as { error: unknown }).error, stderr: err.slice(-2000) },
+            "analise_rapida_ia: script devolveu erro",
+          );
+        }
+      };
+
       try {
-        return resolve(JSON.parse(out));
+        const parsed = JSON.parse(out);
+        registrarSeErro(parsed);
+        return resolve(parsed);
       } catch {
         const ultimaLinha = out.split("\n").filter((l) => l.trim()).pop() ?? "";
         try {
-          return resolve(JSON.parse(ultimaLinha));
+          const parsed = JSON.parse(ultimaLinha);
+          registrarSeErro(parsed);
+          return resolve(parsed);
         } catch {
           logger.error(
             { stdoutHead: out.slice(0, 500), stdoutTail: out.slice(-500), bytes: out.length },

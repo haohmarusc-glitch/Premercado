@@ -60,10 +60,43 @@ def test_orcamento_do_python_cabe_no_timeout_do_node():
 def test_duas_tentativas_de_provedor_cabem_no_orcamento():
     """A cadeia de fallback precisa conseguir trocar de provedor ao menos uma
     vez. Com uma tentativa só, um provedor lento derruba a análise inteira em
-    vez de cair para o próximo."""
+    vez de cair para o próximo.
+
+    Este teste JÁ EXISTIA e passava -- usando 20s de coleta fundamental como
+    suposição que nada no código garantia. Em 18/08/2026 a suposição falhou em
+    produção: a coleta mais a primeira chamada consumiram 124s dos 135s, e a
+    troca de provedor ficou inalcançável exatamente no caso para o qual foi
+    escrita. Aritmética certa no papel, livre na prática.
+
+    Agora o teto da coleta é constante do módulo (_TETO_FUNDAMENTO_S) e a
+    conta amarra código, não estimativa."""
     mod = _modulo()
-    coleta_fundamental_s = 20  # yfinance.info + FMP + notícias, com folga
-    assert 2 * mod._LLM_TIMEOUT_S + coleta_fundamental_s <= mod._ORCAMENTO_TOTAL_S
+    assert 2 * mod._LLM_TIMEOUT_S + mod._TETO_FUNDAMENTO_S <= mod._ORCAMENTO_TOTAL_S
+
+
+def test_a_camada_opcional_tem_teto_proprio():
+    """A camada fundamental é fail-open por projeto, mas "opcional" sem teto
+    de TEMPO não é opcional: o que ela consome sai do LLM, que é obrigatório.
+    yfinance.info sozinho já levou dezenas de segundos em produção."""
+    mod = _modulo()
+    assert mod._TETO_FUNDAMENTO_S > 0
+    assert mod._TETO_FUNDAMENTO_S < mod._ORCAMENTO_TOTAL_S
+
+
+def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
+    """O script sai com código 0 E {"error": ...} quando nenhum provedor
+    produz texto -- é o que a Tarefa 0 passou a fazer. Sem registrar o stderr
+    NESSE caminho, todo o diagnóstico morre na variável `err`: em 18/08/2026 a
+    tela mostrou "0 chars" e o log do container não tinha uma linha sobre a
+    causa.
+
+    Trocar um 500 mudo por um erro elegante não pode significar trocar um erro
+    legível por um erro bonito e inauditável."""
+    trecho = _ROTA.split("function runAnaliseRapidaIA", 1)[1]
+    assert "registrarSeErro" in trecho, "o caminho de sucesso-com-erro não registra o stderr"
+    # E precisa valer nos DOIS parses (bloco inteiro e última linha), senão
+    # stdout poluído volta a engolir o diagnóstico.
+    assert trecho.count("registrarSeErro(parsed)") == 2
 
 
 def test_retries_desligados_para_esta_rota():
