@@ -7,6 +7,14 @@ import sys, json, re
 import yfinance as yf
 from security import sanitize_ticker, friendly_error
 from http_retry import SESSION
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
@@ -226,4 +234,4 @@ if __name__ == "__main__":
             for (n, field), tr in zip(refs, translated):
                 n[field] = tr
 
-    print(json.dumps({"items": items}))
+    print(json_seguro.dumps({"items": items}))

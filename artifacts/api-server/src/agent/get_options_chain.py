@@ -6,6 +6,14 @@ Output (stdout JSON): {"items": [ {ticker, putCallRatio, atmIvPct, ...}, ... ]}
 import sys, json
 import yfinance as yf
 from security import sanitize_ticker, friendly_error
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 def for_ticker(ticker: str) -> dict:
     try:
@@ -51,4 +59,4 @@ def for_ticker(ticker: str) -> dict:
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     items = [for_ticker(t) for t in args.get("tickers", [])]
-    print(json.dumps({"items": items}))
+    print(json_seguro.dumps({"items": items}))

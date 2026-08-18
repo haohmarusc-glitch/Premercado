@@ -41,6 +41,14 @@ import os
 import sys
 from datetime import date, timedelta
 from itertools import combinations
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # brt.today_brt: import dos DOIS jeitos porque este script roda dos dois
 # jeitos (flat via spawn direto por caminho, e como módulo do pacote agent) --
@@ -870,7 +878,7 @@ def main(argv=None):
     elif args.cluster:
         print(json.dumps(cluster_de(args.cluster), ensure_ascii=False, indent=2))
     elif args.contagio:
-        print(json.dumps(alerta_contagio(args.contagio), ensure_ascii=False, indent=2))
+        print(json_seguro.dumps(alerta_contagio(args.contagio), ensure_ascii=False, indent=2))
     elif args.sizing:
         for linha in sizing_por_vol(args.sizing):
             print(linha)

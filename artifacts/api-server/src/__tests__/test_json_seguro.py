@@ -153,3 +153,49 @@ def test_a_rota_registra_o_stdout_quando_nao_e_json():
     rota = (_AGENT.parent / "routes" / "technicals.ts").read_text(encoding="utf-8")
     assert "stdoutHead" in rota
     assert "stdoutTail" in rota
+
+
+# ── a varredura ─────────────────────────────────────────────────────────────
+#
+# Dois painéis caíram no MESMO dia pela mesma causa: Técnica e Reação a
+# Earnings, ambos com `JSON.parse` recusando um `NaN` no meio do payload.
+# Depois do segundo, corrigir de um em um deixou de ser defensável.
+#
+# Este teste é o que impede o terceiro: ele descobre sozinho quais scripts as
+# rotas consomem e cobra o helper de cada um. Script novo servido por rota
+# entra na lista automaticamente -- não há uma lista para alguém esquecer de
+# atualizar.
+
+_ROTAS = _AGENT.parent / "routes"
+
+
+def _scripts_servidos_por_rota() -> set[str]:
+    import re
+    nomes: set[str] = set()
+    for ts in _ROTAS.glob("*.ts"):
+        nomes.update(re.findall(r'"([a-z_0-9]+\.py)"', ts.read_text(encoding="utf-8")))
+    return nomes
+
+
+def test_ha_scripts_servidos_por_rota():
+    """Se a descoberta parar de achar nada, o teste abaixo passaria vazio e
+    daria uma falsa sensação de cobertura."""
+    assert len(_scripts_servidos_por_rota()) >= 15
+
+
+def test_todo_script_de_rota_serializa_sem_nan():
+    """O stdout destes scripts é lido por JSON.parse do Node, que recusa NaN.
+    Um campo não-finito derruba a resposta inteira -- inclusive os tickers que
+    vieram certos."""
+    faltando = []
+    for nome in sorted(_scripts_servidos_por_rota()):
+        caminho = _AGENT / nome
+        if not caminho.exists():
+            continue
+        fonte = caminho.read_text(encoding="utf-8")
+        if "json_seguro" not in fonte:
+            faltando.append(nome)
+    assert faltando == [], (
+        "scripts servidos por rota sem json_seguro (um NaN derruba a resposta "
+        f"inteira): {faltando}"
+    )

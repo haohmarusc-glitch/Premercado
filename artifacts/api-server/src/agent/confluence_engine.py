@@ -36,6 +36,14 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
 from security import sanitize_ticker
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 try:  # import duplo: spawn por caminho e também como membro do pacote
     from agent import market_data_provider
 except ImportError:
@@ -464,6 +472,6 @@ if __name__ == "__main__":
     except Exception as e:
         result = {"error": f"{type(e).__name__}: {e}"}
 
-    out = json.dumps(result, ensure_ascii=False) + "\n"
+    out = json_seguro.dumps(result, ensure_ascii=False) + "\n"
     os.write(_real_stdout_fd, out.encode("utf-8"))
     os.close(_real_stdout_fd)

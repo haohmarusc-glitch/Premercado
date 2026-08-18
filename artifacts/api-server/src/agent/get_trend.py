@@ -14,6 +14,14 @@ Output (stdout JSON): {"items": [{ticker, trend, score, components, news, conflu
 import sys, json, os, re, time, datetime
 import yfinance as yf
 import pandas as pd
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
     from agent.http_retry import SESSION
@@ -461,4 +469,4 @@ if __name__ == "__main__":
             items.append(result)
     if dirty:
         _cache_save(cache)
-    print(json.dumps({"items": items}, ensure_ascii=False))
+    print(json_seguro.dumps({"items": items}, ensure_ascii=False))
