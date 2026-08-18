@@ -91,22 +91,37 @@ def test_a_troca_de_provedor_pede_o_equivalente_full(monkeypatch):
     ]
 
 
-# ── por que o deepseek saiu do v4-pro ───────────────────────────────────────
+# ── a ordem da cadeia ───────────────────────────────────────────────────────
+#
+# A versão anterior deste bloco afirmava que o v4-flash "não é modelo thinking"
+# e que por isso não queimaria o teto raciocinando. Era falso, e a medição de
+# 18/08/2026 desmentiu: os DOIS modelos V4 raciocinam, e o flash esgotou os
+# 6.000 tokens em 54,2s devolvendo 0 char. A troca de modelo não resolveu nada
+# -- o conserto foi na ordem.
 
-def test_o_full_do_deepseek_nao_e_modelo_thinking():
-    """Produção 18/08/2026: o v4-pro gastou 17.806 chars de raciocínio para
-    devolver 0 char visível em 142s; depois que o teto de 55s passou a valer,
-    virou timeout puro (3 tentativas medidas, 3 estouros, a última em 55,8s).
+def test_o_gemini_vem_antes_do_deepseek():
+    """Medido com cada provedor isolado, mesmo prompt:
 
-    Ele é o PRIMEIRO fallback da cadeia, então esses 55s saíam do orçamento de
-    quem tem prazo -- a Análise com IA chegava a 110s dos 135s e o orçamento
-    recusava o provedor seguinte por não caber outra tentativa."""
-    from agent import analise_rapida_ia as mod
+        gemini     16,4s   3.567 chars   ok
+        deepseek   54,2s   0 chars       esgota o teto raciocinando
 
-    full = prov.PROVIDERS["deepseek"]["models"]["full"]
-    assert not mod._MODELO_PENSA_RE.search(full), (
-        f"'{full}' conta raciocínio contra o max_tokens; como primeiro fallback "
-        f"da cadeia ele queima o orçamento de quem tem prazo"
-    )
-    # E o teto pedido volta a ser o normal, sem a folga de raciocínio.
-    assert mod.teto_de_tokens(full) == mod.MAX_TOKENS
+    A ordem da cadeia é por TEMPO ATÉ RESPOSTA ÚTIL, não por qualidade: quem
+    tem prazo paga cada tentativa que falha antes da que funciona. Com o
+    deepseek na 2ª posição e o anthropic falhando antes dele, a Análise com IA
+    chegava a ~110s dos 135s e o orçamento recusava justamente o gemini -- o
+    provedor mais rápido barrado pelo tempo que o mais lento já queimou."""
+    ordem = prov._DEFAULT_ORDER
+    assert ordem.index("gemini") < ordem.index("deepseek")
+
+
+def test_o_primeiro_fallback_e_um_provedor_que_responde():
+    """O 2º da ordem é o que herda o pedido quando o principal cai, e é o mais
+    caro de errar: o 3º só é tentado se sobrar orçamento depois dele."""
+    assert prov._DEFAULT_ORDER[1] == "gemini"
+
+
+def test_todo_provedor_da_ordem_existe_na_tabela():
+    """Nome fora de PROVIDERS não falha alto -- `_has_key` devolve False e ele
+    some da cadeia em silêncio, encurtando o fallback sem avisar ninguém."""
+    faltando = [p for p in prov._DEFAULT_ORDER if p not in prov.PROVIDERS]
+    assert faltando == [], f"provedores na ordem sem configuração: {faltando}"
