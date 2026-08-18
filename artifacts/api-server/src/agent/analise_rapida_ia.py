@@ -92,6 +92,22 @@ MAX_NOTICIAS = 6
 # qualidade — um texto de 250 chars também é ruim, mas aí o problema é o
 # prompt, não o provedor.
 MIN_TEXTO_CHARS = 200
+
+# Teto da camada fundamental (opcional) dentro do orcamento total.
+#
+# Ela e fail-open por projeto: fonte fora do ar vira ausencia no prompt. Mas
+# "opcional" sem teto de TEMPO nao e opcional -- yfinance.info sozinho ja
+# levou dezenas de segundos em producao, e o que ela consome sai do LLM, que
+# e obrigatorio.
+#
+# O numero vem da aritmetica do orcamento, nao do gosto: para caber DUAS
+# tentativas de provedor (o fallback da Tarefa 0 so serve se houver tempo
+# para a segunda), precisa valer
+#     teto_fundamento + 2 x _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S
+# 25 + 2x55 = 135, exatamente o orcamento. Visto em producao (18/08/2026):
+# a primeira chamada consumiu o orcamento inteiro e a troca de provedor --
+# que existia justamente para esse caso -- ficou inalcancavel.
+_TETO_FUNDAMENTO_S = float(os.environ.get("ANALISE_IA_FUNDAMENTO_S", "25"))
 REC_LABELS = {
     "strongBuy": "compra forte", "buy": "compra", "hold": "manter",
     "sell": "venda", "strongSell": "venda forte",
@@ -199,6 +215,24 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
     fundamento: dict = {}
     fontes: list[str] = []
 
+    def _estourou() -> bool:
+        """Teto proprio da camada opcional, conferido ENTRE os blocos.
+
+        Sem thread nem sinal, mesmo padrao de bounded_parallel.
+        deadline_exceeded: cada bloco que ainda cabe roda inteiro, e o
+        primeiro que nao cabe simplesmente nao comeca. Bloco que nao rodou
+        vira ausencia no prompt -- que e o comportamento que esta camada ja
+        tinha para fonte fora do ar."""
+        gasto = time.monotonic() - _inicio_fundamento
+        if gasto < _TETO_FUNDAMENTO_S:
+            return False
+        print(f"[analise_rapida_ia] camada fundamental atingiu o teto de "
+              f"{_TETO_FUNDAMENTO_S:.0f}s ({gasto:.0f}s gastos); seguindo com o que ja tem",
+              file=sys.stderr, flush=True)
+        return True
+
+    _inicio_fundamento = time.monotonic()
+
     try:
         # Mesma extração do get_fundamentals.py (que não dá pra importar
         # daqui: ele usa import plano `from security import`, que não
@@ -224,6 +258,9 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] alvos indisponíveis: {e}", file=sys.stderr)
 
+    if _estourou():
+        return fundamento, fontes
+
     try:
         val = tools.get_fundamentals_valuation(ticker) or {}
         if val.get("configured") and not val.get("error"):
@@ -234,6 +271,9 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
                 fontes.append("valuation/DCF (FMP)")
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] valuation indisponível: {e}", file=sys.stderr)
+
+    if _estourou():
+        return fundamento, fontes
 
     try:
         noticias = (tools.get_news([ticker], max_items=MAX_NOTICIAS) or {}).get(ticker) or []
@@ -433,11 +473,28 @@ def analisar(dados: dict) -> dict:
             break
 
         provedor, modelo = client.provider_name, client.models["full"]
+
+        # Toco e truncamento parecem iguais daqui -- os dois chegam como texto
+        # curto -- e sao problemas OPOSTOS: toco e o modelo respondendo de
+        # menos; truncamento e o modelo produzindo tanto que nao sobrou espaco
+        # para a resposta visivel.
+        #
+        # Modelo em modo thinking (deepseek-v4-pro) conta os tokens de
+        # RACIOCINIO contra o max_tokens. Raciocinio longo esgota o teto e o
+        # `content` volta VAZIO -- 0 chars depois de uma chamada lenta, que foi
+        # o que apareceu em producao em 18/08/2026. Sem nomear a diferenca, o
+        # log dizia "devolveu toco" e mandava investigar o lado errado.
+        razao = (getattr(resp, "raw_stop_reason", "") or "").lower()
+        n_raciocinio = len(getattr(resp, "reasoning_content", None) or "")
+        truncado = razao in ("length", "max_tokens") or (not texto and n_raciocinio > 0)
+        diagnostico = "truncou antes da resposta" if truncado else "devolveu toco"
+
         # stderr: o stdout deste script é EXCLUSIVO do JSON final (o Node
         # parseia). Diagnóstico aqui nunca pode vazar para lá.
         print(
-            f"[analise_rapida_ia] {provedor}/{modelo} devolveu toco "
-            f"({len(texto)} chars): {texto[:120]!r}",
+            f"[analise_rapida_ia] {provedor}/{modelo} {diagnostico} "
+            f"({len(texto)} chars, stop_reason={razao or 'n/d'}, "
+            f"raciocinio={n_raciocinio} chars): {texto[:120]!r}",
             file=sys.stderr, flush=True,
         )
 
@@ -447,15 +504,15 @@ def analisar(dados: dict) -> dict:
         gasto = time.monotonic() - _INICIO
         if gasto + _LLM_TIMEOUT_S > _ORCAMENTO_TOTAL_S:
             return {"error": (
-                f"{provedor}/{modelo} devolveu resposta curta demais "
-                f"({len(texto)} chars) e não sobra tempo no orçamento "
-                f"({gasto:.0f}s de {_ORCAMENTO_TOTAL_S:.0f}s) para tentar outro provedor."
+                f"{provedor}/{modelo} {diagnostico} ({len(texto)} chars) e não sobra "
+                f"tempo no orçamento ({gasto:.0f}s de {_ORCAMENTO_TOTAL_S:.0f}s) "
+                f"para tentar outro provedor."
             )}
 
-        if not client.pular_provedor_atual(f"resposta curta demais ({len(texto)} chars)"):
+        if not client.pular_provedor_atual(f"{diagnostico} ({len(texto)} chars)"):
             return {"error": (
-                f"Todos os provedores devolveram resposta curta demais. "
-                f"Último: {provedor}/{modelo} com {len(texto)} chars."
+                f"Todos os provedores falharam em produzir a análise. "
+                f"Último: {provedor}/{modelo} {diagnostico} com {len(texto)} chars."
             )}
 
     saida = {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}

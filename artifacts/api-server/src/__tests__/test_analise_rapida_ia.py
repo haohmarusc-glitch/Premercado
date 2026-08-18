@@ -157,7 +157,7 @@ def test_toco_faz_a_cadeia_avancar_em_vez_de_falhar(monkeypatch):
     assert "error" not in out
     assert out["markdown"] == TEXTO_OK.strip()  # texto_da_resposta apara as pontas
     assert len(cliente.pulos) == 1
-    assert "curta" in cliente.pulos[0]
+    assert "toco" in cliente.pulos[0]
 
 
 def test_toco_em_todos_os_provedores_vira_erro_nomeando_o_ultimo(monkeypatch):
@@ -329,3 +329,98 @@ def test_compactar_limita_manchetes_a_seis():
     ]}})
     texto = ia._compactar(dados)
     assert texto.count('"title"') == 6
+
+
+# ── truncamento não é toco ──────────────────────────────────────────────────
+#
+# Os dois chegam como texto curto e são problemas OPOSTOS: toco é o modelo
+# respondendo de menos; truncamento é ele produzindo tanto que não sobrou
+# espaço para a resposta visível. Modelo em modo thinking (deepseek-v4-pro)
+# conta os tokens de RACIOCÍNIO contra o max_tokens -- raciocínio longo esgota
+# o teto e o `content` volta VAZIO.
+#
+# Produção, 18/08/2026: 0 chars depois de uma chamada lenta, e o log dizia
+# "devolveu toco", mandando investigar o lado errado do problema.
+
+def test_zero_chars_com_raciocinio_e_truncamento_nao_toco(monkeypatch):
+    cliente = _Client(["", TEXTO_OK], {}, provedores=("deepseek", "gemini"))
+    _original_create = cliente.create
+
+    def create_com_raciocinio(**kwargs):
+        r = _original_create(**kwargs)
+        r.reasoning_content = "pensando " * 500   # o teto foi embora aqui
+        return r
+
+    cliente.create = create_com_raciocinio
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+
+    out = ia.analisar(_dados())
+
+    assert "error" not in out
+    assert "truncou" in cliente.pulos[0], cliente.pulos
+    assert "toco" not in cliente.pulos[0]
+
+
+def test_stop_reason_de_tamanho_e_truncamento(monkeypatch):
+    """Mesmo com algum texto: corte por tamanho é truncamento, não preguiça."""
+    cliente = _Client(["ok.", TEXTO_OK], {}, stop="length",
+                      provedores=("deepseek", "gemini"))
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+
+    ia.analisar(_dados())
+
+    assert "truncou" in cliente.pulos[0]
+
+
+def test_texto_curto_sem_raciocinio_continua_sendo_toco(monkeypatch):
+    """O contrário também precisa valer, senão todo texto curto vira
+    'truncamento' e a distinção não informa nada."""
+    cliente = _Client(["ok.", TEXTO_OK], {}, provedores=("anthropic", "gemini"))
+    monkeypatch.setattr(ia, "get_client", lambda: cliente)
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+
+    ia.analisar(_dados())
+
+    assert "toco" in cliente.pulos[0]
+
+
+# ── teto da camada opcional ─────────────────────────────────────────────────
+
+def test_camada_fundamental_para_no_teto_de_tempo(monkeypatch):
+    """"Opcional" sem teto de TEMPO não é opcional: o que a camada consome sai
+    do LLM, que é obrigatório. Com o teto estourado, os blocos seguintes NÃO
+    começam -- e bloco que não rodou vira ausência no prompt, que é o mesmo
+    comportamento que esta camada já tinha para fonte fora do ar."""
+    chamou = []
+
+    monkeypatch.setattr(ia, "_TETO_FUNDAMENTO_S", 0.0)
+    monkeypatch.setattr(ia.yf, "Ticker", lambda _t: _Tk())
+    monkeypatch.setattr(ia.tools, "get_fundamentals_valuation",
+                        lambda t: chamou.append("valuation") or {})
+    monkeypatch.setattr(ia.tools, "get_news",
+                        lambda t, max_items=6: chamou.append("news") or {})
+
+    fundamento, fontes = ia._buscar_fundamento("INTC")
+
+    assert chamou == [], "blocos além do teto não podem rodar"
+
+
+def test_sem_estourar_o_teto_a_camada_roda_inteira(monkeypatch):
+    """A borda oposta: teto folgado não pode virar coleta pela metade."""
+    chamou = []
+
+    monkeypatch.setattr(ia, "_TETO_FUNDAMENTO_S", 3600.0)
+    monkeypatch.setattr(ia.yf, "Ticker", lambda _t: _Tk())
+    monkeypatch.setattr(ia.tools, "get_fundamentals_valuation",
+                        lambda t: chamou.append("valuation") or {})
+    monkeypatch.setattr(ia.tools, "get_news",
+                        lambda t, max_items=6: chamou.append("news") or {})
+
+    ia._buscar_fundamento("INTC")
+
+    assert chamou == ["valuation", "news"]
