@@ -44,13 +44,13 @@ def test_reprova_o_texto_que_somou_a_divergencia_ao_upside():
     """O erro concreto: ele CITOU os dois preços -- então passou no 'exige' --
     e mesmo assim concluiu errado. Uma sonda que só cobrasse a citação daria
     aprovado. É por isso que existe o 'proíbe'."""
-    falhas = sonda._checar(GEMINI, _caso("divergencia_de_preco"))
+    falhas, _ = sonda._checar(GEMINI, _caso("divergencia_de_preco"))
     assert falhas, "a sonda aprovou o texto que virou tese de compra sobre dado ruim"
     assert any("upside" in f for f in falhas)
 
 
 def test_aprova_o_texto_que_tratou_a_divergencia_como_problema():
-    assert sonda._checar(ANTHROPIC, _caso("divergencia_de_preco")) == []
+    assert sonda._checar(ANTHROPIC, _caso("divergencia_de_preco"))[0] == []
 
 
 # ── a sonda não pode ser frouxa nem histérica ───────────────────────────────
@@ -59,29 +59,29 @@ def test_texto_que_ignora_a_divergencia_reprova():
     """Escolher um preço em silêncio é o modo de falhar mais discreto: o texto
     fica coerente consigo mesmo e errado em relação ao retrato."""
     mudo = "O DCF indica valor justo de US$ 240,10, um upside de 6,7% sobre o preço atual."
-    falhas = sonda._checar(mudo, _caso("divergencia_de_preco"))
+    falhas, _ = sonda._checar(mudo, _caso("divergencia_de_preco"))
     assert any("diverg" in f for f in falhas)
 
 
 def test_nao_reprova_por_falar_de_dolar():
     """`R$` é proibido, mas 'US$' contém '$' -- regex descuidada reprovaria
     todo texto correto."""
-    assert sonda._checar("O papel está em US$ 180,00.", _caso("moeda_em_dolar")) == []
+    assert sonda._checar("O papel está em US$ 180,00.", _caso("moeda_em_dolar"))[0] == []
 
 
 def test_reprova_real_de_verdade():
-    assert sonda._checar("O papel está em R$ 950,00.", _caso("moeda_em_dolar"))
+    assert sonda._checar("O papel está em R$ 950,00.", _caso("moeda_em_dolar"))[0]
 
 
 def test_ausencia_de_dado_nao_pode_virar_leitura_tecnica():
     inventado = "O RSI de 62 mostra o papel em zona de sobrecompra."
-    falhas = sonda._checar(inventado, _caso("campo_ausente_nao_vira_conclusao"))
+    falhas, _ = sonda._checar(inventado, _caso("campo_ausente_nao_vira_conclusao"))
     assert falhas
 
 
 def test_dizer_que_o_dado_faltou_passa():
     honesto = "Não há indicadores técnicos disponíveis nesta consulta."
-    assert sonda._checar(honesto, _caso("campo_ausente_nao_vira_conclusao")) == []
+    assert sonda._checar(honesto, _caso("campo_ausente_nao_vira_conclusao"))[0] == []
 
 
 # ── higiene ─────────────────────────────────────────────────────────────────
@@ -100,3 +100,64 @@ def test_a_sonda_nao_roda_no_pytest():
     import pathlib
     assert pathlib.Path(sonda.__file__).name == "sonda_qualidade.py"
     assert not [n for n in dir(sonda) if n.startswith("test_")]
+
+
+# ── negação não pode virar reprovação ───────────────────────────────────────
+#
+# Produção 18/08/2026: o gemini reprovou em `campo_ausente` por conter
+# "sobrecompr". Só que a MESMA palavra aparece na frase certa -- e o anthropic,
+# que passou, escreveu exatamente essa frase num run anterior. A sonda estava
+# medindo presença de palavra, não presença de erro.
+
+_TEXTO_CERTO = (
+    "Nenhum indicador técnico (RSI, MACD, médias móveis, VWAP, RVOL) foi "
+    "calculado para este ticker, o que impede qualquer leitura de momentum ou "
+    "sobrecompra/sobrevenda no curto prazo."
+)
+
+_TEXTO_ERRADO = "O papel está em sobrecompra clara, com o RSI de 78."
+
+
+def test_negar_a_leitura_tecnica_nao_reprova():
+    falhas, ignorados = sonda._checar(_TEXTO_CERTO, _caso("campo_ausente_nao_vira_conclusao"))
+    assert falhas == [], f"reprovou texto correto: {falhas}"
+    assert ignorados, "descartou em silêncio -- é assim que uma sonda começa a aprovar tudo"
+
+
+def test_afirmar_a_leitura_tecnica_reprova():
+    """O outro lado: a heurística de negação não pode virar porta dos fundos."""
+    falhas, _ = sonda._checar(_TEXTO_ERRADO, _caso("campo_ausente_nao_vira_conclusao"))
+    assert falhas
+
+
+def test_a_falha_carrega_a_frase_inteira():
+    """Sem a frase, quem lê o ✗ não sabe se o modelo errou ou se a regex é
+    burra -- e um veredito que não se deixa auditar não decide nada."""
+    falhas, _ = sonda._checar(_TEXTO_ERRADO, _caso("campo_ausente_nao_vira_conclusao"))
+    # Em TODAS as falhas, não só na primeira: este texto viola exige e proíbe
+    # ao mesmo tempo, e a ordem entre os dois é detalhe de implementação.
+    assert any("RSI de 78" in f for f in falhas)
+
+
+def test_negacao_de_uma_frase_nao_isenta_a_outra():
+    """Duas frases, uma honesta e uma inventada. Se a busca fosse pelo texto
+    inteiro em vez de por frase, a primeira absolveria a segunda."""
+    misto = _TEXTO_CERTO + " " + _TEXTO_ERRADO
+    falhas, _ = sonda._checar(misto, _caso("campo_ausente_nao_vira_conclusao"))
+    assert falhas, "a negação de uma frase blindou a afirmação da outra"
+
+
+# ── o relógio do orçamento ──────────────────────────────────────────────────
+
+def test_a_sonda_zera_o_relogio_entre_casos():
+    """`_INICIO` é constante de módulo, fixada no import. Em produção cada
+    análise é um processo novo; na sonda são vários casos no mesmo processo.
+    Medido: a 'coleta' do 3º caso apareceu como 75,2s dos 135s (a real foi 2s),
+    e um 4º caso teria abortado com uma mensagem falsa."""
+    import pathlib
+    fonte = pathlib.Path(sonda.__file__).read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    i_zera = next((i for i, l in enumerate(codigo) if "_INICIO = time.monotonic()" in l), -1)
+    i_chama = next((i for i, l in enumerate(codigo) if "mod.analisar(" in l), -1)
+    assert i_zera >= 0, "o relógio do orçamento não é zerado entre casos"
+    assert i_zera < i_chama, "zerar depois da chamada não adianta"
