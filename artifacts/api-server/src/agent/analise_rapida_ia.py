@@ -216,6 +216,13 @@ SYSTEM = (
     "isso em uma linha na Leitura técnica, citando `porPainel`, e trate os "
     "indicadores do painel mais distante com ressalva — provavelmente ele "
     "está defasado.\n"
+    "- UPSIDE DO DCF: `dcf_implied_upside_pct` é calculado contra o preço do "
+    "PRÓPRIO painel de valuation (`valuation.current_price`), não contra "
+    "`precoAtual.valor`. Se os dois diferirem, NÃO apresente esse upside como "
+    "distância até o preço atual — diga a base explicitamente ('6,7% sobre a "
+    "base de US$ 225,01 usada no valuation'). Em 18/08/2026 um modelo leu os "
+    "dois preços juntos e concluiu que a diferença era espaço EXTRA de alta: "
+    "virou tese de compra construída sobre dois números incompatíveis.\n"
     "- RVOL: se `rvolSignal` for `indefinido_abertura`, o pregão tem menos de "
     "30 minutos e o RVOL está inflado pelo leilão de abertura. NÃO o use como "
     "sinal de convicção nem conclua nada sobre força compradora ou realização "
@@ -361,11 +368,26 @@ def _preco_canonico(dados: dict) -> dict | None:
     docstring de get_ticker_snapshot.py). Sem ele, cai para a Técnica, depois
     a reação, e a Tendência por último -- justamente a que pode vir de cache.
     """
+    # A camada fundamental entra por ÚLTIMO, e de propósito.
+    #
+    # Ela não estava aqui até 18/08/2026, e essa era a maior cegueira do
+    # detector: o preço da valuation vem da FMP (ou do fast_info como reserva)
+    # numa requisição própria, e foi ele quem produziu a divergência que
+    # apareceu em TODAS as análises daquele dia -- US$ 225,01 na valuation
+    # contra o preço dos painéis ao vivo. Sem estar na lista, `divergenciaPct`
+    # nunca era calculado, e o modelo ficava por conta própria: o anthropic
+    # sinalizou a contradição, o gemini a usou como argumento altista
+    # ("comparado ao preço atual, o DCF aponta espaço ainda maior").
+    #
+    # Último na ordem porque `validos[0]` vira o preço canônico: a valuation é
+    # a menos indicada para responder "onde o papel está agora", já que a FMP
+    # atualiza em ritmo próprio. Ela entra para SER COMPARADA, não para mandar.
     candidatos = [
         ("niveis", ((dados.get("snapshot") or {}).get("price"))),
         ("tecnica", ((dados.get("technicals") or {}).get("price"))),
         ("reacaoEarnings", (((dados.get("reaction") or {}).get("summary") or {}).get("current_price"))),
         ("tendencia", ((dados.get("trend") or {}).get("price"))),
+        ("valuation", (((dados.get("_fundamento") or {}).get("valuation") or {}).get("current_price"))),
     ]
     validos = [(fonte, float(p)) for fonte, p in candidatos
                if isinstance(p, (int, float)) and p > 0]
