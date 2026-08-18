@@ -243,3 +243,48 @@ def test_todo_sinal_avaliado_tem_peso(modulo):
     r = modulo.evaluate()
     avaliados = {k for k, v in r.items() if isinstance(v, dict) and "flag" in v}
     assert avaliados == set(mr.PESOS)
+
+
+# ── o sinal de earnings, com a fonte que existe ─────────────────────────────
+#
+# A fonte disponível (earnings_dates do yfinance) publica surpresa de EPS e não
+# de receita -- a de receita viria da FMP, que devolve 402 nesta conta desde
+# 18/08/2026. O check original exigia as duas.
+
+def test_receita_ausente_nao_bloqueia_o_sinal():
+    """Exigir a receita deixaria o sinal em sem_dado PERMANENTE, que é pior que
+    ausente: puniria o Kelly todo dia sem nunca poder disparar. O essencial do
+    padrão é "número bom, ação caiu", e o EPS sozinho já o expressa."""
+    r = mr.check_priced_for_perfection(5.0, None, -9.0)
+    assert r.status == mr.OK
+    assert r.active is True
+
+
+def test_receita_presente_endurece_o_criterio():
+    """Quando ela existe, é usada: bater no EPS e furar na receita não é o
+    padrão que o sinal descreve."""
+    assert mr.check_priced_for_perfection(5.0, -3.0, -9.0).active is False
+    assert mr.check_priced_for_perfection(5.0, 3.0, -9.0).active is True
+
+
+def test_sem_balanco_continua_nao_aplicavel():
+    r = mr.check_priced_for_perfection(None, None, None)
+    assert r.status == mr.NAO_APLICAVEL
+
+
+def test_balanco_sem_reacao_e_sem_dado():
+    """Surpresa sem a reação de preço não diz nada: o sinal é sobre a DISTÂNCIA
+    entre o número e o que o mercado fez com ele."""
+    r = mr.check_priced_for_perfection(5.0, None, None)
+    assert r.status == mr.SEM_DADO
+    assert "reação" in r.motivo
+
+
+def test_bateu_e_subiu_nao_dispara():
+    assert mr.check_priced_for_perfection(5.0, None, 2.0).active is False
+
+
+def test_errou_e_caiu_nao_e_este_sinal():
+    """Queda depois de resultado RUIM é reação normal -- o sinal existe para o
+    caso contrário, que é o que revela expectativa esticada."""
+    assert mr.check_priced_for_perfection(-4.0, None, -9.0).active is False

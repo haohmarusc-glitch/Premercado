@@ -126,6 +126,40 @@ function stopPremarketTask(): void {
   }
 }
 
+// ── Retrato diário do risco macro ────────────────────────────────────────────
+//
+// Fixo, não configurável: diferente do diário e dos alertas, este não gasta
+// LLM nem depende de preferência do usuário -- é uma leitura de mercado que ou
+// acontece todo pregão ou não vira série. Um botão para desligá-lo só criaria
+// buraco silencioso no histórico meses depois.
+//
+// 07:50 BRT = 06:50 ET, antes do pré-mercado abrir. A Ásia já fechou (é isso
+// que dá as 6-8h de dianteira ao sinal de contágio) e o FRED já publicou a
+// observação do dia anterior.
+//
+// NÃO usa runAgent(): aquilo serializa por state.running para não rodar duas
+// análises de LLM ao mesmo tempo. Esta coleta é só rede e cabe em ~20s -- passar
+// por ali faria o retrato ser PULADO nos dias em que o diário atrasa, que são
+// justamente os dias movimentados.
+const MACRO_RISK_CRON = "50 7 * * 1-5";
+
+let macroRiskTask: ScheduledTask | null = null;
+
+function scheduleMacroRiskTask(): void {
+  if (macroRiskTask) return;
+  macroRiskTask = cron.schedule(
+    MACRO_RISK_CRON,
+    () => {
+      // coletarEPersistir nunca levanta: exceção não tratada dentro de um task
+      // do node-cron derruba o agendamento em silêncio até o próximo boot, e o
+      // sintoma seria a série parando de crescer sem nenhum erro no log.
+      void import("./macro-risk").then(({ coletarEPersistir }) => coletarEPersistir("cron"));
+    },
+    { timezone: TIMEZONE },
+  );
+  logger.info({ cron: MACRO_RISK_CRON, tz: TIMEZONE }, "Macro risk snapshot scheduler started");
+}
+
 // ── Unified settings application ─────────────────────────────────────────────
 
 type SchedulerSettings = Pick<
@@ -178,6 +212,7 @@ export async function startScheduler(): Promise<void> {
     const [row] = await db.select().from(settingsTable).limit(1);
     if (row) {
       applySettings(row);
+      scheduleMacroRiskTask();
       return;
     }
   } catch (_) {
@@ -186,6 +221,7 @@ export async function startScheduler(): Promise<void> {
   // Defaults: 8:30 BRT, premarket disabled
   scheduleTask(8, 30);
   scheduleAlertsTask(8, 30);
+  scheduleMacroRiskTask();
   state.scheduleEnabled = true;
   state.nextRunAt = nextOccurrence(8, 30).toISOString();
   logger.info(

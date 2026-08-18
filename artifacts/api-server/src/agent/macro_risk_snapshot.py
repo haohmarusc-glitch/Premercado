@@ -185,6 +185,82 @@ def _perto_do_fomc(hoje: date | None = None) -> bool:
     return False
 
 
+# ── Balanço recente ─────────────────────────────────────────────────────────
+
+# Janela em dias corridos: um balanço de sexta reage na sexta e ainda pesa na
+# segunda. Mais que isso e o "reagiu ao balanço" vira "andou na semana".
+JANELA_EARNINGS_DIAS = 3
+
+# Nomes de coluna já vistos no earnings_dates do yfinance. A lista existe
+# porque a biblioteca renomeia colunas entre versões, e um KeyError aqui
+# derrubaria a busca inteira -- o que este módulo trata como sem_dado, mas com
+# um motivo inútil ("KeyError") em vez do nome do que faltou.
+COLUNAS_SURPRESA = ("Surprise(%)", "Surprise (%)", "surprise(%)", "Surprise Pct")
+
+
+def _surpresa_recente(ticker: str, hoje: date | None = None) -> tuple[float | None, str]:
+    """Surpresa de EPS do último balanço, se ele foi na janela.
+
+    Só EPS: a receita viria da FMP, que devolve 402 nesta conta. Ver o
+    comentário de check_priced_for_perfection sobre por que isso não invalida
+    o sinal."""
+    import yfinance as yf
+
+    hoje = hoje or date.today()
+    df = yf.Ticker(ticker).earnings_dates
+    if df is None or len(df) == 0:
+        return None, f"{ticker}: sem earnings_dates"
+
+    coluna = next((c for c in COLUNAS_SURPRESA if c in df.columns), None)
+    if coluna is None:
+        return None, f"{ticker}: sem coluna de surpresa em {list(df.columns)[:4]}"
+
+    # O índice vem com fuso; comparar date com date evita o off-by-one que o
+    # processo em UTC introduziria (mesma lição do get_earnings_calendar).
+    for quando, linha in df.iterrows():
+        try:
+            dia = quando.date()
+        except AttributeError:
+            continue
+        if not (0 <= (hoje - dia).days <= JANELA_EARNINGS_DIAS):
+            continue
+        valor = linha.get(coluna)
+        if valor is None or valor != valor:      # NaN: balanço agendado, ainda não reportado
+            return None, f"{ticker}: balanço em {dia} sem número reportado"
+        return round(float(valor), 2), ""
+    return None, ""      # sem balanço na janela -- não é erro
+
+
+def _earnings_da_carteira() -> tuple[float | None, float | None, str]:
+    """(surpresa de EPS, reação do dia, motivo).
+
+    Varre os tickers cobertos e usa o PRIMEIRO com balanço na janela. Um por
+    vez de propósito: o sinal descreve um evento -- "fulano bateu e caiu" --, e
+    misturar dois balanços numa média produziria um número que não aconteceu
+    com ninguém.
+    """
+    try:
+        from agent import config
+    except ImportError:
+        import config  # type: ignore
+
+    motivos: list[str] = []
+    for t in (getattr(config, "TICKERS", None) or [])[:12]:
+        try:
+            surpresa, motivo = _surpresa_recente(t)
+        except Exception as e:  # noqa: BLE001
+            motivos.append(f"{t}: {e}")
+            continue
+        if motivo:
+            motivos.append(motivo)
+        if surpresa is None:
+            continue
+        reacao = _variacao_do_dia(t)
+        _log(f"balanço recente: {t} surpresa {surpresa:+.1f}% reação {reacao}")
+        return surpresa, reacao, ""
+    return None, None, "; ".join(motivos)
+
+
 # ── Manchetes China/semis ───────────────────────────────────────────────────
 
 def _manchetes_china() -> tuple[list[dict] | None, str]:
@@ -274,6 +350,15 @@ def coletar() -> tuple[dict, dict]:
         _log(f"manchetes indisponíveis: {e}")
 
     try:
+        dados["eps_surpresa"], dados["reacao"], motivo = _earnings_da_carteira()
+        if motivo:
+            erros["earnings"] = motivo
+    except Exception as e:  # noqa: BLE001
+        dados["eps_surpresa"] = dados["reacao"] = None
+        erros["earnings"] = str(e)
+        _log(f"earnings indisponível: {e}")
+
+    try:
         dados["fomc"] = _perto_do_fomc()
     except Exception:  # noqa: BLE001
         dados["fomc"] = False
@@ -290,10 +375,11 @@ def montar() -> dict:
         sk_hynix_pct=dados.get("sk_hynix"),
         samsung_pct=dados.get("samsung"),
         kospi_pct=dados.get("kospi"),
-        # Earnings ainda não entram: PRICED_FOR_PERFECTION precisa do balanço do
-        # dia cruzado com a reação em pré-mercado, e ligar isso pela metade
-        # produziria um sinal pior que ausente. Sem os três, o módulo devolve
-        # NAO_APLICAVEL, que é honesto: hoje o sistema não avalia este eixo.
+        # Receita fica de fora: a fonte (earnings_dates) publica só EPS, e a de
+        # receita viria da FMP, que devolve 402 nesta conta. O check trata a
+        # receita como opcional -- ver o comentário lá.
+        eps_surprise_pct=dados.get("eps_surpresa"),
+        premarket_reaction_pct=dados.get("reacao"),
         manchetes=dados.get("manchetes"),
         sox_precos=dados.get("sox"),
         wti_hoje=dados.get("wti_hoje"),
