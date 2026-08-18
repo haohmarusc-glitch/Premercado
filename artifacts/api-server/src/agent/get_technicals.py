@@ -24,6 +24,7 @@ import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker, friendly_error
 import hist_cache
+import json_seguro
 try:
     from agent import market_data_provider
 except ImportError:  # execução standalone (sys.path[0] = src/agent)
@@ -72,6 +73,16 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             return {"ticker": ticker, "error": "Dados insuficientes"}
         if hasattr(hist.columns, "levels"):
             hist.columns = hist.columns.get_level_values(0)
+
+        # Linha sem Close fora, ANTES de qualquer conta -- mesmo tratamento do
+        # get_chart.py:42. O yfinance devolve a barra do dia corrente com Close
+        # vazio fora do pregão, e ela entra como última linha: `close.iloc[-1]`
+        # virava NaN e contaminava price, changePct, pctAboveSma* e
+        # priceVsVwapPct de uma vez. O guarda de `len(hist) < 30` não pega isso,
+        # porque as linhas existem -- só a última é que está vazia.
+        hist = hist[hist["Close"].notna()]
+        if len(hist) < 30:
+            return {"ticker": ticker, "error": "Dados insuficientes"}
 
         close = hist["Close"]
         volume = hist["Volume"]
@@ -200,7 +211,10 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[get_technicals] {tickers[i]}: {e}", file=sys.stderr)
                 items[i] = {"ticker": tickers[i], "error": friendly_error(e)}
-    result = json.dumps({"items": items}, ensure_ascii=False) + "\n"
+    # json_seguro e não json.dumps: um único NaN em qualquer campo torna a
+    # resposta INTEIRA ilegível para o Node, derrubando junto os tickers que
+    # vieram certos. Ver o cabeçalho de json_seguro.py.
+    result = json_seguro.dumps({"items": items}) + "\n"
     # Write directly to the saved real stdout fd — clean, no buffering issues
     os.write(_real_stdout_fd, result.encode("utf-8"))
     os.close(_real_stdout_fd)
