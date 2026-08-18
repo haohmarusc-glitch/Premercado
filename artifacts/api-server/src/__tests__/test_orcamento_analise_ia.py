@@ -69,7 +69,18 @@ def test_duas_tentativas_de_provedor_cabem_no_orcamento():
     escrita. Aritmética certa no papel, livre na prática.
 
     Agora o teto da coleta é constante do módulo (_TETO_FUNDAMENTO_S) e a
-    conta amarra código, não estimativa."""
+    conta amarra código, não estimativa.
+
+    ATUALIZAÇÃO 18/08/2026 -- e a conta AINDA estava errada, de um jeito mais
+    fundo. Ela pressupõe que uma chamada a `create()` é UMA tentativa de
+    provedor. Não é: a cadeia de fallback percorre os provedores por DENTRO da
+    chamada, sem devolver o controle. Com seis configurados, um `create()` pode
+    custar 6 x 55s.
+
+    Este teste continua valendo como piso -- o orçamento precisa comportar ao
+    menos duas tentativas -- mas quem GARANTE o teto agora é o prazo passado ao
+    cliente (definir_orcamento), testado em test_orcamento_da_cadeia.py.
+    Aritmética de fora não segura laço de dentro."""
     mod = _modulo()
     assert 2 * mod._LLM_TIMEOUT_S + mod._TETO_FUNDAMENTO_S <= mod._ORCAMENTO_TOTAL_S
 

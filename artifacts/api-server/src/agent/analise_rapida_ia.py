@@ -498,6 +498,18 @@ def analisar(dados: dict) -> dict:
         )}
 
     client = get_client()
+    # O prazo vive no CLIENTE, não numa contagem de tentativas aqui fora.
+    #
+    # `create()` percorre a cadeia inteira por dentro: anthropic estoura 55s,
+    # cai para o deepseek, outro tanto -- tudo numa chamada só, sem devolver o
+    # controle. Contar "duas tentativas de 55s" daqui descrevia um mundo em que
+    # uma chamada é uma tentativa, e nunca foi esse. Com seis provedores
+    # configurados, uma chamada pode custar 330s contra os 135s de orçamento.
+    #
+    # Produção 18/08/2026: anthropic deu timeout, a cadeia caiu para o deepseek
+    # por dentro, e o Node matou o processo aos 150s com stdoutParcial=0 -- sem
+    # análise e sem erro legível.
+    client.definir_orcamento(_INICIO + _ORCAMENTO_TOTAL_S, _LLM_TIMEOUT_S)
     conteudo = f"Dados calculados para {ticker}:\n\n{_compactar(dados)}"
 
     # Modelo fraco da cadeia devolvendo TOCO (resposta de uma linha) é falha

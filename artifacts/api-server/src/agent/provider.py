@@ -1040,9 +1040,42 @@ class FallbackClient:
             )
         self._clients: dict[str, ProviderClient] = {}
         self._current_idx = 0
+        # Prazo do CHAMADOR, em time.monotonic(). None = sem prazo, que é o
+        # comportamento do agente diário (roda em janela de 10 min e prefere
+        # percorrer a cadeia inteira a voltar sem resposta).
+        self._prazo: float | None = None
+        self._custo_tentativa_s: float = 0.0
         # nome -> motivo. Só entra aqui por falha PERMANENTE (ver
         # _is_falha_permanente); rate limit passageiro nunca condena.
         self._mortos: dict[str, str] = {}
+
+    def definir_orcamento(self, prazo_monotonic: float, custo_por_tentativa_s: float) -> None:
+        """Prazo além do qual a cadeia para de tentar provedores novos.
+
+        Existe porque `create()` percorre a cadeia INTEIRA por dentro: um
+        provedor que estoura o timeout, outro que estoura, e uma única chamada
+        já consumiu 2x o teto por tentativa sem nunca devolver o controle a
+        quem chamou.
+
+        Quem contava tentativas de fora contava errado. Em analise_rapida_ia a
+        conta era "coleta + 2 x 55s cabem em 135s", e o teste que a fixava
+        passava -- mas ela descrevia um mundo em que uma chamada é uma
+        tentativa. Produção 18/08/2026: anthropic estourou 55s, a cadeia caiu
+        para o deepseek por dentro, e o processo foi morto pelo Node em 150s
+        com stdoutParcial=0. Com seis provedores configurados, uma chamada
+        pode custar 330s.
+
+        O prazo é do chamador porque só ele sabe quanto tempo tem: rota
+        interativa tem o timeout do Node na frente; o agente diário, não.
+        """
+        self._prazo = prazo_monotonic
+        self._custo_tentativa_s = max(0.0, custo_por_tentativa_s)
+
+    def _cabe_outra_tentativa(self) -> bool:
+        """Sem prazo definido, sempre cabe -- o default preserva o agente."""
+        if self._prazo is None:
+            return True
+        return (time.monotonic() + self._custo_tentativa_s) <= self._prazo
 
     def _condenar(self, name: str, motivo: str) -> None:
         if name in self._mortos:
@@ -1133,11 +1166,32 @@ class FallbackClient:
         tools_fn:  optional callable(provider_name) -> list for per-provider tools subset.
         """
         primary_name = self._order[self._current_idx]
+        # Fora do laço: a checagem de orçamento cita o último erro, e o primeiro
+        # provedor pode ser pulado por `continue` (condenado) antes de qualquer
+        # atribuição -- aí a citação daria UnboundLocalError.
+        last_exc: Exception | None = None
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
             if name in self._mortos:
                 # Já condenado nesta run: pular sem gastar round-trip.
                 continue
+            # Só para as tentativas de FALLBACK (idx > o provedor da vez): a
+            # primeira é a que o chamador já orçou antes de chamar. Barrar essa
+            # seria recusar trabalho que ele decidiu que cabia.
+            if idx > self._current_idx and not self._cabe_outra_tentativa():
+                restante = (self._prazo or 0) - time.monotonic()
+                print(
+                    f"[provider] sem orçamento para tentar {name}: restam "
+                    f"{restante:.0f}s e uma tentativa custa até "
+                    f"{self._custo_tentativa_s:.0f}s",
+                    file=sys.stderr, flush=True,
+                )
+                raise RuntimeError(
+                    f"Orçamento de tempo esgotado antes de tentar {name} "
+                    f"(restavam {restante:.0f}s, tentativa custa até "
+                    f"{self._custo_tentativa_s:.0f}s). Último erro: "
+                    f"{mask_sensitive_data(str(last_exc)) if last_exc else 'n/d'}"
+                )
             c = self._get_client(name)
             tier = _resolve_tier(model)
             resolved_model = c.models.get(tier, model) if tier else model
@@ -1174,7 +1228,7 @@ class FallbackClient:
             # default 1) — pior caso agora é 2x2=4 tentativas totais em vez
             # de até 3x4=12.
             transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "1"))
-            last_exc: Exception | None = None
+            last_exc = None
             for attempt in range(transient_retries + 1):
                 try:
                     result = c.create(

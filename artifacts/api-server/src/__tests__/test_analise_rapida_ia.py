@@ -55,6 +55,13 @@ class _Client:
         r.raw_stop_reason = self._stop
         return r
 
+    def definir_orcamento(self, prazo_monotonic, custo_por_tentativa_s):
+        """O dublê registra e não age: o que este arquivo testa é o laço de
+        RETRY do script. Que o prazo de fato pare a cadeia por dentro é
+        responsabilidade do FallbackClient, e está em
+        test_orcamento_da_cadeia.py -- testar aqui seria testar o dublê."""
+        self.orcamento = (prazo_monotonic, custo_por_tentativa_s)
+
     def pular_provedor_atual(self, motivo):
         self.pulos.append(motivo)
         if self._p + 1 < len(self._provedores):
