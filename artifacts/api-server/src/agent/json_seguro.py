@@ -38,13 +38,43 @@ import math
 from typing import Any
 
 
+def _nativo(obj: Any) -> Any:
+    """Escalar do numpy vira o tipo Python equivalente.
+
+    Produção 18/08/2026, primeira coleta do risco macro:
+
+        {"error": "Object of type bool is not JSON serializable"}
+
+    A causa é uma assimetria fácil de não ver: `np.float64` É subclasse de
+    `float` -- foi por isso que a limpeza de NaN funcionou sem ninguém pensar
+    em numpy -- mas `np.bool_` NÃO é subclasse de `bool`, nem `np.int64` de
+    `int`. Basta uma comparação sobre valor vindo do pandas (`preco <= -6`)
+    para o resultado virar `np.bool_` e derrubar a resposta inteira.
+
+    Fica aqui pelo mesmo motivo do NaN: a fronteira é o único ponto onde a
+    garantia vale para o payload todo, inclusive para campos que ainda não
+    existem. Qualquer script que deixe um escalar do numpy escapar de um
+    cálculo com pandas passa por este ponto.
+    """
+    if isinstance(obj, (str, bytes, bool, int, float, type(None))):
+        return obj
+    item = getattr(obj, "item", None)
+    if callable(item):
+        try:
+            return item()          # np.bool_/np.int64/np.float64 -> bool/int/float
+        except Exception:          # noqa: BLE001 -- array com mais de um elemento
+            return obj
+    return obj
+
+
 def limpar_nao_finitos(obj: Any) -> Any:
-    """Troca NaN/Infinity por None, recursivamente. Preserva o resto.
+    """Troca NaN/Infinity por None e normaliza escalar do numpy, recursivamente.
 
     bool antes de float de propósito: `isinstance(True, float)` é False em
     Python, mas int/bool passam por caminhos diferentes e a ordem evita
     surpresa se alguém trocar a checagem por Number.
     """
+    obj = _nativo(obj)
     if isinstance(obj, float):
         return None if not math.isfinite(obj) else obj
     if isinstance(obj, dict):

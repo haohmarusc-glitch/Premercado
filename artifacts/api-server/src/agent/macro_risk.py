@@ -59,7 +59,11 @@ class SignalResult:
     def to_dict(self) -> dict:
         return {
             "flag": self.flag,
-            "active": self.active,
+            # bool() explícito: comparação sobre valor vindo do pandas devolve
+            # np.bool_, que não é subclasse de bool. O json_seguro normaliza na
+            # serialização, mas o confluence_engine consome este dict em Python
+            # -- e ali o np.bool_ não quebra, só vira tipo estranho viajando.
+            "active": bool(self.active),
             "status": self.status,
             "severity": self.severity,
             "motivo": self.motivo,
