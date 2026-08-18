@@ -83,6 +83,32 @@ def test_a_camada_opcional_tem_teto_proprio():
     assert mod._TETO_FUNDAMENTO_S < mod._ORCAMENTO_TOTAL_S
 
 
+def test_a_rota_registra_o_stderr_quando_a_analise_tropeca_e_sai(monkeypatch):
+    """O caso CARO é o intermediário: um provedor trunca (e a tentativa perdida
+    É cobrada -- tokens de raciocínio contam como saída), o seguinte entrega o
+    texto, e o desfecho é sucesso. Registrar só no erro deixava exatamente esse
+    caminho sem rastro.
+
+    Produção 18/08/2026: análise a US$ 0,0608 contra os ~US$ 0,015 esperados, e
+    `docker compose logs | grep analise_rapida_ia` vazio -- não por falha do
+    log, mas porque a execução tinha dado certo."""
+    trecho = _ROTA.split("function runAnaliseRapidaIA", 1)[1]
+    assert "MARCAS_DE_TROPECO" in trecho
+    # As três marcas que o Python imprime quando a cadeia anda.
+    for marca in ("pulando", "truncou", "toco"):
+        assert marca in trecho, f"'{marca}' não é reconhecida como tropeço"
+
+
+def test_a_regra_de_unidade_de_tempo_esta_no_system():
+    """Número certo com unidade errada é pior que número errado: o valor
+    confere com o JSON, então o leitor não tem como desconfiar. Visto em
+    produção -- `momentumAnnualPct` (taxa anualizada) descrito como
+    'momentum de 106,56% em 90 dias', que seria ~38%."""
+    mod = _modulo()
+    assert "momentumAnnualPct" in mod.SYSTEM
+    assert "ANUALIZADA" in mod.SYSTEM
+
+
 def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
     """O script sai com código 0 E {"error": ...} quando nenhum provedor
     produz texto -- é o que a Tarefa 0 passou a fazer. Sem registrar o stderr
@@ -93,10 +119,10 @@ def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
     Trocar um 500 mudo por um erro elegante não pode significar trocar um erro
     legível por um erro bonito e inauditável."""
     trecho = _ROTA.split("function runAnaliseRapidaIA", 1)[1]
-    assert "registrarSeErro" in trecho, "o caminho de sucesso-com-erro não registra o stderr"
+    assert "registrarDiagnostico" in trecho, "o caminho de sucesso-com-erro não registra o stderr"
     # E precisa valer nos DOIS parses (bloco inteiro e última linha), senão
     # stdout poluído volta a engolir o diagnóstico.
-    assert trecho.count("registrarSeErro(parsed)") == 2
+    assert trecho.count("registrarDiagnostico(parsed)") == 2
 
 
 def test_retries_desligados_para_esta_rota():
