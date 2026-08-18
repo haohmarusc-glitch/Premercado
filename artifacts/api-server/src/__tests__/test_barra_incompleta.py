@@ -135,3 +135,49 @@ def test_resultado_sem_df_passa_sem_erro(monkeypatch):
     res = mdp.get_daily_history("NVDA", "6mo")
     assert res.ok is False
     assert res.df is None
+
+
+# ── quem chama o yfinance DIRETO ────────────────────────────────────────────
+#
+# A fachada do get_daily_history só protege quem passa por ela. Vários scripts
+# chamam `yf.Ticker(...).history()` direto -- e foi por isso que o conserto na
+# fonte não alcançou a Reação a Earnings: ela busca o próprio histórico.
+#
+# Estes testes fixam o caso concreto que quebrou. A varredura dos demais
+# chamadores diretos é decisão à parte: ali a semântica difere por script
+# (diário vs intradiário, janela de aquecimento), então não é mecânica como
+# foi a do json_seguro.
+
+def test_o_helper_e_publico():
+    """O nome sem underscore é contrato: scripts fora do provider precisam
+    poder aplicá-lo. Voltar a torná-lo privado quebraria esses chamadores."""
+    assert hasattr(mdp, "sem_barra_incompleta")
+
+
+def test_earnings_reaction_limpa_o_proprio_historico():
+    """Ela chama t.history() direto, sem passar pelo provider. Produção
+    18/08/2026, SNDK: "base: —" com R1/R2/S1/S2 vazios, enquanto gap,
+    fechamento e volume vinham certos -- o preço era o único NaN, e os quatro
+    níveis derivam dele."""
+    import pathlib
+    fonte = (pathlib.Path(mdp.__file__).parent / "earnings_reaction_analysis.py").read_text(encoding="utf-8")
+
+    # Linhas de CÓDIGO, sem comentário. A primeira versão deste teste comparou
+    # posições no texto cru e falhou achando `hist["Close"].iloc[-1]` dentro do
+    # comentário que explica o conserto -- o comentário vem antes da linha que
+    # ele descreve. Teste que lê fonte precisa saber a diferença.
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+
+    def primeira(trecho: str) -> int:
+        for i, linha in enumerate(codigo):
+            if trecho in linha:
+                return i
+        return -1
+
+    i_filtro = primeira("sem_barra_incompleta(hist)")
+    i_preco = primeira('hist["Close"].iloc[-1]')
+
+    assert i_filtro >= 0, "o filtro não é aplicado ao histórico deste script"
+    assert i_preco >= 0, "não achei o uso do preço -- teste desatualizado?"
+    # Filtrar DEPOIS de ler o preço não serviria de nada.
+    assert i_filtro < i_preco
