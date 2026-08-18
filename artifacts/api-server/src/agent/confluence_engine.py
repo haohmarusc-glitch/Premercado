@@ -401,7 +401,10 @@ def macro_risk_signals() -> dict:
     import yfinance as yf
     active: list[str] = []
     try:
-        df_y = yf.Ticker(YIELD_TICKER).history(period="5d")
+        # 5d cru: a barra de hoje pode vir sem Close e é a última -- o
+        # iloc[-1] abaixo pegaria NaN e o veto macro sumiria em silêncio.
+        df_y = market_data_provider.sem_barra_incompleta(
+            yf.Ticker(YIELD_TICKER).history(period="5d"))
         if df_y is not None and not df_y.empty:
             y = float(df_y["Close"].iloc[-1])
             if y > 20:
@@ -411,7 +414,8 @@ def macro_risk_signals() -> dict:
     except Exception:
         pass
     try:
-        df_o = yf.Ticker(OIL_TICKER).history(period="1mo")
+        df_o = market_data_provider.sem_barra_incompleta(
+            yf.Ticker(OIL_TICKER).history(period="1mo"))
         if df_o is not None and len(df_o) >= OIL_SHOCK_LOOKBACK_DAYS + 1:
             then = float(df_o["Close"].iloc[-1 - OIL_SHOCK_LOOKBACK_DAYS])
             now = float(df_o["Close"].iloc[-1])

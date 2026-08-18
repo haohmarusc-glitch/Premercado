@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 
 from . import brt
+from . import market_data_provider
 from . import config
 from . import memory
 from . import tools as t
@@ -1475,6 +1476,11 @@ def _fetch_veredito_quote(ticker: str) -> dict | None:
     MESMO candle usado no change_percent pra detectar fade intradiário."""
     try:
         hist = yf.Ticker(ticker).history(period="5d")
+        # `price` sai de iloc[-1]: com a barra de hoje ainda sem Close, ele
+        # viraria NaN. Aqui o filtro é seguro porque prev_close sai de iloc[-2]
+        # DA MESMA série filtrada -- os dois deslizam juntos e continuam sendo
+        # "último fechamento" e "o anterior a ele".
+        hist = market_data_provider.sem_barra_incompleta(hist)
         if hist.empty or len(hist) < 2:
             return None
         last = hist.iloc[-1]
