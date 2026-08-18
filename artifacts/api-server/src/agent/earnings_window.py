@@ -65,6 +65,14 @@ except ImportError:
     from agent.security import sanitize_ticker
 
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # Quantos balanços passados alimentam a "realizada". 8 = dois anos de
 # trimestres: amostra grande o bastante para uma média fazer sentido e curta o
@@ -300,7 +308,7 @@ def main() -> None:
             print(f"[earnings_window] {tk}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             itens.append({"ticker": tk, "error": f"{type(e).__name__}: {e}"})
 
-    print(json.dumps({"items": itens}, ensure_ascii=False))
+    print(json_seguro.dumps({"items": itens}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

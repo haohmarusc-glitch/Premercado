@@ -22,6 +22,14 @@ import json
 import sys
 
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 try:
     from get_scenario_params import compute as compute_cenario
@@ -83,4 +91,4 @@ if __name__ == "__main__":
     if not ticker:
         print(json.dumps({"error": "ticker é obrigatório"}))
         sys.exit(0)
-    print(json.dumps(snapshot(ticker, benchmark), ensure_ascii=False))
+    print(json_seguro.dumps(snapshot(ticker, benchmark), ensure_ascii=False))

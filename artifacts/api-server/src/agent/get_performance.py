@@ -11,6 +11,14 @@ except ImportError:
 _probe_boot()
 
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
 # jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
@@ -53,4 +61,4 @@ for t in tickers:
         result[t] = {"price": price, "previousClose": prev_close}
     except:
         result[t] = {"price": None, "previousClose": None}
-print(json.dumps(result))
+print(json_seguro.dumps(result))

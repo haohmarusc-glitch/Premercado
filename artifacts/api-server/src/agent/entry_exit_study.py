@@ -60,6 +60,14 @@ from get_scenario_params import compute as compute_scenario_params
 from get_earnings import get_earnings
 from earnings_reaction_analysis import analyze_ticker as analyze_earnings_reaction
 from get_news_feed import for_ticker as news_for_ticker, _company_names, translate_all
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 _probe_imports()
 
@@ -316,4 +324,4 @@ if __name__ == "__main__":
         label="entry_exit_study",
     )
     _traduzir_noticias(results)
-    exit_now(json.dumps({"results": results}, ensure_ascii=False) + "\n")
+    exit_now(json_seguro.dumps({"results": results}, ensure_ascii=False) + "\n")

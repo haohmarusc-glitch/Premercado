@@ -39,6 +39,14 @@ import sys
 
 import pandas as pd
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 DEFAULT_TICKERS = ["NVDA", "SMCI", "AVGO", "SKHY", "ARM"]
 
@@ -390,6 +398,6 @@ if __name__ == "__main__":
                 _saida.append({"ticker": tk, "error": "orçamento de tempo esgotado"})
                 continue
             _saida.append(analyze_ticker(tk, _lookback))
-        print(json.dumps(_saida, ensure_ascii=False))
+        print(json_seguro.dumps(_saida, ensure_ascii=False))
     else:
         main()
