@@ -189,3 +189,80 @@ def test_serializa_por_json_seguro():
     fonte = pathlib.Path(snap.__file__).read_text(encoding="utf-8")
     assert "json_seguro.dumps" in fonte
     assert "json.dumps(" not in fonte
+
+
+# ── busca do balanço recente ────────────────────────────────────────────────
+
+import pandas as pd
+
+
+def _df_earnings(dias_atras: int, surpresa, coluna="Surprise(%)"):
+    from datetime import date, timedelta
+    quando = pd.Timestamp(date.today() - timedelta(days=dias_atras))
+    return pd.DataFrame({coluna: [surpresa]}, index=[quando])
+
+
+class _TickerFalso:
+    def __init__(self, df): self.earnings_dates = df
+
+
+def test_balanco_na_janela_devolve_a_surpresa(monkeypatch):
+    import yfinance as yf
+    monkeypatch.setattr(yf, "Ticker", lambda t: _TickerFalso(_df_earnings(1, 5.0)))
+    valor, motivo = snap._surpresa_recente("NVDA")
+    assert valor == 5.0
+    assert motivo == ""
+
+
+def test_balanco_velho_e_ignorado_sem_virar_erro(monkeypatch):
+    """Fora da janela não é falha de coleta -- é ausência de evento. Reportar
+    como erro encheria `coleta.erros` todo dia com ruído."""
+    import yfinance as yf
+    monkeypatch.setattr(yf, "Ticker", lambda t: _TickerFalso(_df_earnings(30, 5.0)))
+    valor, motivo = snap._surpresa_recente("NVDA")
+    assert valor is None
+    assert motivo == ""
+
+
+def test_balanco_agendado_ainda_sem_numero(monkeypatch):
+    """earnings_dates traz datas FUTURAS com surpresa NaN. Tratar NaN como 0
+    faria um balanço ainda não divulgado virar "não bateu"."""
+    import yfinance as yf
+    monkeypatch.setattr(yf, "Ticker", lambda t: _TickerFalso(_df_earnings(0, float("nan"))))
+    valor, motivo = snap._surpresa_recente("NVDA")
+    assert valor is None
+    assert "sem número reportado" in motivo
+
+
+def test_coluna_renomeada_diz_o_que_achou(monkeypatch):
+    """O yfinance renomeia colunas entre versões. Um KeyError daria um motivo
+    inútil; nomear as colunas encontradas manda o conserto direto."""
+    import yfinance as yf
+    monkeypatch.setattr(yf, "Ticker", lambda t: _TickerFalso(
+        _df_earnings(1, 5.0, coluna="Outra Coisa")))
+    valor, motivo = snap._surpresa_recente("NVDA")
+    assert valor is None
+    assert "Outra Coisa" in motivo
+
+
+def test_o_primeiro_ticker_com_balanco_vence(monkeypatch):
+    """Um evento por vez de propósito: o sinal descreve "fulano bateu e caiu", e
+    misturar dois balanços numa média produziria um número que não aconteceu
+    com ninguém."""
+    chamados = []
+
+    def falso(t, hoje=None):
+        chamados.append(t)
+        return (7.0, "") if t == "MRVL" else (None, "")
+
+    monkeypatch.setattr(snap, "_surpresa_recente", falso)
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: -9.0)
+    try:
+        from agent import config
+    except ImportError:
+        import config  # type: ignore
+    monkeypatch.setattr(config, "TICKERS", ["NVDA", "MRVL", "ARM"], raising=False)
+
+    eps, reacao, _ = snap._earnings_da_carteira()
+    assert (eps, reacao) == (7.0, -9.0)
+    assert "ARM" not in chamados          # parou no MRVL

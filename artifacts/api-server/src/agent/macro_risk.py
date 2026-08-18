@@ -176,26 +176,33 @@ def check_priced_for_perfection(
 
     Sem balanço no dia, o sinal é NAO_APLICAVEL, não sem_dado: "não houve
     earnings" é resposta completa. Tratar como buraco puniria o Kelly em todo
-    dia comum do calendário."""
-    faltando = [
-        nome for nome, v in (
-            ("eps", eps_surprise_pct),
-            ("receita", revenue_surprise_pct),
-            ("reação", premarket_reaction_pct),
-        ) if v is None
-    ]
-    if len(faltando) == 3:
+    dia comum do calendário.
+
+    A surpresa de RECEITA é opcional. A fonte disponível (earnings_dates do
+    yfinance) publica só EPS -- a de receita viria da FMP, que devolve 402
+    nesta conta desde 18/08/2026. Exigir as duas deixaria o sinal em sem_dado
+    permanente, que é pior que ausente: puniria o Kelly todo dia sem nunca
+    poder disparar. O essencial do padrão é "número bom, ação caiu", e o EPS
+    sozinho já o expressa; quando a receita existir, ela endurece o critério."""
+    if eps_surprise_pct is None and premarket_reaction_pct is None:
         return SignalResult(
             flag="PRICED_FOR_PERFECTION", active=False, status=NAO_APLICAVEL,
             motivo="nenhum balanço na janela",
         )
+    faltando = [
+        nome for nome, v in (
+            ("eps", eps_surprise_pct), ("reação", premarket_reaction_pct),
+        ) if v is None
+    ]
     if faltando:
         return _sem_dado(
             "PRICED_FOR_PERFECTION",
             f"balanço na janela mas faltou: {', '.join(faltando)}",
         )
 
-    bateu = eps_surprise_pct > 0 and revenue_surprise_pct > 0
+    bateu = eps_surprise_pct > 0 and (
+        revenue_surprise_pct is None or revenue_surprise_pct > 0
+    )
     active = bateu and premarket_reaction_pct <= -5
 
     return SignalResult(
