@@ -1066,6 +1066,11 @@ class FallbackClient:
         # nome -> motivo. Só entra aqui por falha PERMANENTE (ver
         # _is_falha_permanente); rate limit passageiro nunca condena.
         self._mortos: dict[str, str] = {}
+        # Quanto custou a tentativa que RESPONDEU, sozinha. Quem chama só
+        # consegue cronometrar o create() inteiro -- e o create() percorre a
+        # cadeia por dentro -- então sem este número o chamador carimba o tempo
+        # de todos os provedores em cima do único que respondeu (ver create()).
+        self.ultimo_tempo_provedor_s: float | None = None
 
     def definir_orcamento(self, prazo_monotonic: float, custo_por_tentativa_s: float) -> None:
         """Prazo além do qual a cadeia para de tentar provedores novos.
@@ -1247,6 +1252,10 @@ class FallbackClient:
             # de até 3x4=12.
             transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "1"))
             last_exc = None
+            # Relógio POR PROVEDOR. Inclui os retries transitórios dele de
+            # propósito: a pergunta que o log responde é "quanto este provedor
+            # custou", e a espera do backoff foi gasta por causa dele.
+            _t_provedor = time.monotonic()
             for attempt in range(transient_retries + 1):
                 try:
                     result = c.create(
@@ -1256,6 +1265,7 @@ class FallbackClient:
                         tools=resolved_tools,
                         messages=resolved_messages,
                     )
+                    self.ultimo_tempo_provedor_s = time.monotonic() - _t_provedor
                     if idx != self._current_idx:
                         print(f"[provider] switched to {name}", file=sys.stderr, flush=True)
                         self._current_idx = idx
@@ -1275,6 +1285,7 @@ class FallbackClient:
                         continue
                     break
 
+            gasto_provedor = time.monotonic() - _t_provedor
             safe_exc = mask_sensitive_data(str(last_exc))
             if last_exc is not None and _is_falha_permanente(last_exc):
                 self._condenar(name, safe_exc)
@@ -1290,7 +1301,11 @@ class FallbackClient:
                     flush=True,
                 )
             else:
-                print(f"[provider] {name} failed: {safe_exc}", file=sys.stderr, flush=True)
+                # O tempo junto do erro: "deepseek failed" sem número não
+                # distingue recusa imediata (chave ruim) de teto estourado
+                # (55s), que pedem investigações opostas.
+                print(f"[provider] {name} failed after {gasto_provedor:.1f}s: {safe_exc}",
+                      file=sys.stderr, flush=True)
             proximos = [p for p in self._order[idx + 1:] if p not in self._mortos]
             if proximos:
                 print(f"[provider] trying {proximos[0]}...", file=sys.stderr, flush=True)
