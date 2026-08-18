@@ -31,9 +31,11 @@ import json
 try:
     from bounded_parallel import deadline_exceeded
     import earnings_dates as _earnings_dates
+    import market_data_provider
 except ImportError:
     from agent.bounded_parallel import deadline_exceeded
     from agent import earnings_dates as _earnings_dates
+    from agent import market_data_provider
 
 import sys
 
@@ -119,6 +121,16 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
         hist = t.history(start=start, auto_adjust=False)
     except Exception as e:
         return {"ticker": ticker, "error": f"falha ao buscar histórico de preço: {type(e).__name__}: {e}"}
+    # A barra do DIA CORRENTE vem sem Close antes do fechamento, e é a ÚLTIMA
+    # linha -- `hist["Close"].iloc[-1]` pegava NaN, que json_seguro converte em
+    # null, deixando current_price e os quatro níveis (que derivam dele) vazios
+    # na tela. Visto em produção 18/08/2026, SNDK: "base: —" com R1/R2/S1/S2
+    # todos em branco enquanto gap, fechamento e volume vinham certos.
+    #
+    # Este script chama t.history() DIRETO, sem passar pelo market_data_
+    # provider -- então a fachada que limpa isso lá não o alcança. Mesmo
+    # helper, aplicado aqui na mão.
+    hist = market_data_provider.sem_barra_incompleta(hist)
     if hist.empty:
         return {"ticker": ticker, "error": "sem histórico de preço no período"}
     if hist.index.tz is not None:

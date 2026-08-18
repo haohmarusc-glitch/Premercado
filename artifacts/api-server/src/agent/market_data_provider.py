@@ -110,7 +110,7 @@ def _yf_history_with_retry(ticker: str, period: str, auto_adjust: bool) -> pd.Da
     return None
 
 
-def _sem_barra_incompleta(df):
+def sem_barra_incompleta(df):
     """Descarta linhas sem `Close`. Devolve o df como veio se não der.
 
     O yfinance inclui a barra do DIA CORRENTE mesmo antes de haver fechamento:
@@ -146,6 +146,9 @@ def _sem_barra_incompleta(df):
         return df
 
 
+_sem_barra_incompleta = sem_barra_incompleta  # nome antigo, mantido
+
+
 def get_daily_history(
     ticker: str, period: str = "6mo", *, auto_adjust: bool = False,
     permitir_externa: bool = True,
@@ -161,7 +164,7 @@ def get_daily_history(
     )
     if res.df is not None:
         res = HistoryResult(
-            df=_sem_barra_incompleta(res.df), source=res.source,
+            df=sem_barra_incompleta(res.df), source=res.source,
             is_stale=res.is_stale, warnings=res.warnings,
         )
     return res
