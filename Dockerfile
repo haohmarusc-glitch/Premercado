@@ -19,11 +19,26 @@ RUN corepack enable
 # O truque de copiar manifests primeiro melhora o cache de camada, mas aqui
 # exigiria listar à mão cada pacote de lib/ e artifacts/ -- e a lista sai de
 # sincronia no dia em que alguém adicionar um pacote, com falha silenciosa (o
-# install "funciona" sem a dependência nova). Este app rebuilda raramente;
-# robustez vale mais que a camada em cache.
+# install "funciona" sem a dependência nova). Robustez vale mais que a camada
+# em cache.
 COPY . .
 
-RUN pnpm install --frozen-lockfile
+# ...mas o preço disso é que QUALQUER mudança de código invalida a camada do
+# install, e sem store persistente o pnpm rebaixa 934 pacotes da rede a cada
+# deploy. Medido em 18/08/2026, num deploy que só mexeu em dois arquivos
+# Python: "resolved 934, reused 0, downloaded 934".
+#
+# O cache mount separa as duas coisas. Ele NÃO é camada: sobrevive à
+# invalidação do COPY acima, então o install continua rodando (robusto, sem
+# lista para manter em dia) mas resolve por hardlink do store em vez de
+# baixar. O "reused" passa a ser quase o total.
+#
+# Não é cache de CORRETUDE: --frozen-lockfile continua mandando, e o store é
+# endereçado por conteúdo -- pacote com hash diferente não é reaproveitado.
+# Na pior das hipóteses o store está vazio e o build é o de hoje.
+ENV PNPM_STORE_DIR=/pnpm-store
+RUN --mount=type=cache,target=/pnpm-store,sharing=locked \
+    pnpm install --frozen-lockfile
 
 # PORT e BASE_PATH existem aqui porque o vite.config.ts dos artifacts de
 # frontend lança exceção quando eles faltam -- é validação de config, avaliada

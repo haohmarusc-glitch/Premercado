@@ -109,6 +109,38 @@ def test_a_regra_de_unidade_de_tempo_esta_no_system():
     assert "ANUALIZADA" in mod.SYSTEM
 
 
+def test_a_regra_de_escala_da_volatilidade_esta_no_system():
+    """Resíduo da mesma família do momentum, achado no dia seguinte (SNDK):
+    `volAnnual` chega como FRAÇÃO (1,169) e saiu no texto como "a volatilidade
+    anual é 1,17", ao lado de "beta 1,99". Um é percentual, o outro é
+    adimensional, e escritos crus parecem a mesma grandeza.
+
+    A regra precisa dizer as DUAS metades -- o que converter e o que NÃO --
+    senão o modelo passa a carimbar % em beta e RVOL."""
+    mod = _modulo()
+    assert "FRAÇÃO" in mod.SYSTEM
+    assert "volAnnual" in mod.SYSTEM
+    # a metade que impede o excesso de zelo
+    assert "adimensionais" in mod.SYSTEM
+
+
+def test_o_dockerfile_tem_store_persistente_do_pnpm():
+    """COPY . . antes do install é decisão consciente (ver comentário lá): a
+    alternativa exigiria listar os package.json à mão e sair de sincronia em
+    silêncio. O custo é o install rodar sempre -- e sem store persistente ele
+    rebaixava 934 pacotes por deploy ("reused 0", medido em 18/08/2026).
+
+    O cache mount resolve sem tocar naquela decisão: não é camada, sobrevive à
+    invalidação do COPY, e o install continua rodando com --frozen-lockfile.
+    Este teste existe para o mount não ser removido junto com algum refactor
+    do Dockerfile -- a perda seria invisível, só um deploy mais lento."""
+    dockerfile = (_SRC.parent.parent.parent / "Dockerfile").read_text(encoding="utf-8")
+    assert "--mount=type=cache" in dockerfile
+    assert "PNPM_STORE_DIR" in dockerfile
+    # --frozen-lockfile continua mandando: cache de velocidade, não de corretude
+    assert "--frozen-lockfile" in dockerfile
+
+
 def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
     """O script sai com código 0 E {"error": ...} quando nenhum provedor
     produz texto -- é o que a Tarefa 0 passou a fazer. Sem registrar o stderr
