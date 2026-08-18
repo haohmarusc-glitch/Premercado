@@ -6,6 +6,7 @@ and Anthropic into a single interface that agent.py can use transparently.
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -485,6 +486,7 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
             print(
                 f"[provider] {len(leaked_calls)} chamada(s) de função vazada(s) "
                 f"como texto foram recuperadas: {[b.name for b in leaked_calls]}",
+                file=sys.stderr,
                 flush=True,
             )
         if cleaned_text:
@@ -554,6 +556,7 @@ def _try_recover_tool_use_failed(exc: Exception) -> "NormalizedResponse | None":
     if blocks:
         print(
             f"[provider] recuperado de tool_use_failed (formato padrão): {[b.name for b in blocks]}",
+            file=sys.stderr,
             flush=True,
         )
         return NormalizedResponse(content=blocks, stop_reason="tool_use")
@@ -572,6 +575,7 @@ def _try_recover_tool_use_failed(exc: Exception) -> "NormalizedResponse | None":
         )
         print(
             f"[provider] recuperado de tool_use_failed (formato alternativo): {name}",
+            file=sys.stderr,
             flush=True,
         )
         return NormalizedResponse(content=[block], stop_reason="tool_use")
@@ -793,6 +797,19 @@ class ProviderClient:
 
 
 # ── Fallback chain ────────────────────────────────────────────────────────────
+
+# TODO NADA aqui vai para stdout. Descoberto em 18/08/2026: estas linhas eram
+# impressas em stdout, e em analise_rapida_ia.py o stdout é CONTRATUALMENTE do
+# JSON final (o Node o parseia). O efeito era duplo e os dois lados doíam:
+#
+#   - o diagnóstico sumia. Toda investigação daquele dia -- "por que o
+#     Anthropic não respondeu?" -- esbarrou num `grep [provider]` vazio,
+#     porque as linhas estavam misturadas ao JSON, não no log;
+#   - e poluíam o pipe. O "parse resiliente" da rota (tentar a última linha
+#     não-vazia quando o bloco todo falha) foi escrito para sobreviver a
+#     exatamente esta poluição -- tratava o sintoma, com a causa aqui.
+#
+# Regra do projeto, sem exceção: stdout é do resultado, stderr é do diagnóstico.
 
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
 _DEFAULT_ORDER = ["anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"]
@@ -1034,6 +1051,7 @@ class FallbackClient:
         print(
             f"[provider] {name} fora desta run (falha permanente) -- "
             f"não será tentado de novo até o próximo processo.",
+            file=sys.stderr,
             flush=True,
         )
         # Linha estruturada pro runner.ts (mesmo padrão de USAGE:/STEP:/
@@ -1042,6 +1060,11 @@ class FallbackClient:
         # transforma isso em aviso no topo do e-mail do relatório e no stepLog
         # da tela de Runs. `motivo` passa por mask_sensitive_data antes de
         # chegar aqui (ver call site em create()).
+        # ÚNICO print deste arquivo que fica em stdout, e de propósito: não é
+        # diagnóstico humano, é canal legível por máquina. runner.ts e
+        # report-preflight.ts fazem parse de PROVIDER_DOWN:{json} no stdout
+        # CRU para montar o banner de "provedor caído" no relatório diário.
+        # Mover para stderr quebraria esse banner em silêncio.
         print(
             "PROVIDER_DOWN:" + json.dumps(
                 {"provider": name, "motivo": motivo[:300]}, ensure_ascii=False
@@ -1068,10 +1091,11 @@ class FallbackClient:
             if nome in self._mortos:
                 continue
             self._current_idx = idx
-            print(f"[provider] pulando {atual} ({motivo}) -> {nome}", flush=True)
+            print(f"[provider] pulando {atual} ({motivo}) -> {nome}", file=sys.stderr, flush=True)
             return True
         print(
             f"[provider] pulando {atual} ({motivo}) -- sem próximo provedor disponível",
+            file=sys.stderr,
             flush=True,
         )
         return False
@@ -1135,6 +1159,7 @@ class FallbackClient:
                         f"[provider] histórico condensado para {name} "
                         f"({len(messages)} mensagens -> 1 de {chars} chars, "
                         f"com o trabalho já feito)",
+                        file=sys.stderr,
                         flush=True,
                     )
             else:
@@ -1160,7 +1185,7 @@ class FallbackClient:
                         messages=resolved_messages,
                     )
                     if idx != self._current_idx:
-                        print(f"[provider] switched to {name}", flush=True)
+                        print(f"[provider] switched to {name}", file=sys.stderr, flush=True)
                         self._current_idx = idx
                     return result
                 except Exception as exc:
@@ -1171,6 +1196,7 @@ class FallbackClient:
                             f"[provider] {name} erro transitório "
                             f"(tentativa {attempt + 1}/{transient_retries + 1}) — "
                             f"aguardando {delay}s antes de re-tentar...",
+                            file=sys.stderr,
                             flush=True,
                         )
                         time.sleep(delay)
@@ -1188,13 +1214,14 @@ class FallbackClient:
                     f"[provider] {name}: modelo '{resolved_model}' não existe ou não está "
                     f"disponível para esta chave — ERRO DE CONFIGURAÇÃO, corrija "
                     f"PROVIDERS['{name}']['models'] em provider.py. Detalhe: {safe_exc}",
+                    file=sys.stderr,
                     flush=True,
                 )
             else:
-                print(f"[provider] {name} failed: {safe_exc}", flush=True)
+                print(f"[provider] {name} failed: {safe_exc}", file=sys.stderr, flush=True)
             proximos = [p for p in self._order[idx + 1:] if p not in self._mortos]
             if proximos:
-                print(f"[provider] trying {proximos[0]}...", flush=True)
+                print(f"[provider] trying {proximos[0]}...", file=sys.stderr, flush=True)
             else:
                 # Diagnóstico junto do erro: sem isso o operador só vê o último
                 # motivo e não sabe que a cadeia INTEIRA está fora, nem por quê.

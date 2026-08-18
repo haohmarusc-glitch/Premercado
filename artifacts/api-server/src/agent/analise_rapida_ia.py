@@ -41,6 +41,7 @@ Output (stdout JSON):
 """
 import json
 import os
+import re
 import sys
 import time
 
@@ -124,6 +125,36 @@ REC_LABELS = {
 # custo alto (4500 tokens de saída ≈ US$ 0,045 por análise, contra ~0,015
 # de uma análise no tamanho pedido).
 MAX_TOKENS = 6000
+
+# Folga de raciocínio, para modelo que PENSA antes de responder.
+#
+# Em modelo thinking o max_tokens cobre raciocínio + resposta, não só a
+# resposta. O mesmo 6000 significa coisas diferentes conforme o provedor, e
+# ninguém percebeu porque o primeiro da cadeia (Anthropic) não gasta orçamento
+# visível pensando.
+#
+# Medido em produção 18/08/2026, deepseek-v4-pro: 17.147 caracteres de
+# raciocínio -- perto de 4.300 tokens -- e `stop_reason=length` com a resposta
+# VAZIA. O modelo pensou até o teto e não sobrou espaço para escrever nada.
+#
+# 6000 de folga cobre aquele caso com margem. Não é generosidade: o teto de
+# baixo continua valendo para a resposta, que é o que o usuário lê e o que
+# custa em texto útil.
+MAX_TOKENS_RACIOCINIO = 6000
+
+# Heurística por nome, e o detector de truncamento é a rede de segurança.
+#
+# Uma lista de modelos envelhece -- por isso ela não é a única defesa: quando
+# um modelo novo pensar sem estar aqui, o laço de retry ainda vai reconhecer
+# `stop_reason=length` e trocar de provedor em vez de devolver texto vazio.
+_MODELO_PENSA_RE = re.compile(r"deepseek-v4-pro|reasoner|thinking|-r1\b", re.I)
+
+
+def teto_de_tokens(modelo: str) -> int:
+    """Teto a pedir para ESTE modelo, já contando o raciocínio quando houver."""
+    if _MODELO_PENSA_RE.search(modelo or ""):
+        return MAX_TOKENS + MAX_TOKENS_RACIOCINIO
+    return MAX_TOKENS
 # Teto do JSON de dados no prompt — a tela manda o que coletou, mas um
 # payload anômalo não pode virar um prompt gigante cobrado por token.
 MAX_DADOS_CHARS = 14_000
@@ -452,6 +483,13 @@ def analisar(dados: dict) -> dict:
     # que o Node mate o processo no meio -- o usuário paga os tokens e não
     # recebe nada. Melhor devolver um erro legível com o tempo já gasto.
     gasto = time.monotonic() - _INICIO
+    # A divisão do tempo, explícita. Sem ela o log traz só o total, e descobrir
+    # se foram as fontes ou o LLM vira aritmética sobre um número só -- foi o
+    # que aconteceu em 18/08/2026, com o erro dizendo "143s de 135s" e nada
+    # sobre onde os 143s foram parar.
+    print(f"[analise_rapida_ia] coleta terminou em {gasto:.1f}s "
+          f"(teto {_TETO_FUNDAMENTO_S:.0f}s); orçamento total {_ORCAMENTO_TOTAL_S:.0f}s",
+          file=sys.stderr, flush=True)
     if gasto + _LLM_TIMEOUT_S > _ORCAMENTO_TOTAL_S:
         return {"error": (
             f"A coleta de dados levou {gasto:.0f}s e não sobra tempo para a "
@@ -473,14 +511,19 @@ def analisar(dados: dict) -> dict:
     # FallbackClient.pular_provedor_atual).
     texto = ""
     while True:
+        _antes_llm = time.monotonic()
         resp = client.create(
             model=client.models["full"],
-            max_tokens=MAX_TOKENS,
+            max_tokens=teto_de_tokens(client.models["full"]),
             system=SYSTEM,
             tools=[],
             messages=[{"role": "user", "content": conteudo}],
         )
         texto = texto_da_resposta(resp)
+        _llm_s = time.monotonic() - _antes_llm
+        print(f"[analise_rapida_ia] {client.provider_name}/{client.models['full']} "
+              f"respondeu em {_llm_s:.1f}s ({len(texto)} chars)",
+              file=sys.stderr, flush=True)
         if len(texto) >= MIN_TEXTO_CHARS:
             break
 

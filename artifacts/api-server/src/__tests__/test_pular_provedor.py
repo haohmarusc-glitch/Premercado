@@ -38,7 +38,7 @@ def test_avanca_para_o_proximo_e_devolve_true(cadeia, capsys):
     assert cadeia.pular_provedor_atual("resposta curta demais (12 chars)") is True
     assert cadeia.provider_name == "gemini"
 
-    saida = capsys.readouterr().out
+    saida = capsys.readouterr().err
     assert "[provider] pulando anthropic" in saida
     assert "resposta curta demais (12 chars)" in saida
     assert "-> gemini" in saida
@@ -64,7 +64,10 @@ def test_devolve_false_no_fim_da_cadeia(cadeia, capsys):
     assert cadeia.pular_provedor_atual("toco") is True   # -> gemini
     assert cadeia.pular_provedor_atual("toco") is True   # -> openrouter
     assert cadeia.pular_provedor_atual("toco") is False  # acabou
-    assert "sem próximo provedor disponível" in capsys.readouterr().out
+    # .err e não .out: desde 18/08/2026 todo diagnóstico do provider vai para
+    # stderr. Iam para stdout, que em analise_rapida_ia.py é do JSON final --
+    # o efeito era o diagnóstico sumir E poluir o pipe do resultado.
+    assert "sem próximo provedor disponível" in capsys.readouterr().err
 
 
 def test_false_quando_todos_os_seguintes_estao_condenados(cadeia):
