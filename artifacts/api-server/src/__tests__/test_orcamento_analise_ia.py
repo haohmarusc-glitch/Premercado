@@ -183,6 +183,89 @@ def test_a_idade_maxima_da_carona_cabe_no_timeout_da_rota():
     assert idade_max_s + 58.6 <= _timeout_da_rota_s()
 
 
+def test_nenhum_diagnostico_do_provider_vai_para_stdout():
+    """A regra do projeto: stdout é do resultado, stderr é do diagnóstico.
+
+    Quebrada em provider.py até 18/08/2026 -- as quatro linhas `[provider]`
+    iam para stdout, que em analise_rapida_ia.py é CONTRATUALMENTE do JSON
+    final. O efeito era duplo: o diagnóstico sumia (todo `grep [provider]`
+    daquele dia voltou vazio, porque as linhas estavam dentro do JSON) e o
+    pipe era poluído -- o "parse resiliente" da rota existe para sobreviver a
+    exatamente isso, tratando o sintoma.
+
+    Este teste vale para o arquivo INTEIRO, não só para as linhas de hoje:
+    qualquer print novo em stdout aqui volta a esconder o diagnóstico."""
+    provider_py = (_SRC / "agent" / "provider.py").read_text(encoding="utf-8")
+
+    # print( multilinha: o file=sys.stderr costuma vir numa linha seguinte, e
+    # olhar linha a linha daria falso positivo. Cada bloco vai até o ")" que o
+    # fecha.
+    linhas = provider_py.splitlines()
+    em_stdout: list[str] = []
+    i = 0
+    while i < len(linhas):
+        if "print(" in linhas[i] and not linhas[i].strip().startswith("#"):
+            bloco = []
+            j = i
+            while j < len(linhas) and j < i + 10:
+                bloco.append(linhas[j])
+                if linhas[j].rstrip().endswith(")"):
+                    break
+                j += 1
+            texto = "\n".join(bloco)
+            # PROVIDER_DOWN é a ÚNICA exceção, e não é diagnóstico humano: é
+            # canal legível por máquina, lido por runner.ts e
+            # report-preflight.ts no stdout CRU para montar o banner de
+            # "provedor caído". Movê-lo quebraria o banner em silêncio.
+            if "sys.stderr" not in texto and "PROVIDER_DOWN" not in texto:
+                em_stdout.append(linhas[i].strip() + " ...")
+            i = j + 1
+            continue
+        i += 1
+
+    assert em_stdout == [], f"print sem stderr em provider.py: {em_stdout}"
+
+
+def test_teto_de_tokens_cresce_para_modelo_que_pensa():
+    """Em modelo thinking o max_tokens cobre raciocínio + resposta, não só a
+    resposta -- o mesmo número significa coisas diferentes por provedor.
+
+    Medido: deepseek-v4-pro gastou 17.147 chars de raciocínio (~4.300 tokens) e
+    devolveu resposta VAZIA com stop_reason=length."""
+    mod = _modulo()
+    assert mod.teto_de_tokens("claude-sonnet-5") == mod.MAX_TOKENS
+    assert mod.teto_de_tokens("deepseek-v4-flash") == mod.MAX_TOKENS
+    # o que pensa ganha a folga
+    assert mod.teto_de_tokens("deepseek-v4-pro") == mod.MAX_TOKENS + mod.MAX_TOKENS_RACIOCINIO
+    assert mod.teto_de_tokens("some-reasoner-v2") > mod.MAX_TOKENS
+
+
+def test_a_folga_cobre_o_raciocinio_medido():
+    """4.300 tokens medidos + a resposta pedida (400-700 palavras) têm que
+    caber. Folga menor que o caso real já visto não protege de nada."""
+    mod = _modulo()
+    tokens_medidos = 4300
+    assert mod.MAX_TOKENS_RACIOCINIO >= tokens_medidos
+
+
+def test_o_teto_por_modelo_e_de_fato_usado_na_chamada():
+    """Declarar a função e continuar mandando MAX_TOKENS cru passaria nos
+    testes acima sem corrigir nada."""
+    mod = _modulo()
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    assert "max_tokens=teto_de_tokens(" in fonte
+
+
+def test_o_tempo_e_registrado_dividido_entre_coleta_e_llm():
+    """Em 18/08/2026 o erro dizia "143s de 135s" e nada sobre onde os 143s
+    foram parar -- descobrir se a culpa era das fontes ou do LLM exigiu
+    aritmética sobre um número só."""
+    mod = _modulo()
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    assert "coleta terminou em" in fonte
+    assert "respondeu em" in fonte
+
+
 def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
     """O script sai com código 0 E {"error": ...} quando nenhum provedor
     produz texto -- é o que a Tarefa 0 passou a fazer. Sem registrar o stderr
