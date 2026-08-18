@@ -141,6 +141,48 @@ def test_o_dockerfile_tem_store_persistente_do_pnpm():
     assert "--frozen-lockfile" in dockerfile
 
 
+def test_o_resultado_pronto_e_guardado_para_a_reconexao():
+    """A análise leva ~58s (medido: um 200 com responseTime 58608) e nesse
+    tempo a conexão do celular cai. Quando cai, o servidor NÃO cancela o
+    Python: o trabalho termina, os tokens são cobrados, e a resposta é escrita
+    num socket que não existe mais.
+
+    A resposta certa não é evitar a queda -- rede móvel vai cair -- é fazer com
+    que ela não custe nada."""
+    trecho = _ROTA.split("function runAnaliseRapidaIA", 1)[1]
+    assert "cacheIA" in trecho
+    assert "guardarIA" in trecho
+
+
+def test_erro_nao_e_guardado_no_cache():
+    """Guardar um erro transformaria falha passageira (provedor fora do ar,
+    orçamento estourado) em dez minutos de falha GARANTIDA -- o usuário
+    clicaria de novo e receberia o mesmo erro instantaneamente, sem nem tentar."""
+    corpo = _ROTA.split("function guardarIA", 1)[1].split("\n}", 1)[0]
+    assert '"error" in valor' in corpo
+    assert "return" in corpo
+
+
+def test_a_carona_no_coalescer_tem_idade_maxima():
+    """Embarcar num trabalho que já gastou o orçamento não é economia, é herdar
+    uma morte marcada: em produção uma requisição de 68s morreu por um timeout
+    de 150s, quando 58s bastavam."""
+    trecho = _ROTA.split("function runAnaliseRapidaIA", 1)[1]
+    assert "IDADE_MAX_CARONA_MS" in _ROTA
+    assert "IDADE_MAX_CARONA_MS" in trecho, "a idade máxima precisa ser PASSADA ao coalescer"
+
+
+def test_a_idade_maxima_da_carona_cabe_no_timeout_da_rota():
+    """A invariante: quem entra de carona precisa de tempo para ao menos uma
+    passada completa. Idade máxima + uma análise inteira tem que caber no teto
+    da rota, senão o parâmetro não protege de nada."""
+    m = re.search(r"IDADE_MAX_CARONA_MS\s*=\s*([\d_]+)", _ROTA)
+    assert m, "não achei IDADE_MAX_CARONA_MS"
+    idade_max_s = int(m.group(1).replace("_", "")) / 1000
+    # A análise medida em produção levou 58,6s.
+    assert idade_max_s + 58.6 <= _timeout_da_rota_s()
+
+
 def test_a_rota_registra_o_stderr_quando_o_script_devolve_erro():
     """O script sai com código 0 E {"error": ...} quando nenhum provedor
     produz texto -- é o que a Tarefa 0 passou a fazer. Sem registrar o stderr
