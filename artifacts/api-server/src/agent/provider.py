@@ -291,7 +291,31 @@ PROVIDERS = {
         "models": {
             # V4 (oficial 2026). Pro = melhor qualidade/raciocínio; Flash =
             # forte em agent/tool-calling e bem mais barato (atualizado 31/07).
-            "full": "deepseek-v4-pro",
+            #
+            # `full` era o v4-pro até 18/08/2026. Ele é modo THINKING, e o
+            # raciocínio conta contra o max_tokens: em produção gastou 17.806
+            # chars pensando e devolveu 0 char de resposta visível, em 142s.
+            # Depois que o teto de 55s passou a valer (ver sdk_timeout abaixo),
+            # o padrão virou timeout puro -- 3 tentativas medidas em 18/08, 3
+            # estouros, o último cronometrado em 55,8s.
+            #
+            # O deepseek é o PRIMEIRO fallback (_DEFAULT_ORDER), então esses 55s
+            # saíam do orçamento de quem tem prazo: com o anthropic falhando
+            # antes, a Análise com IA chegava em 110s dos 135s e o orçamento
+            # recusava o gemini por não caber outra tentativa. O segundo slot da
+            # cadeia estava sendo gasto com quem menos entrega.
+            #
+            # O flash não casa com _MODELO_PENSA_RE, então não queima o teto
+            # raciocinando. Ele responde pior -- e responder pior RÁPIDO é o que
+            # se quer de um fallback: um toco em segundos faz a cadeia andar
+            # (pular_provedor_atual) com orçamento de sobra, enquanto um timeout
+            # de 55s faz a cadeia andar sem orçamento nenhum.
+            #
+            # O agente diário também usa este tier. Lá a janela é de 10 min e
+            # não há prazo definido, então a troca custa um pouco de qualidade
+            # num fallback que ele raramente alcança -- e evita que uma cadeia
+            # lenta coma a janela dele pelo mesmo motivo.
+            "full": "deepseek-v4-flash",
             "flash": "deepseek-v4-flash",
             "chat": "deepseek-v4-flash",
         },
@@ -1327,10 +1351,31 @@ class FallbackClient:
 
 
 # Tier detection: map a model name back to its tier key
+#
+# Um MESMO modelo costuma servir vários tiers (o gemini-2.5-flash é full, flash
+# e chat ao mesmo tempo; o mesmo vale para o llama do openrouter e, desde
+# 18/08/2026, para o deepseek-v4-flash). O mapa é nome -> tier, então sem
+# precedência o ÚLTIMO tier escrito vencia -- e como os dicts acima listam full,
+# flash, chat nessa ordem, o vencedor era sempre `chat`.
+#
+# O efeito era um rebaixamento silencioso na troca de provedor: pedir o `full`
+# do gemini e cair para o anthropic resolvia como tier `chat` e trazia o haiku
+# onde a chamada tinha pedido o sonnet. Ninguém percebe pelo log -- a resposta
+# vem, só vem de um modelo mais fraco do que o pedido.
+#
+# A ambiguidade é estrutural: quando um nome serve a três tiers, ele não carrega
+# informação suficiente para desfazer o empate (o certo seria passar o tier
+# adiante em vez de reconstruí-lo pelo nome). Diante do empate, subir é a
+# escolha segura: errar para cima custa alguns centavos, errar para baixo entrega
+# análise pior sem avisar -- e degradação silenciosa é o que esta apuração
+# inteira esteve caçando.
+_PRECEDENCIA_TIER = {"full": 0, "flash": 1, "chat": 2}
 _TIER_MAP: dict[str, str] = {}
 for _pname, _pcfg in PROVIDERS.items():
     for _tier, _mname in _pcfg["models"].items():
-        _TIER_MAP[_mname] = _tier
+        _ja = _TIER_MAP.get(_mname)
+        if _ja is None or _PRECEDENCIA_TIER.get(_tier, 99) < _PRECEDENCIA_TIER.get(_ja, 99):
+            _TIER_MAP[_mname] = _tier
 
 
 def _resolve_tier(model: str) -> str | None:
