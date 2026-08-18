@@ -159,3 +159,50 @@ def test_a_analise_rapida_define_o_orcamento():
     i_def = next(i for i, l in enumerate(codigo) if "definir_orcamento(" in l)
     i_create = next(i for i, l in enumerate(codigo) if "client.create(" in l)
     assert i_def < i_create
+
+
+# ── o teto vale para TODOS os provedores ────────────────────────────────────
+#
+# Produção 18/08/2026, com o orçamento do #322 já ativo:
+#
+#   coleta terminou em 2.4s (teto 25s); orçamento total 135s
+#   [provider] anthropic failed: Request timed out or interrupted.
+#   [provider] trying deepseek...
+#   deepseek/deepseek-v4-pro respondeu em 142.2s (0 chars)
+#
+# 142 segundos com API_TIMEOUT_SECONDS=55. O teto ia só para o cliente
+# Anthropic; o cliente OpenAI-compatível (deepseek, gemini, openrouter, openai,
+# kimi) era construído sem `timeout=`, e o default do SDK é 600s.
+#
+# O estrago não era só a espera. `definir_orcamento` decide se cabe outra
+# tentativa usando o custo ESTIMADO de uma chamada -- e com o teto valendo para
+# um provedor só, essa estimativa era mentira para os outros cinco. A proteção
+# de orçamento autorizava chamadas que não tinha como limitar.
+
+def test_o_timeout_vai_para_os_dois_clientes():
+    """A assimetria sobreviveu porque ninguém comparava os dois lados: cada um
+    era construído no seu ramo do if, e ler um ramo por vez não revela o que
+    falta no outro."""
+    import pathlib
+    from agent import provider as prov
+
+    fonte = pathlib.Path(prov.__file__).read_text(encoding="utf-8")
+    trecho = fonte.split("if self.provider_name == \"anthropic\":", 1)[1][:1200]
+
+    anthropic_tem = "timeout=" in trecho.split("else:", 1)[0]
+    openai_tem = "timeout=" in trecho.split("else:", 1)[1]
+
+    assert anthropic_tem, "cliente Anthropic sem timeout"
+    assert openai_tem, "cliente OpenAI-compatível sem timeout -- default do SDK é 600s"
+
+
+def test_o_custo_estimado_do_orcamento_bate_com_o_teto_real():
+    """A invariante que liga as duas coisas: `definir_orcamento` recebe o custo
+    de uma tentativa, e esse custo só é honesto se o SDK de fato interromper
+    naquele tempo. Um lado sem o outro é orçamento sobre estimativa fictícia."""
+    from agent import analise_rapida_ia as mod
+
+    # O script passa _LLM_TIMEOUT_S como custo, e é ele que vira
+    # API_TIMEOUT_SECONDS -- que agora chega aos dois clientes.
+    import os
+    assert float(os.environ["API_TIMEOUT_SECONDS"]) == pytest.approx(mod._LLM_TIMEOUT_S)
