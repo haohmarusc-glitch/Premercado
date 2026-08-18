@@ -131,24 +131,45 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
       // legivel por um erro bonito e inauditavel. Visto em producao
       // (18/08/2026): a tela mostrou "0 chars" e o log do container nao tinha
       // uma linha sequer sobre a causa.
-      const registrarSeErro = (parsed: unknown): void => {
+      //
+      // E registrar SO no erro nao basta: quando um provedor tropeca mas o
+      // seguinte entrega o texto, o desfecho e sucesso -- e a linha
+      // "[provider] pulando ..." era descartada junto. Esse e justamente o
+      // caso CARO: a tentativa perdida foi cobrada (tokens de raciocinio
+      // contam como saida) e some da auditoria. Visto em producao
+      // (18/08/2026): analise a US$ 0,0608 contra os ~US$ 0,015 esperados,
+      // sem uma linha no log dizendo por que.
+      //
+      // Marcas de tropeco, nao stderr inteiro: log de toda execucao bem
+      // sucedida viraria ruido e a linha que importa se perderia nele.
+      const MARCAS_DE_TROPECO = /\bpulando\b|truncou|toco/i;
+
+      const registrarDiagnostico = (parsed: unknown): void => {
+        const cauda = err.slice(-2000);
         if (parsed && typeof parsed === "object" && "error" in parsed) {
           logger.warn(
-            { erro: (parsed as { error: unknown }).error, stderr: err.slice(-2000) },
+            { erro: (parsed as { error: unknown }).error, stderr: cauda },
             "analise_rapida_ia: script devolveu erro",
+          );
+          return;
+        }
+        if (MARCAS_DE_TROPECO.test(err)) {
+          logger.warn(
+            { stderr: cauda },
+            "analise_rapida_ia: análise saiu, mas não na primeira tentativa",
           );
         }
       };
 
       try {
         const parsed = JSON.parse(out);
-        registrarSeErro(parsed);
+        registrarDiagnostico(parsed);
         return resolve(parsed);
       } catch {
         const ultimaLinha = out.split("\n").filter((l) => l.trim()).pop() ?? "";
         try {
           const parsed = JSON.parse(ultimaLinha);
-          registrarSeErro(parsed);
+          registrarDiagnostico(parsed);
           return resolve(parsed);
         } catch {
           logger.error(
