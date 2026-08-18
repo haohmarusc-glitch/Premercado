@@ -1,0 +1,191 @@
+"""
+A coleta não pode transformar falha em zero.
+
+O macro_risk.py distingue "medi e está calmo" de "não consegui medir", e essa
+distinção só sobrevive se a camada que busca os dados respeitá-la. Um `except`
+que devolvesse 0.0 aqui reintroduziria o bug na camada de baixo: cegueira
+chegando ao Kelly como se fosse leitura de mercado calmo.
+
+Estes testes rodam SEM rede -- cada fonte é dublada. O que eles fixam é o
+contrato entre coleta e módulo, não o valor de nenhum indicador.
+
+Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_macro_risk_snapshot.py -v
+"""
+import pytest
+
+from agent import macro_risk as mr
+from agent import macro_risk_snapshot as snap
+
+
+# ── uma fonte fora não derruba as outras ────────────────────────────────────
+
+def _sem_nada(monkeypatch):
+    """Todas as fontes falhando, cada uma do seu jeito."""
+    def explode(*_a, **_k):
+        raise RuntimeError("fonte fora do ar")
+    monkeypatch.setattr(snap, "_fred_duas_ultimas", explode)
+    monkeypatch.setattr(snap, "_variacao_do_dia", explode)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", explode)
+    monkeypatch.setattr(snap, "_serie_sox", explode)
+    monkeypatch.setattr(snap, "_manchetes_china", explode)
+    monkeypatch.setattr(snap, "_perto_do_fomc", lambda *_a, **_k: False)
+
+
+def test_tudo_fora_nao_levanta_e_nao_vira_zero(monkeypatch):
+    """O caso que importa: coleta totalmente cega tem que produzir um retrato
+    HONESTO, não um retrato de mercado calmo."""
+    _sem_nada(monkeypatch)
+    dados, diag = snap.coletar()
+
+    assert dados["sk_hynix"] is None
+    assert dados["kospi"] is None
+    assert dados["sox"] is None
+    assert dados["manchetes"] is None
+    assert "yield_30y_hoje" not in dados        # ausente, não 0.0
+    assert len(diag["erros"]) >= 5
+
+
+def test_o_retrato_cego_nao_tem_score(monkeypatch):
+    _sem_nada(monkeypatch)
+    saida = snap.montar()
+
+    assert saida["aggregate_score"] is None
+    assert saida["cobertura_pct"] < mr.COBERTURA_MINIMA_PCT
+    assert saida["fontesDegradadas"]
+
+
+def test_uma_fonte_fora_nao_leva_as_outras(monkeypatch):
+    """O FRED cai e o resto continua. Sem o isolamento por bloco, uma exceção
+    no primeiro fetch abortaria a coleta inteira e o dia inteiro viraria cego
+    por causa de uma fonte."""
+    def explode(*_a, **_k):
+        raise RuntimeError("FRED fora")
+    monkeypatch.setattr(snap, "_fred_duas_ultimas", explode)
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: -14.65)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (-8.0, ""))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: ([100.0] * 46, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: ([], ""))
+    monkeypatch.setattr(snap, "_perto_do_fomc", lambda *_a, **_k: False)
+
+    saida = snap.montar()
+
+    assert saida["ASIA_MEMORY_CONTAGION"]["active"] is True
+    assert saida["OVEREXTENDED_SECTOR"]["status"] == mr.OK
+    assert "RATE_SHOCK" in saida["fontesDegradadas"]
+    assert set(saida["coleta"]["erros"]) >= {"DGS30", "DGS10", "DCOILWTICO"}
+
+
+# ── o Kospi suspeito ────────────────────────────────────────────────────────
+
+def test_kospi_suspeito_nao_e_usado(monkeypatch):
+    """`suspect` no snapshot global significa que o número pode ser comparação
+    atravessando sessões. Usá-lo como se fosse variação de um dia é o erro que
+    aquele rótulo existe para evitar."""
+    monkeypatch.setattr(
+        __import__("agent.market_alerts", fromlist=["x"]),
+        "get_global_market_snapshot",
+        lambda: {"items": [{"ticker": "^KS11", "changePct": -31.0,
+                            "suspect": True, "suspectReason": "barras a 9 dias"}]},
+    )
+    pct, motivo = snap._kospi_do_snapshot_global()
+    assert pct is None
+    assert "9 dias" in motivo
+
+
+def test_kospi_limpo_passa(monkeypatch):
+    monkeypatch.setattr(
+        __import__("agent.market_alerts", fromlist=["x"]),
+        "get_global_market_snapshot",
+        lambda: {"items": [{"ticker": "^KS11", "changePct": -8.0, "suspect": False}]},
+    )
+    pct, motivo = snap._kospi_do_snapshot_global()
+    assert pct == -8.0
+    assert motivo == ""
+
+
+def test_perder_o_kospi_nao_apaga_o_sinal_da_asia(monkeypatch):
+    """Por isso o sinal não depende só do índice: SK Hynix e Samsung vêm de
+    outra fonte, e o check dispara por ação OU índice. Relevante porque o limite
+    de implausibilidade do snapshot é 8,0% e o Kospi fechou a -8,0% em
+    28/07/2026 -- uma queda real um pouco maior chegaria rotulada."""
+    monkeypatch.setattr(snap, "_fred_duas_ultimas", lambda s: (0.0, 0.0, ["", ""]))
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: -14.65)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, "suspeito"))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: ([100.0] * 46, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: ([], ""))
+
+    saida = snap.montar()
+    assert saida["ASIA_MEMORY_CONTAGION"]["active"] is True
+
+
+# ── FRED ────────────────────────────────────────────────────────────────────
+
+class _Resposta:
+    def __init__(self, obs): self._obs = obs
+    def raise_for_status(self): pass
+    def json(self): return {"observations": self._obs}
+
+
+def test_fred_pula_os_pontos_vazios(monkeypatch):
+    """A série vem com '.' em feriado. Pedir limit=2 devolveria dois pontos
+    vazios numa emenda de feriado, e o delta sairia de datas erradas."""
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _Resposta([
+        {"date": "2026-08-18", "value": "."},
+        {"date": "2026-08-17", "value": "5.31"},
+        {"date": "2026-08-14", "value": "5.19"},
+    ]))
+    hoje, ant, datas = snap._fred_duas_ultimas("DGS30")
+    assert (hoje, ant) == (5.31, 5.19)
+    assert datas == ["2026-08-17", "2026-08-14"]
+
+
+def test_fred_sem_chave_levanta(monkeypatch):
+    """Levantar, não devolver 0.0: quem chama transforma isso em sem_dado."""
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="FRED_API_KEY"):
+        snap._fred_duas_ultimas("DGS30")
+
+
+def test_fred_com_uma_observacao_so_levanta(monkeypatch):
+    """Um ponto não faz variação. Devolver o mesmo valor duas vezes daria
+    delta zero -- 'sem choque de juros' construído sobre dado faltando."""
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _Resposta([
+        {"date": "2026-08-18", "value": "5.31"},
+    ]))
+    with pytest.raises(RuntimeError, match="2 observações"):
+        snap._fred_duas_ultimas("DGS30")
+
+
+# ── FOMC ────────────────────────────────────────────────────────────────────
+
+def test_fomc_usa_o_calendario_que_ja_existe():
+    """Segunda lista de datas do Fed seria fonte divergente (playbook §10)."""
+    from datetime import date
+    assert snap._perto_do_fomc(date(2026, 7, 29)) is True    # data oficial
+    assert snap._perto_do_fomc(date(2026, 7, 28)) is True    # véspera
+    assert snap._perto_do_fomc(date(2026, 7, 20)) is False
+
+
+# ── contrato de saída ───────────────────────────────────────────────────────
+
+def test_o_stdout_e_so_json(monkeypatch, capsys):
+    """O Node faz JSON.parse do stdout. Diagnóstico vazando para lá derruba a
+    resposta inteira -- mesma regra dos outros scripts servidos por rota."""
+    _sem_nada(monkeypatch)
+    import json
+    saida = snap.montar()
+    from agent import json_seguro
+    texto = json_seguro.dumps(saida)
+    assert json.loads(texto)["cobertura_pct"] is not None
+    # o _log da montagem foi para stderr, não para stdout
+    assert capsys.readouterr().out == ""
+
+
+def test_serializa_por_json_seguro():
+    """NaN vindo de uma divisão em qualquer fetch derrubaria a rota inteira."""
+    import pathlib
+    fonte = pathlib.Path(snap.__file__).read_text(encoding="utf-8")
+    assert "json_seguro.dumps" in fonte
+    assert "json.dumps(" not in fonte
