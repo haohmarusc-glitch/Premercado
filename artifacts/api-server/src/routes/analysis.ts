@@ -146,8 +146,15 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
     // bateram 90s cravados: "Failed: /analise-rapida/ia", 500 na tela.
     //
     // Agora o Python fixa o próprio orçamento (ver analise_rapida_ia.py):
-    // 55s por chamada, uma tentativa por provedor. Duas tentativas de
-    // provedor + coleta fundamental cabem em 135s; 150s aqui deixa margem.
+    // 75s por chamada, uma tentativa por provedor. Duas tentativas de
+    // provedor + coleta fundamental cabem em 175s; 195s aqui deixa margem.
+    //
+    // Subiu de 150s em 19/08/2026 junto com o teto por chamada: com 55s o
+    // anthropic era cortado pelo nosso relógio ("failed after 55.1s") em vez
+    // de responder, e o corte queimava uma das duas tentativas que o
+    // orçamento compra. O custo aceito é a tela demorar mais ANTES DE FALHAR
+    // -- o caminho feliz continua em ~40s, porque o teto só é alcançado por
+    // quem não respondeu.
     // test_orcamento_analise_ia.py lê os dois lados e falha se a invariante
     // (interno < externo) quebrar.
     const t = setTimeout(() => {
@@ -160,7 +167,7 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
         "analise_rapida_ia: estourou o orçamento de tempo",
       );
       reject(new Error("timeout"));
-    }, 150_000);
+    }, 195_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
