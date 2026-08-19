@@ -82,6 +82,37 @@ _probe_boot()
 import yfinance as yf
 
 from agent.provider import get_client, get_run_usage, texto_da_resposta
+from agent.provider import _DEFAULT_ORDER as _ORDEM_PADRAO
+
+# Provedores que não CONVERGEM nesta tarefa -- não que estejam fora do ar.
+#
+# O deepseek (v4-pro e v4-flash) gasta o max_tokens inteiro raciocinando e
+# nunca chega à resposta. Medido quatro vezes em 18-19/08/2026, com duas
+# versões de modelo e duas versões do prompt:
+#
+#   v4-pro    teto 12.000   142,2s   0 chars   (17.806 chars de raciocínio)
+#   v4-flash  teto  6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
+#   v4-flash  teto  6.000    52,7s   0 chars   (com o prompt 27% menor)
+#
+# Num prompt trivial ele responde em 1s. O problema é ESTA tarefa: redigir uma
+# análise longa e estruturada. Dobrar o teto dobrou o tempo sem produzir texto
+# -- o raciocínio se expande para preencher o que houver.
+#
+# Fica FORA daqui e DENTRO da cadeia global de propósito: o v4-flash é forte em
+# tool-calling, que é o formato do agente diário, e esse uso nunca falhou.
+# Excluí-lo lá puniria um caminho que funciona por causa de outro que não.
+#
+# Deriva de _DEFAULT_ORDER em vez de listar a ordem aqui: uma terceira cópia da
+# sequência divergiria das outras duas (provider.py e agent-budget.ts) na
+# primeira mudança -- é o padrão do playbook §10, e já mordeu neste repo.
+_SEM_CONVERGENCIA_AQUI = {"deepseek"}
+
+if not os.environ.get("AGENT_PROVIDER_ORDER"):
+    # Respeita override explícito: é assim que se testa um provedor excluído
+    # sem editar código (AGENT_PROVIDER_ORDER=deepseek ...).
+    os.environ["AGENT_PROVIDER_ORDER"] = ",".join(
+        p for p in _ORDEM_PADRAO if p not in _SEM_CONVERGENCIA_AQUI
+    )
 from agent.security import sanitize_for_llm
 from agent import tools
 

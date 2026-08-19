@@ -310,3 +310,54 @@ def test_o_script_imprime_os_dois_relogios():
     codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
     assert any("ultimo_tempo_provedor_s" in l for l in codigo)
     assert any("cadeia inteira" in l for l in codigo)
+
+
+# ── provedor que não converge NESTA tarefa ──────────────────────────────────
+#
+# O deepseek gasta o max_tokens inteiro raciocinando e nunca chega à resposta.
+# Medido quatro vezes em 18-19/08/2026, duas versões de modelo e duas do prompt:
+#
+#   v4-pro    teto 12.000   142,2s   0 chars   (17.806 chars de raciocínio)
+#   v4-flash  teto  6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
+#   v4-flash  teto  6.000    52,7s   0 chars   (com o prompt 27% menor)
+#
+# Num prompt trivial ele responde em 1s -- não é indisponibilidade, é esta
+# tarefa. E como ele ocupava um slot do orçamento de 135s para entregar nada, o
+# custo não era só o dele: era o tempo que sobrava para o provedor seguinte.
+
+def test_a_analise_exclui_quem_nao_converge(monkeypatch):
+    """Fora da tela, DENTRO da cadeia global: o v4-flash é forte em
+    tool-calling, formato do agente diário, e esse uso nunca falhou. Excluí-lo
+    lá puniria um caminho que funciona por causa de outro que não."""
+    import importlib, os
+    monkeypatch.delenv("AGENT_PROVIDER_ORDER", raising=False)
+    from agent import analise_rapida_ia as mod
+    importlib.reload(mod)
+
+    ordem = os.environ["AGENT_PROVIDER_ORDER"].split(",")
+    assert "deepseek" not in ordem
+    assert "deepseek" in prov._DEFAULT_ORDER      # segue na cadeia global
+    assert ordem[0] == "anthropic" and ordem[1] == "gemini"
+
+
+def test_override_explicito_vence(monkeypatch):
+    """É assim que se testa um provedor excluído sem editar código -- foi o
+    comando que produziu a medição acima."""
+    import importlib, os
+    monkeypatch.setenv("AGENT_PROVIDER_ORDER", "deepseek")
+    from agent import analise_rapida_ia as mod
+    importlib.reload(mod)
+    assert os.environ["AGENT_PROVIDER_ORDER"] == "deepseek"
+
+
+def test_a_exclusao_deriva_da_ordem_unica(monkeypatch):
+    """Uma terceira cópia da sequência divergiria das outras duas (provider.py
+    e agent-budget.ts) na primeira mudança -- padrão do playbook §10, que já
+    mordeu neste repo na #327."""
+    import pathlib
+    from agent import analise_rapida_ia as mod
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    assert any("_ORDEM_PADRAO" in l for l in codigo)
+    # e nenhuma lista literal de provedores
+    assert not any('"anthropic", "gemini"' in l for l in codigo)
