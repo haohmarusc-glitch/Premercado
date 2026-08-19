@@ -40,7 +40,11 @@ import pandas as pd
 from confluence_engine import ConfluenceEngine, run_backtest, _fetch_ohlcv  # noqa: E402
 
 TICKERS = ["MU", "AVGO", "MRVL"]
-MIN_VOTES_GRID = (4, 5, 6)
+# (3, 4, 5) e não (4, 5, 6): com 5 sinais votantes, min_votes=6 é impossível --
+# a linha saía com num_trades 0 em TODAS as combinações, com a mesma cara de
+# "a estratégia ficou de fora", e desperdiçava um terço do grid. O 3 entra no
+# lugar porque é o extremo oposto que ninguém tinha medido.
+MIN_VOTES_GRID = (3, 4, 5)
 RESULTS_MD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "confluence_grid_search_results.md")
 
 # Cada regime é um dict de kwargs pra _fetch_ohlcv (period OU start/end).
