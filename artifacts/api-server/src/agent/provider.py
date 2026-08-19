@@ -1131,6 +1131,16 @@ class FallbackClient:
         # nome -> motivo. Só entra aqui por falha PERMANENTE (ver
         # _is_falha_permanente); rate limit passageiro nunca condena.
         self._mortos: dict[str, str] = {}
+        # nome -> motivo de TODA tentativa que falhou, condenada ou não.
+        #
+        # Separado de _mortos porque o resumo do erro só citava os condenados,
+        # e quem falha sem condenação sumia. Em 19/08/2026 a Análise com IA
+        # devolveu "condenados nesta run: openrouter | openai | kimi" com as
+        # cinco chaves presentes: anthropic e gemini FORAM tentados, falharam
+        # com erro não-permanente, e o erro não disse uma palavra sobre eles.
+        # Passamos a investigar as três contas quebradas, que era o lugar
+        # errado -- de novo.
+        self._falhas: dict[str, str] = {}
         # Quanto custou a tentativa que RESPONDEU, sozinha. Quem chama só
         # consegue cronometrar o create() inteiro -- e o create() percorre a
         # cadeia por dentro -- então sem este número o chamador carimba o tempo
@@ -1192,6 +1202,25 @@ class FallbackClient:
             ),
             flush=True,
         )
+
+    def _nota_falhas_sem_condenacao(self) -> str:
+        """Sufixo para quem tentou, falhou e NÃO foi condenado.
+
+        Condenação exige falha permanente (modelo inexistente, conta sem
+        saldo). Timeout, erro de conexão, 500 e 529 não condenam -- e é certo
+        que não condenem, porque passam. O que estava errado era o silêncio:
+        o resumo listava só os condenados, então um provedor que caiu por
+        timeout desaparecia do erro como se nunca tivesse existido.
+
+        As duas listas ficam separadas porque apontam para lugares diferentes:
+        condenado é conta/configuração para resolver com o provedor; falha
+        passageira é rede, latência ou capacidade, e pode ter passado agora.
+        """
+        pendentes = {p: m for p, m in self._falhas.items() if p not in self._mortos}
+        if not pendentes:
+            return ""
+        resumo = " | ".join(f"{p}: {m}" for p, m in pendentes.items())
+        return f" -- tentados e falharam sem condenação: {resumo}"
 
     def _nota_sem_chave(self) -> str:
         """Sufixo que nomeia quem nunca entrou na cadeia, e por quê.
@@ -1367,6 +1396,11 @@ class FallbackClient:
 
             gasto_provedor = time.monotonic() - _t_provedor
             safe_exc = mask_sensitive_data(str(last_exc))
+            if last_exc is not None:
+                # Antes de decidir se condena: registrar que ESTE provedor
+                # tentou e falhou. Sem isto, falha não-permanente é invisível
+                # no resumo final.
+                self._falhas.setdefault(name, safe_exc)
             if last_exc is not None and _is_falha_permanente(last_exc):
                 self._condenar(name, safe_exc)
             if last_exc is not None and _is_model_not_found(last_exc):
@@ -1399,6 +1433,7 @@ class FallbackClient:
                 raise RuntimeError(
                     f"All providers exhausted. Last error: {safe_exc}"
                     + (f" -- condenados nesta run: {resumo}" if resumo else "")
+                    + self._nota_falhas_sem_condenacao()
                     + self._nota_sem_chave()
                 ) from last_exc
         raise RuntimeError(
