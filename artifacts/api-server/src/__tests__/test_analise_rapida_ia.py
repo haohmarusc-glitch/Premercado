@@ -431,3 +431,79 @@ def test_sem_estourar_o_teto_a_camada_roda_inteira(monkeypatch):
     ia._buscar_fundamento("INTC")
 
     assert chamou == ["valuation", "news"]
+
+
+# ── o prompt consolidado ────────────────────────────────────────────────────
+#
+# Até 19/08/2026 o SYSTEM tinha 17 regras numa lista plana de 6.244 chars, e
+# duas coisas misturadas: a REGRA e a história do incidente que a motivou
+# ("Em 18/08/2026 um modelo leu os dois preços juntos e concluiu..."). O modelo
+# não precisa da data; ela competia por atenção com o resto.
+#
+# Lista plana também dá o mesmo peso a "não invente números" e a "RVOL nos
+# primeiros 30 minutos". Agrupado por TIPO DE ERRO, o modelo vê primeiro a
+# classe e depois o caso.
+#
+# Prompt encolhe uma vez e cresce para sempre: cada regra nova parece barata
+# sozinha e dilui as anteriores. Estes testes existem para que a próxima adição
+# seja uma decisão, não um reflexo.
+
+# Cada tupla é (o que a regra proíbe/exige, marca que prova que ela sobreviveu).
+# Consolidar não pode PERDER restrição -- se uma sumir, o teste diz qual.
+_REGRAS_QUE_NAO_PODEM_SUMIR = [
+    ("só cita número do JSON", "campo ausente ou null"),
+    ("não calcula número novo", "NÃO CALCULE"),
+    ("ordena pela lista pronta", "niveisOrdenados"),
+    ("moeda em dólar", "nunca R$"),
+    ("momentum é anualizado", "ANUALIZADA"),
+    ("vol chega como fração", "FRAÇÃO"),
+    ("beta e RVOL são adimensionais", "adimensionais"),
+    ("um preço só", "precoAtual.valor"),
+    ("divergência entre painéis", "divergenciaPct"),
+    ("cita o painel divergente", "porPainel"),
+    ("upside do DCF tem base própria", "valuation.current_price"),
+    ("R1/S1 não são suporte técnico", "bandas estatísticas"),
+    ("RVOL no leilão de abertura", "indefinido_abertura"),
+    ("balanço já ocorrido vai no passado", "janela_contem_earnings"),
+    ("run-up sem o salto do evento", "runup_atual_ex_evento_pct"),
+    ("não recomenda comprar ou vender", "NÃO recomende"),
+    ("não preenche fundamento de memória", "nunca preencha de memória"),
+    ("valor está nos cruzamentos", "CRUZAMENTOS"),
+    ("sem disclaimer genérico", "juridiquês"),
+    ("limite de tamanho", "400 e 700 palavras"),
+]
+
+
+@pytest.mark.parametrize("descricao,marca", _REGRAS_QUE_NAO_PODEM_SUMIR)
+def test_nenhuma_regra_se_perdeu_na_consolidacao(descricao, marca):
+    assert marca in ia.SYSTEM, f"regra perdida: {descricao}"
+
+
+# Teto com folga sobre o tamanho atual: aperta o suficiente para uma regra nova
+# exigir consolidar outra, sem brigar por ajuste de redação.
+TETO_DO_SYSTEM_CHARS = 5200
+
+
+def test_o_prompt_nao_volta_a_inchar():
+    """O SYSTEM saiu de 6.244 para ~4.600 chars agrupando 17 regras em 5. Sem
+    teto, ele volta ao tamanho anterior uma regra por vez -- e o sintoma
+    (modelo esquecendo regra ANTIGA) aparece longe da causa."""
+    assert len(ia.SYSTEM) <= TETO_DO_SYSTEM_CHARS, (
+        f"SYSTEM com {len(ia.SYSTEM)} chars. Antes de subir o teto, veja se a "
+        f"regra nova não cabe consolidada num dos grupos existentes."
+    )
+
+
+def test_os_grupos_estao_nomeados():
+    """O agrupamento é o mecanismo: sem os cabeçalhos, volta a ser lista plana
+    com um sumário por cima."""
+    for grupo in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
+        assert grupo in ia.SYSTEM
+
+
+def test_o_prompt_nao_carrega_datas_de_incidente():
+    """História do incidente vive no comentário do código, não no prompt. Uma
+    data solta ali é sinal de que os dois voltaram a se misturar."""
+    import re
+    achadas = re.findall(r"\d{2}/\d{2}/20\d{2}", ia.SYSTEM)
+    assert achadas == [], f"datas de incidente no prompt: {achadas}"
