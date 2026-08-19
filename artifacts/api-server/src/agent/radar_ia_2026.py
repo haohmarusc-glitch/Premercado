@@ -134,7 +134,7 @@ EARNINGS = {
     "XPEV":{"data": "2026-08-24", "quando": "BO", "setor": "china"},
     "BILI":{"data": "2026-08-27", "quando": "BO", "setor": "china"},
     # -- EV --
-    "LI":  {"data": "2026-08-27", "quando": None, "setor": "ev"},
+    "LI":  {"data": "2026-08-26", "quando": None, "setor": "ev"},
     "NIO": {"data": "2026-09-01", "quando": None, "setor": "ev"},
     # -- outros --
     "TOL": {"data": "2026-08-18", "quando": None, "setor": "outros"},
