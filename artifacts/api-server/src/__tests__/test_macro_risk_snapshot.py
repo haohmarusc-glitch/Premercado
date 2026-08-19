@@ -397,3 +397,40 @@ def test_o_FRED_ainda_serve_de_reserva(monkeypatch):
 
     dados, _ = snap.coletar()
     assert dados["wti_hoje"] == 84.0
+
+
+# ── ruído de float32 não vai para o banco ───────────────────────────────────
+
+def test_preco_do_provider_sai_limpo(monkeypatch):
+    """Produção 19/08/2026: o WTI chegou como 84.43000030517578. O yfinance
+    devolve float32 e a conversão para float64 expõe o ruído.
+
+    Na tela isso não aparece (o formatador arredonda), mas o valor CRU é
+    gravado no `raw` do snapshot -- que existe para revisar thresholds meses
+    depois, e é aí que a sujeira atrapalha."""
+    import pandas as pd
+    import numpy as np
+
+    idx = pd.date_range("2026-08-17", periods=2, freq="B")
+    df = pd.DataFrame({"Close": np.array([82.0, 84.43], dtype="float32")}, index=idx)
+
+    try:
+        from agent import market_data_provider as mdp
+    except ImportError:
+        import market_data_provider as mdp  # type: ignore
+
+    monkeypatch.setattr(mdp, "get_daily_history",
+                        lambda t, p="6mo", **k: mdp.HistoryResult(df=df, source="teste"))
+
+    ultimo, anterior, _ = snap._dois_ultimos_fechamentos("CL=F")
+    assert ultimo == 84.43
+    assert anterior == 82.0
+    # e o valor cru era mesmo sujo -- se um dia o provider passar a devolver
+    # float64, este teste vira redundante em vez de falhar
+    assert float(df["Close"].iloc[-1]) != 84.43
+
+
+def test_arredondar_nao_apaga_precisao_util():
+    """4 casas e não 2: preço de índice ou câmbio pode precisar de mais que
+    centavo, e truncar ali inventaria movimento que não houve."""
+    assert snap.CASAS_DO_PRECO >= 4

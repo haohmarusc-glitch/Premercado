@@ -130,6 +130,19 @@ def _variacao_do_dia(ticker: str) -> float | None:
     return round((float(fech.iloc[-1]) / anterior - 1) * 100, 2)
 
 
+# Casas decimais do preço vindo do provider.
+#
+# O yfinance devolve float32, e a conversão para float64 expõe o ruído da
+# representação: em 19/08/2026 o WTI chegou como 84.43000030517578. Na tela sai
+# $84,43 (o formatador arredonda), mas o valor CRU é gravado no `raw` do
+# snapshot -- que existe justamente para revisar thresholds meses depois, e
+# nesse momento a sujeira atrapalha a leitura.
+#
+# 4 e não 2: preço de índice ou de câmbio pode precisar de mais que centavo, e
+# 4 já mata o ruído de float32 sem inventar precisão.
+CASAS_DO_PRECO = 4
+
+
 def _dois_ultimos_fechamentos(ticker: str) -> tuple[float, float, str]:
     """(último, anterior, data do último). Levanta quando não dá para formar o
     par -- quem chama transforma isso em sem_dado com motivo."""
@@ -142,7 +155,11 @@ def _dois_ultimos_fechamentos(ticker: str) -> tuple[float, float, str]:
     if not res.ok or res.df is None or len(res.df) < 2:
         raise RuntimeError(f"{ticker}: histórico insuficiente")
     fech = res.df["Close"]
-    return float(fech.iloc[-1]), float(fech.iloc[-2]), str(res.df.index[-1].date())
+    return (
+        round(float(fech.iloc[-1]), CASAS_DO_PRECO),
+        round(float(fech.iloc[-2]), CASAS_DO_PRECO),
+        str(res.df.index[-1].date()),
+    )
 
 
 def _kospi_do_snapshot_global() -> tuple[float | None, str]:
