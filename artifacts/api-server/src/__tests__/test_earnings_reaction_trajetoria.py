@@ -21,9 +21,15 @@ if _SRC_DIR not in sys.path:
 
 from agent.earnings_reaction_analysis import (  # noqa: E402
     DIAS_TRAJETORIA,
+    _acum_benchmark,
     _trajetoria,
     _trajetoria_resumo,
 )
+
+
+def _bench(closes: list[float], start="2026-01-05") -> pd.Series:
+    idx = pd.date_range(start=pd.Timestamp(start), periods=len(closes), freq="B")
+    return pd.Series(closes, index=idx)
 
 
 def _hist(closes: list[float]) -> pd.DataFrame:
@@ -56,7 +62,8 @@ def test_variacao_do_dia_e_contra_o_pregao_anterior():
 
 
 def test_para_no_teto_de_dias():
-    closes = [100.0] + [100.0 + i for i in range(1, 20)]
+    # Série com folga sobre o teto, para provar que ele é o que limita.
+    closes = [100.0] + [100.0 + i for i in range(1, DIAS_TRAJETORIA + 6)]
     t = _trajetoria(_hist(closes), pos=1, prev_close=100.0)
     assert len(t) == DIAS_TRAJETORIA
 
@@ -115,3 +122,76 @@ def test_conta_quantos_ficaram_positivos():
 def test_sem_trajetoria_nenhuma_devolve_none():
     assert _trajetoria_resumo([{"trajetoria": []}]) is None
     assert _trajetoria_resumo([]) is None
+
+
+# ── excesso sobre o benchmark ───────────────────────────────────────────────
+
+def test_excesso_desconta_a_mare_do_setor():
+    """O ponto da coluna: papel +5% num setor que subiu 5% não reagiu ao
+    resultado — reagiu junto. Sem o desconto, ciclo de alta vira 'deriva
+    pós-earnings positiva' em qualquer papel do grupo."""
+    closes = [100.0, 100.0, 105.0]          # papel: +5% acumulado no D+1
+    bench = _bench([50.0, 50.0, 52.5])      # benchmark: +5% no mesmo intervalo
+    t = _trajetoria(_hist(closes), pos=1, prev_close=100.0, bench=bench)
+    assert t[0]["acum_pct"] == pytest.approx(5.0)
+    assert t[0]["bench_pct"] == pytest.approx(5.0)
+    assert t[0]["excesso_pct"] == pytest.approx(0.0)
+
+
+def test_excesso_positivo_quando_o_papel_bate_o_setor():
+    closes = [100.0, 100.0, 110.0]
+    bench = _bench([50.0, 50.0, 51.0])      # +2%
+    t = _trajetoria(_hist(closes), pos=1, prev_close=100.0, bench=bench)
+    assert t[0]["excesso_pct"] == pytest.approx(8.0)
+
+
+def test_queda_menor_que_a_do_setor_e_excesso_positivo():
+    """Cair 3% num setor que caiu 8% é força relativa — o retorno cru
+    sozinho leria como punição."""
+    closes = [100.0, 100.0, 97.0]
+    bench = _bench([50.0, 50.0, 46.0])      # -8%
+    t = _trajetoria(_hist(closes), pos=1, prev_close=100.0, bench=bench)
+    assert t[0]["excesso_pct"] == pytest.approx(5.0)
+
+
+def test_sem_benchmark_a_trajetoria_sai_sem_excesso():
+    """Benchmark fora do ar não pode derrubar a análise: o retorno cru já
+    é útil sozinho."""
+    t = _trajetoria(_hist([100.0, 95.0, 96.0]), pos=1, prev_close=100.0, bench=None)
+    assert "excesso_pct" not in t[0]
+    assert t[0]["acum_pct"] == pytest.approx(-4.0)
+
+
+def test_benchmark_com_calendario_diferente_usa_o_pregao_anterior():
+    """Feriado parcial/halt faz o ETF não ter a data exata — asof pega o
+    último pregão disponível em vez de estourar e perder o evento."""
+    bench = pd.Series([50.0, 52.0], index=pd.to_datetime(["2026-01-05", "2026-01-06"]))
+    v = _acum_benchmark(bench, pd.Timestamp("2026-01-05"), pd.Timestamp("2026-01-09"))
+    assert v == pytest.approx(4.0)  # último disponível (06/01) vs base
+
+
+def test_acum_benchmark_sem_serie_e_none():
+    assert _acum_benchmark(None, pd.Timestamp("2026-01-05"), pd.Timestamp("2026-01-06")) is None
+
+
+def test_resumo_media_o_excesso_e_conta_quem_bateu_o_setor():
+    eventos = [
+        {"trajetoria": [{"dia": 1, "acum_pct": 5.0, "excesso_pct": 3.0}]},
+        {"trajetoria": [{"dia": 1, "acum_pct": 1.0, "excesso_pct": -1.0}]},
+    ]
+    r = _trajetoria_resumo(eventos)
+    d1 = r["dias"][0]
+    assert d1["excesso_medio_pct"] == pytest.approx(1.0)
+    assert d1["bateu_bench"] == 1
+    assert d1["acum_medio_pct"] == pytest.approx(3.0)
+
+
+def test_resumo_sem_excesso_omite_os_campos():
+    r = _trajetoria_resumo([{"trajetoria": [{"dia": 1, "acum_pct": 2.0}]}])
+    assert "excesso_medio_pct" not in r["dias"][0]
+
+
+def test_janela_e_de_um_mes_de_mercado():
+    """Estendida de 10 para 21 quando os dados mostraram casos ainda não
+    resolvidos no D+10 (AOSL seguia -7,6%; STX ainda subia)."""
+    assert DIAS_TRAJETORIA == 21

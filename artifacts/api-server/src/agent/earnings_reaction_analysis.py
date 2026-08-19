@@ -61,10 +61,19 @@ RUNUP_PREGOES = 21
 # seria mais fino, mas deixaria de ser comparável entre papéis e viraria
 # caixa-preta; começa simples, calibra depois com os próprios dados.
 RUNUP_ESTICADO_PCT = 10.0
-# Pregões acompanhados DEPOIS do balanço. 10 cobre duas semanas de mercado —
-# tempo suficiente para o mercado digerir o resultado e a reação inicial
-# grudar ou reverter, sem esticar até onde o próximo trimestre já domina.
-DIAS_TRAJETORIA = 10
+# Pregões acompanhados DEPOIS do balanço: um mês de mercado. Começou em 10
+# (duas semanas) e foi estendido quando os dados mostraram casos que ainda
+# não tinham se resolvido lá: a AOSL seguia -7,6% no D+10 sem sinal de
+# recuperação, e a STX ainda subia.
+#
+# Esticar só faz sentido junto do EXCESSO sobre o benchmark: quanto mais
+# longe do evento, mais o retorno cru mede a tendência do papel e menos a
+# reação ao resultado. Sem o ajuste, D+21 seria quase só maré.
+DIAS_TRAJETORIA = 21
+# Referência quando o chamador não manda uma. SPY (mercado amplo) em vez de
+# um ETF setorial porque este script atende ticker qualquer — o mapa por
+# setor vive na tela (lib/benchmark-setor.ts) e chega por parâmetro.
+BENCHMARK_PADRAO = "SPY"
 
 
 def _runup_pct(hist: pd.DataFrame, pos: int) -> float | None:
@@ -97,8 +106,48 @@ def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | Non
     }
 
 
+def _serie_benchmark(simbolo: str, start: str) -> pd.Series | None:
+    """Fechamentos do benchmark, indexados por data (sem fuso).
+
+    Falha vira None e a trajetória sai sem excesso — o retorno cru já é
+    útil, e derrubar a análise inteira porque o ETF de referência não veio
+    seria trocar o principal pelo acessório.
+    """
+    try:
+        b = yf.Ticker(simbolo).history(start=start, auto_adjust=False)
+        b = market_data_provider.sem_barra_incompleta(b)
+        if b.empty:
+            return None
+        if b.index.tz is not None:
+            b.index = b.index.tz_localize(None)
+        return b["Close"]
+    except Exception as e:  # noqa: BLE001
+        print(f"[earnings_reaction] benchmark {simbolo} indisponível: {e}", file=sys.stderr)
+        return None
+
+
+def _acum_benchmark(bench: pd.Series | None, data_base, data: pd.Timestamp) -> float | None:
+    """Variação % do benchmark entre a véspera do balanço e `data`.
+
+    Usa asof (último pregão <= data) porque o calendário do papel e o do ETF
+    podem divergir — halt no papel, feriado parcial. Sem asof, um dia
+    faltante viraria KeyError e mataria a trajetória do evento inteiro.
+    """
+    if bench is None or bench.empty:
+        return None
+    try:
+        base = bench.asof(data_base)
+        agora = bench.asof(data)
+    except Exception:  # noqa: BLE001
+        return None
+    if pd.isna(base) or pd.isna(agora) or not base:
+        return None
+    return (float(agora) / float(base) - 1) * 100
+
+
 def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
-                dias: int = DIAS_TRAJETORIA) -> list[dict]:
+                dias: int = DIAS_TRAJETORIA,
+                bench: pd.Series | None = None) -> list[dict]:
     """Os `dias` pregões seguintes ao balanço, cada um com dois números.
 
     `acum_pct` é sempre contra o fechamento da VÉSPERA do balanço — é o que
@@ -119,12 +168,23 @@ def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
         close_ant = float(hist["Close"].iloc[p - 1])
         if pd.isna(close) or pd.isna(close_ant) or not close_ant:
             break
-        saida.append({
+        acum = (close / prev_close - 1) * 100
+        ponto = {
             "dia": i,
             "date": str(hist.index[p].date()),
-            "acum_pct": round((close / prev_close - 1) * 100, 2),
+            "acum_pct": round(acum, 2),
             "dia_pct": round((close / close_ant - 1) * 100, 2),
-        })
+        }
+        # Excesso sobre o benchmark: separa "subiu porque o resultado foi bom"
+        # de "subiu porque tudo subiu". Sem ele, um papel em ciclo de alta
+        # mostra deriva pós-earnings positiva mesmo quando o balanço foi
+        # irrelevante — e um papel em queda estrutural parece punido pelo
+        # resultado quando só está acompanhando o próprio tombo.
+        b = _acum_benchmark(bench, hist.index[pos - 1], hist.index[p])
+        if b is not None:
+            ponto["bench_pct"] = round(b, 2)
+            ponto["excesso_pct"] = round(acum - b, 2)
+        saida.append(ponto)
     return saida
 
 
@@ -138,26 +198,37 @@ def _trajetoria_resumo(events: list[dict]) -> dict | None:
     não pode parecer igual a uma de 8.
     """
     por_dia: dict[int, list[float]] = {}
+    excesso_por_dia: dict[int, list[float]] = {}
     for e in events:
         for ponto in e.get("trajetoria") or []:
             por_dia.setdefault(ponto["dia"], []).append(ponto["acum_pct"])
+            if ponto.get("excesso_pct") is not None:
+                excesso_por_dia.setdefault(ponto["dia"], []).append(ponto["excesso_pct"])
     if not por_dia:
         return None
-    return {
-        "dias": [
-            {
-                "dia": dia,
-                "n": len(valores),
-                "acum_medio_pct": round(sum(valores) / len(valores), 2),
-                "positivos": sum(1 for v in valores if v > 0),
-            }
-            for dia, valores in sorted(por_dia.items())
-        ]
-    }
+
+    dias = []
+    for dia, valores in sorted(por_dia.items()):
+        linha = {
+            "dia": dia,
+            "n": len(valores),
+            "acum_medio_pct": round(sum(valores) / len(valores), 2),
+            "positivos": sum(1 for v in valores if v > 0),
+        }
+        exc = excesso_por_dia.get(dia)
+        if exc:
+            linha["excesso_medio_pct"] = round(sum(exc) / len(exc), 2)
+            # Quantas vezes o papel BATEU o setor — mais informativo que
+            # "quantas vezes subiu" num mercado que subiu junto.
+            linha["bateu_bench"] = sum(1 for v in exc if v > 0)
+        dias.append(linha)
+    return {"dias": dias}
 
 
-def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
+def analyze_ticker(ticker: str, lookback_events: int = 8,
+                   benchmark: str | None = None) -> dict:
     t = yf.Ticker(ticker)
+    benchmark = (benchmark or BENCHMARK_PADRAO).strip().upper() or BENCHMARK_PADRAO
 
     # get_earnings_dates é a chamada mais instável do yfinance e não passa pela
     # cadeia de fallback (que cuida de série de PREÇO). Sem retry nem cache, uma
@@ -200,6 +271,9 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
         hist.index = hist.index.tz_localize(None)
 
     avg_volume = float(hist["Volume"].mean())
+    # Uma chamada só para todos os eventos deste ticker — a janela do
+    # benchmark é a mesma do histórico já buscado.
+    bench = None if benchmark == ticker.strip().upper() else _serie_benchmark(benchmark, start)
 
     events = []
     for earnings_ts in past_earnings.index:
@@ -229,7 +303,7 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
             # Os 10 pregões seguintes: responde se a reação do dia grudou ou
             # foi devolvida. Vazio nos earnings recentes demais (o mercado
             # ainda não teve os pregões), e o resumo conta o `n` por dia.
-            "trajetoria": _trajetoria(hist, pos, prev_close),
+            "trajetoria": _trajetoria(hist, pos, prev_close, bench=bench),
         })
 
     if not events:
@@ -451,10 +525,12 @@ def main() -> None:
     parser.add_argument("--tickers", default=",".join(DEFAULT_TICKERS))
     parser.add_argument("--lookback", type=int, default=8, help="Quantos earnings passados considerar por ticker")
     parser.add_argument("--json", action="store_true", help="Saída em JSON em vez de texto formatado")
+    parser.add_argument("--benchmark", default=BENCHMARK_PADRAO,
+                        help="Referência do excesso na trajetória (SMH, KWEB, ITB...)")
     args = parser.parse_args()
 
     tickers = [tk.strip().upper() for tk in args.tickers.split(",") if tk.strip()]
-    results = [analyze_ticker(tk, args.lookback) for tk in tickers]
+    results = [analyze_ticker(tk, args.lookback, args.benchmark) for tk in tickers]
 
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
@@ -472,6 +548,9 @@ if __name__ == "__main__":
         _payload = json.loads(_raw_stdin)
         _tickers = [str(tk).strip().upper() for tk in (_payload.get("tickers") or DEFAULT_TICKERS) if str(tk).strip()]
         _lookback = int(_payload.get("lookback") or 8)
+        # Um benchmark para o lote inteiro: a tela manda o do setor do papel
+        # investigado (lib/benchmark-setor.ts). Ausente = SPY.
+        _benchmark = str(_payload.get("benchmark") or "").strip().upper() or None
         _saida = []
         for tk in _tickers:
             # Resultado parcial vale mais que timeout: sem isto o laço roda até
@@ -479,7 +558,7 @@ if __name__ == "__main__":
             if deadline_exceeded():
                 _saida.append({"ticker": tk, "error": "orçamento de tempo esgotado"})
                 continue
-            _saida.append(analyze_ticker(tk, _lookback))
+            _saida.append(analyze_ticker(tk, _lookback, _benchmark))
         print(json_seguro.dumps(_saida, ensure_ascii=False))
     else:
         main()

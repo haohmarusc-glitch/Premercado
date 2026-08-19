@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Gauge } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
+import { benchmarkSugerido } from "@/lib/benchmark-setor";
 
 interface SessionMove {
   date: string;
@@ -16,6 +17,9 @@ interface PontoTrajetoria {
   date: string;
   acum_pct: number;
   dia_pct: number;
+  /** Ausentes quando o benchmark não veio (rede fora) — o cru ainda serve. */
+  bench_pct?: number;
+  excesso_pct?: number;
 }
 
 interface ReactionEvent {
@@ -73,7 +77,10 @@ interface ReactionSummary {
   volume_ratio_mean: number | null;
   suggested_threshold_pct: number | null;
   trajetoria?: {
-    dias: { dia: number; n: number; acum_medio_pct: number; positivos: number }[];
+    dias: {
+      dia: number; n: number; acum_medio_pct: number; positivos: number;
+      excesso_medio_pct?: number; bateu_bench?: number;
+    }[];
   };
   current_price: number | null;
   r1_price: number | null;
@@ -255,14 +262,19 @@ export function interpretResult(r: ReactionResult): string[] {
   if (traj.length >= 2) {
     const d1 = traj[0];
     const ultimo = traj[traj.length - 1];
-    const virou = Math.sign(d1.acum_medio_pct) !== Math.sign(ultimo.acum_medio_pct);
-    const encolheu = Math.abs(ultimo.acum_medio_pct) < Math.abs(d1.acum_medio_pct) * 0.5;
-    const base = `Trajetória: em média o papel estava ${fmtPct(d1.acum_medio_pct)} no D+${d1.dia} e ${fmtPct(ultimo.acum_medio_pct)} no D+${ultimo.dia} (${ultimo.n} evento${ultimo.n === 1 ? "" : "s"} com esse horizonte)`;
+    // Prefere o EXCESSO quando existe: um papel que subiu 10% num setor que
+    // subiu 10% não reagiu ao balanço, e a frase não pode dizer que reagiu.
+    const usaExcesso = d1.excesso_medio_pct != null && ultimo.excesso_medio_pct != null;
+    const v1 = usaExcesso ? d1.excesso_medio_pct! : d1.acum_medio_pct;
+    const vN = usaExcesso ? ultimo.excesso_medio_pct! : ultimo.acum_medio_pct;
+    const virou = Math.sign(v1) !== Math.sign(vN);
+    const encolheu = Math.abs(vN) < Math.abs(v1) * 0.5;
+    const base = `Trajetória${usaExcesso ? " (excesso sobre o benchmark)" : ""}: em média o papel estava ${fmtPct(v1)} no D+${d1.dia} e ${fmtPct(vN)} no D+${ultimo.dia} (${ultimo.n} evento${ultimo.n === 1 ? "" : "s"} com esse horizonte)`;
     if (virou) {
       notes.push(`${base} — a reação inicial se INVERTEU ao longo das semanas seguintes; o movimento do dia foi mau guia da direção.`);
     } else if (encolheu) {
       notes.push(`${base} — o mercado DEVOLVEU boa parte da reação inicial, sinal de que o movimento do dia exagera.`);
-    } else if (Math.abs(ultimo.acum_medio_pct) > Math.abs(d1.acum_medio_pct)) {
+    } else if (Math.abs(vN) > Math.abs(v1)) {
       notes.push(`${base} — a reação inicial CONTINUOU na mesma direção; o movimento do dia tende a ser começo, não fim.`);
     } else {
       notes.push(`${base} — a reação inicial se manteve, sem continuação nem devolução relevante.`);
@@ -375,9 +387,14 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
 
     if (s.trajetoria?.dias.length) {
       blocos.push(`### Trajetória média pós-earnings (${r.ticker})\n\n` + tabela(
-        ["Pregão", "Acumulado médio", "Positivos", "Eventos com dado"],
+        ["Pregão", "Acumulado médio", "Excesso vs benchmark", "Positivos", "Bateu setor", "Eventos com dado"],
         s.trajetoria.dias.map((d) => [
-          `D+${d.dia}`, pct(d.acum_medio_pct), String(d.positivos), String(d.n),
+          `D+${d.dia}`,
+          pct(d.acum_medio_pct),
+          d.excesso_medio_pct != null ? pct(d.excesso_medio_pct) : "—",
+          String(d.positivos),
+          d.bateu_bench != null ? String(d.bateu_bench) : "—",
+          String(d.n),
         ]),
       ));
     }
@@ -388,8 +405,12 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
     for (const e of r.events ?? []) {
       if (!e.trajetoria?.length) continue;
       blocos.push(`#### ${r.ticker} · ${e.earnings_date} — dia a dia\n\n` + tabela(
-        ["Pregão", "Data", "Acumulado", "Variação do dia"],
-        e.trajetoria.map((p) => [`D+${p.dia}`, p.date, pct(p.acum_pct), pct(p.dia_pct)]),
+        ["Pregão", "Data", "Acumulado", "Variação do dia", "Benchmark", "Excesso"],
+        e.trajetoria.map((p) => [
+          `D+${p.dia}`, p.date, pct(p.acum_pct), pct(p.dia_pct),
+          p.bench_pct != null ? pct(p.bench_pct) : "—",
+          p.excesso_pct != null ? pct(p.excesso_pct) : "—",
+        ]),
       ));
     }
   }
@@ -400,6 +421,14 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
 export default function EarningsReactionPage() {
   const [tickersInput, setTickersInput] = useState(DEFAULT_TICKERS);
   const [lookback, setLookback] = useState("8");
+  // Referência do excesso na trajetória. Sugerido pelo PRIMEIRO ticker da
+  // lista (é o mais provável foco da consulta) e editável — uma cesta com
+  // papéis de setores diferentes precisa de uma escolha do usuário, e SPY
+  // costuma ser a resposta certa nesse caso.
+  const [benchmark, setBenchmark] = useState("");
+  const [benchmarkManual, setBenchmarkManual] = useState(false);
+  const primeiroTicker = tickersInput.split(",")[0]?.trim().toUpperCase() ?? "";
+  const benchmarkEfetivo = (benchmarkManual ? benchmark : benchmarkSugerido(primeiroTicker)) || "SPY";
   const [results, setResults] = useState<ReactionResult[] | null>(null);
 
   const run = useMutation({
@@ -409,7 +438,11 @@ export default function EarningsReactionPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tickers, lookback: parseInt(lookback, 10) || 8 }),
+        body: JSON.stringify({
+          tickers,
+          lookback: parseInt(lookback, 10) || 8,
+          benchmark: benchmarkEfetivo,
+        }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
@@ -449,6 +482,21 @@ export default function EarningsReactionPage() {
               onChange={(e) => setLookback(e.target.value)}
               className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-mono text-muted-foreground uppercase">Benchmark (excesso)</label>
+            <input
+              type="text"
+              value={benchmarkEfetivo}
+              onChange={(e) => { setBenchmark(e.target.value); setBenchmarkManual(true); }}
+              placeholder="SPY, SMH, KWEB..."
+              className="bg-background border border-border rounded px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <span className="text-[10px] font-mono text-muted-foreground/70">
+              {benchmarkManual
+                ? "escolhido por você"
+                : `sugerido por ${primeiroTicker || "—"} · cesta mista? use SPY`}
+            </span>
           </div>
         </div>
         <button
@@ -573,6 +621,18 @@ export default function EarningsReactionPage() {
                                   </td>
                                 ))}
                               </tr>
+                              {r.summary.trajetoria.dias.some((d) => d.excesso_medio_pct != null) && (
+                                <tr>
+                                  <td className="pr-2 py-1 text-[10px] text-muted-foreground uppercase" title="Retorno do papel MENOS o do benchmark no mesmo intervalo — separa 'reagiu ao resultado' de 'andou com o setor'">
+                                    Excesso
+                                  </td>
+                                  {r.summary.trajetoria.dias.map((d) => (
+                                    <td key={d.dia} className={`text-right px-1.5 py-1 font-bold ${(d.excesso_medio_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                      {d.excesso_medio_pct != null ? fmtPct(d.excesso_medio_pct) : SEM_DADO}
+                                    </td>
+                                  ))}
+                                </tr>
+                              )}
                               <tr>
                                 <td className="pr-2 py-1 text-[10px] text-muted-foreground uppercase" title="Quantos dos eventos analisados estavam positivos neste pregão, e sobre quantos com dado disponível">Positivos</td>
                                 {r.summary.trajetoria.dias.map((d) => (
@@ -581,6 +641,16 @@ export default function EarningsReactionPage() {
                                   </td>
                                 ))}
                               </tr>
+                              {r.summary.trajetoria.dias.some((d) => d.bateu_bench != null) && (
+                                <tr>
+                                  <td className="pr-2 py-1 text-[10px] text-muted-foreground uppercase" title="Em quantos eventos o papel superou o benchmark neste pregão">Bateu setor</td>
+                                  {r.summary.trajetoria.dias.map((d) => (
+                                    <td key={d.dia} className="text-right px-1.5 py-1 text-muted-foreground">
+                                      {d.bateu_bench != null ? `${d.bateu_bench}/${d.n}` : SEM_DADO}
+                                    </td>
+                                  ))}
+                                </tr>
+                              )}
                             </tbody>
                           </table>
                         </div>
