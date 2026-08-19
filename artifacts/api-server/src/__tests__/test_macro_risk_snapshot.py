@@ -235,8 +235,8 @@ import pandas as pd
 
 
 def _df_earnings(dias_atras: int, surpresa, coluna="Surprise(%)"):
-    from datetime import date, timedelta
-    quando = pd.Timestamp(date.today() - timedelta(days=dias_atras))
+    from datetime import timedelta
+    quando = pd.Timestamp(snap._hoje() - timedelta(days=dias_atras))
     return pd.DataFrame({coluna: [surpresa]}, index=[quando])
 
 
@@ -322,7 +322,10 @@ from datetime import date, timedelta
 
 
 def _resp_fred(dias_atras: int, hoje=5.31, ant=5.25):
-    d = date.today() - timedelta(days=dias_atras)
+    # snap._hoje(), não date.today(): o módulo raciocina em BRT e o processo
+    # roda em UTC. Entre 21h e 23h59 BRT as duas divergem por um dia, e o teste
+    # passaria a medir o fuso em vez do comportamento.
+    d = snap._hoje() - timedelta(days=dias_atras)
     return _Resposta([
         {"date": d.isoformat(), "value": str(hoje)},
         {"date": (d - timedelta(days=3)).isoformat(), "value": str(ant)},
@@ -369,7 +372,7 @@ def test_o_petroleo_vem_do_futuro_e_nao_do_FRED(monkeypatch):
     procedência."""
     monkeypatch.setenv("FRED_API_KEY", "x")
     monkeypatch.setattr(snap, "_dois_ultimos_fechamentos",
-                        lambda t: (84.77, 82.0, date.today().isoformat()))
+                        lambda t: (84.77, 82.0, snap._hoje().isoformat()))
     monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _resp_fred(7, hoje=70.0, ant=69.0))
     monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: None)
     monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, ""))
@@ -577,7 +580,7 @@ def test_kospi_de_sessao_em_curso_e_descartado(monkeypatch):
     import agent.market_alerts as ma
     monkeypatch.setattr(ma, "get_global_market_snapshot", lambda: {"items": [
         {"ticker": "^KS11", "changePct": -7.27, "suspect": False,
-         "asOf": date.today().isoformat()},
+         "asOf": snap._hoje().isoformat()},
     ]})
     monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: True)
 
@@ -592,7 +595,7 @@ def test_kospi_de_sessao_encerrada_passa(monkeypatch):
     import agent.market_alerts as ma
     monkeypatch.setattr(ma, "get_global_market_snapshot", lambda: {"items": [
         {"ticker": "^KS11", "changePct": -7.27, "suspect": False,
-         "asOf": date.today().isoformat()},
+         "asOf": snap._hoje().isoformat()},
     ]})
     monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: False)
 
@@ -610,3 +613,43 @@ def test_sem_asOf_nao_derruba_o_kospi(monkeypatch):
     ]})
     pct, _ = snap._kospi_do_snapshot_global()
     assert pct == -7.27
+
+
+# ── "hoje" é em Brasília, não em UTC ────────────────────────────────────────
+#
+# Produção 19/08/2026, 01:07 UTC = 22:07 BRT do dia 18. O retrato foi gravado
+# com `snapshot_date = 2026-08-19` -- a data de amanhã, num registro coletado
+# ontem à noite.
+#
+# É exatamente o risco que o brt.py documenta ("entre 21h e 23h59 BRT o dia do
+# container já virou"), e aqui ele é mais caro que um rótulo errado: a data é a
+# CHAVE da série. O dia 18 nunca existiria, e a linha do 19 seria sobrescrita
+# pelo cron da manhã -- carregando, até lá, dado da noite anterior. Buraco no
+# histórico que só aparece meses depois, ao comparar um dia ruim com o padrão.
+
+def test_hoje_e_em_brasilia():
+    from agent import brt
+    from datetime import datetime as _d
+    # 01:07 UTC do dia 19 = 22:07 BRT do dia 18
+    assert brt.today_brt(_d(2026, 8, 19, 1, 7)) == date(2026, 8, 18)
+
+
+def test_o_snapshot_usa_a_data_de_brasilia(monkeypatch):
+    """O caso concreto: às 22h BRT o retrato tem que ser do dia corrente em
+    Brasília, não do dia seguinte em UTC."""
+    monkeypatch.setattr(snap, "_hoje", lambda: date(2026, 8, 18))
+    monkeypatch.setattr(snap, "_perto_do_fomc", lambda *_a, **_k: False)
+    saida = snap.montar()
+    assert saida["snapshotDate"] == "2026-08-18"
+
+
+def test_nenhum_date_today_cru_no_modulo():
+    """`date.today()` devolve o dia do PROCESSO, que roda em UTC. Um uso solto
+    reintroduz o off-by-one em silêncio -- e o sintoma (buraco na série) aparece
+    longe da causa."""
+    import pathlib
+    fonte = pathlib.Path(snap.__file__).read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    assert not [l for l in codigo if "date.today()" in l], (
+        "use _hoje(), que respeita o fuso de Brasília"
+    )
