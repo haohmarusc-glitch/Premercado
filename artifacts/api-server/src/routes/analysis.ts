@@ -112,7 +112,28 @@ function guardarIA(chave: string, valor: unknown): void {
 // nem para UMA passada completa (a análise que deu certo levou 58s).
 const IDADE_MAX_CARONA_MS = 60_000;
 
-function runAnaliseRapidaIA(payload: object): Promise<unknown> {
+/** Preenchido só por quem REALMENTE spawnou o Python. Ver `runAnaliseRapidaIA`. */
+interface Execucao { gastoNovo: boolean }
+
+/**
+ * `exec.gastoNovo` responde "esta requisição pagou por tokens?", que é
+ * diferente de "esta requisição recebeu uma análise".
+ *
+ * Duas requisições podem receber o MESMO texto sem que exista uma segunda
+ * chamada de API: uma pelo cache por TTL, outra pela carona do coalescer. Nos
+ * dois casos o `usage` volta junto (a tela mostra o que a análise custou), e
+ * era isso que o registro de gasto lia -- gravando uma linha nova em
+ * agent_runs para uma chamada que nunca aconteceu.
+ *
+ * Medido em produção (19/08/2026), duas linhas com 5299 tokens de saída e
+ * US$ 0,062852 cada, terminando no MESMO instante (17:26:31.7): uma chamada
+ * de API, dois lançamentos. A tela Gastos com IA superestimava.
+ *
+ * Só a closure que o coalescer executa sabe a resposta -- quem entra de
+ * carona nunca roda a dela. Por isso a marca é feita lá dentro, e não por
+ * inspeção do mapa de em-voo (que seria uma corrida).
+ */
+function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
   const chave = `analise_rapida_ia:${JSON.stringify(payload)}`;
 
   const guardado = cacheIA.get(chave);
@@ -125,6 +146,10 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
   }
 
   return coalescer(chave, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
+    // Daqui para baixo é execução de verdade: o Python vai ser spawnado e os
+    // tokens vão ser cobrados, dê certo ou não. O retardatário que roda "por
+    // fora" (carona velha demais) também passa por aqui, e também gastou.
+    exec.gastoNovo = true;
     const py = spawnPython(getPythonBin(), ["-m", "agent.analise_rapida_ia"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
@@ -270,6 +295,7 @@ async function registrarGastoIA(
 router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
   const inicio = Date.now();
   const ticker = String(req.body?.ticker ?? "").trim().toUpperCase();
+  const exec: Execucao = { gastoNovo: false };
   try {
     if (!/^[A-Z0-9.^-]{1,10}$/.test(ticker)) { res.status(400).json({ error: "ticker inválido" }); return; }
     if (JSON.stringify(req.body).length > LIMITE_CORPO_IA) {
@@ -282,15 +308,26 @@ router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
       technicals: req.body?.technicals ?? null,
       snapshot: req.body?.snapshot ?? null,
       reaction: req.body?.reaction ?? null,
-    }) as { usage?: UsoLlm; error?: string };
+    }, exec) as { usage?: UsoLlm; error?: string };
     // O script devolve {error} para falhas de conteúdo (resposta curta,
     // sem painel) — nesses casos o provedor pode já ter sido cobrado, então
     // o registro vale igual, marcado como failed.
-    await registrarGastoIA(ticker, data.usage, Date.now() - inicio, data.error);
+    // Sem gasto novo (cache ou carona) não há lançamento: o livro registra
+    // chamadas de API, não entregas de texto. A resposta segue trazendo o
+    // `usage`, porque a tela mostra o que a ANÁLISE custou -- e isso continua
+    // verdade para quem a recebeu de segunda mão.
+    if (exec.gastoNovo) {
+      await registrarGastoIA(ticker, data.usage, Date.now() - inicio, data.error);
+    }
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /analise-rapida/ia");
-    await registrarGastoIA(ticker, undefined, Date.now() - inicio, String(err));
+    // Mesma regra na falha: quem herdou a rejeição de uma carona não spawnou
+    // nada, e contar a falha dele inflaria a taxa de erro do painel com
+    // execuções que nunca existiram.
+    if (exec.gastoNovo) {
+      await registrarGastoIA(ticker, undefined, Date.now() - inicio, String(err));
+    }
     res.status(500).json({ error: "Falha na análise com IA" });
   }
 });
