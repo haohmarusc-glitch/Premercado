@@ -14,8 +14,26 @@ baixo, exatamente o bug que o módulo corrige: cegueira lida como segurança.
 Por isso cada bloco é isolado: uma fonte fora não pode derrubar as outras
 cinco, e cada falha é nomeada em `coleta.erros`.
 
-Rodar à mão (dentro do container, de artifacts/api-server/src):
-    python3 -m agent.macro_risk_snapshot
+## Roda como MÓDULO, nunca por caminho
+
+    python3 -m agent.macro_risk_snapshot        # certo
+    python3 agent/macro_risk_snapshot.py        # QUEBRA três fontes
+
+Este script usa market_alerts (Kospi), tools (notícias) e o pacote agent para
+earnings, e esses módulos fazem `from .cache import cached` -- import relativo
+que só resolve em contexto de pacote.
+
+Rodar por caminho põe agent/ no sys.path, e lá existe um agent.py que SOMBREIA
+o pacote agent/: `from agent import market_alerts` passa a procurar um atributo
+dentro do módulo errado. Medido em produção 19/08/2026:
+
+    "^KS11":    "attempted relative import with no known parent package"
+    "earnings":  idem
+    "noticias":  idem
+
+Três das seis fontes caíram em silêncio -- a coleta isola falha por bloco, então
+o retrato saiu com cobertura 90% em vez de erro. Mesma regra de
+analise_rapida_ia.py e get_market_alerts_snapshot.py.
 """
 from __future__ import annotations
 
@@ -112,9 +130,56 @@ SK_HYNIX = "000660.KS"
 SAMSUNG = "005930.KS"
 
 
+# Fechamento de cada praça: sufixo do ticker -> (offset UTC, hora local do
+# fechamento). Só praças cujo pregão precisa estar ENCERRADO para o número valer.
+#
+# Coreia não observa horário de verão, então UTC+9 é exato -- mesma premissa que
+# o brt.py usa para o UTC-3 do Brasil. Sufixo desconhecido mantém o
+# comportamento antigo: quem não está aqui não é tratado, e isso é dito no
+# código em vez de virar suposição silenciosa.
+MERCADOS_POR_SUFIXO = {
+    ".KS": (9, 15.5),    # KRX, fecha 15:30 KST
+    ".KQ": (9, 15.5),    # KOSDAQ
+}
+# Margem depois do fechamento para o dado assentar na fonte.
+MARGEM_APOS_FECHAMENTO_H = 0.5
+
+
+def _sessao_ainda_aberta(ticker: str, data_da_barra, agora_utc: datetime | None = None) -> bool:
+    """A última barra é de um pregão que ainda pode estar em curso?
+
+    Produção 19/08/2026, 00:25 UTC (09:25 em Seul, 25 min após a abertura da
+    KRX). Duas coletas do mesmo dado com minutos de diferença:
+
+        linha de comando   sk_hynix +1,03   samsung -2,19   kospi +2,42
+        rota (botão)       sk_hynix -9,33   samsung -7,45   kospi descartado
+
+    A primeira leu o pregão de ONTEM; a segunda, a barra em ANDAMENTO de hoje.
+    `sem_barra_incompleta` não pega isso -- ela descarta barra com Close vazio, e
+    barra intradiária tem Close, só que provisório.
+
+    O estrago é maior que a inconsistência: ler sessão em curso como dia fechado
+    faz o número mudar a manhã inteira, e o sinal dispara ou não conforme a hora
+    em que alguém abre a tela. Também contradiz a premissa do próprio sinal --
+    ele vale como leading indicator PORQUE a Coreia já fechou.
+
+    O cron das 07:50 BRT (19:50 em Seul) sempre pegou sessão encerrada; quem
+    esbarra nisso é a coleta sob demanda.
+    """
+    sufixo = next((s for s in MERCADOS_POR_SUFIXO if ticker.upper().endswith(s)), None)
+    if sufixo is None:
+        return False
+
+    offset_h, fecha_h = MERCADOS_POR_SUFIXO[sufixo]
+    agora_local = (agora_utc or datetime.utcnow()) + timedelta(hours=offset_h)
+    if data_da_barra != agora_local.date():
+        return False
+    hora_local = agora_local.hour + agora_local.minute / 60
+    return hora_local < fecha_h + MARGEM_APOS_FECHAMENTO_H
+
+
 def _variacao_do_dia(ticker: str) -> float | None:
-    """Variação do último pregão via provider (que já descarta a barra
-    incompleta do dia corrente -- ver market_data_provider.sem_barra_incompleta)."""
+    """Variação do último pregão ENCERRADO."""
     try:
         from agent import market_data_provider as mdp
     except ImportError:
@@ -123,11 +188,21 @@ def _variacao_do_dia(ticker: str) -> float | None:
     res = mdp.get_daily_history(ticker, "1mo")
     if not res.ok or res.df is None or len(res.df) < 2:
         return None
+
     fech = res.df["Close"]
-    anterior = float(fech.iloc[-2])
+    fim = -1
+    if _sessao_ainda_aberta(ticker, res.df.index[-1].date()):
+        # Recua um pregão em vez de devolver None: o que o sinal quer é a última
+        # sessão FECHADA, e ela está logo atrás. Devolver nada aqui apagaria o
+        # sinal a manhã inteira na Ásia.
+        fim = -2
+    if len(fech) < abs(fim) + 1:
+        return None
+
+    anterior = float(fech.iloc[fim - 1])
     if not anterior:
         return None
-    return round((float(fech.iloc[-1]) / anterior - 1) * 100, 2)
+    return round((float(fech.iloc[fim]) / anterior - 1) * 100, 2)
 
 
 # Casas decimais do preço vindo do provider.
@@ -308,7 +383,8 @@ def _earnings_da_carteira() -> tuple[float | None, float | None, str]:
         import config  # type: ignore
 
     motivos: list[str] = []
-    for t in (getattr(config, "TICKERS", None) or [])[:12]:
+    tickers = (getattr(config, "TICKERS", None) or [])[:12]
+    for t in tickers:
         try:
             surpresa, motivo = _surpresa_recente(t)
         except Exception as e:  # noqa: BLE001
@@ -321,7 +397,32 @@ def _earnings_da_carteira() -> tuple[float | None, float | None, str]:
         reacao = _variacao_do_dia(t)
         _log(f"balanço recente: {t} surpresa {surpresa:+.1f}% reação {reacao}")
         return surpresa, reacao, ""
-    return None, None, "; ".join(motivos)
+    return None, None, _resumir(motivos)
+
+
+# Quantos motivos distintos cabem no erro antes de virar contagem.
+#
+# Quando a fonte cai, ela cai para TODOS os tickers com a mesma mensagem: em
+# 19/08/2026 isso produziu doze cópias de um erro de curl de 130 caracteres
+# dentro de `coleta.erros` -- que é persistido no `raw` e fica lá para sempre.
+# Doze repetições não informam mais que uma; informam menos, porque escondem
+# um motivo diferente que estivesse no meio.
+MAX_MOTIVOS = 3
+
+
+def _resumir(motivos: list[str]) -> str:
+    """Junta os motivos sem repetir o mesmo texto doze vezes."""
+    if not motivos:
+        return ""
+    vistos: list[str] = []
+    for m in motivos:
+        # Sem o prefixo "TICKER: ", que é o que difere quando a causa é a mesma.
+        corpo = m.split(": ", 1)[-1]
+        if corpo not in [v.split(": ", 1)[-1] for v in vistos]:
+            vistos.append(m)
+    resumo = "; ".join(vistos[:MAX_MOTIVOS])
+    restantes = len(motivos) - len(vistos[:MAX_MOTIVOS])
+    return f"{resumo} (+{restantes} ticker(s) com o mesmo motivo)" if restantes > 0 else resumo
 
 
 # ── Manchetes China/semis ───────────────────────────────────────────────────

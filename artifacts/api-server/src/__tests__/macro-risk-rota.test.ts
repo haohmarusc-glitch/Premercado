@@ -125,3 +125,35 @@ describe("agendamento diário", () => {
     expect(LIB).toContain("export async function coletarEPersistir");
   });
 });
+
+// ── o coletor precisa de contexto de PACOTE ─────────────────────────────────
+//
+// Produção 19/08/2026, primeira coleta pela rota:
+//
+//   "^KS11":    "attempted relative import with no known parent package"
+//   "earnings":  idem
+//   "noticias":  idem
+//
+// O coletor usa market_alerts (Kospi), tools (notícias) e o pacote agent para
+// earnings, e esses módulos fazem `from .cache import cached`. Rodar por
+// caminho põe agent/ no sys.path, onde existe um agent.py que SOMBREIA o
+// pacote agent/ -- `from agent import market_alerts` passa a procurar um
+// atributo dentro do módulo errado.
+//
+// Três das seis fontes caíram EM SILÊNCIO: a coleta isola falha por bloco,
+// então o retrato foi persistido com cobertura 90% em vez de erro. A
+// verificação por linha de comando não pegou porque eu a rodei com `-m`,
+// que é justamente o modo que funciona.
+
+describe("spawn do coletor", () => {
+  it("roda como módulo, não por caminho", () => {
+    expect(LIB).toContain('["-m", "agent.macro_risk_snapshot"]');
+    expect(LIB).not.toContain('"macro_risk_snapshot.py"');
+  });
+
+  it("passa cwd e PYTHONPATH, sem os quais o -m não acha o pacote", () => {
+    const bloco = LIB.slice(LIB.indexOf("spawnPython"), LIB.indexOf("py.stdin"));
+    expect(bloco).toContain("cwd: agentDir");
+    expect(bloco).toContain("PYTHONPATH: agentDir");
+  });
+});

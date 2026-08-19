@@ -434,3 +434,119 @@ def test_arredondar_nao_apaga_precisao_util():
     """4 casas e não 2: preço de índice ou câmbio pode precisar de mais que
     centavo, e truncar ali inventaria movimento que não houve."""
     assert snap.CASAS_DO_PRECO >= 4
+
+
+# ── sessão em curso não é dia fechado ───────────────────────────────────────
+#
+# Produção 19/08/2026, 00:25 UTC = 09:25 em Seul, 25 min após a abertura da KRX.
+# Duas coletas do MESMO dado, minutos apart:
+#
+#     linha de comando   sk_hynix +1,03   samsung -2,19   kospi +2,42
+#     rota (botão)       sk_hynix -9,33   samsung -7,45   kospi descartado
+#
+# A primeira leu o pregão de ontem; a segunda, a barra em andamento de hoje.
+# `sem_barra_incompleta` não pega: ela descarta Close vazio, e barra intradiária
+# tem Close -- provisório.
+#
+# Ler sessão em curso como dia fechado faz o número mudar a manhã inteira, e o
+# sinal disparar conforme a hora em que alguém abre a tela. E contradiz a
+# premissa do próprio sinal: ele vale como leading indicator PORQUE a Coreia já
+# fechou.
+
+from datetime import datetime as _dt
+
+
+def _hoje_kst(hora_utc: float):
+    """agora_utc tal que em Seul (UTC+9) seja `hora_utc` local."""
+    base = _dt(2026, 8, 19, 0, 0)
+    return base + timedelta(hours=hora_utc - 9)
+
+
+def test_barra_de_hoje_com_bolsa_aberta_e_recusada():
+    agora = _dt(2026, 8, 19, 0, 25)          # 09:25 em Seul
+    assert snap._sessao_ainda_aberta("000660.KS", date(2026, 8, 19), agora) is True
+
+
+def test_depois_do_fechamento_a_barra_de_hoje_vale():
+    """O cron das 07:50 BRT roda às 19:50 em Seul -- sessão encerrada há horas.
+    Recusar a barra aí jogaria fora justamente o dado mais fresco e útil."""
+    agora = _dt(2026, 8, 19, 10, 50)         # 19:50 em Seul
+    assert snap._sessao_ainda_aberta("000660.KS", date(2026, 8, 19), agora) is False
+
+
+def test_barra_de_ontem_sempre_vale():
+    agora = _dt(2026, 8, 19, 0, 25)
+    assert snap._sessao_ainda_aberta("000660.KS", date(2026, 8, 18), agora) is False
+
+
+def test_praca_desconhecida_mantem_o_comportamento_antigo():
+    """Sufixo fora da tabela não é tratado, e isso está dito no código em vez de
+    virar suposição silenciosa."""
+    agora = _dt(2026, 8, 19, 0, 25)
+    assert snap._sessao_ainda_aberta("NVDA", date(2026, 8, 19), agora) is False
+
+
+def test_recua_um_pregao_em_vez_de_apagar_o_sinal(monkeypatch):
+    """Devolver None com a bolsa aberta apagaria o sinal a manhã inteira na
+    Ásia. A última sessão FECHADA está logo atrás -- é ela que o sinal quer."""
+    import pandas as pd
+    idx = pd.to_datetime(["2026-08-15", "2026-08-18", "2026-08-19"])
+    # ontem: 100 -> 101 (+1%). hoje, em curso: 101 -> 91 (-9,9%)
+    df = pd.DataFrame({"Close": [100.0, 101.0, 91.0]}, index=idx)
+
+    try:
+        from agent import market_data_provider as mdp
+    except ImportError:
+        import market_data_provider as mdp  # type: ignore
+    monkeypatch.setattr(mdp, "get_daily_history",
+                        lambda t, p="6mo", **k: mdp.HistoryResult(df=df, source="teste"))
+    monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: True)
+
+    assert snap._variacao_do_dia("000660.KS") == 1.0     # o pregão fechado
+
+
+def test_com_a_bolsa_fechada_usa_a_ultima_barra(monkeypatch):
+    import pandas as pd
+    idx = pd.to_datetime(["2026-08-15", "2026-08-18", "2026-08-19"])
+    df = pd.DataFrame({"Close": [100.0, 101.0, 91.0]}, index=idx)
+
+    try:
+        from agent import market_data_provider as mdp
+    except ImportError:
+        import market_data_provider as mdp  # type: ignore
+    monkeypatch.setattr(mdp, "get_daily_history",
+                        lambda t, p="6mo", **k: mdp.HistoryResult(df=df, source="teste"))
+    monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: False)
+
+    assert snap._variacao_do_dia("000660.KS") == -9.9
+
+
+# ── erro repetido não enche o banco ─────────────────────────────────────────
+
+def test_o_mesmo_motivo_nao_e_repetido_por_ticker():
+    """Quando a fonte cai, ela cai para TODOS os tickers com a mesma mensagem.
+    Em 19/08/2026 isso produziu doze cópias de um erro de curl de 130 chars
+    dentro de `coleta.erros` -- que é persistido no `raw` e fica lá para
+    sempre."""
+    doze = [f"{t}: CONNECT tunnel failed, response 403" for t in "ABCDEFGHIJKL"]
+    saida = snap._resumir(doze)
+    assert saida.count("CONNECT tunnel") == 1
+    assert "+11 ticker(s)" in saida
+
+
+def test_motivos_diferentes_sobrevivem():
+    """Repetição escondendo um motivo DIFERENTE no meio seria pior que a
+    repetição."""
+    saida = snap._resumir([
+        "NVDA: CONNECT tunnel failed",
+        "MU: CONNECT tunnel failed",
+        "ARM: sem coluna de surpresa em ['Outra']",
+    ])
+    assert "CONNECT tunnel" in saida
+    assert "sem coluna de surpresa" in saida
+
+
+def test_sem_motivo_nenhum_devolve_vazio():
+    """Nenhum balanço na janela não é erro -- string vazia mantém a chave fora
+    de coleta.erros."""
+    assert snap._resumir([]) == ""

@@ -1,4 +1,3 @@
-import path from "path";
 import { db, macroRiskSnapshotsTable } from "@workspace/db";
 import { getPythonBin, agentDir } from "./runner";
 import { spawnPython } from "./python-spawn";
@@ -36,8 +35,31 @@ export function flagsAtivos(r: RetratoMacro): string[] {
 /** Roda o coletor Python e devolve o retrato do dia. */
 export function coletarMacroRisk(): Promise<RetratoMacro> {
   return comVagaPython("macro-risk", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "macro_risk_snapshot.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    // `-m agent.xxx`, NÃO caminho direto do script.
+    //
+    // O coletor usa market_alerts (Kospi), tools (notícias) e yfinance via
+    // pacote, e esses módulos fazem `from .cache import cached` -- import
+    // relativo que só resolve em contexto de pacote. Rodar por caminho põe o
+    // diretório agent/ no sys.path, onde existe um agent.py que SOMBREIA o
+    // pacote agent/: `from agent import market_alerts` passa a procurar um
+    // atributo dentro do módulo errado.
+    //
+    // Medido em produção 19/08/2026, na primeira coleta pela rota:
+    //
+    //   "^KS11":    "attempted relative import with no known parent package"
+    //   "earnings":  idem
+    //   "noticias":  idem
+    //
+    // Três das seis fontes caíram, e em silêncio: a coleta isola falha por
+    // bloco, então o retrato saiu com cobertura 90% e a Ásia avaliada só pelas
+    // ações. A verificação por linha de comando não pegou porque eu a rodei
+    // com `-m`, que é justamente o modo que funciona.
+    //
+    // Mesmo padrão de analysis.ts (analise_rapida_ia), quotes.ts e chart.ts.
+    const py = spawnPython(getPythonBin(), ["-m", "agent.macro_risk_snapshot"], {
+      cwd: agentDir,
+      env: { ...process.env, PYTHONPATH: agentDir },
+    });
     py.stdin.end();
     let out = "";
     let err = "";
