@@ -141,6 +141,11 @@ MERCADOS_POR_SUFIXO = {
     ".KS": (9, 15.5),    # KRX, fecha 15:30 KST
     ".KQ": (9, 15.5),    # KOSDAQ
 }
+# Índices, que não têm sufixo de praça.
+MERCADOS_POR_TICKER = {
+    "^KS11": (9, 15.5),  # KOSPI Composite
+    "^KQ11": (9, 15.5),  # KOSDAQ Composite
+}
 # Margem depois do fechamento para o dado assentar na fonte.
 MARGEM_APOS_FECHAMENTO_H = 0.5
 
@@ -166,11 +171,15 @@ def _sessao_ainda_aberta(ticker: str, data_da_barra, agora_utc: datetime | None 
     O cron das 07:50 BRT (19:50 em Seul) sempre pegou sessão encerrada; quem
     esbarra nisso é a coleta sob demanda.
     """
-    sufixo = next((s for s in MERCADOS_POR_SUFIXO if ticker.upper().endswith(s)), None)
-    if sufixo is None:
+    alvo = ticker.upper()
+    praca = MERCADOS_POR_TICKER.get(alvo)
+    if praca is None:
+        sufixo = next((s for s in MERCADOS_POR_SUFIXO if alvo.endswith(s)), None)
+        praca = MERCADOS_POR_SUFIXO.get(sufixo) if sufixo else None
+    if praca is None:
         return False
 
-    offset_h, fecha_h = MERCADOS_POR_SUFIXO[sufixo]
+    offset_h, fecha_h = praca
     agora_local = (agora_utc or datetime.utcnow()) + timedelta(hours=offset_h)
     if data_da_barra != agora_local.date():
         return False
@@ -262,6 +271,30 @@ def _kospi_do_snapshot_global() -> tuple[float | None, str]:
         return None, "^KS11 ausente do snapshot global"
     if kospi.get("suspect"):
         return None, f"marcado suspeito: {kospi.get('suspectReason', 'sem motivo')}"
+
+    # Sessão em curso é descartada, pelo mesmo motivo das AÇÕES coreanas (ver
+    # _sessao_ainda_aberta) -- mas por um caminho diferente, e foi por isso que
+    # escapou do primeiro conserto.
+    #
+    # Produção 19/08/2026, 00:58 UTC (09:58 em Seul):
+    #
+    #     sk_hynix  +1,03   samsung  -2,19    <- pregão fechado
+    #     kospi     -7,27                     <- sessão em curso
+    #
+    # O sinal disparou com DUAS bases de tempo no mesmo cartão, o que é pior
+    # que a inconsistência que o antecedeu: parece coerente.
+    #
+    # O que se perde é só o intradiário no botão. O cron das 07:50 BRT roda às
+    # 19:50 em Seul, com tudo fechado -- para o uso real, o retrato antes da
+    # abertura americana, a queda coreana aparece inteira e no tempo certo.
+    quando = kospi.get("asOf")
+    try:
+        data_barra = datetime.strptime(str(quando), "%Y-%m-%d").date() if quando else None
+    except ValueError:
+        data_barra = None
+    if data_barra and _sessao_ainda_aberta("^KS11", data_barra):
+        return None, f"pregão de {quando} ainda em curso em Seul"
+
     return kospi.get("changePct"), ""
 
 

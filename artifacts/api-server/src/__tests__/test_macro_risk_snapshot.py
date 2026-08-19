@@ -550,3 +550,63 @@ def test_sem_motivo_nenhum_devolve_vazio():
     """Nenhum balanço na janela não é erro -- string vazia mantém a chave fora
     de coleta.erros."""
     assert snap._resumir([]) == ""
+
+
+# ── o Kospi entra pela mesma régua das ações ────────────────────────────────
+#
+# Produção 19/08/2026, 00:58 UTC = 09:58 em Seul, com a KRX aberta há uma hora:
+#
+#     sk_hynix  +1,03   samsung  -2,19    <- pregão fechado (conserto anterior)
+#     kospi     -7,27                     <- sessão em curso
+#
+# O sinal disparou com DUAS bases de tempo no mesmo cartão. Isso é pior que a
+# inconsistência que o antecedeu, porque parece coerente: três números lado a
+# lado, dois de ontem e um de agora, sem nada indicando a diferença.
+#
+# Escapou do primeiro conserto porque o Kospi vem por OUTRO caminho -- o
+# snapshot global, não o _variacao_do_dia.
+
+def test_indice_coreano_tambem_e_reconhecido():
+    """A tabela de praças era só por sufixo, e índice não tem sufixo."""
+    agora = _dt(2026, 8, 19, 0, 58)          # 09:58 em Seul
+    assert snap._sessao_ainda_aberta("^KS11", date(2026, 8, 19), agora) is True
+    assert snap._sessao_ainda_aberta("^KS11", date(2026, 8, 18), agora) is False
+
+
+def test_kospi_de_sessao_em_curso_e_descartado(monkeypatch):
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "get_global_market_snapshot", lambda: {"items": [
+        {"ticker": "^KS11", "changePct": -7.27, "suspect": False,
+         "asOf": date.today().isoformat()},
+    ]})
+    monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: True)
+
+    pct, motivo = snap._kospi_do_snapshot_global()
+    assert pct is None
+    assert "em curso" in motivo
+
+
+def test_kospi_de_sessao_encerrada_passa(monkeypatch):
+    """É o caso do cron (19:50 em Seul). Descartar aqui jogaria fora justamente
+    o dado que o retrato diário existe para capturar."""
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "get_global_market_snapshot", lambda: {"items": [
+        {"ticker": "^KS11", "changePct": -7.27, "suspect": False,
+         "asOf": date.today().isoformat()},
+    ]})
+    monkeypatch.setattr(snap, "_sessao_ainda_aberta", lambda *a, **k: False)
+
+    pct, motivo = snap._kospi_do_snapshot_global()
+    assert pct == -7.27
+    assert motivo == ""
+
+
+def test_sem_asOf_nao_derruba_o_kospi(monkeypatch):
+    """`asOf` é campo do snapshot global; se ele sumir numa mudança lá, o certo
+    é seguir com o número (comportamento antigo) e não apagar o sinal."""
+    import agent.market_alerts as ma
+    monkeypatch.setattr(ma, "get_global_market_snapshot", lambda: {"items": [
+        {"ticker": "^KS11", "changePct": -7.27, "suspect": False},
+    ]})
+    pct, _ = snap._kospi_do_snapshot_global()
+    assert pct == -7.27
