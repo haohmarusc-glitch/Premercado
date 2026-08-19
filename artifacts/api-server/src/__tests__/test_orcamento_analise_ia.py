@@ -243,7 +243,9 @@ def test_teto_de_tokens_cresce_para_modelo_que_pensa():
 
     Medido: deepseek-v4-pro gastou 17.147 chars de raciocínio (~4.300 tokens) e
     devolveu resposta VAZIA com stop_reason=length."""
-    mod = _modulo()
+    # O cálculo saiu de analise_rapida_ia quando a interpretação da Reação a
+    # Earnings passou a precisar dele; o teste segue o número, não o arquivo.
+    from agent import teto_tokens as mod
     assert mod.teto_de_tokens("claude-sonnet-5") == mod.MAX_TOKENS
     assert mod.teto_de_tokens("deepseek-v4-flash") == mod.MAX_TOKENS
     # o que pensa ganha a folga
@@ -254,7 +256,7 @@ def test_teto_de_tokens_cresce_para_modelo_que_pensa():
 def test_a_folga_cobre_o_raciocinio_medido():
     """4.300 tokens medidos + a resposta pedida (400-700 palavras) têm que
     caber. Folga menor que o caso real já visto não protege de nada."""
-    mod = _modulo()
+    from agent import teto_tokens as mod
     tokens_medidos = 4300
     assert mod.MAX_TOKENS_RACIOCINIO >= tokens_medidos
 
