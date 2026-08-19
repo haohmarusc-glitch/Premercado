@@ -17,17 +17,48 @@ from agent import macro_risk as mr
 from agent import macro_risk_snapshot as snap
 
 
+# ── nenhum teste daqui toca a rede ──────────────────────────────────────────
+#
+# Fixture AUTOUSE, e por um motivo aprendido do jeito ruim. Em 18/08/2026 a
+# fonte nova do WTI entrou sem dublê. Este ambiente não alcança o yfinance,
+# então ela falhava e caía no FRED dublado -- os testes passavam. O CI TEM
+# rede: lá ela funcionou de verdade, o FRED nunca foi tentado, e
+# `test_uma_fonte_fora_nao_leva_as_outras` quebrou.
+#
+# O bloqueio é nas PRIMITIVAS de rede, não nos nomes das funções deste módulo.
+# Duas razões: os testes abaixo exercitam os fetchers de verdade (com dublê de
+# camada mais baixa), e uma lista de nomes de função envelhece -- quem
+# adicionar a sétima fonte não teria como saber que precisa vir aqui. Bloquear
+# a primitiva pega qualquer fonte futura sem manutenção.
+
+REDE_BLOQUEADA = "rede bloqueada nos testes -- duble a camada que este teste exercita"
+
+
+@pytest.fixture(autouse=True)
+def sem_rede(monkeypatch):
+    try:
+        from agent import market_alerts, market_data_provider, tools
+    except ImportError:  # pragma: no cover
+        import market_alerts, market_data_provider, tools  # type: ignore
+    import yfinance as yf
+
+    def bloqueia(quem):
+        def _b(*_a, **_k):
+            raise RuntimeError(f"{quem}: {REDE_BLOQUEADA}")
+        return _b
+
+    monkeypatch.setattr(snap.SESSION, "get", bloqueia("SESSION.get"))
+    monkeypatch.setattr(market_data_provider, "get_daily_history", bloqueia("get_daily_history"))
+    monkeypatch.setattr(market_alerts, "get_global_market_snapshot", bloqueia("snapshot global"))
+    monkeypatch.setattr(tools, "get_geopolitical_news", bloqueia("get_geopolitical_news"))
+    monkeypatch.setattr(yf, "Ticker", bloqueia("yf.Ticker"))
+
+
 # ── uma fonte fora não derruba as outras ────────────────────────────────────
 
 def _sem_nada(monkeypatch):
-    """Todas as fontes falhando, cada uma do seu jeito."""
-    def explode(*_a, **_k):
-        raise RuntimeError("fonte fora do ar")
-    monkeypatch.setattr(snap, "_fred_duas_ultimas", explode)
-    monkeypatch.setattr(snap, "_variacao_do_dia", explode)
-    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", explode)
-    monkeypatch.setattr(snap, "_serie_sox", explode)
-    monkeypatch.setattr(snap, "_manchetes_china", explode)
+    """Todas as fontes fora. Com o bloqueio por primitiva isto já é o estado
+    padrão -- só o FOMC (que lê MACRO_EVENTS, não a rede) precisa ser fixado."""
     monkeypatch.setattr(snap, "_perto_do_fomc", lambda *_a, **_k: False)
 
 
@@ -61,10 +92,12 @@ def test_uma_fonte_fora_nao_leva_as_outras(monkeypatch):
     def explode(*_a, **_k):
         raise RuntimeError("FRED fora")
     monkeypatch.setattr(snap, "_fred_duas_ultimas", explode)
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos", explode)
     monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: -14.65)
     monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (-8.0, ""))
     monkeypatch.setattr(snap, "_serie_sox", lambda **_k: ([100.0] * 46, ""))
     monkeypatch.setattr(snap, "_manchetes_china", lambda: ([], ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
     monkeypatch.setattr(snap, "_perto_do_fomc", lambda *_a, **_k: False)
 
     saida = snap.montar()
@@ -108,11 +141,16 @@ def test_perder_o_kospi_nao_apaga_o_sinal_da_asia(monkeypatch):
     outra fonte, e o check dispara por ação OU índice. Relevante porque o limite
     de implausibilidade do snapshot é 8,0% e o Kospi fechou a -8,0% em
     28/07/2026 -- uma queda real um pouco maior chegaria rotulada."""
-    monkeypatch.setattr(snap, "_fred_duas_ultimas", lambda s: (0.0, 0.0, ["", ""]))
+    from datetime import date as _d
+    monkeypatch.setattr(snap, "_fred_duas_ultimas",
+                        lambda s: (0.0, 0.0, [_d.today().isoformat(), ""]))
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos",
+                        lambda t: (_ for _ in ()).throw(RuntimeError("fora")))
     monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: -14.65)
     monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, "suspeito"))
     monkeypatch.setattr(snap, "_serie_sox", lambda **_k: ([100.0] * 46, ""))
     monkeypatch.setattr(snap, "_manchetes_china", lambda: ([], ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
 
     saida = snap.montar()
     assert saida["ASIA_MEMORY_CONTAGION"]["active"] is True
@@ -207,6 +245,7 @@ class _TickerFalso:
 
 
 def test_balanco_na_janela_devolve_a_surpresa(monkeypatch):
+    monkeypatch.undo()          # este teste exercita a função real, com yf dublado
     import yfinance as yf
     monkeypatch.setattr(yf, "Ticker", lambda t: _TickerFalso(_df_earnings(1, 5.0)))
     valor, motivo = snap._surpresa_recente("NVDA")
