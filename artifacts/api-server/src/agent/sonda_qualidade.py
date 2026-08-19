@@ -51,21 +51,36 @@ CASOS = [
             "divergenciaPct calculado; a análise tem que DIZER isso, não "
             "escolher um dos dois em silêncio nem somar a diferença ao upside."
         ),
+        # SEM `_fundamento` fabricado, e isso não é descuido.
+        #
+        # `analisar()` sobrescreve incondicionalmente o `_fundamento` recebido
+        # pelo que busca ao vivo (ver a chamada de _buscar_fundamento). Qualquer
+        # valuation montado aqui é DESCARTADO -- deixá-lo no caso mentiria sobre
+        # o que o teste exercita.
+        #
+        # A divergência acontece sozinha: o preço de 180 é fabricado e o do
+        # painel de valuation vem da FMP, então os dois discordam por
+        # construção. É um caso real, não simulado.
         "dados": {
             "ticker": "NVDA",
             "snapshot": {"price": 180.0},
             "technicals": {"price": 180.0, "rsi": 55.0},
-            "_fundamento": {
-                "valuation": {
-                    "current_price": 225.01,
-                    "dcf_fair_value": 240.10,
-                    "dcf_implied_upside_pct": 6.7,
-                },
-            },
         },
+        # Nenhum número VIVO no `exige`.
+        #
+        # A versão anterior cobrava o literal "225", que era o preço de
+        # valuation que eu tinha inventado -- e que nunca chegava ao modelo. Ele
+        # passou por coincidência enquanto o preço real rondava aquele valor, e
+        # reprovou quando o mercado andou. A sonda estava medindo a cotação do
+        # dia, não a obediência do modelo, e me levou a "consertar" o prompt
+        # duas vezes atrás de uma regressão que não existia.
+        #
+        # O que se cobra agora é o COMPORTAMENTO: dizer que divergem, citar o
+        # preço que este teste controla, e nomear o painel de onde vem o outro.
         "exige": [
             (r"diverg|discord|defasad|incompat|difere", "citar a divergência entre os painéis"),
-            (r"225", "citar o preço do painel que divergiu"),
+            (r"180", "citar o preço que o caso controla"),
+            (r"valuation", "nomear o painel de onde vem o outro preço"),
         ],
         "proibe": [
             # O erro exato do gemini: tratar a diferença entre os dois preços

@@ -161,3 +161,50 @@ def test_a_sonda_zera_o_relogio_entre_casos():
     i_chama = next((i for i, l in enumerate(codigo) if "mod.analisar(" in l), -1)
     assert i_zera >= 0, "o relógio do orçamento não é zerado entre casos"
     assert i_zera < i_chama, "zerar depois da chamada não adianta"
+
+
+# ── a sonda não pode depender de número vivo ────────────────────────────────
+#
+# O caso `divergencia_de_preco` cobrava o literal "225" -- o preço de valuation
+# que eu tinha fabricado no payload. Só que `analisar()` SOBRESCREVE o
+# `_fundamento` recebido pelo que busca ao vivo, então aquele número nunca
+# chegava ao modelo.
+#
+# Ele passou por coincidência enquanto o preço real rondava 225, e reprovou
+# quando o mercado andou (220,11 em 19/08/2026). A sonda estava medindo a
+# cotação do dia, não a obediência do modelo -- e me levou a "consertar" o
+# prompt duas vezes atrás de uma regressão que não existia.
+
+def test_nenhum_caso_cobra_numero_de_mercado():
+    """Número vivo no `exige` transforma a sonda em oráculo de cotação: ela
+    reprova quando o mercado anda, e o operador vai investigar o modelo."""
+    import re
+    for caso in sonda.CASOS:
+        for padrao, descricao in caso["exige"] + caso["proibe"]:
+            # 180 é o preço que o próprio caso injeta via `snapshot` -- esse o
+            # teste controla. Qualquer outro número de 3+ dígitos vem do mercado.
+            vivos = [n for n in re.findall(r"\\d{3,}", padrao) if n != "180"]
+            assert not vivos, (
+                f"{caso['nome']}: padrão {padrao!r} cobra o número {vivos} "
+                f"({descricao}) -- ele muda com o mercado"
+            )
+
+
+def test_o_caso_da_divergencia_nao_finge_injetar_valuation():
+    """`analisar()` sobrescreve `_fundamento` com o que busca ao vivo. Um
+    valuation montado no caso é descartado, e deixá-lo ali mentiria sobre o que
+    o teste exercita."""
+    caso = _caso("divergencia_de_preco")
+    assert "_fundamento" not in caso["dados"]
+    # a divergência acontece por construção: 180 fabricado contra o preço real
+    assert caso["dados"]["snapshot"]["price"] == 180.0
+
+
+def test_a_analise_realmente_sobrescreve_o_fundamento():
+    """A premissa dos dois testes acima. Se um dia `analisar()` passar a
+    respeitar o `_fundamento` recebido, eles ficam conservadores demais em vez
+    de errados -- mas vale saber."""
+    import pathlib
+    from agent import analise_rapida_ia as mod
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    assert 'dados = {**dados, "_fundamento": fundamento}' in fonte
