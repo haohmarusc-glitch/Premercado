@@ -38,12 +38,16 @@ router.post("/earnings-reaction/run", async (req, res, next): Promise<void> => {
     ? rawTickers.map((t: unknown) => String(t).trim().toUpperCase()).filter(Boolean)
     : undefined; // undefined/vazio -> script usa DEFAULT_TICKERS
   const lookback = typeof req.body?.lookback === "number" ? req.body.lookback : 8;
+  // Referência do excesso na trajetória pós-earnings. Vem da tela (mapa por
+  // setor); ausente ou malformado deixa o script cair no padrão dele (SPY).
+  const rawBenchmark = String(req.body?.benchmark ?? "").trim().toUpperCase();
+  const benchmark = /^[A-Z0-9.^-]{1,10}$/.test(rawBenchmark) ? rawBenchmark : undefined;
 
   try {
     // ~12s por ticker (chamada de earnings dates + histórico de preço via
     // yfinance) -- 5 tickers (padrão) cai nos mesmos 60s de antes.
     const timeoutMs = 12_000 * Math.max(1, tickers?.length ?? 5);
-    const data = await runEarningsReactionScript({ tickers, lookback }, timeoutMs);
+    const data = await runEarningsReactionScript({ tickers, lookback, benchmark }, timeoutMs);
     res.json(data);
   } catch (e) {
     next(e);
