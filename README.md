@@ -731,6 +731,8 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #326, #327 | Precedência no `_TIER_MAP` (troca de provedor rebaixava o modelo em silêncio) e ordem por tempo até resposta útil |
 | #328, #329 | Sonda de qualidade do prompt + o furo do detector de divergência; a sonda deixa de reprovar por presença de palavra |
 | #339–#342 | 17 regras do SYSTEM em 5 grupos (-27%); exclusão do deepseek, que gasta o teto raciocinando e entrega 0 chars; sonda deixa de embutir cotação |
+| #346–#349 | Erro do fallback deixa de esconder provedor sem chave e falha sem condenação; teto por chamada 55→85s vindo das durações reais; gasto contado uma vez por chamada de API |
+| #350 | Gemini abre a fila da Análise com IA — quem falha barato na frente deixa orçamento para o próximo |
 
 ### Provedores de LLM e desempenho do agente
 
