@@ -337,7 +337,9 @@ def test_a_analise_exclui_quem_nao_converge(monkeypatch):
     ordem = os.environ["AGENT_PROVIDER_ORDER"].split(",")
     assert "deepseek" not in ordem
     assert "deepseek" in prov._DEFAULT_ORDER      # segue na cadeia global
-    assert ordem[0] == "anthropic" and ordem[1] == "gemini"
+    # A tela promove o gemini (ver _PRIMEIRO_AQUI); o anthropic vira o
+    # primeiro fallback. A cadeia global não muda.
+    assert ordem[0] == "gemini" and ordem[1] == "anthropic"
 
 
 def test_ordem_generica_nao_reabre_a_porta_dos_fundos():
@@ -363,7 +365,10 @@ def test_ordem_vazia_cai_na_padrao_e_nao_em_lista_de_string_vazia():
     from agent import analise_rapida_ia as mod
     ordem = mod._ordem_desta_tela("", "")
     assert "" not in ordem
-    assert ordem[0] == "anthropic"
+    # O que importa aqui é ter caído na ordem PADRÃO, não qual nome abre a
+    # fila -- quem fixa isso é test_gemini_abre_a_fila_na_ordem_default.
+    assert set(ordem) <= set(mod._ORDEM_PADRAO)
+    assert len(ordem) > 1
 
 
 def test_a_exclusao_deriva_da_ordem_unica(monkeypatch):
@@ -377,3 +382,50 @@ def test_a_exclusao_deriva_da_ordem_unica(monkeypatch):
     assert any("_ORDEM_PADRAO" in l for l in codigo)
     # e nenhuma lista literal de provedores
     assert not any('"anthropic", "gemini"' in l for l in codigo)
+
+
+# ── quem abre a fila nesta tela ─────────────────────────────────────────────
+
+def test_gemini_abre_a_fila_na_ordem_default():
+    """Decidido pelo formato da FALHA, não pelo preço.
+
+    Em 19/08/2026 o anthropic queimou 55,1s sendo cortado no teto e o gemini
+    falhou em 11,1s com um 503. Quem falha barato na frente deixa orçamento
+    para o próximo; quem falha caro não deixa.
+    """
+    from agent import analise_rapida_ia as mod
+    assert mod._ordem_desta_tela("", "")[0] == "gemini"
+
+
+def test_promocao_nao_perde_nem_duplica_provedor():
+    """Mover um item de lugar é onde se perde ou repete elemento."""
+    from agent import analise_rapida_ia as mod
+    ordem = mod._ordem_desta_tela("", "")
+    assert len(ordem) == len(set(ordem))
+    esperado = {p for p in mod._ORDEM_PADRAO if p not in mod._SEM_CONVERGENCIA_AQUI}
+    assert set(ordem) == esperado
+
+
+def test_ordem_explicita_nao_e_reordenada_por_tras():
+    """AGENT_PROVIDER_ORDER é decisão de quem operou.
+
+    Reordená-la tornaria a variável mentirosa. É o oposto da exclusão do
+    deepseek, que vale para QUALQUER origem porque é regra de correção (ele
+    não entrega texto nenhum aqui), não preferência de velocidade.
+    """
+    from agent import analise_rapida_ia as mod
+    assert mod._ordem_desta_tela("anthropic,gemini", "") == ["anthropic", "gemini"]
+
+
+def test_promocao_nao_inventa_provedor_ausente():
+    """Ordem sem o promovido continua como está -- nada de inserir do nada."""
+    from agent import analise_rapida_ia as mod
+    assert mod._ordem_desta_tela("anthropic,openai", "") == ["anthropic", "openai"]
+
+
+def test_o_promovido_deriva_da_ordem_unica():
+    """O nome existe em _DEFAULT_ORDER: promover quem não está na cadeia
+    global seria uma quarta cópia da sequência, divergindo na primeira
+    mudança (playbook §10)."""
+    from agent import analise_rapida_ia as mod
+    assert mod._PRIMEIRO_AQUI in mod._ORDEM_PADRAO

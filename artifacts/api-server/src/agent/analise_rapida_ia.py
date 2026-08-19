@@ -139,12 +139,40 @@ _SEM_CONVERGENCIA_AQUI = {"deepseek"}
 # nome e portanto não acontece por acidente.
 _PERMITIR_ENV = "ANALISE_IA_PERMITIR"
 
+# Quem abre a fila NESTA tela, contra o anthropic da ordem global.
+#
+# Os números do agent_runs de 19/08/2026 -- durações das análises que deram
+# certo -- mostram o anthropic entre 57s e 65s aqui, e o teto por chamada teve
+# de ir de 55s para 85s para caber. O gemini responde em menos da metade do
+# tempo e custa ~12x menos por token.
+#
+# O que decidiu não foi o preço, foi o formato da falha. Na cascata daquele dia
+# o anthropic queimou 55,1s sendo CORTADO no teto, e o gemini falhou em 11,1s
+# com um 503 de capacidade. Um provedor que falha barato na frente deixa
+# orçamento para o próximo; um que falha caro não deixa. Invertidos, os mesmos
+# dois eventos custariam 11,1 + 65 = ~76s e a análise sairia.
+#
+# Só aqui: o agente diário usa a cadeia em formato de tool-calling, onde a
+# medição que motivou isto não vale, e mexer em _DEFAULT_ORDER mudaria os dois.
+_PRIMEIRO_AQUI = "gemini"
+
 
 def _ordem_desta_tela(bruta: str = "", permitidos: str = "") -> list[str]:
-    """Ordem efetiva, já sem quem não converge aqui."""
-    origem = [p.strip() for p in bruta.split(",") if p.strip()] or list(_ORDEM_PADRAO)
+    """Ordem efetiva: sem quem não converge aqui, e com o mais rápido na frente.
+
+    A promoção só vale quando a ordem veio do DEFAULT. Ordem explícita em
+    AGENT_PROVIDER_ORDER é decisão de quem operou, e reordená-la por trás
+    tornaria a variável mentirosa -- ao contrário da exclusão do deepseek, que
+    vale para qualquer origem porque é regra de correção (ele não entrega
+    texto nenhum aqui), não preferência de velocidade.
+    """
+    explicita = [p.strip() for p in bruta.split(",") if p.strip()]
+    origem = explicita or list(_ORDEM_PADRAO)
     liberados = {p.strip() for p in permitidos.split(",") if p.strip()}
-    return [p for p in origem if p not in (_SEM_CONVERGENCIA_AQUI - liberados)]
+    ordem = [p for p in origem if p not in (_SEM_CONVERGENCIA_AQUI - liberados)]
+    if not explicita and _PRIMEIRO_AQUI in ordem:
+        ordem.insert(0, ordem.pop(ordem.index(_PRIMEIRO_AQUI)))
+    return ordem
 
 
 os.environ["AGENT_PROVIDER_ORDER"] = ",".join(_ordem_desta_tela(
