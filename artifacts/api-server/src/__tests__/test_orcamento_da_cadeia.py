@@ -340,14 +340,30 @@ def test_a_analise_exclui_quem_nao_converge(monkeypatch):
     assert ordem[0] == "anthropic" and ordem[1] == "gemini"
 
 
-def test_override_explicito_vence(monkeypatch):
-    """É assim que se testa um provedor excluído sem editar código -- foi o
-    comando que produziu a medição acima."""
-    import importlib, os
-    monkeypatch.setenv("AGENT_PROVIDER_ORDER", "deepseek")
+def test_ordem_generica_nao_reabre_a_porta_dos_fundos():
+    """A primeira versão desta exclusão só agia com AGENT_PROVIDER_ORDER vazia.
+    Bastaria alguém definir a ordem no compose por outro motivo -- e o deepseek
+    voltava à cadeia sem ninguém notar."""
     from agent import analise_rapida_ia as mod
-    importlib.reload(mod)
-    assert os.environ["AGENT_PROVIDER_ORDER"] == "deepseek"
+    assert "deepseek" not in mod._ordem_desta_tela("deepseek,anthropic", "")
+
+
+def test_a_escotilha_exige_citar_o_nome():
+    """O que se perde num ban absoluto é testar o provedor excluído sem editar
+    código -- foi como a medição acima foi produzida. Volta por uma variável
+    que tem de nomeá-lo, e portanto não acontece por acidente."""
+    from agent import analise_rapida_ia as mod
+    assert mod._ordem_desta_tela("deepseek,anthropic", "deepseek") == ["deepseek", "anthropic"]
+
+
+def test_ordem_vazia_cai_na_padrao_e_nao_em_lista_de_string_vazia():
+    """`"".split(",")` devolve `['']`, que é TRUTHY -- um `or` ingênuo aqui
+    produziria uma ordem com um provedor de nome vazio, e a cadeia morreria
+    sem provedor nenhum."""
+    from agent import analise_rapida_ia as mod
+    ordem = mod._ordem_desta_tela("", "")
+    assert "" not in ordem
+    assert ordem[0] == "anthropic"
 
 
 def test_a_exclusao_deriva_da_ordem_unica(monkeypatch):
