@@ -101,84 +101,24 @@ _probe_boot()
 import yfinance as yf
 
 from agent.provider import get_client, get_run_usage, texto_da_resposta
-from agent.provider import _DEFAULT_ORDER as _ORDEM_PADRAO
+from agent.ordem_das_telas import (
+    ORDEM_PADRAO as _ORDEM_PADRAO,
+    PERMITIR_ENV as _PERMITIR_ENV,
+    PRIMEIRO as _PRIMEIRO_AQUI,
+    SEM_CONVERGENCIA as _SEM_CONVERGENCIA_AQUI,
+    aplicar_na_env as _aplicar_ordem_na_env,
+    ordem_desta_tela as _ordem_desta_tela,
+)
 
-# Provedores que não CONVERGEM nesta tarefa -- não que estejam fora do ar.
+# A política (quem não converge, quem abre a fila) mora em ordem_das_telas.py
+# porque a interpretação da Reação a Earnings usa a MESMA. Mantida aqui só a
+# aplicação, que tem de acontecer antes do primeiro get_client().
 #
-# O deepseek (v4-pro e v4-flash) gasta o max_tokens inteiro raciocinando e
-# nunca chega à resposta. Medido quatro vezes em 18-19/08/2026, com duas
-# versões de modelo e duas versões do prompt:
-#
-#   v4-pro    teto 12.000   142,2s   0 chars   (17.806 chars de raciocínio)
-#   v4-flash  teto  6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
-#   v4-flash  teto  6.000    52,7s   0 chars   (com o prompt 27% menor)
-#
-# Num prompt trivial ele responde em 1s. O problema é ESTA tarefa: redigir uma
-# análise longa e estruturada. Dobrar o teto dobrou o tempo sem produzir texto
-# -- o raciocínio se expande para preencher o que houver.
-#
-# Fica FORA daqui e DENTRO da cadeia global de propósito: o v4-flash é forte em
-# tool-calling, que é o formato do agente diário, e esse uso nunca falhou.
-# Excluí-lo lá puniria um caminho que funciona por causa de outro que não.
-#
-# Deriva de _DEFAULT_ORDER em vez de listar a ordem aqui: uma terceira cópia da
-# sequência divergiria das outras duas (provider.py e agent-budget.ts) na
-# primeira mudança -- é o padrão do playbook §10, e já mordeu neste repo.
-_SEM_CONVERGENCIA_AQUI = {"deepseek"}
+# Os nomes seguem re-exportados com o prefixo `_` de antes: eles são o que os
+# testes e o resto do módulo já chamam, e renomeá-los junto com a mudança de
+# casa faria um refactor virar dois.
+_aplicar_ordem_na_env()
 
-# Escotilha de saída, estreita e nomeada. Reabilitar um provedor excluído exige
-# pedir POR ELE -- um AGENT_PROVIDER_ORDER genérico não serve.
-#
-# A primeira versão desta exclusão só agia quando AGENT_PROVIDER_ORDER estava
-# vazia, e isso deixava uma porta dos fundos: bastaria alguém definir a ordem no
-# compose por outro motivo para o deepseek voltar à cadeia sem ninguém notar.
-#
-# O filtro agora vale para QUALQUER origem da ordem. O que se perderia com um
-# ban absoluto -- testar o provedor excluído sem editar código, que foi como a
-# medição acima foi produzida -- volta por esta variável, que tem de citar o
-# nome e portanto não acontece por acidente.
-_PERMITIR_ENV = "ANALISE_IA_PERMITIR"
-
-# Quem abre a fila NESTA tela, contra o anthropic da ordem global.
-#
-# Os números do agent_runs de 19/08/2026 -- durações das análises que deram
-# certo -- mostram o anthropic entre 57s e 65s aqui, e o teto por chamada teve
-# de ir de 55s para 85s para caber. O gemini responde em menos da metade do
-# tempo e custa ~12x menos por token.
-#
-# O que decidiu não foi o preço, foi o formato da falha. Na cascata daquele dia
-# o anthropic queimou 55,1s sendo CORTADO no teto, e o gemini falhou em 11,1s
-# com um 503 de capacidade. Um provedor que falha barato na frente deixa
-# orçamento para o próximo; um que falha caro não deixa. Invertidos, os mesmos
-# dois eventos custariam 11,1 + 65 = ~76s e a análise sairia.
-#
-# Só aqui: o agente diário usa a cadeia em formato de tool-calling, onde a
-# medição que motivou isto não vale, e mexer em _DEFAULT_ORDER mudaria os dois.
-_PRIMEIRO_AQUI = "gemini"
-
-
-def _ordem_desta_tela(bruta: str = "", permitidos: str = "") -> list[str]:
-    """Ordem efetiva: sem quem não converge aqui, e com o mais rápido na frente.
-
-    A promoção só vale quando a ordem veio do DEFAULT. Ordem explícita em
-    AGENT_PROVIDER_ORDER é decisão de quem operou, e reordená-la por trás
-    tornaria a variável mentirosa -- ao contrário da exclusão do deepseek, que
-    vale para qualquer origem porque é regra de correção (ele não entrega
-    texto nenhum aqui), não preferência de velocidade.
-    """
-    explicita = [p.strip() for p in bruta.split(",") if p.strip()]
-    origem = explicita or list(_ORDEM_PADRAO)
-    liberados = {p.strip() for p in permitidos.split(",") if p.strip()}
-    ordem = [p for p in origem if p not in (_SEM_CONVERGENCIA_AQUI - liberados)]
-    if not explicita and _PRIMEIRO_AQUI in ordem:
-        ordem.insert(0, ordem.pop(ordem.index(_PRIMEIRO_AQUI)))
-    return ordem
-
-
-os.environ["AGENT_PROVIDER_ORDER"] = ",".join(_ordem_desta_tela(
-    os.environ.get("AGENT_PROVIDER_ORDER", ""),
-    os.environ.get(_PERMITIR_ENV, ""),
-))
 from agent.security import sanitize_for_llm
 from agent import tools
 
@@ -211,47 +151,11 @@ REC_LABELS = {
     "sell": "venda", "strongSell": "venda forte",
 }
 
-# Teto de SEGURANÇA, não de projeto. Histórico: 2500 cortou (16/08, INTC);
-# 4500 cortou de novo no mesmo ponto — porque o modelo escrevia até o teto,
-# fosse ele qual fosse, ignorando as "400 a 700 palavras" enterradas no fim
-# da lista de regras. A correção real foi o SYSTEM (limite por seção, no
-# topo, com o motivo); este número só existe para o caso de o modelo
-# desobedecer mesmo assim, e aí o corte vai MARCADO (truncado=true).
-#
-# Não subir mais sem antes checar o texto: teto alto com prompt fraco vira
-# custo alto (4500 tokens de saída ≈ US$ 0,045 por análise, contra ~0,015
-# de uma análise no tamanho pedido).
-MAX_TOKENS = 6000
+# MAX_TOKENS / teto_de_tokens moram em teto_tokens.py: a interpretação da
+# Reação a Earnings usa o mesmo cálculo, e duas cópias divergiriam na primeira
+# vez que um modelo novo pensasse.
+from agent.teto_tokens import MAX_TOKENS, teto_de_tokens  # noqa: E402,F401
 
-# Folga de raciocínio, para modelo que PENSA antes de responder.
-#
-# Em modelo thinking o max_tokens cobre raciocínio + resposta, não só a
-# resposta. O mesmo 6000 significa coisas diferentes conforme o provedor, e
-# ninguém percebeu porque o primeiro da cadeia (Anthropic) não gasta orçamento
-# visível pensando.
-#
-# Medido em produção 18/08/2026, deepseek-v4-pro: 17.147 caracteres de
-# raciocínio -- perto de 4.300 tokens -- e `stop_reason=length` com a resposta
-# VAZIA. O modelo pensou até o teto e não sobrou espaço para escrever nada.
-#
-# 6000 de folga cobre aquele caso com margem. Não é generosidade: o teto de
-# baixo continua valendo para a resposta, que é o que o usuário lê e o que
-# custa em texto útil.
-MAX_TOKENS_RACIOCINIO = 6000
-
-# Heurística por nome, e o detector de truncamento é a rede de segurança.
-#
-# Uma lista de modelos envelhece -- por isso ela não é a única defesa: quando
-# um modelo novo pensar sem estar aqui, o laço de retry ainda vai reconhecer
-# `stop_reason=length` e trocar de provedor em vez de devolver texto vazio.
-_MODELO_PENSA_RE = re.compile(r"deepseek-v4-pro|reasoner|thinking|-r1\b", re.I)
-
-
-def teto_de_tokens(modelo: str) -> int:
-    """Teto a pedir para ESTE modelo, já contando o raciocínio quando houver."""
-    if _MODELO_PENSA_RE.search(modelo or ""):
-        return MAX_TOKENS + MAX_TOKENS_RACIOCINIO
-    return MAX_TOKENS
 # Teto do JSON de dados no prompt — a tela manda o que coletou, mas um
 # payload anômalo não pode virar um prompt gigante cobrado por token.
 MAX_DADOS_CHARS = 14_000

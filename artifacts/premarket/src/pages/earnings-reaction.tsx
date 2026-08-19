@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Gauge } from "lucide-react";
+import { MarkdownContent } from "@/components/markdown";
+import { Gauge, Sparkles } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 import { benchmarkSugerido } from "@/lib/benchmark-setor";
 
@@ -315,13 +316,19 @@ export function interpretResult(r: ReactionResult): string[] {
 // Um bloco por ticker, com os níveis técnicos e a tabela evento a evento —
 // que é o dado que sustenta a média. O run-up entra como seção própria só
 // quando existe: nem todo ticker tem histórico suficiente pro cálculo.
-function montarRelatorioReacao(results: ReactionResult[], lookback: string): string {
+function montarRelatorioReacao(results: ReactionResult[], lookback: string, leituraIA?: string | null): string {
   const blocos: string[] = [];
   const ok = results.filter((r) => r.summary);
   blocos.push(cabecalho(
     `Reação a earnings — ${ok.map((r) => r.ticker).join(", ") || "sem resultado"}`,
     `Lookback de ${lookback} earnings passados`,
   ));
+
+  // A leitura da IA vai no TOPO, antes das tabelas: ela é comparação entre os
+  // papéis, e quem exporta o relatório quer a conclusão antes do dado bruto.
+  // Fora quando não foi pedida -- seção vazia num relatório parece dado que
+  // faltou, não recurso que não se usou.
+  if (leituraIA) blocos.push(`## Leitura da cesta com IA\n\n${leituraIA}`);
 
   for (const r of results) {
     if (r.error || !r.summary) {
@@ -430,6 +437,9 @@ export default function EarningsReactionPage() {
   const primeiroTicker = tickersInput.split(",")[0]?.trim().toUpperCase() ?? "";
   const benchmarkEfetivo = (benchmarkManual ? benchmark : benchmarkSugerido(primeiroTicker)) || "SPY";
   const [results, setResults] = useState<ReactionResult[] | null>(null);
+  const [leituraIA, setLeituraIA] = useState<
+    { markdown: string; usage?: { total_cost_usd?: number }; truncado?: boolean } | null
+  >(null);
 
   const run = useMutation({
     mutationFn: async () => {
@@ -448,7 +458,31 @@ export default function EarningsReactionPage() {
       if (!r.ok) throw new Error(data.error || "Failed");
       return data as ReactionResult[];
     },
-    onSuccess: (data) => setResults(data),
+    // Dados novos invalidam a leitura da IA -- texto antigo sobre cesta nova
+    // seria interpretação de outro retrato.
+    onSuccess: (data) => { setResults(data); setLeituraIA(null); },
+  });
+
+  // Uma chamada para a CESTA inteira, não uma por ticker: a tela já interpreta
+  // cada papel por regra (interpretResult), e o que a IA acrescenta é a
+  // comparação entre eles -- que a regra não faz por construção.
+  const runIA = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/earnings-reaction/ia", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          results,
+          lookback: parseInt(lookback, 10) || 8,
+          benchmark: benchmarkEfetivo,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || "Falha na interpretação com IA");
+      return data as { markdown: string; usage?: { total_cost_usd?: number }; truncado?: boolean };
+    },
+    onSuccess: setLeituraIA,
   });
 
   return (
@@ -513,18 +547,58 @@ export default function EarningsReactionPage() {
             <><Gauge className="h-4 w-4" /> Rodar análise</>
           )}
         </button>
-        {run.isError && <p className="text-sm text-red-400 font-mono">{String(run.error)}</p>}
+        {(run.isError || runIA.isError) && (
+          <p className="text-sm text-red-400 font-mono">{String(run.error ?? runIA.error)}</p>
+        )}
+        {results && results.some((r) => r.summary) && (
+          <button
+            onClick={() => runIA.mutate()}
+            disabled={runIA.isPending}
+            className="px-6 py-2 border border-primary/40 text-primary rounded font-mono text-sm font-bold disabled:opacity-50 flex items-center gap-2"
+          >
+            {runIA.isPending ? (
+              <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            Interpretar cesta com IA
+          </button>
+        )}
         {results && results.length > 0 && (
           <div className="border-t border-border/40 pt-4">
             <ExportarRelatorio
               titulo={`Reação a earnings — ${results.map((r) => r.ticker).join(", ")}`}
               mode="tela_earnings_reaction"
               tickers={results.map((r) => r.ticker)}
-              construir={() => montarRelatorioReacao(results, lookback)}
+              construir={() => montarRelatorioReacao(results, lookback, leituraIA?.markdown)}
             />
           </div>
         )}
       </div>
+
+      {leituraIA && (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border bg-secondary/30 flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <span className="font-mono font-bold text-primary">Leitura da cesta com IA</span>
+          </div>
+          <div className="p-4 space-y-3">
+            <p className="font-mono text-[10px] text-muted-foreground/70">
+              Comparação entre os papéis, sobre a estatística já calculada — o que cada um mostra
+              sozinho está no card dele. Amostra de ~{lookback} earnings por ticker: são observações,
+              não regras. Não é recomendação de compra ou venda.
+              {leituraIA.usage?.total_cost_usd != null
+                && ` · custo desta leitura: ~$${leituraIA.usage.total_cost_usd.toFixed(4)}`}
+            </p>
+            {leituraIA.truncado && (
+              <p className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
+                ⚠ O texto bateu o limite de tamanho e terminou no meio — rode de novo para uma versão completa.
+              </p>
+            )}
+            <MarkdownContent content={leituraIA.markdown} />
+          </div>
+        </div>
+      )}
 
       {results && (
         <div className="space-y-4">

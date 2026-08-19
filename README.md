@@ -733,6 +733,8 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #339–#342 | 17 regras do SYSTEM em 5 grupos (-27%); exclusão do deepseek, que gasta o teto raciocinando e entrega 0 chars; sonda deixa de embutir cotação |
 | #346–#349 | Erro do fallback deixa de esconder provedor sem chave e falha sem condenação; teto por chamada 55→85s vindo das durações reais; gasto contado uma vez por chamada de API |
 | #350 | Gemini abre a fila da Análise com IA — quem falha barato na frente deixa orçamento para o próximo |
+| #351 | A objeção ao gemini não reproduz: 3/3 nos dois provedores, e a sonda que a produziu estava quebrada |
+| #352 | Interpretação com IA da Reação a Earnings — leitura da CESTA, não do papel; política de provedores e teto de tokens saem para módulos compartilhados |
 
 ### Provedores de LLM e desempenho do agente
 
