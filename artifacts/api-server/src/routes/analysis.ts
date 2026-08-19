@@ -108,7 +108,7 @@ function guardarIA(chave: string, valor: unknown): void {
 // comentário de `coalescer`: embarcar num trabalho que já gastou o orçamento
 // não é economia, é herdar uma morte marcada.
 //
-// 60s contra o teto de 150s da rota: quem chega depois disso não teria tempo
+// 60s contra o teto de 195s da rota: quem chega depois disso não teria tempo
 // nem para UMA passada completa (a análise que deu certo levou 58s).
 const IDADE_MAX_CARONA_MS = 60_000;
 
