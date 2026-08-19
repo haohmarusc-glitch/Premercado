@@ -1,18 +1,26 @@
 """
-Provedor excluído da cadeia por falta de chave não pode sumir em silêncio.
-
-O FallbackClient filtra a ordem por `_has_key`. A filtragem está certa -- não
-há o que tentar sem credencial -- mas era INVISÍVEL, e o erro que chega à tela
-ficava enganoso.
+Provedor que não respondeu não pode sumir do resumo do erro.
 
 Incidente de 19/08/2026, na Análise com IA:
 
     All providers exhausted. Last error: [kimi 429 conta suspensa]
     -- condenados nesta run: openrouter: 404 | openai: 429 | kimi: 429
 
-Lê-se como "tentei tudo que tenho". Anthropic e gemini -- os dois que teriam
-respondido -- nem entraram na cadeia, e nada no erro dizia isso. O operador foi
-investigar as três contas quebradas, que era o lugar errado.
+Lê-se como "tentei tudo que tenho". Não era: a cadeia desta tela tem CINCO
+provedores e o resumo cita três. Anthropic e gemini -- os dois primeiros, e os
+dois que teriam respondido -- não aparecem nem como condenados.
+
+Há DOIS jeitos de um provedor sumir assim, e o erro não distinguia nenhum:
+
+  1. Nunca entrou na cadeia. `self._order = [p for p in _provider_order() if
+     _has_key(p)]` -- sem chave, o provedor é filtrado sem log nem campo.
+  2. Entrou, tentou, falhou e não foi condenado. `_mortos` só recebe falha
+     PERMANENTE (modelo inexistente, conta sem saldo); timeout, erro de
+     conexão e 500/529 caem para o próximo provedor em silêncio.
+
+Neste incidente foi o caso 2 -- o dump do ambiente mostrou as cinco chaves
+presentes. Mas os dois casos produziam a MESMA mensagem enganosa, e por isso
+os dois estão cobertos aqui.
 
 Import de PACOTE (`from agent import ...`), nunca inserindo `src/agent` no
 sys.path: existe um `agent.py` além do pacote `agent/`, e colocar o diretório
@@ -125,3 +133,41 @@ def test_provedor_desconhecido_na_ordem_nao_quebra_a_nota(monkeypatch):
     nota = c._nota_sem_chave()
     assert "anthropic" in nota
     assert "provedor-que-nao-existe" not in nota  # sem cfg, não há env para citar
+
+
+# ── tentou, falhou, não foi condenado ───────────────────────────────────────
+#
+# A segunda metade do mesmo incidente. Com as cinco chaves presentes, o erro
+# ainda dizia só "condenados nesta run: openrouter | openai | kimi" -- porque
+# anthropic e gemini falharam com erro NÃO-permanente e o resumo não os citava.
+
+def test_falha_nao_permanente_aparece_no_resumo(monkeypatch):
+    _com_chaves(monkeypatch, "anthropic", "openai")
+    c = prov.FallbackClient()
+    c._falhas = {"anthropic": "Connection timed out", "openai": "insufficient_quota"}
+    c._mortos = {"openai": "insufficient_quota"}
+    nota = c._nota_falhas_sem_condenacao()
+    assert "anthropic" in nota
+    assert "Connection timed out" in nota
+
+
+def test_condenado_nao_e_repetido_na_outra_lista(monkeypatch):
+    """As duas listas apontam para lugares diferentes; duplicar embaralha."""
+    _com_chaves(monkeypatch, "anthropic", "openai")
+    c = prov.FallbackClient()
+    c._falhas = {"anthropic": "timeout", "openai": "insufficient_quota"}
+    c._mortos = {"openai": "insufficient_quota"}
+    assert "openai" not in c._nota_falhas_sem_condenacao()
+
+
+def test_sem_nota_quando_todos_falharam_condenados(monkeypatch):
+    _com_chaves(monkeypatch, "openai")
+    c = prov.FallbackClient()
+    c._falhas = {"openai": "insufficient_quota"}
+    c._mortos = {"openai": "insufficient_quota"}
+    assert c._nota_falhas_sem_condenacao() == ""
+
+
+def test_sem_nota_quando_ninguem_falhou(monkeypatch):
+    _com_chaves(monkeypatch, "openai")
+    assert prov.FallbackClient()._nota_falhas_sem_condenacao() == ""
