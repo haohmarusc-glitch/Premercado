@@ -288,3 +288,36 @@ def test_errou_e_caiu_nao_e_este_sinal():
     """Queda depois de resultado RUIM é reação normal -- o sinal existe para o
     caso contrário, que é o que revela expectativa esticada."""
     assert mr.check_priced_for_perfection(-4.0, None, -9.0).active is False
+
+
+# ── número exibido e veredito saem da MESMA conta ───────────────────────────
+#
+# Produção 18/08/2026, primeira coleta completa:
+#
+#     "delta_bps": 6.0, "active": false     (limiar documentado: >= 6bps)
+#
+# 5,31 - 5,25 dá 5.999999999999961 em ponto flutuante. A tela exibia o valor
+# arredondado e o veredito vinha da comparação crua. Quem lê conclui que o
+# código está quebrado, e não tem como saber que a diferença está na 13ª casa.
+
+def test_o_delta_exibido_bate_com_o_veredito():
+    r = mr.check_rate_shock(5.31, 5.25)
+    assert r.details["delta_bps"] == 6.0
+    assert r.active is True, "exibe 6.0 e não dispara com limiar de 6 -- incoerente"
+
+
+def test_logo_abaixo_do_limiar_continua_inativo():
+    """O conserto não pode virar arredondamento generoso: 5,4bps exibe 5.4 e
+    não dispara."""
+    r = mr.check_rate_shock(5.304, 5.25)
+    assert r.details["delta_bps"] < 6
+    assert r.active is False
+
+
+def test_o_mesmo_vale_para_o_sinal_de_petroleo():
+    """Mesma armadilha, mesma correção -- o sinal tem dois limiares e portanto
+    duas chances de exibir um número que contradiz o próprio veredito."""
+    r = mr.check_geopolitical_oil_shock(103.0, 100.0, 4.63, 4.60)
+    assert r.details["oleo_delta_pct"] == 3.0
+    assert r.details["yield_delta_bps"] == 3.0
+    assert r.active is True

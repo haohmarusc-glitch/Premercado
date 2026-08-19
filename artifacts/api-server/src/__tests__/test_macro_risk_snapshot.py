@@ -266,3 +266,95 @@ def test_o_primeiro_ticker_com_balanco_vence(monkeypatch):
     eps, reacao, _ = snap._earnings_da_carteira()
     assert (eps, reacao) == (7.0, -9.0)
     assert "ARM" not in chamados          # parou no MRVL
+
+
+# ── frescura do dado ────────────────────────────────────────────────────────
+#
+# Produção 18/08/2026, primeira coleta completa:
+#
+#     "datasFred": {"yield_30y": ["2026-08-17", "2026-08-14"],
+#                   "wti":       ["2026-08-11", "2026-08-10"]}
+#
+# Os yields vieram de ontem. O WTI, de SETE dias antes -- o sinal de choque
+# geopolítico comparava 11 contra 10 de agosto e apresentava isso como o
+# movimento do dia. Um salto do petróleo hoje só apareceria daqui a uma semana.
+
+from datetime import date, timedelta
+
+
+def _resp_fred(dias_atras: int, hoje=5.31, ant=5.25):
+    d = date.today() - timedelta(days=dias_atras)
+    return _Resposta([
+        {"date": d.isoformat(), "value": str(hoje)},
+        {"date": (d - timedelta(days=3)).isoformat(), "value": str(ant)},
+    ])
+
+
+def test_observacao_velha_demais_e_descartada(monkeypatch):
+    """Usar dado de semana passada como "hoje" produz um delta com cara de
+    variação do dia -- pior que não ter, porque parece medição."""
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _resp_fred(7))
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos", lambda t: (_ for _ in ()).throw(RuntimeError("fora")))
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: None)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: (None, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
+
+    dados, diag = snap.coletar()
+
+    assert "yield_30y_hoje" not in dados
+    assert "7 dias" in diag["erros"]["DGS30"]
+
+
+def test_observacao_de_ontem_passa(monkeypatch):
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _resp_fred(1))
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos", lambda t: (_ for _ in ()).throw(RuntimeError("fora")))
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: None)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: (None, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
+
+    dados, diag = snap.coletar()
+
+    assert dados["yield_30y_hoje"] == 5.31
+    assert "DGS30" not in diag["erros"]
+
+
+def test_o_petroleo_vem_do_futuro_e_nao_do_FRED(monkeypatch):
+    """CL=F fecha todo pregão e é o preço que o mercado está olhando agora. O
+    FRED é a fonte oficial, mas para ESTE sinal a frescura importa mais que a
+    procedência."""
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos",
+                        lambda t: (84.77, 82.0, date.today().isoformat()))
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _resp_fred(7, hoje=70.0, ant=69.0))
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: None)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: (None, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
+
+    dados, _ = snap.coletar()
+
+    assert dados["wti_hoje"] == 84.77       # do futuro, não os 70.0 do FRED
+    assert "DCOILWTICO" not in dados
+
+
+def test_o_FRED_ainda_serve_de_reserva(monkeypatch):
+    """Se o futuro falhar, o dado oficial recente ainda é melhor que nada."""
+    monkeypatch.setenv("FRED_API_KEY", "x")
+    monkeypatch.setattr(snap, "_dois_ultimos_fechamentos",
+                        lambda t: (_ for _ in ()).throw(RuntimeError("yfinance fora")))
+    monkeypatch.setattr(snap.SESSION, "get", lambda *a, **k: _resp_fred(1, hoje=84.0, ant=79.5))
+    monkeypatch.setattr(snap, "_variacao_do_dia", lambda t: None)
+    monkeypatch.setattr(snap, "_kospi_do_snapshot_global", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_serie_sox", lambda **_k: (None, ""))
+    monkeypatch.setattr(snap, "_manchetes_china", lambda: (None, ""))
+    monkeypatch.setattr(snap, "_earnings_da_carteira", lambda: (None, None, ""))
+
+    dados, _ = snap.coletar()
+    assert dados["wti_hoje"] == 84.0
