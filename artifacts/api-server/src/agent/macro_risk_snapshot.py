@@ -43,12 +43,30 @@ from datetime import date, datetime, timedelta
 
 try:
     import json_seguro
+    import brt
     from macro_risk import MacroRiskModule
     from http_retry import SESSION
 except ImportError:  # rodando como membro do pacote agent
     from agent import json_seguro
+    from agent import brt
     from agent.macro_risk import MacroRiskModule
     from agent.http_retry import SESSION
+
+
+def _hoje() -> date:
+    """"Hoje" em Brasília, não em UTC.
+
+    O processo roda em UTC, então entre 21h e 23h59 BRT o dia do container já
+    virou -- é exatamente o que o brt.py existe para evitar, e o que aconteceu
+    aqui em 19/08/2026: às 22:07 BRT do dia 18, o retrato foi gravado com
+    `snapshot_date = 2026-08-19`.
+
+    O estrago é maior que um rótulo errado, porque a data é a CHAVE da série: o
+    dia 18 nunca existiria, e a linha do 19 seria sobrescrita pelo cron da
+    manhã carregando, até lá, dado da noite anterior. Buraco no histórico que
+    só aparece meses depois, ao comparar um dia ruim com o padrão.
+    """
+    return brt.today_brt()
 
 
 def _log(msg: str) -> None:
@@ -332,7 +350,7 @@ JANELA_FOMC_DIAS = 1
 
 def _idade_em_dias(iso: str, hoje: date | None = None) -> int | None:
     try:
-        return ((hoje or date.today()) - datetime.strptime(iso, "%Y-%m-%d").date()).days
+        return ((hoje or _hoje()) - datetime.strptime(iso, "%Y-%m-%d").date()).days
     except (ValueError, TypeError):
         return None
 
@@ -345,7 +363,7 @@ def _perto_do_fomc(hoje: date | None = None) -> bool:
     except ImportError:
         import market_alerts as ma  # type: ignore
 
-    hoje = hoje or date.today()
+    hoje = hoje or _hoje()
     for iso in ma.MACRO_EVENTS.get("FOMC", []):
         try:
             d = datetime.strptime(iso, "%Y-%m-%d").date()
@@ -377,7 +395,7 @@ def _surpresa_recente(ticker: str, hoje: date | None = None) -> tuple[float | No
     o sinal."""
     import yfinance as yf
 
-    hoje = hoje or date.today()
+    hoje = hoje or _hoje()
     df = yf.Ticker(ticker).earnings_dates
     if df is None or len(df) == 0:
         return None, f"{ticker}: sem earnings_dates"
@@ -605,7 +623,7 @@ def montar() -> dict:
         yield_10y_anterior=dados.get("yield_10y_ant"),
     )
     saida["coleta"] = diag
-    saida["snapshotDate"] = date.today().isoformat()
+    saida["snapshotDate"] = _hoje().isoformat()
     _log(
         f"cobertura {saida['cobertura_pct']}% | score {saida['aggregate_score']} | "
         f"{len(diag['erros'])} fonte(s) com erro"
