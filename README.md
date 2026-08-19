@@ -35,6 +35,7 @@ para o modelo de ameaças, [`threat_model.md`](threat_model.md).
 - [Convenções e armadilhas do repo](#convenções-e-armadilhas-do-repo)
 - [Operação](#operação)
 - [Histórico de PRs](#histórico-de-prs)
+- [Diário](#diário)
 
 ---
 
@@ -572,6 +573,32 @@ Aprendidas de incidentes reais. Detalhamento em
     WTI vinha do FRED com **sete dias** de atraso e o sinal de choque
     geopolítico comparava a semana anterior achando que era o dia. Faça as
     datas viajarem no payload e recuse observação acima de um limite de idade.
+18. **Erro que não nomeia quem foi PULADO manda investigar o lugar errado.** A
+    Análise com IA falhou com `condenados nesta run: openrouter | openai |
+    kimi` — três contas quebradas, e a leitura natural é "tentei tudo que
+    tenho". Não era: a cadeia tem cinco, e os dois primeiros não apareciam.
+    Havia DOIS jeitos de sumir (filtrado por falta de chave; tentado e falhado
+    sem condenação) e o erro não distinguia nenhum. A regra: quem não respondeu
+    entra no erro **com o motivo**, e "quebrou" fica separado de "nem foi
+    tentado" — apontam para investigações diferentes.
+19. **Teto de tempo se dimensiona pela DURAÇÃO MEDIDA, não por estimativa.** O
+    teto por chamada era 55s sobre a suposição de "~40s típico". O `agent_runs`
+    dizia outra coisa: 33,5 / 57,7 / 63,9 / 65,0 / 70,0. Três das cinco
+    passavam de 55s — o teto cortava trabalho NORMAL, não cauda, e `failed
+    after 55.1s` era o nosso relógio batendo, não o provedor falhando. A
+    primeira correção (75s) ainda ficou 15% acima do pico observado, o que não
+    é teto: é sorteio com viés bom.
+20. **O livro de gastos registra CHAMADAS DE API, não entregas de texto.**
+    Cache por TTL e carona do coalescer devolvem o `usage` junto (a tela mostra
+    o custo, e isso está certo), e a rota lançava uma linha nova a cada
+    entrega: duas linhas de US$ 0,062852 terminando no MESMO instante para uma
+    chamada só. Quem sabe a resposta é a closure que o coalescer executa —
+    quem pega carona nunca roda a dela.
+21. **Comentário viaja junto com a constante que ele explica.** Ao subir o teto
+    da rota, o comentário de `IDADE_MAX_CARONA_MS` ficou citando os 150s
+    antigos; ao mover `MAX_TOKENS` para módulo próprio, quase deixei para trás
+    o histórico de por que ele é 6000. Comentário que descreve um número errado
+    é pior que comentário nenhum — alguém confere a conta contra ele.
 
 ---
 
@@ -648,7 +675,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #269 | Parâmetros de vol: stops, sizing, vol de carteira **com covariância**, stress; camada macro (FOMC) e sinal overnight |
 | #270 | Proxy líder por posição vindo do dado + refresh semanal automático |
 | #271 | Vol **medida por nós** substitui a coleta manual (contaminava stop e sizing) |
-| #345 | Calendário de earnings deixa de ser digitado: overlay diário da Alpha Vantage. Três datas estavam erradas na transcrição — BABA por 15 dias, na véspera do próprio catalisador |
+| #345, #355 | Calendário de earnings deixa de ser digitado: overlay diário da Alpha Vantage. Quatro datas estavam erradas na transcrição — BABA por 15 dias, na véspera do próprio catalisador |
 
 ### Backtest e exportação (ago/2026)
 
@@ -659,6 +686,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #276 | Salvar relatório e enviar por e-mail nas oito telas de análise |
 | #277 | Tabela do e-mail vira `<table>` com estilo inline (Gmail no celular ignora o `<style>`) |
 | #278 | Rótulo para todo grupo do Radar, com teste que lê o Python e pega a deriva |
+| #344 | Parâmetro impossível no ConfluenceEngine falha alto: `min_votes=6` com 5 sinais deixava o motor mudo em `flat` |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -698,6 +726,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | PR | O que entregou |
 |---|---|
 | #264 | Run-up pré-earnings × direção da reação ("bom não é bom o suficiente") |
+| #354 | Interpretação com IA da CESTA — a leitura por ticker já existe por regra; o que a IA acrescenta é a comparação |
 
 ### Segurança e infraestrutura
 
@@ -734,7 +763,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #346–#349 | Erro do fallback deixa de esconder provedor sem chave e falha sem condenação; teto por chamada 55→85s vindo das durações reais; gasto contado uma vez por chamada de API |
 | #350 | Gemini abre a fila da Análise com IA — quem falha barato na frente deixa orçamento para o próximo |
 | #351 | A objeção ao gemini não reproduz: 3/3 nos dois provedores, e a sonda que a produziu estava quebrada |
-| #352 | Interpretação com IA da Reação a Earnings — leitura da CESTA, não do papel; política de provedores e teto de tokens saem para módulos compartilhados |
+| #354 | Política de provedores e teto de tokens saem para módulos compartilhados — a segunda tela com IA seria a terceira cópia da sequência |
 
 ### Provedores de LLM e desempenho do agente
 
@@ -767,3 +796,68 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 
 Histórico completo: `git log` ou a
 [lista de PRs](https://github.com/haohmarusc-glitch/Premercado/pulls?q=is%3Apr+is%3Aclosed).
+
+---
+
+## Diário
+
+Relato por dia, para quando a tabela de PRs não conta a história. Fica aqui o
+que foi APRENDIDO — o que cada conserto entregou está nas tabelas acima, e as
+regras generalizáveis viraram numeração em *Convenções*.
+
+### 19/08/2026 — os erros que se escondiam
+
+Onze PRs (#344–#355). O fio que liga quase todos: **o sistema falhava e não
+dizia direito onde**.
+
+**A cegueira do fallback, em três camadas.** A Análise com IA voltou `All
+providers exhausted -- condenados nesta run: openrouter | openai | kimi`. Três
+contas quebradas, e a leitura natural é "tentei tudo". A cadeia daquela tela
+tem cinco. Anthropic e gemini não apareciam nem como condenados.
+
+Investiguei e concluí que tinham sido filtrados por falta de chave. **Errado** —
+o dump do ambiente mostrou as cinco presentes. A causa real: `_mortos` só recebe
+falha PERMANENTE, então timeout e 503 caíam para o próximo provedor em silêncio.
+Os dois caminhos produziam a MESMA mensagem enganosa, e os dois foram fechados
+(#346, #347).
+
+Vale registrar que o bloco que monta essa mensagem já tinha um comentário do
+incidente de 03/08 dizendo que "sem isso o operador não sabe que a cadeia
+INTEIRA está fora, nem por quê". Aquele conserto nomeou os condenados e parou um
+passo antes dos nunca-tentados. Cada correção fechou um caminho e deixou o irmão
+aberto — o padrão que mais se repete neste repo.
+
+**O relógio era nosso, não do provedor.** Com a mensagem consertada, o log disse:
+`anthropic failed after 55.1s` contra um teto de 55s. Não era falha, era corte —
+e o corte queimava uma das duas tentativas que o orçamento compra, sem produzir
+resposta nem diagnóstico. A primeira correção foi por estimativa e ficou
+apertada; a segunda veio das durações medidas no `agent_runs` (#348, #349).
+
+**Um custo contado duas vezes.** Olhando a mesma tabela para outra pergunta,
+apareceram duas linhas com tokens e custo idênticos terminando no MESMO instante:
+uma requisição pegando carona no coalescer, e a rota lançando gasto por entrega
+de texto em vez de por chamada de API (#349).
+
+**O dado mais perecível deixou de ser digitado.** O calendário de earnings do
+Radar era transcrição humana, e quatro datas estavam erradas — BABA por 15 dias,
+na véspera do próprio catalisador. Virou overlay diário da Alpha Vantage
+(#345, #355). No dia seguinte o coletor pegou sozinho a antecipação da LI.
+
+**Evidência produzida por instrumento quebrado.** A sonda de qualidade
+registrava, como razão para desconfiar do gemini, que ele lia divergência de
+preço como argumento de compra. Usei esse registro para recomendar cautela.
+Remedido: 3/3 nos dois provedores — e a sonda que produziu a evidência original
+estava quebrada, com o payload fabricado nunca chegando ao modelo. O texto que o
+gemini escreveu naquele dia foi real; as condições documentadas, não (#351).
+
+**Um parâmetro que calava o motor.** `min_votes=6` com 5 sinais votantes não é
+raro: é impossível. O ConfluenceEngine não ficava conservador, ficava
+permanentemente em `flat` — sem erro, sem sinal, sem nada que dissesse por quê
+(#344).
+
+**O que o backtest disse, e continua valendo.** Calibrando o Kelly com o
+`backtest_confluence`: +1,61% da estratégia contra +771,47% de buy & hold na MU
+em dois anos, e Kelly recalibrado em **zero** em 3 dos 6 casos. Kelly zero não é
+sizing cauteloso — é a fórmula dizendo que não há edge para dimensionar. O
+`trade_journal` está vazio, então não há trade real para calibrar em cima. Fica
+aberto, e nenhum conserto de sizing resolve.
