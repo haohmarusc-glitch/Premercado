@@ -18,6 +18,22 @@ Medido em 18/08/2026, com dois preços incompatíveis no mesmo payload:
 O gemini transformou a contradição em argumento de compra. Esta sonda existe
 para que essa diferença apareça como número, não como impressão de quem leu.
 
+NÃO REPRODUZ MAIS (19/08/2026). Medido de novo, 3/3 nos dois provedores:
+
+    gemini/gemini-2.5-flash      21,4s e 17,6s
+    anthropic/claude-sonnet-5    37,3s e 34,5s
+
+Duas coisas mudaram entre uma medição e outra, e a segunda desqualifica em
+parte a primeira: o SYSTEM foi consolidado (as regras de divergência ficaram
+explícitas), e ESTA SONDA ESTAVA QUEBRADA -- o `_fundamento` fabricado nunca
+chegava ao modelo, então o payload de 18/08 não era o que o caso descrevia.
+O texto que o gemini produziu naquele dia foi real; as condições em que ele
+o produziu, não eram as documentadas acima.
+
+Mantido o registro em vez de apagado: é o histórico de por que a exclusão foi
+considerada, e a lição de que uma sonda quebrada produz evidência contra o
+provedor errado.
+
 Rodar (dentro do container, do diretório do agente):
 
     AGENT_PROVIDER_ORDER=gemini python3 -m agent.sonda_qualidade
