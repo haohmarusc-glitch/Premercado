@@ -189,3 +189,35 @@ def test_a_ordem_e_aplicada_antes_do_primeiro_cliente():
     i_ordem = next(i for i, l in enumerate(codigo) if "_aplicar_ordem_na_env()" in l)
     i_client = next(i for i, l in enumerate(codigo) if "get_client()" in l)
     assert i_ordem < i_client
+
+
+# ── um papel só não é cesta ─────────────────────────────────────────────────
+#
+# Medido em 19/08/2026 com WOLF sozinho: a seção "Quem se move junto" -- que é
+# sobre co-movimento -- foi preenchida com a leitura individual (gap que atenua
+# até o fechamento, trajetória pós-evento), que é exatamente o que o card do
+# papel já mostra. O desenho degenerou no que ele existe para não fazer.
+
+def test_um_ticker_so_nao_chama_o_llm():
+    saida = mod.interpretar({"results": [_resultado("WOLF")]})
+    assert "error" in saida
+    assert "COMPARA" in saida["error"]
+    assert "WOLF" in saida["error"]
+
+
+def test_um_com_dados_e_um_com_erro_tambem_recusa():
+    """O que conta é quantos são COMPARÁVEIS, não quantos foram pedidos."""
+    saida = mod.interpretar({"results": [
+        _resultado("WOLF"),
+        {"ticker": "NVDA", "error": "sem histórico"},
+    ]})
+    assert "error" in saida
+    assert "COMPARA" in saida["error"]
+
+
+def test_o_system_proibe_previsao_a_partir_de_bucket():
+    """O modelo escreveu 'papel em deságio tende a sofrer reações mais
+    severas' a partir de 4 eventos divididos em dois buckets. Descrever o que
+    aconteceu é legítimo; dizer o que acontece, não."""
+    assert "nunca sobre o que acontece" in mod.SYSTEM
+    assert "abaixo de 6" in mod.SYSTEM

@@ -154,6 +154,26 @@ function SessionCell({ move }: { move: SessionMove | null }) {
 // Interpretação em texto puro, calculada em cima dos mesmos campos de summary/events
 // já retornados pelo backend -- nenhuma chamada de LLM, só regras diretas (mesmo
 // princípio "não usa LLM" da análise em si).
+/**
+ * Quantos earnings a cesta REALMENTE tem, não quantos foram pedidos.
+ *
+ * A legenda usava o `lookback` do formulário e mentia: em 19/08/2026 o WOLF
+ * saiu com 4 eventos e a tela dizia "~8 earnings por ticker". Papel novo, ou
+ * com histórico curto, entrega menos do que se pede -- e a força da leitura
+ * depende justamente desse número.
+ */
+export function amostraDaCesta(results: ReactionResult[] | null): string {
+  const ns = (results ?? [])
+    .map((r) => r.summary?.n_events)
+    .filter((n): n is number => typeof n === "number" && n > 0);
+  if (!ns.length) return "Amostra por ticker indisponível";
+  const min = Math.min(...ns);
+  const max = Math.max(...ns);
+  return min === max
+    ? `Amostra de ${min} earnings por ticker`
+    : `Amostra de ${min} a ${max} earnings por ticker`;
+}
+
 export function interpretResult(r: ReactionResult): string[] {
   if (!r.summary) return [];
   const s = r.summary;
@@ -550,7 +570,7 @@ export default function EarningsReactionPage() {
         {(run.isError || runIA.isError) && (
           <p className="text-sm text-red-400 font-mono">{String(run.error ?? runIA.error)}</p>
         )}
-        {results && results.some((r) => r.summary) && (
+        {results && results.filter((r) => r.summary).length >= 2 && (
           <button
             onClick={() => runIA.mutate()}
             disabled={runIA.isPending}
@@ -585,8 +605,8 @@ export default function EarningsReactionPage() {
           <div className="p-4 space-y-3">
             <p className="font-mono text-[10px] text-muted-foreground/70">
               Comparação entre os papéis, sobre a estatística já calculada — o que cada um mostra
-              sozinho está no card dele. Amostra de ~{lookback} earnings por ticker: são observações,
-              não regras. Não é recomendação de compra ou venda.
+              sozinho está no card dele. {amostraDaCesta(results)}: são observações, não regras.
+              Não é recomendação de compra ou venda.
               {leituraIA.usage?.total_cost_usd != null
                 && ` · custo desta leitura: ~$${leituraIA.usage.total_cost_usd.toFixed(4)}`}
             </p>
