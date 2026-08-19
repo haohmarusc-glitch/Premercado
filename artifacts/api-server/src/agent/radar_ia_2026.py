@@ -478,6 +478,17 @@ VOL_MEDIDA_APLICADA = 0
 
 _OVERLAY_PATH_DEFAULT = "/var/cache/premercado/radar_correlacoes.json"
 
+# ── Overlay do calendário de earnings (atualizar_earnings.py) ──────────────
+# O EARNINGS acima era digitado à mão e é o pedaço mais perecível do
+# snapshot: correlação de 6 meses se move devagar, data de earnings vira
+# passado em dias. O script busca o calendário na Alpha Vantage e grava um
+# JSON que este bloco aplica por cima no import, mesma mecânica (e mesma
+# tolerância a falha) do overlay de correlações.
+EARNINGS_ATUALIZADO_EM: str | None = None
+EARNINGS_APLICADOS = 0
+
+_OVERLAY_EARNINGS_DEFAULT = "/var/cache/premercado/radar_earnings.json"
+
 
 def _aplicar_vol_medida(blob: dict) -> None:
     """Substitui a vol semanal de TEMA_IA pela MEDIDA por nós, quando o
@@ -564,7 +575,52 @@ def _aplicar_overlay_correlacoes() -> None:
         print(f"[radar] overlay de correlações ignorado ({path}): {e}", file=sys.stderr)
 
 
+def _aplicar_overlay_earnings() -> None:
+    global EARNINGS_ATUALIZADO_EM, EARNINGS_APLICADOS
+    import os
+    path = os.environ.get("RADAR_EARNINGS_OVERLAY") or _OVERLAY_EARNINGS_DEFAULT
+    try:
+        with open(path, encoding="utf-8") as f:
+            blob = json.load(f)
+        eventos = blob.get("earnings")
+        if not isinstance(eventos, dict) or not eventos:
+            return
+        aplicados = 0
+        for ticker, ev in eventos.items():
+            alvo = EARNINGS.get(str(ticker).upper())
+            # Ticker fora do universo do radar é ignorado de propósito: o
+            # `setor` é classificação nossa, não vem da API, então criar
+            # entrada aqui produziria linha sem setor na tela.
+            if alvo is None or not isinstance(ev, dict):
+                continue
+            data = str(ev.get("data") or "").strip()
+            if len(data) != 10 or data.count("-") != 2:
+                continue
+            alvo["data"] = data
+            alvo["quando"] = ev.get("quando") if ev.get("quando") in ("BO", "AC") else None
+            alvo["fonte"] = "alphavantage"
+            # Toda `nota` do EARNINGS é especulação SOBRE A DATA ("fontes
+            # divergem: pode ser 01/09", "não confirmado oficialmente"), e
+            # especulação morre no instante em que uma fonte de calendário
+            # responde. Deixá-la ao lado da data confirmada seria pior que
+            # inútil: a tela mostraria "fontes divergem" embaixo do dado que
+            # encerrou a divergência. Nota que não seja sobre a data não
+            # pertence a este dicionário.
+            alvo.pop("nota", None)
+            aplicados += 1
+        if aplicados:
+            EARNINGS_APLICADOS = aplicados
+            EARNINGS_ATUALIZADO_EM = str(blob.get("atualizado_em")) if blob.get("atualizado_em") else None
+            print(f"[radar] overlay de earnings aplicado: {aplicados} tickers, "
+                  f"coletado em {EARNINGS_ATUALIZADO_EM} ({path})", file=sys.stderr)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[radar] overlay de earnings ignorado ({path}): {e}", file=sys.stderr)
+
+
 _aplicar_overlay_correlacoes()
+_aplicar_overlay_earnings()
 
 
 # ============================================================================
@@ -838,6 +894,11 @@ def exportar_json():
         # foi aplicado no import.
         "correlacoes_janela_fim": CORRELACOES_JANELA_FIM,
         "correlacoes_atualizado_em": CORRELACOES_ATUALIZADO_EM,
+        # None enquanto só houver o calendário embutido; vira a data da
+        # coleta quando o overlay de atualizar_earnings.py entrou. É o que
+        # permite à tela dizer "calendário de hoje" em vez de deixar o
+        # usuário supor que tudo ali é do snapshot.
+        "earnings_atualizado_em": EARNINGS_ATUALIZADO_EM,
         "earnings": EARNINGS,
         "min52": MIN52,
         "reacao_earnings": REACAO_EARNINGS,

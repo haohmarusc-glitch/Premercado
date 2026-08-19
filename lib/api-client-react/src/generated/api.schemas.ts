@@ -222,6 +222,8 @@ export interface RadarEarningsItem {
   /** @nullable */
   quando?: string | null;
   setor: string;
+  /** 'alphavantage' quando a data veio do calendario coletado; ausente = snapshot digitado a mao */
+  fonte?: string;
   nota?: string;
 }
 
@@ -266,6 +268,9 @@ export interface RadarSnapshot {
   correlacoes_janela_fim?: string;
   /** @nullable */
   correlacoes_atualizado_em?: string | null;
+  /** YYYY-MM-DD da coleta do calendario de earnings; null quando so ha o embutido
+   * @nullable */
+  earnings_atualizado_em?: string | null;
   /** YYYY-MM-DD da coleta MANUAL de EVR/move implicito (OptionSlam) */
   overridesColetadoEm?: string | null;
   overridesFonte?: string | null;

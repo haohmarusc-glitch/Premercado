@@ -391,9 +391,10 @@ export default function RadarPage() {
         )}
       </div>
       <p className="font-mono text-xs text-muted-foreground -mt-3">
-        Dados consolidados estáticos (correlações Alpha Vantage numa janela de 6 meses, EVR/moves do
-        OptionSlam, calendário de earnings ago-set/26). Não é recomendação — é infraestrutura de análise;
-        em stress, correlações reais sobem acima do medido.
+        Correlações medidas numa janela de 6 meses e calendário de earnings são recoletados sozinhos;
+        EVR e move implícito vêm de transcrição manual do OptionSlam e envelhecem — o selo de cada bloco
+        diz qual é o caso. Não é recomendação — é infraestrutura de análise; em stress, correlações reais
+        sobem acima do medido.
       </p>
 
       {isLoading && <div className="font-mono text-sm text-muted-foreground">Carregando radar…</div>}
@@ -407,6 +408,19 @@ export default function RadarPage() {
             <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap">
               <CalendarClock className="h-4 w-4 text-muted-foreground" />
               <h2 className="font-mono text-sm font-bold text-foreground">Earnings no radar</h2>
+              {/* O calendário deixou de ser digitado à mão. Sem este selo o
+                  usuário leria o "snapshot 14/08" do topo e suporia que as
+                  datas também são daquele dia -- que era verdade até o
+                  overlay de atualizar_earnings.py existir. */}
+              {data.earnings_atualizado_em != null ? (
+                <Badge variant="outline" className="font-mono text-[10px] border-green-500/40 text-green-400" title="Calendário coletado da Alpha Vantage — datas mais novas que o snapshot embutido">
+                  calendário de {fmtDateBR(data.earnings_atualizado_em)}
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="font-mono text-[10px] border-amber-500/40 text-amber-400" title="Overlay de atualizar_earnings.py ainda não aplicado — as datas são as do snapshot embutido">
+                  calendário do snapshot
+                </Badge>
+              )}
             </div>
             <EarningsWatch data={data} />
           </section>
