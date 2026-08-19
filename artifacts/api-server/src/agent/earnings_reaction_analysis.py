@@ -49,6 +49,10 @@ RUNUP_PREGOES = 21
 # seria mais fino, mas deixaria de ser comparável entre papéis e viraria
 # caixa-preta; começa simples, calibra depois com os próprios dados.
 RUNUP_ESTICADO_PCT = 10.0
+# Pregões acompanhados DEPOIS do balanço. 10 cobre duas semanas de mercado —
+# tempo suficiente para o mercado digerir o resultado e a reação inicial
+# grudar ou reverter, sem esticar até onde o próximo trimestre já domina.
+DIAS_TRAJETORIA = 10
 
 
 def _runup_pct(hist: pd.DataFrame, pos: int) -> float | None:
@@ -78,6 +82,65 @@ def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | Non
         "close_pct": round(float((day["Close"] - prev_close) / prev_close * 100), 2),
         "intraday_range_pct": round(float((day["High"] - day["Low"]) / prev_close * 100), 2),
         "volume": float(day["Volume"]),
+    }
+
+
+def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
+                dias: int = DIAS_TRAJETORIA) -> list[dict]:
+    """Os `dias` pregões seguintes ao balanço, cada um com dois números.
+
+    `acum_pct` é sempre contra o fechamento da VÉSPERA do balanço — é o que
+    responde "onde o papel está agora em relação a antes do resultado", que
+    é a pergunta de quem segurou a posição. `dia_pct` é a variação do próprio
+    pregão, que mostra se o movimento continuou ou parou.
+
+    Sem os dois, um acumulado de +2% no D+5 esconde se veio de subida
+    contínua ou de tombo seguido de recuperação — histórias opostas para
+    quem opera.
+    """
+    saida: list[dict] = []
+    for i in range(1, dias + 1):
+        p = pos + i
+        if p >= len(hist.index):
+            break  # earnings recente: a trajetória ainda não completou
+        close = float(hist["Close"].iloc[p])
+        close_ant = float(hist["Close"].iloc[p - 1])
+        if pd.isna(close) or pd.isna(close_ant) or not close_ant:
+            break
+        saida.append({
+            "dia": i,
+            "date": str(hist.index[p].date()),
+            "acum_pct": round((close / prev_close - 1) * 100, 2),
+            "dia_pct": round((close / close_ant - 1) * 100, 2),
+        })
+    return saida
+
+
+def _trajetoria_resumo(events: list[dict]) -> dict | None:
+    """Média do acumulado em cada horizonte, sobre os eventos que têm o dia.
+
+    É o que separa "reação que gruda" de "reação que reverte": se a média do
+    D+1 é -8% e a do D+10 é -1%, o mercado devolveu o tombo; se o D+10 é
+    -12%, a reação foi só o começo. `n` por horizonte é obrigatório — os
+    eventos mais recentes ainda não têm 10 pregões, e uma média de 1 evento
+    não pode parecer igual a uma de 8.
+    """
+    por_dia: dict[int, list[float]] = {}
+    for e in events:
+        for ponto in e.get("trajetoria") or []:
+            por_dia.setdefault(ponto["dia"], []).append(ponto["acum_pct"])
+    if not por_dia:
+        return None
+    return {
+        "dias": [
+            {
+                "dia": dia,
+                "n": len(valores),
+                "acum_medio_pct": round(sum(valores) / len(valores), 2),
+                "positivos": sum(1 for v in valores if v > 0),
+            }
+            for dia, valores in sorted(por_dia.items())
+        ]
     }
 
 
@@ -135,6 +198,10 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
             "runup_pct": _runup_pct(hist, pos),
             "announcement_day": announcement_day,
             "next_day": next_day,
+            # Os 10 pregões seguintes: responde se a reação do dia grudou ou
+            # foi devolvida. Vazio nos earnings recentes demais (o mercado
+            # ainda não teve os pregões), e o resumo conta o `n` por dia.
+            "trajetoria": _trajetoria(hist, pos, prev_close),
         })
 
     if not events:
@@ -191,6 +258,9 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     summary["s2_price"] = round(current_price * (1 - extreme_frac), 2)
 
     summary["runup"] = _runup_summary(df, hist, _ultimo_earnings_pos(hist, past_earnings.index))
+    trajetoria = _trajetoria_resumo(events)
+    if trajetoria:
+        summary["trajetoria"] = trajetoria
 
     return {"ticker": ticker, "summary": summary, "events": events}
 

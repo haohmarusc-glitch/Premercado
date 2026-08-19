@@ -11,11 +11,20 @@ interface SessionMove {
   volume: number;
 }
 
+interface PontoTrajetoria {
+  dia: number;
+  date: string;
+  acum_pct: number;
+  dia_pct: number;
+}
+
 interface ReactionEvent {
   earnings_date: string;
   runup_pct?: number | null;
   announcement_day: SessionMove | null;
   next_day: SessionMove | null;
+  /** Até 10 pregões após o balanço. Vazio nos earnings recentes demais. */
+  trajetoria?: PontoTrajetoria[];
 }
 
 interface RunupSummary {
@@ -49,6 +58,9 @@ interface ReactionSummary {
   intraday_range_pct_mean: number;
   volume_ratio_mean: number | null;
   suggested_threshold_pct: number;
+  trajetoria?: {
+    dias: { dia: number; n: number; acum_medio_pct: number; positivos: number }[];
+  };
   current_price: number;
   r1_price: number;
   r2_price: number;
@@ -72,6 +84,22 @@ function fmtPct(v: number): string {
 
 function fmtUsd(v: number): string {
   return `$${v.toFixed(2)}`;
+}
+
+/** Acumulado no N-ésimo pregão após o balanço, se o evento chegou lá. */
+function acumNoDia(e: ReactionEvent, dia: number): PontoTrajetoria | undefined {
+  return (e.trajetoria ?? []).find((p) => p.dia === dia);
+}
+
+function AcumCell({ ponto }: { ponto?: PontoTrajetoria }) {
+  // Earnings recente ainda não tem D+10 — "—" é a resposta honesta, e não
+  // pode virar 0% (que leria como "não andou").
+  if (!ponto) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className={ponto.acum_pct >= 0 ? "text-green-400" : "text-red-400"}>
+      {fmtPct(ponto.acum_pct)}
+    </span>
+  );
 }
 
 function SessionCell({ move }: { move: SessionMove | null }) {
@@ -176,6 +204,27 @@ function interpretResult(r: ReactionResult): string[] {
       `Correlação run-up × reação: ${ru.corr_runup_reacao >= 0 ? "+" : ""}${ru.corr_runup_reacao.toFixed(2)} — amostra pequena, trate como indício, não prova.`,
     );
   }
+
+  // A reação inicial grudou ou foi devolvida? Compara o primeiro pregão com
+  // o último horizonte disponível — é a pergunta que a trajetória existe
+  // para responder, e ninguém deveria precisar ler a tabela pra chegar lá.
+  const traj = s.trajetoria?.dias ?? [];
+  if (traj.length >= 2) {
+    const d1 = traj[0];
+    const ultimo = traj[traj.length - 1];
+    const virou = Math.sign(d1.acum_medio_pct) !== Math.sign(ultimo.acum_medio_pct);
+    const encolheu = Math.abs(ultimo.acum_medio_pct) < Math.abs(d1.acum_medio_pct) * 0.5;
+    const base = `Trajetória: em média o papel estava ${fmtPct(d1.acum_medio_pct)} no D+${d1.dia} e ${fmtPct(ultimo.acum_medio_pct)} no D+${ultimo.dia} (${ultimo.n} evento${ultimo.n === 1 ? "" : "s"} com esse horizonte)`;
+    if (virou) {
+      notes.push(`${base} — a reação inicial se INVERTEU ao longo das semanas seguintes; o movimento do dia foi mau guia da direção.`);
+    } else if (encolheu) {
+      notes.push(`${base} — o mercado DEVOLVEU boa parte da reação inicial, sinal de que o movimento do dia exagera.`);
+    } else if (Math.abs(ultimo.acum_medio_pct) > Math.abs(d1.acum_medio_pct)) {
+      notes.push(`${base} — a reação inicial CONTINUOU na mesma direção; o movimento do dia tende a ser começo, não fim.`);
+    } else {
+      notes.push(`${base} — a reação inicial se manteve, sem continuação nem devolução relevante.`);
+    }
+  }
   if (ru && ru.runup_atual_pct != null && ru.estado_atual) {
     const rotulo = ru.estado_atual === "esticado"
       ? "ESTICADO — historicamente é o estado que precede reações negativas mesmo com resultado bom"
@@ -267,7 +316,7 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
 
     if (r.events?.length) {
       blocos.push(`### Eventos (${r.ticker})\n\n` + tabela(
-        ["Data", "Run-up", "Gap dia", "Fech. dia", "Amplitude", "Fech. D+1"],
+        ["Data", "Run-up", "Gap dia", "Fech. dia", "Amplitude", "Fech. D+1", "D+5", "D+10"],
         r.events.map((e) => [
           e.earnings_date,
           e.runup_pct != null ? pct(e.runup_pct) : "—",
@@ -275,7 +324,29 @@ function montarRelatorioReacao(results: ReactionResult[], lookback: string): str
           e.announcement_day ? pct(e.announcement_day.close_pct) : "—",
           e.announcement_day ? `${e.announcement_day.intraday_range_pct.toFixed(2)}%` : "—",
           e.next_day ? pct(e.next_day.close_pct) : "—",
+          acumNoDia(e, 5) ? pct(acumNoDia(e, 5)!.acum_pct) : "—",
+          acumNoDia(e, 10) ? pct(acumNoDia(e, 10)!.acum_pct) : "—",
         ]),
+      ));
+    }
+
+    if (s.trajetoria?.dias.length) {
+      blocos.push(`### Trajetória média pós-earnings (${r.ticker})\n\n` + tabela(
+        ["Pregão", "Acumulado médio", "Positivos", "Eventos com dado"],
+        s.trajetoria.dias.map((d) => [
+          `D+${d.dia}`, pct(d.acum_medio_pct), String(d.positivos), String(d.n),
+        ]),
+      ));
+    }
+
+    // Detalhe dia a dia por evento — é o dado cru que sustenta as médias
+    // acima. Fica só no relatório: na tela, dez colunas por evento seriam
+    // ilegíveis no celular.
+    for (const e of r.events ?? []) {
+      if (!e.trajetoria?.length) continue;
+      blocos.push(`#### ${r.ticker} · ${e.earnings_date} — dia a dia\n\n` + tabela(
+        ["Pregão", "Data", "Acumulado", "Variação do dia"],
+        e.trajetoria.map((p) => [`D+${p.dia}`, p.date, pct(p.acum_pct), pct(p.dia_pct)]),
       ));
     }
   }
@@ -427,6 +498,57 @@ export default function EarningsReactionPage() {
                     </div>
                   </div>
 
+                  {r.summary.trajetoria && r.summary.trajetoria.dias.length > 0 && (
+                    <div className="px-4 pb-4">
+                      <div className="border border-border/60 rounded-lg bg-background p-3">
+                        <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+                          <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                            Trajetória média pós-earnings (acumulado vs véspera)
+                          </span>
+                          <span className="text-[10px] font-mono text-muted-foreground/70">
+                            a reação gruda ou é devolvida?
+                          </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full font-mono text-xs">
+                            <thead>
+                              <tr>
+                                <th className="text-left pr-2 py-1 text-[10px] text-muted-foreground uppercase">Pregão</th>
+                                {r.summary.trajetoria.dias.map((d) => (
+                                  <th key={d.dia} className="text-right px-1.5 py-1 text-[10px] text-muted-foreground">
+                                    D+{d.dia}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td className="pr-2 py-1 text-[10px] text-muted-foreground uppercase">Média</td>
+                                {r.summary.trajetoria.dias.map((d) => (
+                                  <td key={d.dia} className={`text-right px-1.5 py-1 font-bold ${d.acum_medio_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                    {fmtPct(d.acum_medio_pct)}
+                                  </td>
+                                ))}
+                              </tr>
+                              <tr>
+                                <td className="pr-2 py-1 text-[10px] text-muted-foreground uppercase" title="Quantos dos eventos analisados estavam positivos neste pregão, e sobre quantos com dado disponível">Positivos</td>
+                                {r.summary.trajetoria.dias.map((d) => (
+                                  <td key={d.dia} className="text-right px-1.5 py-1 text-muted-foreground">
+                                    {d.positivos}/{d.n}
+                                  </td>
+                                ))}
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-[10px] font-mono text-muted-foreground/70 mt-2 leading-relaxed">
+                          Os horizontes mais longos têm menos amostra — earnings recentes ainda não completaram os 10 pregões
+                          (veja o denominador de "positivos").
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {r.events && r.events.length > 0 && (
                     <div className="overflow-x-auto border-t border-border">
                       <table className="w-full font-mono text-sm">
@@ -436,6 +558,8 @@ export default function EarningsReactionPage() {
                             <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase" title="Variação do mês (21 pregões) anterior ao balanço">Run-up prévio</th>
                             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Dia do anúncio</th>
                             <th className="text-left px-4 py-2 text-[10px] text-muted-foreground uppercase">Dia seguinte</th>
+                            <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase" title="Acumulado do 5º pregão após o balanço, contra o fechamento da véspera">D+5</th>
+                            <th className="text-right px-4 py-2 text-[10px] text-muted-foreground uppercase" title="Acumulado do 10º pregão após o balanço, contra o fechamento da véspera">D+10</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -447,6 +571,8 @@ export default function EarningsReactionPage() {
                               </td>
                               <td className="px-4 py-2"><SessionCell move={e.announcement_day} /></td>
                               <td className="px-4 py-2"><SessionCell move={e.next_day} /></td>
+                              <td className="px-4 py-2 text-right"><AcumCell ponto={acumNoDia(e, 5)} /></td>
+                              <td className="px-4 py-2 text-right"><AcumCell ponto={acumNoDia(e, 10)} /></td>
                             </tr>
                           ))}
                         </tbody>
