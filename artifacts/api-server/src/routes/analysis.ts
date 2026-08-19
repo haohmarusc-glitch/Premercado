@@ -108,7 +108,7 @@ function guardarIA(chave: string, valor: unknown): void {
 // comentário de `coalescer`: embarcar num trabalho que já gastou o orçamento
 // não é economia, é herdar uma morte marcada.
 //
-// 60s contra o teto de 195s da rota: quem chega depois disso não teria tempo
+// 60s contra o teto de 215s da rota: quem chega depois disso não teria tempo
 // nem para UMA passada completa (a análise que deu certo levou 58s).
 const IDADE_MAX_CARONA_MS = 60_000;
 
@@ -171,15 +171,15 @@ function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
     // bateram 90s cravados: "Failed: /analise-rapida/ia", 500 na tela.
     //
     // Agora o Python fixa o próprio orçamento (ver analise_rapida_ia.py):
-    // 75s por chamada, uma tentativa por provedor. Duas tentativas de
-    // provedor + coleta fundamental cabem em 175s; 195s aqui deixa margem.
+    // 85s por chamada, uma tentativa por provedor. Duas tentativas de
+    // provedor + coleta fundamental cabem em 195s; 215s aqui deixa margem.
     //
     // Subiu de 150s em 19/08/2026 junto com o teto por chamada: com 55s o
     // anthropic era cortado pelo nosso relógio ("failed after 55.1s") em vez
     // de responder, e o corte queimava uma das duas tentativas que o
     // orçamento compra. O custo aceito é a tela demorar mais ANTES DE FALHAR
-    // -- o caminho feliz continua em ~40s, porque o teto só é alcançado por
-    // quem não respondeu.
+    // -- o caminho feliz não muda, porque o teto só é alcançado por quem não
+    // respondeu (as análises boas medidas no agent_runs levam 33s a 65s).
     // test_orcamento_analise_ia.py lê os dois lados e falha se a invariante
     // (interno < externo) quebrar.
     const t = setTimeout(() => {
@@ -192,7 +192,7 @@ function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
         "analise_rapida_ia: estourou o orçamento de tempo",
       );
       reject(new Error("timeout"));
-    }, 195_000);
+    }, 215_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
