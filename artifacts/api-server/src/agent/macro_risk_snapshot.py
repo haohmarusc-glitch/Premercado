@@ -54,6 +54,30 @@ SERIES_FRED = {
     "wti": "DCOILWTICO",
 }
 
+# Idade máxima da observação mais recente para ela ainda valer como "hoje".
+#
+# Produção 18/08/2026, primeira coleta completa:
+#
+#     "datasFred": {"yield_30y": ["2026-08-17", "2026-08-14"],
+#                   "wti":       ["2026-08-11", "2026-08-10"]}
+#
+# Os yields vieram de ontem (normal). O WTI veio de SETE DIAS antes -- ou seja,
+# o sinal de choque geopolítico estava comparando 11 contra 10 de agosto e
+# apresentando isso como o movimento do dia. Um salto do petróleo hoje só
+# apareceria daqui a uma semana: o sinal desenhado para pegar choque agudo
+# chegava tarde por construção.
+#
+# 4 dias cobre fim de semana emendado com feriado sem aceitar dado de semana
+# passada. Acima disso a série vira sem_dado com a idade nomeada -- é o mesmo
+# princípio do `suspect` no snapshot global: número velho rotulado é melhor que
+# número velho usado como se fosse fresco.
+IDADE_MAX_OBS_DIAS = 4
+
+# Futuro do petróleo: fecha todo pregão e é o preço que o mercado está olhando
+# AGORA. O FRED continua como reserva -- ele é a fonte oficial, mas publica com
+# atraso variável, e para este sinal a frescura importa mais que a procedência.
+WTI_TICKER = "CL=F"
+
 
 def _fred_duas_ultimas(series_id: str) -> tuple[float | None, float | None, list[str]]:
     """(mais recente, anterior, datas). Pede 10 e filtra: a série vem com '.'
@@ -104,6 +128,21 @@ def _variacao_do_dia(ticker: str) -> float | None:
     if not anterior:
         return None
     return round((float(fech.iloc[-1]) / anterior - 1) * 100, 2)
+
+
+def _dois_ultimos_fechamentos(ticker: str) -> tuple[float, float, str]:
+    """(último, anterior, data do último). Levanta quando não dá para formar o
+    par -- quem chama transforma isso em sem_dado com motivo."""
+    try:
+        from agent import market_data_provider as mdp
+    except ImportError:
+        import market_data_provider as mdp  # type: ignore
+
+    res = mdp.get_daily_history(ticker, "1mo")
+    if not res.ok or res.df is None or len(res.df) < 2:
+        raise RuntimeError(f"{ticker}: histórico insuficiente")
+    fech = res.df["Close"]
+    return float(fech.iloc[-1]), float(fech.iloc[-2]), str(res.df.index[-1].date())
 
 
 def _kospi_do_snapshot_global() -> tuple[float | None, str]:
@@ -164,6 +203,13 @@ def _serie_sox(pregoes_minimos: int = 46) -> tuple[list[float] | None, str]:
 # ── FOMC ────────────────────────────────────────────────────────────────────
 
 JANELA_FOMC_DIAS = 1
+
+
+def _idade_em_dias(iso: str, hoje: date | None = None) -> int | None:
+    try:
+        return ((hoje or date.today()) - datetime.strptime(iso, "%Y-%m-%d").date()).days
+    except (ValueError, TypeError):
+        return None
 
 
 def _perto_do_fomc(hoje: date | None = None) -> bool:
@@ -306,14 +352,34 @@ def coletar() -> tuple[dict, dict]:
     erros: dict[str, str] = {}
     datas: dict[str, list[str]] = {}
 
+    # WTI pelo futuro primeiro: o FRED publica com atraso variável (7 dias em
+    # 18/08/2026) e este sinal existe para pegar choque AGUDO.
+    try:
+        hoje_p, ant_p, quando = _dois_ultimos_fechamentos(WTI_TICKER)
+        dados["wti_hoje"], dados["wti_ant"] = hoje_p, ant_p
+        datas["wti"] = [quando, ""]
+    except Exception as e:  # noqa: BLE001
+        _log(f"{WTI_TICKER} indisponível ({e}) -- caindo para o FRED")
+
     for campo, series_id in SERIES_FRED.items():
+        if f"{campo}_hoje" in dados:
+            continue                      # já resolvido por fonte mais fresca
         try:
-            hoje, ant, ds = _fred_duas_ultimas(series_id)
-            dados[f"{campo}_hoje"], dados[f"{campo}_ant"] = hoje, ant
-            datas[campo] = ds
+            hoje_v, ant_v, ds = _fred_duas_ultimas(series_id)
         except Exception as e:  # noqa: BLE001
             erros[series_id] = str(e)
             _log(f"{series_id} indisponível: {e}")
+            continue
+        # Observação velha demais não vale como "hoje". Usá-la assim produz um
+        # delta de semana passada com cara de variação do dia -- pior que não
+        # ter o dado, porque parece medição.
+        idade = _idade_em_dias(ds[0])
+        if idade is not None and idade > IDADE_MAX_OBS_DIAS:
+            erros[series_id] = f"observação de {ds[0]} tem {idade} dias (máx {IDADE_MAX_OBS_DIAS})"
+            _log(f"{series_id} descartado -- {erros[series_id]}")
+            continue
+        dados[f"{campo}_hoje"], dados[f"{campo}_ant"] = hoje_v, ant_v
+        datas[campo] = ds
 
     for nome, ticker in (("sk_hynix", SK_HYNIX), ("samsung", SAMSUNG)):
         try:

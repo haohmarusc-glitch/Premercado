@@ -98,7 +98,17 @@ def check_rate_shock(
     if yield_30y_today is None or yield_30y_prev is None:
         return _sem_dado("RATE_SHOCK", "yield de 30 anos indisponível (FRED DGS30)")
 
-    delta_bps = (yield_30y_today - yield_30y_prev) * 100
+    # Arredonda ANTES de comparar, e usa o mesmo número nos dois lugares.
+    #
+    # Produção 18/08/2026: 5,31 - 5,25 dá 5.999999999999961 em ponto flutuante.
+    # A tela exibia `Δ +6bps` (arredondado) ao lado de `inativo` (comparação
+    # crua), com o limiar documentado em ">= 6bps". Quem lê conclui que o código
+    # está quebrado -- e não tem como saber que a diferença está na 13ª casa.
+    #
+    # Um sinal cujo número exibido contradiz o próprio veredito perde a
+    # utilidade que tinha: o operador para de confiar no painel inteiro por
+    # causa de um caso de borda invisível.
+    delta_bps = round((yield_30y_today - yield_30y_prev) * 100, 2)
     active = delta_bps >= 6 and yield_30y_today > 5.0
 
     severity = "low"
@@ -108,7 +118,7 @@ def check_rate_shock(
     return SignalResult(
         flag="RATE_SHOCK", active=active, severity=severity,
         details={
-            "delta_bps": round(delta_bps, 2),
+            "delta_bps": delta_bps,
             "yield_30y_today": yield_30y_today,
             "near_fomc_window": near_fomc_window,
         },
@@ -334,8 +344,10 @@ def check_geopolitical_oil_shock(
     if not wti_anterior:
         return _sem_dado("GEOPOLITICAL_OIL_SHOCK", "preço anterior do WTI inválido")
 
-    oleo_delta_pct = (wti_hoje / wti_anterior - 1) * 100
-    yield_delta_bps = (yield_10y_hoje - yield_10y_anterior) * 100
+    # Arredondados antes da comparação, pelo mesmo motivo do RATE_SHOCK: número
+    # exibido e veredito precisam sair da MESMA conta.
+    oleo_delta_pct = round((wti_hoje / wti_anterior - 1) * 100, 2)
+    yield_delta_bps = round((yield_10y_hoje - yield_10y_anterior) * 100, 2)
     active = oleo_delta_pct >= 3 and yield_delta_bps >= 3
 
     severity = "low"
@@ -345,10 +357,10 @@ def check_geopolitical_oil_shock(
     return SignalResult(
         flag="GEOPOLITICAL_OIL_SHOCK", active=active, severity=severity,
         details={
-            "oleo_delta_pct": round(oleo_delta_pct, 2),
+            "oleo_delta_pct": oleo_delta_pct,
             "wti_hoje": wti_hoje,
             "yield_10y_hoje": yield_10y_hoje,
-            "yield_delta_bps": round(yield_delta_bps, 2),
+            "yield_delta_bps": yield_delta_bps,
         },
     )
 
