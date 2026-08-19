@@ -461,6 +461,7 @@ _REGRAS_QUE_NAO_PODEM_SUMIR = [
     ("um preço só", "precoAtual.valor"),
     ("divergência entre painéis", "divergenciaPct"),
     ("cita o painel divergente", "porPainel"),
+    ("escreve os DOIS preços da divergência", "ESCREVENDO OS DOIS PREÇOS"),
     ("upside do DCF tem base própria", "valuation.current_price"),
     ("R1/S1 não são suporte técnico", "bandas estatísticas"),
     ("RVOL no leilão de abertura", "indefinido_abertura"),
@@ -507,3 +508,21 @@ def test_o_prompt_nao_carrega_datas_de_incidente():
     import re
     achadas = re.findall(r"\d{2}/\d{2}/20\d{2}", ia.SYSTEM)
     assert achadas == [], f"datas de incidente no prompt: {achadas}"
+
+
+def test_a_divergencia_pede_numero_e_nao_so_o_nome_do_campo():
+    """Sonda de 19/08/2026, primeira rodada depois da consolidação: anthropic e
+    gemini caíram JUNTOS de 3/3 para 2/3, no mesmo caso e na mesma
+    sub-checagem -- disseram que os painéis divergiam e não citaram o preço
+    divergente.
+
+    A instrução antiga mandava "citar `porPainel`", que é referência a um campo
+    do JSON, não uma ordem concreta. Dois provedores diferentes falhando igual
+    aponta a instrução, não o modelo.
+
+    (Ressalva: uma amostra por provedor. A mudança se sustenta pelo mérito --
+    'escreva os dois preços' é instrução melhor que 'cite o campo X' em
+    qualquer hipótese -- mas a causa não está provada.)"""
+    trecho = ia.SYSTEM[ia.SYSTEM.index("divergenciaPct"):][:600]
+    assert "ESCREVENDO OS DOIS PREÇOS" in trecho
+    assert "225,01" in trecho and "180,00" in trecho      # exemplo com números
