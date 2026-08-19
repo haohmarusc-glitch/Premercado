@@ -7,6 +7,14 @@ import sys, json
 import yfinance as yf
 from security import friendly_error
 from http_retry import SESSION
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 SECTOR_ETFS = [
     ("Tecnologia", "XLK"), ("Energia", "XLE"), ("Financeiro", "XLF"),
@@ -83,4 +91,4 @@ if __name__ == "__main__":
         json.loads(sys.stdin.read() or "{}")
     except Exception:
         pass
-    print(json.dumps({"fearGreed": fear_greed(), "sectors": sectors()}))
+    print(json_seguro.dumps({"fearGreed": fear_greed(), "sectors": sectors()}))

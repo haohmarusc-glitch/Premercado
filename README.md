@@ -28,6 +28,7 @@ para o modelo de ameaças, [`threat_model.md`](threat_model.md).
   - [8. Risco, backtest e confluência](#8-risco-backtest-e-confluência)
   - [9. Exportar relatório das telas de análise](#9-exportar-relatório-das-telas-de-análise)
   - [10. Chat e memória](#10-chat-e-memória)
+  - [11. Risco macro setorial](#11-risco-macro-setorial)
 - [Telas](#telas)
 - [Jobs de background](#jobs-de-background)
 - [Fontes de dado](#fontes-de-dado)
@@ -180,11 +181,41 @@ Camada de dados estruturais sobre o tema de IA/semicondutores.
 earnings com EVR e move implícito, YTD/vol/beta por ticker, riscos mapeados,
 screening de proximidade da mínima de 52 semanas.
 
+O módulo tem **três camadas com validades diferentes**, e a tela rotula cada
+uma — confundi-las foi o erro que a auditoria de 17/08/2026 pegou:
+
+| Camada | Como atualiza | Cadência |
+| --- | --- | --- |
+| Preço e faixa de 52 semanas | `atualizar_min52_vivo()` na própria resposta | a cada request |
+| Correlações e vol medida | `atualizar_correlacoes.py` → overlay | semanal |
+| Calendário de earnings | `atualizar_earnings.py` → overlay | diário |
+| EVR, move implícito, reação histórica | transcrição manual do OptionSlam | quando alguém abre o site |
+
+`HOJE_SNAPSHOT` descreve a **última** linha, não as três primeiras.
+
 **Correlações vivas** (`atualizar_correlacoes.py`): recalcula a matriz completa
 do universo a partir de 6 meses de fechamentos do yfinance, sobre **retornos
 diários** (não nível de preço — dois papéis em tendência exibem correlação de
 nível altíssima sem co-movimento real). Grava um **overlay JSON** que o núcleo
 aplica por cima do snapshot embutido no import. Roda sozinho toda semana.
+
+**Calendário vivo** (`atualizar_earnings.py`): busca o `EARNINGS_CALENDAR` da
+Alpha Vantage e sobrescreve as datas e a janela (BO/AC) do calendário
+embutido. **Diário**, ao contrário das correlações: são os dois extremos da
+mesma escala — correlação de 6 meses se move devagar e o que importa é
+mudança de regime; data de earnings vira passado em dias, e a confirmação
+oficial sai na semana anterior, que é justo quando o dado importa.
+
+Pede o calendário **inteiro numa chamada só** e filtra local. O endpoint
+aceita `symbol`, mas o universo tem ~51 papéis e a cota diária compartilhada
+com o feed de notícias é 15 — pedir por ticker esgotaria a cota e derrubaria
+as notícias junto. (Medido: transcrevendo o universo à mão pelo MCP em
+19/08/2026, a chave estourou na 30ª chamada.)
+
+Quem editar o `EARNINGS` à mão: o campo `nota` é reservado a especulação
+**sobre a data** e o overlay o remove quando a fonte responde — manter
+"fontes divergem" embaixo da data confirmada faria a tela contradizer o
+próprio dado.
 
 **Parâmetros operacionais** (`parametros_volatilidade.py`):
 
@@ -248,6 +279,36 @@ carteira e memória filtrada por identidade. Sessões persistidas.
 
 ---
 
+### 11. Risco macro setorial
+
+Seis sinais de pano de fundo para IA/semicondutores, derivados de dois
+episódios reais (o sell-off de 28-29/07/2026 e o choque de petróleo de
+18/08/2026), que viraram golden dataset em `test_macro_risk.py`.
+
+| sinal | fonte | o que detecta |
+|---|---|---|
+| `RATE_SHOCK` | FRED `DGS30` | yield de 30 anos disparando |
+| `ASIA_MEMORY_CONTAGION` | `^KS11`, SK Hynix, Samsung | Coreia fecha 6-8h antes dos EUA — leading indicator |
+| `PRICED_FOR_PERFECTION` | `earnings_dates` | bateu o consenso e a ação caiu |
+| `CHINA_COMPETITION_RISK` | `get_geopolitical_news` | notícia atacando a tese de escassez |
+| `OVEREXTENDED_SECTOR` | `^SOX` (reserva `SOXX`) | quanto o setor subiu em 9 semanas |
+| `GEOPOLITICAL_OIL_SHOCK` | `CL=F` + FRED `DGS10` | petróleo e yield subindo juntos |
+
+**Não é sinal de compra ou venda: é modulador** do Kelly no
+`confluence_engine`. Reduz o tamanho sugerido de posição quando o pano de fundo
+amplifica qualquer gatilho — e **também quando o sistema está cego**, contando
+sinal não medido como meio flag ativo.
+
+Cada sinal tem **três** estados (`ok` / `sem_dado` / `nao_aplicavel`), e o
+agregado publica `cobertura_pct` junto do score. Abaixo de 50% de cobertura o
+score é `None`: um 0 apurado sobre um terço do peso tem a mesma cara de um 0
+apurado sobre tudo, e diz coisa muito diferente.
+
+Retrato diário persistido em `macro_risk_snapshots` (upsert por data), coletado
+às 07:50 BRT — 19:50 em Seul, com a Ásia fechada e o FRED já publicado. A tela
+fica no topo de `/macro`, com o estado "sem dado" **listrado**, não cinza:
+num painel de risco, silêncio lido como calmaria é pior que erro.
+
 ## Telas
 
 36 telas React. As principais:
@@ -282,6 +343,13 @@ autenticado), com trava e cadência coordenadas por linha única no Postgres
 | `scenario_params` | 24 h | Recalcula vol/beta e momentum do setor |
 | `entry_exit_study` | 24 h | Snapshot diário dos estudos + resolução |
 | `radar_correlacoes` | 7 dias | Correlações e vol medidas do radar |
+| `radar_earnings` | 24 h | Datas e janela (BO/AC) do calendário do radar |
+
+Fora desse ciclo, o **retrato de risco macro** roda pelo agendador interno
+(`node-cron` em `lib/scheduler.ts`), às 07:50 BRT em dias úteis. Não passa por
+`runAgent()` de propósito: aquilo serializa por `state.running` para não rodar
+duas análises de LLM juntas, e o retrato seria PULADO nos dias em que o diário
+atrasa — justamente os dias movimentados.
 
 ---
 
@@ -458,11 +526,52 @@ Aprendidas de incidentes reais. Detalhamento em
     inteira passa e o mesmo arquivo falha noutra ordem de coleta. O
     `conftest.py` fixa o pacote em `sys.modules` antes de tudo — mas em teste
     novo prefira import de pacote e não mexa no path.
+    **O mesmo vale para spawn**: script que usa `market_alerts`, `tools` ou
+    qualquer módulo com import relativo tem de ser spawnado como
+    `-m agent.xxx`, com `cwd` e `PYTHONPATH` no diretório do agente. Rodar por
+    caminho põe `agent/` no `sys.path` e reproduz o sombreamento — o sintoma é
+    `attempted relative import with no known parent package` numa fonte só,
+    enquanto as outras seguem, então o resultado sai **degradado em silêncio**
+    em vez de estourar.
 12. **Checagem cruzada só vale onde as duas pontas existem.** Na primeira
     versão do `market_data_provider.py` a comparação de fechamento ficava no
     ramo do Stooq, onde o cache é sempre `None` por construção — nunca rodava.
     Guarda que não dispara é pior que guarda nenhuma: passa confiança sem dar
     proteção.
+13. **"Sem dado" é um estado, não é "sem risco".** O módulo de risco macro
+    devolvia score 0 tanto para "medi e está calmo" quanto para "não consegui
+    medir" — e num módulo que dimensiona posição isso INVERTE o sentido da
+    falha: coleta quebrada vira permissão para posição cheia. Mesma classe do
+    `null` que virava "volatilidade histórica baixa" na tela de earnings.
+    Ausência de dado tem de alargar a cautela, nunca removê-la, e a camada que
+    busca precisa devolver `None` — um `except` que devolve `0.0` reintroduz o
+    bug uma camada abaixo, onde ninguém procura.
+14. **A fronteira da serialização é o único ponto onde a garantia vale para o
+    payload inteiro.** `json.dumps` emite `NaN`/`Infinity`, que o `JSON.parse`
+    do Node recusa — um campo não-finito torna ilegível uma resposta em que
+    todo o resto estava certo. Use `json_seguro.dumps`. Cuidado com a
+    assimetria do numpy: `np.float64` **é** subclasse de `float` (por isso a
+    limpeza de NaN funcionou sem ninguém pensar em numpy), mas `np.bool_`
+    **não é** `bool`, nem `np.int64` é `int`. Basta uma comparação sobre valor
+    do pandas (`preco <= -6`) para derrubar o payload.
+15. **Barra do dia corrente não é pregão fechado, e `sem_barra_incompleta` não
+    pega isso** — ela descarta `Close` vazio, e barra intradiária tem `Close`,
+    só que provisório. Duas coletas do mesmo ticker com minutos de diferença
+    deram `+1,03%` e `-9,33%` porque a bolsa coreana tinha aberto no meio. Para
+    comparar "o último pregão", confirme que a praça fechou (ver
+    `_sessao_ainda_aberta` em `macro_risk_snapshot.py`). E lembre que o mesmo
+    dado pode chegar por dois caminhos: o conserto nas AÇÕES não alcançou o
+    índice, que vem do snapshot global.
+16. **Teste não pode embutir número de mercado.** A sonda de qualidade cobrava
+    o literal `225` — preço que ela mesma fabricava e que `analisar()`
+    descartava ao rebuscar o fundamento. Passou por coincidência enquanto o
+    mercado rondava aquele valor e reprovou quando ele andou, levando a dois
+    "consertos" de prompt atrás de uma regressão que não existia. Teste que
+    embute cotação vira oráculo de preço e manda investigar o lugar errado.
+17. **Fonte externa velha é pior que fonte ausente**, porque parece medição. O
+    WTI vinha do FRED com **sete dias** de atraso e o sinal de choque
+    geopolítico comparava a semana anterior achando que era o dia. Faça as
+    datas viajarem no payload e recuse observação acima de um limite de idade.
 
 ---
 
@@ -472,27 +581,56 @@ Aprendidas de incidentes reais. Detalhamento em
 # Deploy (VPS)
 cd /opt/premercado && git pull origin main && docker compose up -d --build
 
-# Qualidade (não há CI — rodar antes de cada PR)
+# Qualidade — os MESMOS comandos que a CI roda (.github/workflows/ci.yml)
 pnpm run typecheck
-pytest artifacts/api-server/src/__tests__      # ~762 testes
-pnpm --filter @workspace/api-server test       # vitest
-pnpm --filter @workspace/premarket test
+pnpm -r --if-present run test -- --run    # vitest de TODOS os pacotes
+pytest                                     # coleta via pytest.ini, sem exclusão
 
-# Ferramentas do radar (dentro do container)
+# Risco macro (dentro do container, a partir de /opt/premercado)
+#
+# Roda como MÓDULO, nunca por caminho -- ver convenção 11.
+docker compose exec -T -w /app/artifacts/api-server/src \
+  app /app/.venv/bin/python3 -m agent.macro_risk_snapshot 2>&1 | tail -30
+# O stderr resume: "cobertura X% | score Y | N fonte(s) com erro".
+# Fonte que falhou aparece nomeada em coleta.erros, com o motivo.
+
+# A série gravada
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A' <<'SQL'
+select snapshot_date, coverage_pct, aggregate_score, active_flags
+from macro_risk_snapshots order by snapshot_date desc limit 10;
+SQL
+
+# Sonda de qualidade do prompt -- NÃO roda no CI (custa dinheiro e depende de
+# rede). Rodar depois de mexer no SYSTEM da Análise com IA. ~US$ 0,15.
+for p in anthropic gemini; do
+  docker compose exec -T -w /app/artifacts/api-server/src -e AGENT_PROVIDER_ORDER=$p \
+    app /app/.venv/bin/python3 -m agent.sonda_qualidade 2>&1 | tail -6
+done
+
+# Ferramentas do radar (dentro do container, a partir de /opt/premercado)
+cd /opt/premercado
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.atualizar_correlacoes < /dev/null
+docker compose exec -T -w /app/artifacts/api-server/src app \
+  /app/.venv/bin/python -m agent.atualizar_earnings < /dev/null
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.parametros_volatilidade < /dev/null
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.earnings_reaction_analysis --tickers NVDA < /dev/null
 ```
 
+> O `cd /opt/premercado` não é decoração: `docker compose` procura o
+> `docker-compose.yml` no diretório atual e, rodado do `~` do root, falha com
+> `no configuration file provided: not found` — que parece container fora do ar
+> e não é.
+
 > `< /dev/null` é necessário: os scripts detectam "chamado pelo Node" testando
 > `stdin.isatty()`, e `docker compose exec -T` deixa o stdin aberto sem TTY —
 > sem o redirecionamento, o script espera um EOF que nunca chega.
 
-> Um `--build` apaga `/var/cache/premercado`, onde mora o overlay de correlações.
-> O checker semanal regrava sozinho; para não esperar, rodar o comando acima.
+> Um `--build` apaga `/var/cache/premercado`, onde moram os overlays de
+> correlações e de earnings. Os checkers regravam sozinhos (7 dias e 24 h);
+> para não esperar, rodar os dois comandos acima.
 
 ---
 
@@ -510,6 +648,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #269 | Parâmetros de vol: stops, sizing, vol de carteira **com covariância**, stress; camada macro (FOMC) e sinal overnight |
 | #270 | Proxy líder por posição vindo do dado + refresh semanal automático |
 | #271 | Vol **medida por nós** substitui a coleta manual (contaminava stop e sizing) |
+| #345 | Calendário de earnings deixa de ser digitado: overlay diário da Alpha Vantage. Três datas estavam erradas na transcrição — BABA por 15 dias, na véspera do próprio catalisador |
 
 ### Backtest e exportação (ago/2026)
 
@@ -570,6 +709,30 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #249, #246 | Stack Infra/Monitor (Netdata, Uptime Kuma, Dozzle) |
 | #226, #231 | Empacotamento para rodar fora do Replit |
 | #241 | CSP liberando TradingView + fallback do DeepSeek |
+
+### Risco macro setorial (ago/2026)
+
+| PR | O que entregou |
+|---|---|
+| #330 | Os seis sinais, com **"sem dado" como estado próprio** — antes, cegueira e calmaria davam a mesma saída e o Kelly ficava cheio |
+| #331 | Coleta real reusando o que já existia (Kospi do snapshot global, FOMC do `MACRO_EVENTS`, léxico do `get_trend`) |
+| #332 | Persistência em Postgres, rotas e a seção em `/macro`; conserta escalar do numpy no `json_seguro` |
+| #333 | Sinal de earnings com fonte real; retrato agendado às 07:50 BRT |
+| #334, #335 | Número exibido passa a bater com o veredito; petróleo sai de 7 dias de atraso; preço do provider sem ruído de float32 |
+| #336–#338 | Spawn como módulo (3 fontes caíam em silêncio), sessão coreana em curso, e "hoje" em BRT — a data é a chave da série |
+
+### Análise com IA — orçamento, diagnóstico e prompt (ago/2026)
+
+| PR | O que entregou |
+|---|---|
+| #322 | `definir_orcamento` — a cadeia percorre provedores POR DENTRO de um `create()`, então quem tem o prazo precisa passá-lo para dentro |
+| #324 | `timeout` nos DOIS clientes: o SDK da OpenAI tem default de 600s, então 5 de 6 provedores rodavam sem teto |
+| #325 | O log para de creditar o tempo da cadeia inteira a quem respondeu |
+| #326, #327 | Precedência no `_TIER_MAP` (troca de provedor rebaixava o modelo em silêncio) e ordem por tempo até resposta útil |
+| #328, #329 | Sonda de qualidade do prompt + o furo do detector de divergência; a sonda deixa de reprovar por presença de palavra |
+| #339–#342 | 17 regras do SYSTEM em 5 grupos (-27%); exclusão do deepseek, que gasta o teto raciocinando e entrega 0 chars; sonda deixa de embutir cotação |
+| #346–#349 | Erro do fallback deixa de esconder provedor sem chave e falha sem condenação; teto por chamada 55→85s vindo das durações reais; gasto contado uma vez por chamada de API |
+| #350 | Gemini abre a fila da Análise com IA — quem falha barato na frente deixa orçamento para o próximo |
 
 ### Provedores de LLM e desempenho do agente
 

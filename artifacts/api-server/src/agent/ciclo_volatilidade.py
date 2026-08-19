@@ -48,6 +48,14 @@ import sys
 
 import numpy as np
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 try:  # spawn por caminho (rota) e módulo do pacote (testes)
     import market_data_provider
@@ -284,4 +292,4 @@ if __name__ == "__main__":
             items.append(analisar(t))
         except Exception as e:  # noqa: BLE001 — um ticker ruim não derruba o lote
             items.append({"ticker": t, "error": str(e) or e.__class__.__name__})
-    print(json.dumps({"items": items}, ensure_ascii=False))
+    print(json_seguro.dumps({"items": items}, ensure_ascii=False))

@@ -21,6 +21,8 @@ outros testes de tools.py.
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_technicals_rsi_rvol.py -v
 """
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -153,3 +155,28 @@ def test_volume_ratio_normal_quando_nao_ha_pico(monkeypatch):
 
     out = tools.get_technical_indicators("NBIS", period="6mo")
     assert out["volume_ratio_5d_vs_20d"] == pytest.approx(1.0, abs=0.01)
+
+
+# ── Guarda de repositório: nenhuma cópia nova de Cutler ─────────────────────
+
+def test_nenhum_modulo_do_agente_usa_rsi_de_cutler():
+    """O RSI tinha QUATRO implementações neste repo e a primeira correção
+    (#298) pegou só uma -- justamente a que a tela não usa, então o bug
+    sobreviveu ao próprio fix. Este teste varre agent/ inteiro: qualquer
+    `rolling(14).mean()` sobre ganhos/perdas reprova.
+
+    É a versão executável da heurística da §2b do playbook ("indicador com
+    mais de uma implementação no repo é um fast_info esperando acontecer").
+    Se você precisar mesmo de Cutler em algum lugar, nomeie a variável de
+    forma explícita e ajuste este teste junto -- o que não pode é uma quinta
+    cópia entrar chamando-se "RSI" e divergindo em silêncio."""
+    agent_dir = pathlib.Path(__file__).resolve().parent.parent / "agent"
+    culpados = []
+    for arquivo in sorted(agent_dir.rglob("*.py")):
+        texto = arquivo.read_text(encoding="utf-8")
+        if "clip(lower=0).rolling(14).mean()" in texto or "clip(upper=0)).rolling(14).mean()" in texto:
+            culpados.append(str(arquivo.relative_to(agent_dir)))
+    assert not culpados, (
+        "RSI de Cutler (rolling(14).mean) encontrado em: " + ", ".join(culpados)
+        + " -- use Wilder (ewm alpha=1/14), igual get_trend.rsi_wilder"
+    )

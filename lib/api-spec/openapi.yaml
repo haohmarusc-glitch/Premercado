@@ -1557,9 +1557,10 @@ components:
         snapshot: { type: string, description: "YYYY-MM-DD do snapshot dos dados" }
         correlacoes_janela_fim: { type: string, description: "YYYY-MM-DD do fim da janela das correlacoes servidas (avanca com o overlay de atualizar_correlacoes.py)" }
         correlacoes_atualizado_em: { type: ["string", "null"] }
+        earnings_atualizado_em: { type: ["string", "null"], description: "YYYY-MM-DD da coleta do calendario (overlay de atualizar_earnings.py); null quando so ha o calendario embutido" }
         earnings:
           type: object
-          description: "ticker -> {data, quando (BO|AC|null), setor, nota?}"
+          description: "ticker -> {data, quando (BO|AC|null), setor, fonte?, nota?}. `fonte: alphavantage` marca a data confirmada pelo calendario coletado; sem ela a data vem do snapshot digitado a mao. `nota` e especulacao sobre a data e some quando a fonte responde."
           additionalProperties:
             type: object
             required: [data, setor]
@@ -1567,16 +1568,34 @@ components:
               data: { type: string }
               quando: { type: ["string", "null"] }
               setor: { type: string }
+              fonte: { type: string }
               nota: { type: string }
         min52:
           type: object
-          description: "ticker -> {preco, min52, status (dentro|borderline)}"
+          description: "ticker -> {preco, min52, max52?, status (dentro|borderline|fora), fonte?}. preco/min52/max52 vem vivos do market_data_provider quando a fonte responde; `fonte` diz de onde (yfinance, cache, snapshot...)."
           additionalProperties:
             type: object
             properties:
               preco: { type: number }
               min52: { type: number }
+              max52: { type: number }
               status: { type: string }
+              fonte: { type: string, description: "Origem do dado desta linha. Ausente = snapshot manual nao atualizado." }
+        overridesColetadoEm: { type: string, description: "YYYY-MM-DD da coleta humana dos dados de reacao_earnings (OptionSlam nao tem API)." }
+        overridesFonte: { type: string, description: "De onde os dados manuais vieram, para auditoria." }
+        overridesIdadeDias: { type: integer, description: "Dias desde overridesColetadoEm. O frontend usa para avisar que o dado envelheceu." }
+        min52Atualizados:
+          type: array
+          description: "Tickers cuja faixa de 52 semanas foi atualizada ao vivo nesta resposta."
+          items: { type: string }
+        min52Avisos:
+          type: array
+          description: "Inconsistencias detectadas (preco abaixo da minima etc.). Dado vivo impossivel e recusado e o snapshot preservado."
+          items: { type: string }
+        fontesDegradadas:
+          type: object
+          description: "ticker -> motivo. Degradacao nunca e silenciosa: quem nao atualizou aparece aqui."
+          additionalProperties: { type: string }
         reacao_earnings:
           type: object
           description: "ticker -> {evr?, move_impl_sem?, move_impl_mes?, vies?, ultima_reacao?}"

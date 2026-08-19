@@ -6,6 +6,7 @@ and Anthropic into a single interface that agent.py can use transparently.
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -290,7 +291,30 @@ PROVIDERS = {
         "models": {
             # V4 (oficial 2026). Pro = melhor qualidade/raciocínio; Flash =
             # forte em agent/tool-calling e bem mais barato (atualizado 31/07).
-            "full": "deepseek-v4-pro",
+            #
+            # OS DOIS RACIOCINAM, e o raciocínio conta contra o max_tokens.
+            # Medido em produção 18/08/2026, mesmo prompt da Análise com IA:
+            #
+            #   modelo     teto      tempo   resposta
+            #   v4-pro     12.000   142,2s   0 chars   (17.806 chars de raciocínio)
+            #   v4-flash    6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
+            #
+            # Dobrar o teto dobrou o tempo e não produziu resposta: o raciocínio
+            # se expande para preencher o orçamento que existir. Por isso NÃO
+            # adianta pôr o flash no _MODELO_PENSA_RE para dar-lhe folga -- isso
+            # o levaria a ~110s para continuar entregando 0 char.
+            #
+            # `full` era o v4-pro até 18/08. A troca para o flash não resolveu
+            # (era a hipótese de que só o pro raciocinava, refutada pela medição
+            # acima) mas fica: pelo mesmo resultado, o flash custa 1/3 do preço
+            # e gasta metade do tempo do orçamento antes de a cadeia andar.
+            #
+            # O conserto real foi na ORDEM -- ver _DEFAULT_ORDER. Num prompt
+            # trivial os dois respondem em 1-2s, então o problema não é a rede
+            # nem a API: é este prompt específico fazendo o modelo raciocinar
+            # sem convergir. Se algum dia isso for investigado a fundo, começar
+            # pelo SYSTEM de analise_rapida_ia.py, não pelo provedor.
+            "full": "deepseek-v4-flash",
             "flash": "deepseek-v4-flash",
             "chat": "deepseek-v4-flash",
         },
@@ -485,6 +509,7 @@ def _openai_response_to_normalized(response) -> NormalizedResponse:
             print(
                 f"[provider] {len(leaked_calls)} chamada(s) de função vazada(s) "
                 f"como texto foram recuperadas: {[b.name for b in leaked_calls]}",
+                file=sys.stderr,
                 flush=True,
             )
         if cleaned_text:
@@ -554,6 +579,7 @@ def _try_recover_tool_use_failed(exc: Exception) -> "NormalizedResponse | None":
     if blocks:
         print(
             f"[provider] recuperado de tool_use_failed (formato padrão): {[b.name for b in blocks]}",
+            file=sys.stderr,
             flush=True,
         )
         return NormalizedResponse(content=blocks, stop_reason="tool_use")
@@ -572,6 +598,7 @@ def _try_recover_tool_use_failed(exc: Exception) -> "NormalizedResponse | None":
         )
         print(
             f"[provider] recuperado de tool_use_failed (formato alternativo): {name}",
+            file=sys.stderr,
             flush=True,
         )
         return NormalizedResponse(content=[block], stop_reason="tool_use")
@@ -605,19 +632,37 @@ class ProviderClient:
         # OpenAI-compatível) para não ter dois orçamentos de retry divergentes.
         sdk_max_retries = int(os.environ.get("AGENT_MAX_RETRIES", "1"))
 
+        # Timeout nos DOIS clientes. Até 18/08/2026 só o Anthropic o recebia, e
+        # o SDK da OpenAI default é 600s -- ou seja, todo provedor menos um
+        # rodava praticamente sem teto.
+        #
+        # O estrago não era só a espera: `definir_orcamento` decide se cabe
+        # outra tentativa usando o custo ESTIMADO de uma chamada. Com o teto
+        # valendo para um provedor só, essa estimativa era mentira para os
+        # outros cinco, e a proteção de orçamento passava a autorizar chamadas
+        # que ela não tinha como limitar.
+        #
+        # Medido em produção: anthropic estourou os 55s, a cadeia caiu para o
+        # deepseek -- e o deepseek respondeu em 142,2s. O orçamento total era
+        # de 135s.
+        sdk_timeout = float(os.environ.get("API_TIMEOUT_SECONDS", "60"))
+
         if self.provider_name == "anthropic":
             import anthropic
 
             self._anthropic = anthropic.Anthropic(
                 api_key=api_key,
-                timeout=float(os.environ.get("API_TIMEOUT_SECONDS", "60")),
+                timeout=sdk_timeout,
                 max_retries=sdk_max_retries,
             )
             self._openai = None
         else:
             from openai import OpenAI
 
-            self._openai = OpenAI(api_key=api_key, base_url=cfg["base_url"], max_retries=sdk_max_retries)
+            self._openai = OpenAI(
+                api_key=api_key, base_url=cfg["base_url"],
+                timeout=sdk_timeout, max_retries=sdk_max_retries,
+            )
             self._anthropic = None
 
     def create(
@@ -794,8 +839,47 @@ class ProviderClient:
 
 # ── Fallback chain ────────────────────────────────────────────────────────────
 
+# TODO NADA aqui vai para stdout. Descoberto em 18/08/2026: estas linhas eram
+# impressas em stdout, e em analise_rapida_ia.py o stdout é CONTRATUALMENTE do
+# JSON final (o Node o parseia). O efeito era duplo e os dois lados doíam:
+#
+#   - o diagnóstico sumia. Toda investigação daquele dia -- "por que o
+#     Anthropic não respondeu?" -- esbarrou num `grep [provider]` vazio,
+#     porque as linhas estavam misturadas ao JSON, não no log;
+#   - e poluíam o pipe. O "parse resiliente" da rota (tentar a última linha
+#     não-vazia quando o bloco todo falha) foi escrito para sobreviver a
+#     exatamente esta poluição -- tratava o sintoma, com a causa aqui.
+#
+# Regra do projeto, sem exceção: stdout é do resultado, stderr é do diagnóstico.
+
 # Order to try when a provider fails. Can be overridden via AGENT_PROVIDER_ORDER env var.
-_DEFAULT_ORDER = ["anthropic", "deepseek", "gemini", "openrouter", "openai", "kimi"]
+#
+# A ordem é por TEMPO ATÉ RESPOSTA ÚTIL, não por qualidade do modelo: quem tem
+# prazo (Análise com IA, 135s) paga o custo de cada tentativa que falha antes da
+# que funciona. Um provedor lento na 2ª posição consome o orçamento do 3º.
+#
+# Medido em produção 18/08/2026, cada provedor isolado com o mesmo prompt
+# (AGENT_PROVIDER_ORDER=<um só>, sem fallback para mascarar):
+#
+#   anthropic    36-43s   3.400-3.600 chars   ok
+#   gemini       16,4s    3.567 chars         ok  <- o mais rápido
+#   deepseek     54,2s    0 chars             esgota o teto raciocinando
+#   openrouter    ~1s     404                 slug ':free' aposentado
+#   openai        1,8s    429                 insufficient_quota
+#   kimi          2,0s    429                 conta suspensa por saldo
+#
+# O gemini subiu para primeiro fallback por causa dessa tabela: ele responde em
+# menos da METADE do tempo do anthropic. Antes o deepseek ocupava essa posição e
+# gastava 54s para não entregar nada -- com o anthropic falhando antes dele, a
+# Análise com IA chegava a ~110s dos 135s e o orçamento recusava o gemini por
+# não caber outra tentativa. O provedor mais rápido da cadeia era barrado pelo
+# tempo que o mais lento já tinha queimado.
+#
+# Os três últimos estão fora por conta/plano, não por código -- ficam na lista
+# porque são condenados em ~2s (ver _condenar) e voltam sozinhos quando as
+# contas forem resolvidas. Se ainda estiverem assim numa próxima revisão, aí
+# vale removê-los em vez de pagar o round-trip.
+_DEFAULT_ORDER = ["anthropic", "gemini", "deepseek", "openrouter", "openai", "kimi"]
 
 
 def _provider_order() -> list[str]:
@@ -1016,16 +1100,80 @@ class FallbackClient:
     """
 
     def __init__(self):
-        self._order = [p for p in _provider_order() if _has_key(p)]
+        pedidos = _provider_order()
+        self._order = [p for p in pedidos if _has_key(p)]
+        # Quem ficou de fora por não ter chave no ambiente DESTE processo.
+        #
+        # Guardado, e não descartado, porque a exclusão era invisível: em
+        # 19/08/2026 a Análise com IA falhou com "All providers exhausted --
+        # condenados nesta run: openrouter | openai | kimi", que se lê como
+        # "tentei tudo que tenho". Anthropic e gemini nem tinham sido
+        # tentados -- sumiram aqui, sem uma linha de log -- e são justamente
+        # os dois que teriam respondido. O operador foi investigar as contas
+        # dos três que apareceram, que era o lugar errado.
+        self._sem_chave = [p for p in pedidos if p not in self._order]
+        if self._sem_chave:
+            faltando = ", ".join(f"{p} ({PROVIDERS[p]['api_key_env']})"
+                                 for p in self._sem_chave if p in PROVIDERS)
+            print(f"[provider] fora da cadeia por falta de chave: {faltando}",
+                  file=sys.stderr, flush=True)
         if not self._order:
             raise RuntimeError(
                 "No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, KIMI_API_KEY"
             )
         self._clients: dict[str, ProviderClient] = {}
         self._current_idx = 0
+        # Prazo do CHAMADOR, em time.monotonic(). None = sem prazo, que é o
+        # comportamento do agente diário (roda em janela de 10 min e prefere
+        # percorrer a cadeia inteira a voltar sem resposta).
+        self._prazo: float | None = None
+        self._custo_tentativa_s: float = 0.0
         # nome -> motivo. Só entra aqui por falha PERMANENTE (ver
         # _is_falha_permanente); rate limit passageiro nunca condena.
         self._mortos: dict[str, str] = {}
+        # nome -> motivo de TODA tentativa que falhou, condenada ou não.
+        #
+        # Separado de _mortos porque o resumo do erro só citava os condenados,
+        # e quem falha sem condenação sumia. Em 19/08/2026 a Análise com IA
+        # devolveu "condenados nesta run: openrouter | openai | kimi" com as
+        # cinco chaves presentes: anthropic e gemini FORAM tentados, falharam
+        # com erro não-permanente, e o erro não disse uma palavra sobre eles.
+        # Passamos a investigar as três contas quebradas, que era o lugar
+        # errado -- de novo.
+        self._falhas: dict[str, str] = {}
+        # Quanto custou a tentativa que RESPONDEU, sozinha. Quem chama só
+        # consegue cronometrar o create() inteiro -- e o create() percorre a
+        # cadeia por dentro -- então sem este número o chamador carimba o tempo
+        # de todos os provedores em cima do único que respondeu (ver create()).
+        self.ultimo_tempo_provedor_s: float | None = None
+
+    def definir_orcamento(self, prazo_monotonic: float, custo_por_tentativa_s: float) -> None:
+        """Prazo além do qual a cadeia para de tentar provedores novos.
+
+        Existe porque `create()` percorre a cadeia INTEIRA por dentro: um
+        provedor que estoura o timeout, outro que estoura, e uma única chamada
+        já consumiu 2x o teto por tentativa sem nunca devolver o controle a
+        quem chamou.
+
+        Quem contava tentativas de fora contava errado. Em analise_rapida_ia a
+        conta era "coleta + 2 x 55s cabem em 135s", e o teste que a fixava
+        passava -- mas ela descrevia um mundo em que uma chamada é uma
+        tentativa. Produção 18/08/2026: anthropic estourou 55s, a cadeia caiu
+        para o deepseek por dentro, e o processo foi morto pelo Node em 150s
+        com stdoutParcial=0. Com seis provedores configurados, uma chamada
+        pode custar 330s.
+
+        O prazo é do chamador porque só ele sabe quanto tempo tem: rota
+        interativa tem o timeout do Node na frente; o agente diário, não.
+        """
+        self._prazo = prazo_monotonic
+        self._custo_tentativa_s = max(0.0, custo_por_tentativa_s)
+
+    def _cabe_outra_tentativa(self) -> bool:
+        """Sem prazo definido, sempre cabe -- o default preserva o agente."""
+        if self._prazo is None:
+            return True
+        return (time.monotonic() + self._custo_tentativa_s) <= self._prazo
 
     def _condenar(self, name: str, motivo: str) -> None:
         if name in self._mortos:
@@ -1034,6 +1182,7 @@ class FallbackClient:
         print(
             f"[provider] {name} fora desta run (falha permanente) -- "
             f"não será tentado de novo até o próximo processo.",
+            file=sys.stderr,
             flush=True,
         )
         # Linha estruturada pro runner.ts (mesmo padrão de USAGE:/STEP:/
@@ -1042,12 +1191,79 @@ class FallbackClient:
         # transforma isso em aviso no topo do e-mail do relatório e no stepLog
         # da tela de Runs. `motivo` passa por mask_sensitive_data antes de
         # chegar aqui (ver call site em create()).
+        # ÚNICO print deste arquivo que fica em stdout, e de propósito: não é
+        # diagnóstico humano, é canal legível por máquina. runner.ts e
+        # report-preflight.ts fazem parse de PROVIDER_DOWN:{json} no stdout
+        # CRU para montar o banner de "provedor caído" no relatório diário.
+        # Mover para stderr quebraria esse banner em silêncio.
         print(
             "PROVIDER_DOWN:" + json.dumps(
                 {"provider": name, "motivo": motivo[:300]}, ensure_ascii=False
             ),
             flush=True,
         )
+
+    def _nota_falhas_sem_condenacao(self) -> str:
+        """Sufixo para quem tentou, falhou e NÃO foi condenado.
+
+        Condenação exige falha permanente (modelo inexistente, conta sem
+        saldo). Timeout, erro de conexão, 500 e 529 não condenam -- e é certo
+        que não condenem, porque passam. O que estava errado era o silêncio:
+        o resumo listava só os condenados, então um provedor que caiu por
+        timeout desaparecia do erro como se nunca tivesse existido.
+
+        As duas listas ficam separadas porque apontam para lugares diferentes:
+        condenado é conta/configuração para resolver com o provedor; falha
+        passageira é rede, latência ou capacidade, e pode ter passado agora.
+        """
+        pendentes = {p: m for p, m in self._falhas.items() if p not in self._mortos}
+        if not pendentes:
+            return ""
+        resumo = " | ".join(f"{p}: {m}" for p, m in pendentes.items())
+        return f" -- tentados e falharam sem condenação: {resumo}"
+
+    def _nota_sem_chave(self) -> str:
+        """Sufixo que nomeia quem nunca entrou na cadeia, e por quê.
+
+        Vai no MESMO texto do erro, não só no log: a mensagem sobe até a tela
+        (o painel "Análise com IA" mostra o `error` cru), e é ali que alguém
+        decide onde investigar. Um erro que lista três contas quebradas sem
+        dizer que outras duas foram puladas manda o operador para o lugar
+        errado com toda a confiança do mundo.
+        """
+        if not self._sem_chave:
+            return ""
+        faltando = ", ".join(f"{p} (sem {PROVIDERS[p]['api_key_env']})"
+                             for p in self._sem_chave if p in PROVIDERS)
+        return f" -- nunca tentados, fora da cadeia por falta de chave: {faltando}"
+
+    def pular_provedor_atual(self, motivo: str) -> bool:
+        """Avança para o próximo provedor SEM condenar o atual.
+
+        Diferente de `_condenar`: um toco (resposta curta demais, tool-call
+        alucinado como texto) não é falha permanente. O provedor respondeu --
+        respondeu mal DESTA vez. Condená-lo tiraria da cadeia, pelo resto do
+        processo, alguém que provavelmente funciona no próximo pedido, e o
+        disjuntor existe para erro que não volta (modelo inexistente, conta
+        sem saldo), não para qualidade ruim pontual.
+
+        Devolve False quando não há próximo provedor disponível -- aí quem
+        chamou precisa desistir com erro legível em vez de repetir o mesmo.
+        """
+        atual = self.provider_name
+        for idx in range(self._current_idx + 1, len(self._order)):
+            nome = self._order[idx]
+            if nome in self._mortos:
+                continue
+            self._current_idx = idx
+            print(f"[provider] pulando {atual} ({motivo}) -> {nome}", file=sys.stderr, flush=True)
+            return True
+        print(
+            f"[provider] pulando {atual} ({motivo}) -- sem próximo provedor disponível",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
 
     @property
     def provider_name(self) -> str:
@@ -1082,11 +1298,32 @@ class FallbackClient:
         tools_fn:  optional callable(provider_name) -> list for per-provider tools subset.
         """
         primary_name = self._order[self._current_idx]
+        # Fora do laço: a checagem de orçamento cita o último erro, e o primeiro
+        # provedor pode ser pulado por `continue` (condenado) antes de qualquer
+        # atribuição -- aí a citação daria UnboundLocalError.
+        last_exc: Exception | None = None
         for idx in range(self._current_idx, len(self._order)):
             name = self._order[idx]
             if name in self._mortos:
                 # Já condenado nesta run: pular sem gastar round-trip.
                 continue
+            # Só para as tentativas de FALLBACK (idx > o provedor da vez): a
+            # primeira é a que o chamador já orçou antes de chamar. Barrar essa
+            # seria recusar trabalho que ele decidiu que cabia.
+            if idx > self._current_idx and not self._cabe_outra_tentativa():
+                restante = (self._prazo or 0) - time.monotonic()
+                print(
+                    f"[provider] sem orçamento para tentar {name}: restam "
+                    f"{restante:.0f}s e uma tentativa custa até "
+                    f"{self._custo_tentativa_s:.0f}s",
+                    file=sys.stderr, flush=True,
+                )
+                raise RuntimeError(
+                    f"Orçamento de tempo esgotado antes de tentar {name} "
+                    f"(restavam {restante:.0f}s, tentativa custa até "
+                    f"{self._custo_tentativa_s:.0f}s). Último erro: "
+                    f"{mask_sensitive_data(str(last_exc)) if last_exc else 'n/d'}"
+                )
             c = self._get_client(name)
             tier = _resolve_tier(model)
             resolved_model = c.models.get(tier, model) if tier else model
@@ -1108,6 +1345,7 @@ class FallbackClient:
                         f"[provider] histórico condensado para {name} "
                         f"({len(messages)} mensagens -> 1 de {chars} chars, "
                         f"com o trabalho já feito)",
+                        file=sys.stderr,
                         flush=True,
                     )
             else:
@@ -1122,7 +1360,11 @@ class FallbackClient:
             # default 1) — pior caso agora é 2x2=4 tentativas totais em vez
             # de até 3x4=12.
             transient_retries = int(os.environ.get("AGENT_TRANSIENT_RETRIES", "1"))
-            last_exc: Exception | None = None
+            last_exc = None
+            # Relógio POR PROVEDOR. Inclui os retries transitórios dele de
+            # propósito: a pergunta que o log responde é "quanto este provedor
+            # custou", e a espera do backoff foi gasta por causa dele.
+            _t_provedor = time.monotonic()
             for attempt in range(transient_retries + 1):
                 try:
                     result = c.create(
@@ -1132,8 +1374,9 @@ class FallbackClient:
                         tools=resolved_tools,
                         messages=resolved_messages,
                     )
+                    self.ultimo_tempo_provedor_s = time.monotonic() - _t_provedor
                     if idx != self._current_idx:
-                        print(f"[provider] switched to {name}", flush=True)
+                        print(f"[provider] switched to {name}", file=sys.stderr, flush=True)
                         self._current_idx = idx
                     return result
                 except Exception as exc:
@@ -1144,13 +1387,20 @@ class FallbackClient:
                             f"[provider] {name} erro transitório "
                             f"(tentativa {attempt + 1}/{transient_retries + 1}) — "
                             f"aguardando {delay}s antes de re-tentar...",
+                            file=sys.stderr,
                             flush=True,
                         )
                         time.sleep(delay)
                         continue
                     break
 
+            gasto_provedor = time.monotonic() - _t_provedor
             safe_exc = mask_sensitive_data(str(last_exc))
+            if last_exc is not None:
+                # Antes de decidir se condena: registrar que ESTE provedor
+                # tentou e falhou. Sem isto, falha não-permanente é invisível
+                # no resumo final.
+                self._falhas.setdefault(name, safe_exc)
             if last_exc is not None and _is_falha_permanente(last_exc):
                 self._condenar(name, safe_exc)
             if last_exc is not None and _is_model_not_found(last_exc):
@@ -1161,13 +1411,18 @@ class FallbackClient:
                     f"[provider] {name}: modelo '{resolved_model}' não existe ou não está "
                     f"disponível para esta chave — ERRO DE CONFIGURAÇÃO, corrija "
                     f"PROVIDERS['{name}']['models'] em provider.py. Detalhe: {safe_exc}",
+                    file=sys.stderr,
                     flush=True,
                 )
             else:
-                print(f"[provider] {name} failed: {safe_exc}", flush=True)
+                # O tempo junto do erro: "deepseek failed" sem número não
+                # distingue recusa imediata (chave ruim) de teto estourado
+                # (55s), que pedem investigações opostas.
+                print(f"[provider] {name} failed after {gasto_provedor:.1f}s: {safe_exc}",
+                      file=sys.stderr, flush=True)
             proximos = [p for p in self._order[idx + 1:] if p not in self._mortos]
             if proximos:
-                print(f"[provider] trying {proximos[0]}...", flush=True)
+                print(f"[provider] trying {proximos[0]}...", file=sys.stderr, flush=True)
             else:
                 # Diagnóstico junto do erro: sem isso o operador só vê o último
                 # motivo e não sabe que a cadeia INTEIRA está fora, nem por quê.
@@ -1178,18 +1433,42 @@ class FallbackClient:
                 raise RuntimeError(
                     f"All providers exhausted. Last error: {safe_exc}"
                     + (f" -- condenados nesta run: {resumo}" if resumo else "")
+                    + self._nota_falhas_sem_condenacao()
+                    + self._nota_sem_chave()
                 ) from last_exc
         raise RuntimeError(
             "No providers available"
             + (f" -- todos condenados: {', '.join(self._mortos)}" if self._mortos else "")
+            + self._nota_sem_chave()
         )
 
 
 # Tier detection: map a model name back to its tier key
+#
+# Um MESMO modelo costuma servir vários tiers (o gemini-2.5-flash é full, flash
+# e chat ao mesmo tempo; o mesmo vale para o llama do openrouter e, desde
+# 18/08/2026, para o deepseek-v4-flash). O mapa é nome -> tier, então sem
+# precedência o ÚLTIMO tier escrito vencia -- e como os dicts acima listam full,
+# flash, chat nessa ordem, o vencedor era sempre `chat`.
+#
+# O efeito era um rebaixamento silencioso na troca de provedor: pedir o `full`
+# do gemini e cair para o anthropic resolvia como tier `chat` e trazia o haiku
+# onde a chamada tinha pedido o sonnet. Ninguém percebe pelo log -- a resposta
+# vem, só vem de um modelo mais fraco do que o pedido.
+#
+# A ambiguidade é estrutural: quando um nome serve a três tiers, ele não carrega
+# informação suficiente para desfazer o empate (o certo seria passar o tier
+# adiante em vez de reconstruí-lo pelo nome). Diante do empate, subir é a
+# escolha segura: errar para cima custa alguns centavos, errar para baixo entrega
+# análise pior sem avisar -- e degradação silenciosa é o que esta apuração
+# inteira esteve caçando.
+_PRECEDENCIA_TIER = {"full": 0, "flash": 1, "chat": 2}
 _TIER_MAP: dict[str, str] = {}
 for _pname, _pcfg in PROVIDERS.items():
     for _tier, _mname in _pcfg["models"].items():
-        _TIER_MAP[_mname] = _tier
+        _ja = _TIER_MAP.get(_mname)
+        if _ja is None or _PRECEDENCIA_TIER.get(_tier, 99) < _PRECEDENCIA_TIER.get(_ja, 99):
+            _TIER_MAP[_mname] = _tier
 
 
 def _resolve_tier(model: str) -> str | None:

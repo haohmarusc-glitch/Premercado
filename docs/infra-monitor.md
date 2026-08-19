@@ -157,3 +157,50 @@ VPS for recriada do zero, esse serviço específico precisa ser reconstruído
 do zero (é pequeno: só uma tela de senha que seta o cookie `monitor_ok=1`),
 já que não há cópia dele em nenhum repositório. Trazê-lo pra um repo (mesmo
 que privado) evitaria repetir esse ponto cego.
+
+
+## Registro de memória do host
+
+`scripts/registrar-memoria.sh` — cron horário que grava os maiores consumidores
+de RAM em `/var/log/memoria-premercado.log`.
+
+**Por que existe.** Em 18/08/2026 a VPS chegou a 3,3 Gi usados de 3,7 Gi, com
+1 Gi em swap, depois de 10 dias ligada. O `docker stats` mostrava os cinco
+containers somando **192 MiB** — ou seja, mais de 3 GB estavam sendo consumidos
+por processos do HOST, fora do Docker.
+
+Isso não era curiosidade: a pressão de memória fazia uma chamada de 26 s à API
+da Anthropic estourar o teto de 55 s, e a Análise com IA falhava sem causa
+aparente. Medimos rede (134 ms de handshake), a própria API (26-29 s, três
+vezes) e o teto — tudo saudável. O gargalo era a máquina.
+
+**E o reboot apagou a evidência.** O consumo voltou a 1,0 Gi e o swap zerou,
+mas ninguém sabe quem acumulou. Sem registro contínuo, o próximo episódio custa
+a mesma investigação e termina do mesmo jeito.
+
+É a mesma lição do resto deste documento, aplicada a tempo em vez de depois:
+o que só existe na máquina, e não está escrito, some.
+
+**Instalar:**
+
+```sh
+install -m 755 scripts/registrar-memoria.sh /usr/local/bin/
+( crontab -l 2>/dev/null; echo "0 * * * * /usr/local/bin/registrar-memoria.sh" ) | crontab -
+```
+
+**Ler, depois de alguns dias:**
+
+```sh
+grep '^===' /var/log/memoria-premercado.log | tail -30    # a curva do total
+grep -A8 '^=== 2026-08-2' /var/log/memoria-premercado.log # quem crescia
+```
+
+O que procurar é RSS subindo de forma monotônica ao longo dos dias. O `uptime`
+vai em cada linha de propósito: sem ele, uma queda no total é ambígua — não dá
+para saber se o vazamento foi resolvido ou se a máquina só reiniciou.
+
+Suspeito principal pela medição de 18/08: **netdata** (270 MB seis minutos após
+o boot, e ele mantém o banco de métricas em memória). Ele é o maior consumidor
+identificável do host e serve a um único botão — se confirmar, `systemctl
+disable --now netdata` devolve a memória, e o Uptime Kuma e o Dozzle continuam
+cobrindo o essencial.

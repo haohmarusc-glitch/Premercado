@@ -18,7 +18,15 @@ Ou importe no Premercado:
     from radar_ia_2026 import (correlacao, cluster_de, risco_portfolio,
                                earnings_proximos, alerta_contagio, DADOS)
 
-AVISO: dados estáticos — snapshot de 14/08/2026. Revalidar antes de operar.
+AVISO: o módulo tem TRÊS camadas com validades diferentes, e confundi-las é o
+erro que a auditoria de 17/08/2026 pegou:
+  - preço e faixa de 52 semanas: VIVOS (atualizar_min52_vivo, a cada chamada);
+  - correlações e calendário de earnings: recoletados por checker
+    (atualizar_correlacoes.py semanal, atualizar_earnings.py diário) e
+    aplicados como overlay no import;
+  - EVR, move implícito e reação histórica: transcrição MANUAL do OptionSlam,
+    sem fonte programática — envelhecem até alguém abrir o site.
+HOJE_SNAPSHOT descreve a última camada, não as duas primeiras.
 
 Adaptações feitas na integração ao Premercado (vs. o pacote original):
   - earnings_proximos() usa HOJE em BRT como referência default, não o
@@ -37,86 +45,110 @@ Adaptações feitas na integração ao Premercado (vs. o pacote original):
 from __future__ import annotations
 import argparse
 import json
+import os
 import sys
 from datetime import date, timedelta
 from itertools import combinations
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # brt.today_brt: import dos DOIS jeitos porque este script roda dos dois
 # jeitos (flat via spawn direto por caminho, e como módulo do pacote agent) --
 # mesmo padrão documentado em earnings_reaction_analysis.py.
 try:
     from brt import today_brt
+    import market_data_provider
+    import radar_overrides as _radar_overrides
 except ImportError:
     from agent.brt import today_brt
+    from agent import market_data_provider
+    from agent import radar_overrides as _radar_overrides
 
 HOJE_SNAPSHOT = date(2026, 8, 14)  # data de referência dos dados
 
 # ============================================================================
-# 1. CALENDÁRIO DE EARNINGS (ago-set/2026)  "BO"=antes da abertura, "AC"=após
+# 1. CALENDÁRIO DE EARNINGS  "BO"=antes da abertura, "AC"=após o fechamento
 # ============================================================================
+#
+# Este dicionário deixou de ser a fonte de verdade: atualizar_earnings.py
+# busca o calendário na Alpha Vantage e o overlay abaixo o sobrescreve no
+# import. O que sobra aqui é o FALLBACK -- vale quando o overlay ainda não
+# rodou (primeiro boot, ou logo depois de um rebuild, que apaga o cache).
+#
+# Conferido contra o EARNINGS_CALENDAR em 19/08/2026 para 25 tickers; o resto
+# segue como veio da transcrição de 14/08 até o checker diário passar por
+# cima. Três datas estavam erradas na transcrição, e a pior delas por 15 dias:
+# BABA aparecia em 04/09 quando reporta em 20/08 -- um papel que o radar
+# mostraria como "sem catalisador" na véspera do catalisador.
+#
+# Quem editar à mão: `nota` é reservada a especulação SOBRE A DATA, e some
+# sozinha quando o overlay confirma. Nota sobre outra coisa não pertence aqui.
 EARNINGS = {
     # -- semicondutores --
-    "ADI":  {"data": "2026-08-19", "quando": None, "setor": "semis"},
-    "WOLF": {"data": "2026-08-19", "quando": None, "setor": "semis"},
-    "NVDA": {"data": "2026-08-26", "quando": "AC", "setor": "semis"},
-    "SNPS": {"data": "2026-08-26", "quando": None, "setor": "semis"},
-    "AVGO": {"data": "2026-09-03", "quando": "AC", "setor": "semis"},
-    "MU":   {"data": "2026-09-22", "quando": "AC", "setor": "semis"},
+    "ADI": {"data": "2026-08-19", "quando": "BO", "setor": "semis"},
+    "WOLF":{"data": "2026-08-19", "quando": None, "setor": "semis"},
+    "NVDA":{"data": "2026-08-26", "quando": "AC", "setor": "semis"},
+    "SNPS":{"data": "2026-08-26", "quando": None, "setor": "semis"},
+    "AVGO":{"data": "2026-09-02", "quando": "AC", "setor": "semis"},
+    "MU":  {"data": "2026-09-22", "quando": "AC", "setor": "semis"},
     # -- software/tech --
-    "INTU": {"data": "2026-08-25", "quando": None, "setor": "software"},
-    "CRM":  {"data": "2026-08-26", "quando": None, "setor": "software"},
-    "CRWD": {"data": "2026-08-26", "quando": None, "setor": "software",
-             "nota": "fontes divergem: pode ser 01/09"},
-    "S":    {"data": "2026-08-27", "quando": None, "setor": "software"},
-    "ADSK": {"data": "2026-08-27", "quando": "AC", "setor": "software"},
-    "PANW": {"data": "2026-09-01", "quando": None, "setor": "software"},
-    "MDB":  {"data": "2026-09-01", "quando": None, "setor": "software"},
-    "AI":   {"data": "2026-09-02", "quando": None, "setor": "software"},
-    "SNOW": {"data": "2026-09-02", "quando": None, "setor": "software"},
-    "ZS":   {"data": "2026-09-03", "quando": None, "setor": "software"},
-    "ORCL": {"data": "2026-09-08", "quando": None, "setor": "software",
-             "nota": "outra fonte: 14/09"},
-    "ADBE": {"data": "2026-09-10", "quando": None, "setor": "software"},
-    "CSCO": {"data": "2026-09-30", "quando": None, "setor": "networking"},
+    "INTU":{"data": "2026-08-25", "quando": "AC", "setor": "software"},
+    "CRM": {"data": "2026-08-26", "quando": "AC", "setor": "software"},
+    "CRWD":{"data": "2026-08-26", "quando": "AC", "setor": "software"},
+    "ADSK":{"data": "2026-08-27", "quando": "AC", "setor": "software"},
+    "S":   {"data": "2026-08-27", "quando": None, "setor": "software"},
+    "MDB": {"data": "2026-09-01", "quando": None, "setor": "software"},
+    "PANW":{"data": "2026-09-01", "quando": None, "setor": "software"},
+    "AI":  {"data": "2026-09-02", "quando": None, "setor": "software"},
+    "SNOW":{"data": "2026-09-02", "quando": None, "setor": "software"},
+    "ZS":  {"data": "2026-09-03", "quando": None, "setor": "software"},
+    "ORCL":{"data": "2026-09-08", "quando": None, "setor": "software"},
+    "ADBE":{"data": "2026-09-10", "quando": "AC", "setor": "software"},
+    "CSCO":{"data": "2026-09-30", "quando": None, "setor": "networking"},
     # -- varejo --
-    "HD":   {"data": "2026-08-18", "quando": "BO", "setor": "varejo"},
-    "LOW":  {"data": "2026-08-19", "quando": "BO", "setor": "varejo"},
-    "TJX":  {"data": "2026-08-19", "quando": None, "setor": "varejo"},
-    "TGT":  {"data": "2026-08-19", "quando": None, "setor": "varejo"},
-    "WMT":  {"data": "2026-08-20", "quando": None, "setor": "varejo"},
-    "ROST": {"data": "2026-08-20", "quando": None, "setor": "varejo"},
-    "BBY":  {"data": "2026-08-27", "quando": None, "setor": "varejo"},
-    "ULTA": {"data": "2026-08-27", "quando": "AC", "setor": "varejo"},
-    "DLTR": {"data": "2026-09-02", "quando": None, "setor": "varejo"},
-    "LULU": {"data": "2026-09-03", "quando": None, "setor": "varejo"},
-    "GME":  {"data": "2026-09-08", "quando": None, "setor": "varejo"},
-    "KR":   {"data": "2026-09-10", "quando": None, "setor": "varejo"},
-    "COST": {"data": "2026-09-24", "quando": None, "setor": "varejo"},
+    "HD":  {"data": "2026-08-18", "quando": "BO", "setor": "varejo"},
+    "LOW": {"data": "2026-08-19", "quando": "BO", "setor": "varejo"},
+    "TGT": {"data": "2026-08-19", "quando": None, "setor": "varejo"},
+    "TJX": {"data": "2026-08-19", "quando": None, "setor": "varejo"},
+    "ROST":{"data": "2026-08-20", "quando": None, "setor": "varejo"},
+    "WMT": {"data": "2026-08-20", "quando": "BO", "setor": "varejo"},
+    "BBY": {"data": "2026-08-27", "quando": "BO", "setor": "varejo"},
+    "DLTR":{"data": "2026-08-27", "quando": "BO", "setor": "varejo"},
+    "ULTA":{"data": "2026-08-27", "quando": "AC", "setor": "varejo"},
+    "LULU":{"data": "2026-09-03", "quando": None, "setor": "varejo"},
+    "GME": {"data": "2026-09-08", "quando": None, "setor": "varejo"},
+    "KR":  {"data": "2026-09-10", "quando": None, "setor": "varejo"},
+    "COST":{"data": "2026-09-24", "quando": None, "setor": "varejo"},
     # -- China ADRs --
-    "BIDU": {"data": "2026-08-18", "quando": None, "setor": "china"},
-    "NTES": {"data": "2026-08-20", "quando": "BO", "setor": "china"},
-    "XPEV": {"data": "2026-08-24", "quando": "BO", "setor": "china"},
-    "PDD":  {"data": "2026-08-24", "quando": "BO", "setor": "china",
-             "nota": "~24-25/08, não confirmado oficialmente"},
-    "BILI": {"data": "2026-08-27", "quando": None, "setor": "china"},
-    "BABA": {"data": "2026-09-04", "quando": None, "setor": "china"},
+    "BIDU":{"data": "2026-08-18", "quando": None, "setor": "china"},
+    "BABA":{"data": "2026-08-20", "quando": "BO", "setor": "china"},
+    "NTES":{"data": "2026-08-20", "quando": "BO", "setor": "china"},
+    "PDD": {"data": "2026-08-24", "quando": "BO", "setor": "china",
+            "nota": "~24-25/08, não confirmado oficialmente"},
+    "XPEV":{"data": "2026-08-24", "quando": "BO", "setor": "china"},
+    "BILI":{"data": "2026-08-27", "quando": "BO", "setor": "china"},
     # -- EV --
-    "LI":   {"data": "2026-08-27", "quando": None, "setor": "ev"},
-    "NIO":  {"data": "2026-09-01", "quando": None, "setor": "ev"},
+    "LI":  {"data": "2026-08-27", "quando": None, "setor": "ev"},
+    "NIO": {"data": "2026-09-01", "quando": None, "setor": "ev"},
     # -- outros --
-    "EL":   {"data": "2026-08-19", "quando": None, "setor": "outros"},
-    "DE":   {"data": "2026-08-20", "quando": None, "setor": "outros"},
-    "TOL":  {"data": "2026-08-18", "quando": None, "setor": "outros"},
-    "NKE":  {"data": "2026-09-29", "quando": None, "setor": "outros"},
+    "TOL": {"data": "2026-08-18", "quando": None, "setor": "outros"},
+    "EL":  {"data": "2026-08-19", "quando": "BO", "setor": "outros"},
+    "DE":  {"data": "2026-08-20", "quando": "BO", "setor": "outros"},
+    "NKE": {"data": "2026-09-29", "quando": None, "setor": "outros"},
     # -- tema IA (datas citadas na análise de volatilidade) --
-    "SNDK": {"data": "2026-11-05", "quando": None, "setor": "memoria"},
-    "STX":  {"data": "2026-10-28", "quando": None, "setor": "memoria"},
-    "LRCX": {"data": "2026-10-21", "quando": None, "setor": "equipamento"},
-    "KLAC": {"data": "2026-10-28", "quando": None, "setor": "equipamento"},
-    "ASML": {"data": "2026-10-14", "quando": None, "setor": "equipamento"},
-    "TSM":  {"data": "2026-10-15", "quando": None, "setor": "foundry"},
-    "MRVL": {"data": "2026-08-27", "quando": None, "setor": "semis",
-             "nota": "fontes divergem: 20 ou 27/08"},
+    "MRVL":{"data": "2026-08-27", "quando": "AC", "setor": "semis"},
+    "ASML":{"data": "2026-10-14", "quando": None, "setor": "equipamento"},
+    "TSM": {"data": "2026-10-15", "quando": None, "setor": "foundry"},
+    "LRCX":{"data": "2026-10-21", "quando": None, "setor": "equipamento"},
+    "KLAC":{"data": "2026-10-28", "quando": None, "setor": "equipamento"},
+    "STX": {"data": "2026-10-28", "quando": None, "setor": "memoria"},
+    "SNDK":{"data": "2026-11-05", "quando": None, "setor": "memoria"},
 }
 
 # ============================================================================
@@ -137,37 +169,149 @@ MIN52 = {
     "HD":   {"preco": 341.70, "min52": 289.10, "status": "borderline"},
 }
 
+# --- Busca viva de preço e faixa de 52 semanas -------------------------------
+#
+# Os valores acima são o SNAPSHOT de 12-14/08/2026 e servem só de fallback.
+# Deixá-los como única fonte produziu o erro que a auditoria de 17/08/2026
+# pegou: PDD com preco 84,5 ABAIXO da própria min52 87,11 -- impossível por
+# construção, e a min52 real era 71,94. Dado velho não erra só de magnitude;
+# erra de forma, e forma impossível passa despercebida quando ninguém olha.
+#
+# auto_adjust=True e permitir_externa=False pela mesma razão de get_trend e
+# get_technicals: a série é ajustada, a fonte externa devolve "as traded", e
+# um desdobramento dentro da janela viraria uma mínima de 52 semanas que nunca
+# existiu.
+#
+# Extremos vêm de Low/High (intradiário), não do fechamento -- é a definição
+# que fast_info.year_low usa e que o resto do app já mostra. Usar fechamento
+# aqui daria dois "min52" diferentes com o mesmo nome nas telas.
+MIN52_PERIODO = "1y"
+MIN52_DENTRO_PCT = 10.0      # <= 10% acima da mínima
+MIN52_BORDERLINE_PCT = 20.0  # 10-20%
+
+
+def _status_min52(preco: float, min52: float) -> str:
+    # round antes de comparar: 110/100-1 dá 0.10000000000000009 em float, e
+    # sem isso um papel EXATAMENTE a +10% da mínima cai em "borderline" quando
+    # a regra escrita é "<= 10% = dentro". Erro de uma casa em ponto flutuante
+    # decidindo classificação é o tipo de coisa que ninguém encontra olhando o
+    # número final.
+    acima = round((preco / min52 - 1) * 100, 6)
+    if acima <= MIN52_DENTRO_PCT:
+        return "dentro"
+    return "borderline" if acima <= MIN52_BORDERLINE_PCT else "fora"
+
+
+def validar_min52(linha: dict) -> list[str]:
+    """Inconsistências que não podem existir num dado bom.
+
+    Mesma ideia do veredito_validator: conferir ANTES de servir, porque um
+    número impossível com cara de número calculado não levanta suspeita em
+    quem lê.
+    """
+    avisos = []
+    preco, mn, mx = linha.get("preco"), linha.get("min52"), linha.get("max52")
+    if preco is not None and mn is not None and preco < mn:
+        avisos.append(f"preço {preco} abaixo da mínima de 52 semanas {mn}")
+    if preco is not None and mx is not None and preco > mx:
+        avisos.append(f"preço {preco} acima da máxima de 52 semanas {mx}")
+    if mn is not None and mx is not None and mn > mx:
+        avisos.append(f"mínima {mn} maior que a máxima {mx}")
+    return avisos
+
+
+def atualizar_min52_vivo(tickers: list[str] | None = None) -> dict:
+    """Substitui preço/mínima/máxima do snapshot por valores vivos.
+
+    Devolve `{"atualizados": [...], "fontesDegradadas": {...}, "avisos": [...]}`.
+    Ticker cuja série não vier NÃO é sobrescrito: mantém o valor do snapshot,
+    mas entra em fontesDegradadas. Degradar em silêncio para o valor velho é
+    exatamente o que se está corrigindo aqui.
+    """
+    alvos = tickers or list(MIN52)
+    resultado: dict = {"atualizados": [], "fontesDegradadas": {}, "avisos": []}
+
+    # Aquece o hist_cache com UMA chamada em lote antes do laço. Os tickers do
+    # screening (PDD, XPEV, ULTA, HD...) não estão na carteira, então nenhum
+    # outro checker os deixou no cache -- sem isto seriam ~10 downloads
+    # sequenciais, e o custo cairia inteiro no primeiro acesso pós-deploy.
+    #
+    # O lote devolve só fechamentos; os extremos precisam de Low/High. Por isso
+    # ele serve de aquecimento (get_daily_closes_batch grava o OHLCV completo
+    # por ticker no hist_cache) e a leitura real vem do get_daily_history
+    # abaixo, que então acerta o cache quente.
+    try:
+        market_data_provider.get_daily_closes_batch(
+            alvos, MIN52_PERIODO, auto_adjust=True, permitir_externa=False
+        )
+    except Exception as e:  # noqa: BLE001 — aquecimento é otimização, não requisito
+        print(f"[radar] lote de aquecimento falhou ({type(e).__name__}); "
+              f"seguindo ticker a ticker", file=sys.stderr, flush=True)
+
+    for t in alvos:
+        try:
+            r = market_data_provider.get_daily_history(
+                t, MIN52_PERIODO, auto_adjust=True, permitir_externa=False
+            )
+        except Exception as e:  # noqa: BLE001 — fonte fora do ar não derruba o radar
+            resultado["fontesDegradadas"][t] = f"erro: {type(e).__name__}"
+            continue
+
+        if not r.ok or r.df.empty:
+            resultado["fontesDegradadas"][t] = "sem série utilizável"
+            continue
+
+        df = r.df
+        try:
+            preco = round(float(df["Close"].iloc[-1]), 2)
+            mn = round(float(df["Low"].min()), 2)
+            mx = round(float(df["High"].max()), 2)
+        except (KeyError, IndexError, ValueError) as e:
+            resultado["fontesDegradadas"][t] = f"série incompleta: {type(e).__name__}"
+            continue
+
+        linha = {"preco": preco, "min52": mn, "max52": mx,
+                 "status": _status_min52(preco, mn), "fonte": r.source}
+        avisos = validar_min52(linha)
+        if avisos:
+            # Dado vivo inconsistente é pior que dado velho: não sobrescreve,
+            # avisa. O snapshot ao menos é reconhecidamente antigo.
+            resultado["avisos"].extend(f"{t}: {a}" for a in avisos)
+            resultado["fontesDegradadas"][t] = "dado vivo inconsistente, mantido o snapshot"
+            continue
+
+        if r.is_stale or r.source not in ("yfinance", "yfinance_cache"):
+            resultado["fontesDegradadas"][t] = r.source
+
+        MIN52[t] = linha
+        resultado["atualizados"].append(t)
+
+    return resultado
+
+
 # ============================================================================
-# 3. REAÇÃO HISTÓRICA A EARNINGS (OptionSlam, snapshot 14/08/2026)
-#    evr: Earnings Volatility Rating 0-10 | move_impl_*: move implícito %
+# 3. REAÇÃO HISTÓRICA A EARNINGS (coleta MANUAL, OptionSlam)
 # ============================================================================
-REACAO_EARNINGS = {
-    "LOW":  {"evr": 1.5, "move_impl_sem": 5.54, "move_impl_mes": 8.59,
-             "ultima_reacao": {"data": "2026-05-20", "abriu": -2.01, "fechou": +1.22},
-             "vies": "recupera no dia"},
-    "NTES": {"evr": 2.7, "move_impl_sem": 6.89, "move_impl_mes": 10.88,
-             "ultima_reacao": {"data": "2026-05-21", "fechou": -2.12, "min_intraday": -9.21},
-             "vies": "negativo; mínima 52sem foi setada no dia do último earnings"},
-    "XPEV": {"evr": 3.5, "move_impl_sem": 10.61, "move_impl_mes": 15.37,
-             "ultima_reacao": {"data": "2026-05-28", "abriu": +1.51, "fechou": -0.06},
-             "vies": "neutro/leve negativo"},
-    "PDD":  {"evr": 4.4, "move_impl_sem": 7.38, "move_impl_mes": 9.80,
-             "ultima_reacao": {"data": "2026-05-27", "fechou": -10.37, "min_intraday": -13.48},
-             "vies": "muito negativo"},
-    "SNPS": {"evr": None, "move_impl_sem": 3.9, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-05-27", "nota": "beat de 12.4% mas caiu"},
-             "vies": "beats não seguram o papel — overhang estrutural de IA"},
-    "ADSK": {"evr": None, "move_impl_sem": 4.9, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-05-28", "nota": "beat de 10.7%"},
-             "vies": "positivo recente; mediana de move 3.6% em 8 tris"},
-    "ULTA": {"evr": 3.9, "move_impl_sem": 9.64, "move_impl_mes": 11.46,
-             "ultima_reacao": {"data": "2026-06-02", "abriu": -3.25, "fechou": -4.78},
-             "vies": "duas últimas reações negativas"},
-    "AOSL": {"evr": None, "move_impl_sem": None, "move_impl_mes": None,
-             "ultima_reacao": {"data": "2026-08-12", "fechou_dia": +4.13,
-                               "premkt_seguinte": -10.47},
-             "vies": "média histórica -12.28% no dia seguinte (AMC)"},
-}
+# Estes números não têm API: alguém abre o OptionSlam e transcreve. Antes eles
+# viviam embutidos aqui, indistinguíveis do resto -- dado manual disfarçado de
+# vivo, que envelhece em silêncio.
+#
+# Agora moram em dados/radar_overrides.json, versionados e com `coletado_em`
+# obrigatório, e o relatório imprime a idade. A auditoria de 17/08/2026 pegou o
+# custo de não fazer isso: o snapshot de 13/08 seguia sendo servido como se
+# fosse de hoje.
+#
+# A leitura em si vive em radar_overrides.py: o earnings_window também precisa
+# destes números (fallback do move implícito quando a cadeia de opções não
+# responde), e duas cópias da leitura divergiriam na primeira mudança de
+# formato -- o padrão de bug do playbook §2b.
+REACAO_EARNINGS, OVERRIDES_COLETADO_EM, OVERRIDES_FONTE = _radar_overrides.carregar()
+
+
+def idade_overrides_dias(ref: date | None = None) -> int | None:
+    """Há quantos dias os dados manuais foram coletados. None sem carimbo."""
+    return _radar_overrides.idade_dias(OVERRIDES_COLETADO_EM, ref)
+
 
 # ============================================================================
 # 4. RISCOS POR TICKER (dos 7 priorizados + AOSL)
@@ -353,6 +497,17 @@ VOL_MEDIDA_APLICADA = 0
 
 _OVERLAY_PATH_DEFAULT = "/var/cache/premercado/radar_correlacoes.json"
 
+# ── Overlay do calendário de earnings (atualizar_earnings.py) ──────────────
+# O EARNINGS acima era digitado à mão e é o pedaço mais perecível do
+# snapshot: correlação de 6 meses se move devagar, data de earnings vira
+# passado em dias. O script busca o calendário na Alpha Vantage e grava um
+# JSON que este bloco aplica por cima no import, mesma mecânica (e mesma
+# tolerância a falha) do overlay de correlações.
+EARNINGS_ATUALIZADO_EM: str | None = None
+EARNINGS_APLICADOS = 0
+
+_OVERLAY_EARNINGS_DEFAULT = "/var/cache/premercado/radar_earnings.json"
+
 
 def _aplicar_vol_medida(blob: dict) -> None:
     """Substitui a vol semanal de TEMA_IA pela MEDIDA por nós, quando o
@@ -439,7 +594,52 @@ def _aplicar_overlay_correlacoes() -> None:
         print(f"[radar] overlay de correlações ignorado ({path}): {e}", file=sys.stderr)
 
 
+def _aplicar_overlay_earnings() -> None:
+    global EARNINGS_ATUALIZADO_EM, EARNINGS_APLICADOS
+    import os
+    path = os.environ.get("RADAR_EARNINGS_OVERLAY") or _OVERLAY_EARNINGS_DEFAULT
+    try:
+        with open(path, encoding="utf-8") as f:
+            blob = json.load(f)
+        eventos = blob.get("earnings")
+        if not isinstance(eventos, dict) or not eventos:
+            return
+        aplicados = 0
+        for ticker, ev in eventos.items():
+            alvo = EARNINGS.get(str(ticker).upper())
+            # Ticker fora do universo do radar é ignorado de propósito: o
+            # `setor` é classificação nossa, não vem da API, então criar
+            # entrada aqui produziria linha sem setor na tela.
+            if alvo is None or not isinstance(ev, dict):
+                continue
+            data = str(ev.get("data") or "").strip()
+            if len(data) != 10 or data.count("-") != 2:
+                continue
+            alvo["data"] = data
+            alvo["quando"] = ev.get("quando") if ev.get("quando") in ("BO", "AC") else None
+            alvo["fonte"] = "alphavantage"
+            # Toda `nota` do EARNINGS é especulação SOBRE A DATA ("fontes
+            # divergem: pode ser 01/09", "não confirmado oficialmente"), e
+            # especulação morre no instante em que uma fonte de calendário
+            # responde. Deixá-la ao lado da data confirmada seria pior que
+            # inútil: a tela mostraria "fontes divergem" embaixo do dado que
+            # encerrou a divergência. Nota que não seja sobre a data não
+            # pertence a este dicionário.
+            alvo.pop("nota", None)
+            aplicados += 1
+        if aplicados:
+            EARNINGS_APLICADOS = aplicados
+            EARNINGS_ATUALIZADO_EM = str(blob.get("atualizado_em")) if blob.get("atualizado_em") else None
+            print(f"[radar] overlay de earnings aplicado: {aplicados} tickers, "
+                  f"coletado em {EARNINGS_ATUALIZADO_EM} ({path})", file=sys.stderr)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[radar] overlay de earnings ignorado ({path}): {e}", file=sys.stderr)
+
+
 _aplicar_overlay_correlacoes()
+_aplicar_overlay_earnings()
 
 
 # ============================================================================
@@ -630,10 +830,37 @@ def _fmt_pct(v):
     return f"{v:+.1f}%" if v is not None else "n/d"
 
 
+def _linha_procedencia(viva: dict) -> None:
+    """Uma linha dizendo de onde veio cada coisa. O radar mistura dado vivo
+    (preço/52s), manual (EVR/move implícito) e embutido (correlações); sem
+    isso o leitor trata tudo como igualmente fresco."""
+    idade = idade_overrides_dias()
+    if OVERRIDES_COLETADO_EM:
+        quando = "hoje" if idade == 0 else f"há {idade} dia(s)"
+        print(f"  EVR/move implícito: coleta manual ({OVERRIDES_FONTE or 'n/d'}) "
+              f"{quando}, em {OVERRIDES_COLETADO_EM}")
+    else:
+        print("  EVR/move implícito: SEM carimbo de coleta — idade desconhecida")
+
+    if viva["atualizados"]:
+        print(f"  preço e faixa de 52 semanas: vivos ({len(viva['atualizados'])} tickers)")
+    if viva["fontesDegradadas"]:
+        print("  ATENÇÃO — não atualizados, servindo o snapshot de "
+              f"{HOJE_SNAPSHOT.isoformat()}:")
+        for t, motivo in sorted(viva["fontesDegradadas"].items()):
+            print(f"    {t}: {motivo}")
+    for aviso in viva["avisos"]:
+        print(f"  INCONSISTÊNCIA: {aviso}")
+
+
 def relatorio_completo():
+    viva = atualizar_min52_vivo()
+
     print("=" * 72)
-    print("RADAR IA 2026 — snapshot 14/08/2026 (dados estáticos, revalidar)")
+    print("RADAR IA 2026")
     print("=" * 72)
+    print("\n--- PROCEDÊNCIA DOS DADOS ---")
+    _linha_procedencia(viva)
 
     print("\n--- EARNINGS PRÓXIMOS 14 DIAS ---")
     for e in earnings_proximos(14):
@@ -671,13 +898,26 @@ def relatorio_completo():
 
 
 def exportar_json():
+    viva = atualizar_min52_vivo()
     blob = {
         "snapshot": HOJE_SNAPSHOT.isoformat(),
+        # Procedência explícita: o consumidor (tela Radar IA) precisa saber o
+        # que é vivo, o que é manual e há quanto tempo.
+        "overridesColetadoEm": OVERRIDES_COLETADO_EM,
+        "overridesFonte": OVERRIDES_FONTE,
+        "overridesIdadeDias": idade_overrides_dias(),
+        "min52Atualizados": viva["atualizados"],
+        "min52Avisos": viva["avisos"],
         # Janela real das correlações servidas: igual ao snapshot quando só
         # há o embutido; avança quando o overlay de atualizar_correlacoes.py
         # foi aplicado no import.
         "correlacoes_janela_fim": CORRELACOES_JANELA_FIM,
         "correlacoes_atualizado_em": CORRELACOES_ATUALIZADO_EM,
+        # None enquanto só houver o calendário embutido; vira a data da
+        # coleta quando o overlay de atualizar_earnings.py entrou. É o que
+        # permite à tela dizer "calendário de hoje" em vez de deixar o
+        # usuário supor que tudo ali é do snapshot.
+        "earnings_atualizado_em": EARNINGS_ATUALIZADO_EM,
         "earnings": EARNINGS,
         "min52": MIN52,
         "reacao_earnings": REACAO_EARNINGS,
@@ -686,6 +926,10 @@ def exportar_json():
         "correlacoes": {f"{a}|{b}": c for (a, b), c in CORRELACOES.items()},
         "portfolio_default": PORTFOLIO_DEFAULT,
     }
+    # Mesmo nome de campo que get_scenario_params/get_ticker_snapshot já usam
+    # para degradação — um vocabulário só em todo o app.
+    if viva["fontesDegradadas"]:
+        blob["fontesDegradadas"] = viva["fontesDegradadas"]
     print(json.dumps(blob, ensure_ascii=False, indent=2))
 
 
@@ -714,7 +958,7 @@ def main(argv=None):
     elif args.cluster:
         print(json.dumps(cluster_de(args.cluster), ensure_ascii=False, indent=2))
     elif args.contagio:
-        print(json.dumps(alerta_contagio(args.contagio), ensure_ascii=False, indent=2))
+        print(json_seguro.dumps(alerta_contagio(args.contagio), ensure_ascii=False, indent=2))
     elif args.sizing:
         for linha in sizing_por_vol(args.sizing):
             print(linha)

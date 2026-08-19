@@ -17,6 +17,14 @@ Output (stdout JSON): {"filers": [{cik, label, name, latestFiling, previousFilin
 """
 import sys, json, os, urllib.request
 from security import friendly_error
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # A SEC exige contato REAL no UA e bloqueia placeholders (mesma env de
 # tools.py::EDGAR_HEADERS).
@@ -102,4 +110,4 @@ if __name__ == "__main__":
         pass
     filers = resolve_filers()
     results = [fetch_filer(cik, label) for cik, label in filers]
-    print(json.dumps({"filers": results}, ensure_ascii=False))
+    print(json_seguro.dumps({"filers": results}, ensure_ascii=False))

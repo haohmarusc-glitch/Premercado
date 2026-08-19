@@ -36,6 +36,14 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
 from security import sanitize_ticker
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 try:  # import duplo: spawn por caminho e também como membro do pacote
     from agent import market_data_provider
 except ImportError:
@@ -174,6 +182,42 @@ class ConfluenceEngine:
     min_votes: int = 4
     total_signals: int = len(SIGNAL_NAMES)  # 5 — catalyst é veto, não voto
     kelly_fraction: float = 0.3  # fração do Kelly cheio (25-50% recomendado)
+
+    def __post_init__(self) -> None:
+        """Parâmetro impossível falha ALTO, em vez de virar motor mudo.
+
+        `min_votes` maior que `total_signals` pede mais votos do que existem
+        eleitores: `buy_votes` tem teto de 5, então a condição nunca pode ser
+        verdadeira. O motor não fica conservador -- ele fica PERMANENTEMENTE
+        em "flat", sem erro, sem sinal, sem nada que diga por quê.
+
+        Descoberto pelo grid search de 19/08/2026, que testava (4, 5, 6): a
+        linha do 6 saía com `num_trades 0` e `total_return_pct 0.000000` em
+        todas as seis combinações de ticker e regime -- com a MESMA cara de
+        "a estratégia ficou de fora do mercado", que é uma leitura legítima e
+        neste caso completamente falsa.
+        `min_votes` chega do corpo da requisição sem validação
+        (routes/confluence.ts: `minVotes ?? 4`), então qualquer chamada com 6
+        recebia um motor mudo.
+
+        `kelly_fraction` tem o problema espelhado, e mais caro: acima de 1 ela
+        não falha nem cala -- `kelly_position_size` satura em `min(1.0, ...)` e
+        devolve 100% do capital numa posição só, calada. Kelly cheio já é
+        agressivo demais para uso prático; acima dele o número deixa de ter
+        relação com a fórmula.
+        """
+        if not 1 <= self.min_votes <= self.total_signals:
+            raise ValueError(
+                f"min_votes={self.min_votes} impossível: há {self.total_signals} "
+                f"sinais votantes ({', '.join(SIGNAL_NAMES)}), então o máximo de "
+                f"votos é {self.total_signals}. Use 1..{self.total_signals}."
+            )
+        if not 0 < self.kelly_fraction <= 1:
+            raise ValueError(
+                f"kelly_fraction={self.kelly_fraction} fora de (0, 1]. Acima de 1 "
+                f"o sizing satura em 100% do capital numa posição só; o intervalo "
+                f"recomendado é 0.25-0.5."
+            )
 
     def evaluate_row(self, votes: dict, vetoed: bool = False) -> dict:
         if vetoed:
@@ -393,7 +437,10 @@ def macro_risk_signals() -> dict:
     import yfinance as yf
     active: list[str] = []
     try:
-        df_y = yf.Ticker(YIELD_TICKER).history(period="5d")
+        # 5d cru: a barra de hoje pode vir sem Close e é a última -- o
+        # iloc[-1] abaixo pegaria NaN e o veto macro sumiria em silêncio.
+        df_y = market_data_provider.sem_barra_incompleta(
+            yf.Ticker(YIELD_TICKER).history(period="5d"))
         if df_y is not None and not df_y.empty:
             y = float(df_y["Close"].iloc[-1])
             if y > 20:
@@ -403,7 +450,8 @@ def macro_risk_signals() -> dict:
     except Exception:
         pass
     try:
-        df_o = yf.Ticker(OIL_TICKER).history(period="1mo")
+        df_o = market_data_provider.sem_barra_incompleta(
+            yf.Ticker(OIL_TICKER).history(period="1mo"))
         if df_o is not None and len(df_o) >= OIL_SHOCK_LOOKBACK_DAYS + 1:
             then = float(df_o["Close"].iloc[-1 - OIL_SHOCK_LOOKBACK_DAYS])
             now = float(df_o["Close"].iloc[-1])
@@ -464,6 +512,6 @@ if __name__ == "__main__":
     except Exception as e:
         result = {"error": f"{type(e).__name__}: {e}"}
 
-    out = json.dumps(result, ensure_ascii=False) + "\n"
+    out = json_seguro.dumps(result, ensure_ascii=False) + "\n"
     os.write(_real_stdout_fd, out.encode("utf-8"))
     os.close(_real_stdout_fd)

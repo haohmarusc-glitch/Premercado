@@ -1,6 +1,14 @@
 import sys, json, math
 import yfinance as yf
 import pandas as pd
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 # ── Estrutura de preço e RSI de Wilder: MESMA lógica de get_trend.py
 # (price_structure/rsi_wilder) -- ver comentário em _confluence_signals sobre
@@ -31,6 +39,45 @@ def _price_structure_at(s: pd.Series, lookback: int = 60, window: int = 3) -> st
             return "baixa"
     return "indefinida"
 
+# Cópia de get_trend.classificar_cruzamento -- este arquivo roda por spawn
+# (routes/backtest.ts o chama por caminho) e importar get_trend traria yfinance,
+# market_data_provider e o cache de tendência junto, por uma função pura de dez
+# linhas. test_backtest_confluencia.py garante que as duas cópias não divirjam;
+# o porquê da regra está no comentário longo em get_trend.py.
+CRUZAMENTO_JANELA = 5
+
+
+def _classificar_cruzamento(sma20, sma50, sma20_antes, sma50_antes):
+    acima = sma20 > sma50
+    tem_antes = (
+        sma20_antes is not None and sma50_antes is not None
+        and sma20_antes == sma20_antes and sma50_antes == sma50_antes
+        and sma50_antes != 0
+    )
+    if not tem_antes:
+        return ("alta" if acima else "baixa", None, 25 if acima else -25)
+
+    gap = (sma20 - sma50) / sma50
+    gap_antes = (sma20_antes - sma50_antes) / sma50_antes
+    sobe20 = sma20 > sma20_antes
+
+    if acima:
+        if not sobe20 and gap < gap_antes:
+            return ("alta",
+                    "cruzamento de alta ENFRAQUECENDO — MM20 caindo e encostando "
+                    "na MM50; nível e direção discordam",
+                    0)
+        return ("alta", None, 25)
+
+    if sobe20 and gap > gap_antes:
+        return ("baixa",
+                "cruzamento de baixa EM REVERSÃO — MM20 abaixo da MM50 mas subindo "
+                "e fechando a distância; defasagem da queda anterior, não "
+                "confirmação de baixa",
+                0)
+    return ("baixa", None, -25)
+
+
 def _rsi_wilder_series(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -44,8 +91,9 @@ def _rsi_wilder_series(close: pd.Series, period: int = 14) -> pd.Series:
     return rsi
 
 def _confluence_signals(close: pd.Series, score_threshold: float = 60.0) -> tuple[pd.Series, pd.Series]:
-    """Reproduz dia-a-dia o score técnico de get_trend.py (SMA20x50, preço x
-    SMA200, estrutura, MACD, ajuste de RSI) SEM a camada de notícias -- a
+    """Reproduz dia-a-dia o score técnico de get_trend.py (SMA20x50 COM
+    direção, preço x SMA200, estrutura, MACD, ajuste de RSI) SEM a camada de
+    notícias -- a
     fórmula real (`sinal`) só confirma compra/venda nos thresholds fortes
     (score >= 60 / <= -60) quando não há notícia pra confirmar os thresholds
     moderados (25/-25), então backtestar sem notícia é simplesmente aplicar a
@@ -68,7 +116,10 @@ def _confluence_signals(close: pd.Series, score_threshold: float = 60.0) -> tupl
     for i in range(len(close)):
         if i < 60 or pd.isna(sma50.iloc[i]):
             continue  # historico insuficiente pro score fazer sentido
-        score = 25 if sma20.iloc[i] > sma50.iloc[i] else -25
+        i_antes = i - CRUZAMENTO_JANELA
+        s20a = sma20.iloc[i_antes] if i_antes >= 0 else None
+        s50a = sma50.iloc[i_antes] if i_antes >= 0 else None
+        _, _, score = _classificar_cruzamento(sma20.iloc[i], sma50.iloc[i], s20a, s50a)
         if not pd.isna(sma200.iloc[i]):
             score += 20 if close.iloc[i] > sma200.iloc[i] else -20
         structure = _price_structure_at(close.iloc[: i + 1])
@@ -105,11 +156,13 @@ def _fetch_warmed_close(ticker, start, end):
 
 def _build_signals(close_full, strategy, rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
     if strategy == "rsi":
-        delta = close_full.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = gain / loss.where(loss != 0, other=float("nan"))
-        rsi = 100 - (100 / (1 + rs))
+        # _rsi_wilder_series, a MESMA conta que a estratégia "confluencia"
+        # logo abaixo já usava -- e que get_trend/get_technicals/tools usam ao
+        # vivo. Era `rolling(14).mean()` (Cutler) aqui: um backtest da
+        # estratégia de RSI media um indicador que o sistema não opera, então
+        # o resultado não modelava a estratégia real. Dentro deste arquivo as
+        # duas estratégias também discordavam entre si.
+        rsi = _rsi_wilder_series(close_full)
         return rsi.fillna(50) < rsi_oversold, rsi.fillna(50) > rsi_overbought
     elif strategy == "confluencia":
         return _confluence_signals(close_full, score_threshold)
@@ -631,4 +684,4 @@ if __name__ == "__main__":
         result = run_basket_backtest(tickers, args["start"], args["end"], args.get("strategy", "confluencia"), **common)
     else:
         result = run_backtest(args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"), **common)
-    print(json.dumps(result))
+    print(json_seguro.dumps(result))

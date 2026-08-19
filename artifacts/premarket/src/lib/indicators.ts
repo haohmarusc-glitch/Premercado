@@ -275,3 +275,22 @@ export function attachIndicatorFields<T>(rows: T[], closes: number[]): (T & Indi
     };
   });
 }
+
+// ── Rótulos de sinal vindos do backend ──────────────────────────────────────
+
+/** Valores possíveis de `rvolSignal` nas respostas de /api/technicals. */
+export type RvolSignal = "alto" | "baixo" | "normal" | "indefinido_abertura";
+
+/**
+ * Texto legível para `rvolSignal`. `indefinido_abertura` existe porque o RVOL
+ * dos primeiros 30 minutos é inflado pelo leilão de abertura — o cálculo
+ * assume volume uniforme ao longo do dia, e a distribuição real é em U.
+ * Visto em produção (NBIS, 17/08/2026): 5,81 "alto" aos sete minutos de
+ * pregão, lido pela análise com IA como realização de lucro.
+ *
+ * Sem este mapa o valor vazaria cru na tela e no markdown exportado.
+ */
+export function rotuloRvol(sinal: string | null | undefined): string {
+  if (!sinal) return "—";
+  return sinal === "indefinido_abertura" ? "ainda não conclusivo (início do pregão)" : sinal;
+}

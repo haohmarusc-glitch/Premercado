@@ -72,8 +72,84 @@ function runMarketAlertsSnapshot(payload: object): Promise<unknown> {
 // runMarketAlertsSnapshot (provider.py tem import relativo). POST porque o
 // corpo carrega os painéis já coletados pela tela — o script não refaz
 // nenhuma busca de mercado, só transforma número em leitura.
-function runAnaliseRapidaIA(payload: object): Promise<unknown> {
-  return coalescer(`analise_rapida_ia:${JSON.stringify(payload)}`, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
+//
+// ── Guardar o resultado pronto ──────────────────────────────────────────────
+//
+// A análise leva ~58s (medido em produção: um 200 com responseTime 58608), e
+// nesse tempo a conexão do celular cai. Quando cai, o servidor NÃO cancela o
+// Python: o trabalho termina, os tokens são cobrados, e a resposta é escrita
+// num socket que não existe mais. O usuário pagou e não viu nada.
+//
+// A resposta certa não é evitar a queda -- rede móvel vai cair -- é fazer com
+// que ela não custe nada. Com o resultado guardado, o segundo clique devolve
+// a análise pronta na hora, de graça.
+//
+// 10min: a análise é um RETRATO dos painéis que a tela mandou no corpo, e a
+// chave é o corpo inteiro. Painel novo = chave nova = análise nova. O TTL só
+// existe para o retrato não envelhecer indefinidamente na memória; ele nunca
+// serve leitura de dados diferentes dos que foram pedidos.
+const CACHE_IA_TTL_MS = 10 * 60_000;
+const cacheIA = new Map<string, { valor: unknown; em: number }>();
+
+function guardarIA(chave: string, valor: unknown): void {
+  // Resposta de erro não entra: o erro é do momento (provedor fora do ar,
+  // orçamento estourado), e guardá-lo transformaria uma falha passageira em
+  // dez minutos de falha garantida.
+  if (valor && typeof valor === "object" && "error" in valor) return;
+  cacheIA.set(chave, { valor, em: Date.now() });
+  // Varre os vencidos no write. Sem isso o Map cresce sem teto -- cada análise
+  // guarda o payload inteiro dos painéis como chave.
+  for (const [k, v] of cacheIA) {
+    if (Date.now() - v.em > CACHE_IA_TTL_MS) cacheIA.delete(k);
+  }
+}
+
+// Idade máxima para entrar de carona numa análise em andamento. Ver o
+// comentário de `coalescer`: embarcar num trabalho que já gastou o orçamento
+// não é economia, é herdar uma morte marcada.
+//
+// 60s contra o teto de 215s da rota: quem chega depois disso não teria tempo
+// nem para UMA passada completa (a análise que deu certo levou 58s).
+const IDADE_MAX_CARONA_MS = 60_000;
+
+/** Preenchido só por quem REALMENTE spawnou o Python. Ver `runAnaliseRapidaIA`. */
+interface Execucao { gastoNovo: boolean }
+
+/**
+ * `exec.gastoNovo` responde "esta requisição pagou por tokens?", que é
+ * diferente de "esta requisição recebeu uma análise".
+ *
+ * Duas requisições podem receber o MESMO texto sem que exista uma segunda
+ * chamada de API: uma pelo cache por TTL, outra pela carona do coalescer. Nos
+ * dois casos o `usage` volta junto (a tela mostra o que a análise custou), e
+ * era isso que o registro de gasto lia -- gravando uma linha nova em
+ * agent_runs para uma chamada que nunca aconteceu.
+ *
+ * Medido em produção (19/08/2026), duas linhas com 5299 tokens de saída e
+ * US$ 0,062852 cada, terminando no MESMO instante (17:26:31.7): uma chamada
+ * de API, dois lançamentos. A tela Gastos com IA superestimava.
+ *
+ * Só a closure que o coalescer executa sabe a resposta -- quem entra de
+ * carona nunca roda a dela. Por isso a marca é feita lá dentro, e não por
+ * inspeção do mapa de em-voo (que seria uma corrida).
+ */
+function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
+  const chave = `analise_rapida_ia:${JSON.stringify(payload)}`;
+
+  const guardado = cacheIA.get(chave);
+  if (guardado && Date.now() - guardado.em <= CACHE_IA_TTL_MS) {
+    logger.info(
+      { idadeMs: Date.now() - guardado.em },
+      "analise_rapida_ia: devolvendo análise já calculada (mesmos painéis)",
+    );
+    return Promise.resolve(guardado.valor);
+  }
+
+  return coalescer(chave, () => comVagaPython("analise_rapida_ia", () => new Promise((resolve, reject) => {
+    // Daqui para baixo é execução de verdade: o Python vai ser spawnado e os
+    // tokens vão ser cobrados, dê certo ou não. O retardatário que roda "por
+    // fora" (carona velha demais) também passa por aqui, e também gastou.
+    exec.gastoNovo = true;
     const py = spawnPython(getPythonBin(), ["-m", "agent.analise_rapida_ia"], {
       cwd: agentDir,
       env: { ...process.env, PYTHONPATH: agentDir },
@@ -84,15 +160,115 @@ function runAnaliseRapidaIA(payload: object): Promise<unknown> {
     let err = "";
     py.stdout.on("data", (d: Buffer) => { out += d.toString(); });
     py.stderr.on("data", (d: Buffer) => { err += d.toString(); });
-    // Uma chamada de LLM tier full + fallback de provedores: 90s cobre o
-    // pior caso da cadeia sem segurar a vaga de Python pra sempre.
-    const t = setTimeout(() => { py.kill("SIGTERM"); reject(new Error("timeout")); }, 90_000);
+    // Orçamento externo. Tem que ser MAIOR que o interno do Python, senão o
+    // Node descobre o problema matando o processo e o usuário recebe um 500
+    // genérico (playbook §3).
+    //
+    // Incidente 17/08/2026: aqui eram 90s, e o Python herdava os defaults do
+    // agente -- API_TIMEOUT_SECONDS=60 × AGENT_MAX_RETRIES=1 ×
+    // AGENT_TRANSIENT_RETRIES=1 = até ~245s por provedor. Uma análise passou
+    // em 57,5s (já encostando no timeout de 60s da API) e as seguintes
+    // bateram 90s cravados: "Failed: /analise-rapida/ia", 500 na tela.
+    //
+    // Agora o Python fixa o próprio orçamento (ver analise_rapida_ia.py):
+    // 85s por chamada, uma tentativa por provedor. Duas tentativas de
+    // provedor + coleta fundamental cabem em 195s; 215s aqui deixa margem.
+    //
+    // Subiu de 150s em 19/08/2026 junto com o teto por chamada: com 55s o
+    // anthropic era cortado pelo nosso relógio ("failed after 55.1s") em vez
+    // de responder, e o corte queimava uma das duas tentativas que o
+    // orçamento compra. O custo aceito é a tela demorar mais ANTES DE FALHAR
+    // -- o caminho feliz não muda, porque o teto só é alcançado por quem não
+    // respondeu (as análises boas medidas no agent_runs levam 33s a 65s).
+    // test_orcamento_analise_ia.py lê os dois lados e falha se a invariante
+    // (interno < externo) quebrar.
+    const t = setTimeout(() => {
+      py.kill("SIGTERM");
+      // O stderr acumulado tem as linhas [provider] com qual provedor foi
+      // tentado e por quê falhou -- descartá-las, como antes, deixava o
+      // diagnóstico impossível: o log só dizia "timeout".
+      logger.error(
+        { stderr: err.slice(-2000), stdoutParcial: out.length },
+        "analise_rapida_ia: estourou o orçamento de tempo",
+      );
+      reject(new Error("timeout"));
+    }, 215_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
-      try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
+      // Parse resiliente. O contrato é "stdout é só o JSON final", mas basta
+      // UMA biblioteca imprimir em stdout durante o import para o JSON.parse
+      // do bloco inteiro falhar e a análise (já gerada e já paga) ser jogada
+      // fora com um "Parse error" que não diz nada.
+      //
+      // 1ª tentativa: o bloco todo, o caso normal.
+      // 2ª: a última linha não-vazia — o JSON final é sempre o último print,
+      //     então lixo ANTES dele deixa de ser fatal.
+      // Falhando as duas, o log leva as pontas do stdout: sem isso não há
+      // como saber o que poluiu o pipe.
+      // O script pode sair com codigo 0 E um {"error": ...} valido -- e o que
+      // ele faz desde a Tarefa 0, quando nenhum provedor produz texto. Sem
+      // registrar o stderr AQUI, todo o diagnostico ([provider] pulando ...,
+      // stop_reason, tamanho do raciocinio) morre nesta variavel: trocar um
+      // 500 mudo por um erro elegante nao pode significar trocar um erro
+      // legivel por um erro bonito e inauditavel. Visto em producao
+      // (18/08/2026): a tela mostrou "0 chars" e o log do container nao tinha
+      // uma linha sequer sobre a causa.
+      //
+      // E registrar SO no erro nao basta: quando um provedor tropeca mas o
+      // seguinte entrega o texto, o desfecho e sucesso -- e a linha
+      // "[provider] pulando ..." era descartada junto. Esse e justamente o
+      // caso CARO: a tentativa perdida foi cobrada (tokens de raciocinio
+      // contam como saida) e some da auditoria. Visto em producao
+      // (18/08/2026): analise a US$ 0,0608 contra os ~US$ 0,015 esperados,
+      // sem uma linha no log dizendo por que.
+      //
+      // Marcas de tropeco, nao stderr inteiro: log de toda execucao bem
+      // sucedida viraria ruido e a linha que importa se perderia nele.
+      const MARCAS_DE_TROPECO = /\bpulando\b|truncou|toco/i;
+
+      const registrarDiagnostico = (parsed: unknown): void => {
+        const cauda = err.slice(-2000);
+        if (parsed && typeof parsed === "object" && "error" in parsed) {
+          logger.warn(
+            { erro: (parsed as { error: unknown }).error, stderr: cauda },
+            "analise_rapida_ia: script devolveu erro",
+          );
+          return;
+        }
+        if (MARCAS_DE_TROPECO.test(err)) {
+          logger.warn(
+            { stderr: cauda },
+            "analise_rapida_ia: análise saiu, mas não na primeira tentativa",
+          );
+        }
+      };
+
+      try {
+        const parsed = JSON.parse(out);
+        registrarDiagnostico(parsed);
+        return resolve(parsed);
+      } catch {
+        const ultimaLinha = out.split("\n").filter((l) => l.trim()).pop() ?? "";
+        try {
+          const parsed = JSON.parse(ultimaLinha);
+          registrarDiagnostico(parsed);
+          return resolve(parsed);
+        } catch {
+          logger.error(
+            { stdoutHead: out.slice(0, 500), stdoutTail: out.slice(-500), bytes: out.length },
+            "analise_rapida_ia: stdout não é JSON",
+          );
+          return reject(new Error("Parse error"));
+        }
+      }
     });
-  })));
+  })), IDADE_MAX_CARONA_MS).then((valor) => {
+    // Guarda DEPOIS de resolver, e independentemente de quem estava ouvindo:
+    // o caso que importa é justamente aquele em que o cliente já foi embora.
+    guardarIA(chave, valor);
+    return valor;
+  });
 }
 
 // Teto do corpo aceito — os painéis da tela cabem com folga; payload maior
@@ -119,6 +295,7 @@ async function registrarGastoIA(
 router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
   const inicio = Date.now();
   const ticker = String(req.body?.ticker ?? "").trim().toUpperCase();
+  const exec: Execucao = { gastoNovo: false };
   try {
     if (!/^[A-Z0-9.^-]{1,10}$/.test(ticker)) { res.status(400).json({ error: "ticker inválido" }); return; }
     if (JSON.stringify(req.body).length > LIMITE_CORPO_IA) {
@@ -131,15 +308,26 @@ router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
       technicals: req.body?.technicals ?? null,
       snapshot: req.body?.snapshot ?? null,
       reaction: req.body?.reaction ?? null,
-    }) as { usage?: UsoLlm; error?: string };
+    }, exec) as { usage?: UsoLlm; error?: string };
     // O script devolve {error} para falhas de conteúdo (resposta curta,
     // sem painel) — nesses casos o provedor pode já ter sido cobrado, então
     // o registro vale igual, marcado como failed.
-    await registrarGastoIA(ticker, data.usage, Date.now() - inicio, data.error);
+    // Sem gasto novo (cache ou carona) não há lançamento: o livro registra
+    // chamadas de API, não entregas de texto. A resposta segue trazendo o
+    // `usage`, porque a tela mostra o que a ANÁLISE custou -- e isso continua
+    // verdade para quem a recebeu de segunda mão.
+    if (exec.gastoNovo) {
+      await registrarGastoIA(ticker, data.usage, Date.now() - inicio, data.error);
+    }
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /analise-rapida/ia");
-    await registrarGastoIA(ticker, undefined, Date.now() - inicio, String(err));
+    // Mesma regra na falha: quem herdou a rejeição de uma carona não spawnou
+    // nada, e contar a falha dele inflaria a taxa de erro do painel com
+    // execuções que nunca existiram.
+    if (exec.gastoNovo) {
+      await registrarGastoIA(ticker, undefined, Date.now() - inicio, String(err));
+    }
     res.status(500).json({ error: "Falha na análise com IA" });
   }
 });

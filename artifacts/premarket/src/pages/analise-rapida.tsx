@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useSearch } from "wouter";
 import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
+import { rotuloRvol } from "@/lib/indicators";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
 // agora como três botões sobre um ticker avulso. Cada botão bate numa rota que
@@ -17,6 +19,9 @@ interface TrendItem {
   score?: number;
   components?: {
     maCruzamento?: string;
+    // Presente só quando nível e direção das médias discordam (cruzamento
+    // em reversão / enfraquecendo). Ver get_trend.classificar_cruzamento.
+    maCruzamentoNota?: string;
     precoVsSma200?: string;
     estrutura?: string;
     macd?: string;
@@ -86,6 +91,9 @@ interface SessionMove {
 interface ReactionResult {
   ticker: string;
   error?: string;
+  // Datas de balanço servidas de cache vencido (rede fora). Mesmo vocabulário
+  // de degradação do painel Tendência — ver agent/earnings_dates.py.
+  stale?: boolean;
   summary?: {
     n_events: number;
     gap_pct_mean: number;
@@ -167,6 +175,7 @@ const TOM_TENDENCIA: Record<string, string> = {
 };
 
 export default function AnaliseRapidaPage() {
+  const search = useSearch();
   const [tickerInput, setTickerInput] = useState("");
   const [benchmark, setBenchmark] = useState("SMH");
   // Enquanto o usuário não editar o benchmark, ele acompanha o ticker.
@@ -181,6 +190,26 @@ export default function AnaliseRapidaPage() {
   const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean } | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
+
+  // Prefill via ?ticker= -- é o que faz o "Investigar" do Painel de Cenários
+  // ser um toque só em vez de "abre a tela, digita o papel de novo". Mesma
+  // convenção de /grafico?ticker= e /alerts?symbol=.
+  //
+  // Guarda o último ticker aplicado num ref, e não "só preenche se o campo
+  // estiver vazio": navegando de /cenarios pra cá duas vezes seguidas com
+  // tickers diferentes o wouter não desmonta o componente, então a segunda
+  // navegação seria ignorada. O ref também é o que impede a URL de
+  // sobrescrever o que o usuário digitou por cima depois.
+  const ultimoTickerDaUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const daUrl = new URLSearchParams(search).get("ticker")?.trim().toUpperCase() || null;
+    if (!daUrl || daUrl === ultimoTickerDaUrlRef.current) return;
+    ultimoTickerDaUrlRef.current = daUrl;
+    setTickerInput(daUrl);
+    // O benchmark acompanha o ticker novo pela mesma regra do campo de
+    // digitação: sugestão automática até o usuário assumir o controle.
+    if (!benchmarkManual) setBenchmark(benchmarkSugerido(daUrl));
+  }, [search, benchmarkManual]);
 
   const runTrend = useMutation({
     mutationFn: async () => {
@@ -262,7 +291,9 @@ export default function AnaliseRapidaPage() {
     if (trend && !trend.error) {
       blocos.push("## Tendência\n\n" + itens([
         ["Tendência", `${trend.trend ?? "—"} (score ${trend.score ?? "—"})`],
-        ["Cruzamento de médias", trend.components?.maCruzamento ?? "—"],
+        ["Cruzamento de médias", trend.components?.maCruzamento
+          ? `${trend.components.maCruzamento}${trend.components.maCruzamentoNota ? ` — ${trend.components.maCruzamentoNota}` : ""}`
+          : "—"],
         ["Preço vs MM200", trend.components?.precoVsSma200 ?? "—"],
         ["Estrutura", trend.components?.estrutura ?? "—"],
         ["MACD", trend.components?.macd ?? "—"],
@@ -281,7 +312,7 @@ export default function AnaliseRapidaPage() {
         ["MM20 / MM50", `${fmtUsd(tech.sma20)} / ${fmtUsd(tech.sma50)}`],
         ["Distância da MM50", fmtPct(tech.pctAboveSma50)],
         ["VWAP", `${fmtUsd(tech.vwap)} (${tech.vwapSignal ?? "—"})`],
-        ["RVOL", tech.rvol != null ? `${tech.rvol.toFixed(2)} (${tech.rvolSignal ?? "—"})` : "—"],
+        ["RVOL", tech.rvol != null ? `${tech.rvol.toFixed(2)} (${rotuloRvol(tech.rvolSignal)})` : "—"],
       ]));
     }
 
@@ -465,7 +496,12 @@ export default function AnaliseRapidaPage() {
                 )}
               </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <Metric label="Médias" value={trend.components?.maCruzamento ?? "—"} tone={trend.components?.maCruzamento === "alta" ? "pos" : trend.components?.maCruzamento === "baixa" ? "neg" : undefined} />
+                <Metric label="Médias" value={trend.components?.maCruzamento ?? "—"} sub={trend.components?.maCruzamentoNota}
+                  // Sem tom quando nível e direção discordam: pintar de vermelho um
+                  // cruzamento que já está revertendo é o próprio erro que a nota corrige.
+                  tone={trend.components?.maCruzamentoNota ? undefined
+                    : trend.components?.maCruzamento === "alta" ? "pos"
+                    : trend.components?.maCruzamento === "baixa" ? "neg" : undefined} />
                 <Metric label="vs MM200" value={trend.components?.precoVsSma200 ?? "—"} tone={trend.components?.precoVsSma200 === "acima" ? "pos" : trend.components?.precoVsSma200 === "abaixo" ? "neg" : undefined} />
                 <Metric label="Estrutura" value={trend.components?.estrutura ?? "—"} tone={trend.components?.estrutura === "alta" ? "pos" : trend.components?.estrutura === "baixa" ? "neg" : undefined} />
                 <Metric label="MACD" value={trend.components?.macd ?? "—"} tone={trend.components?.macd === "bullish" ? "pos" : trend.components?.macd === "bearish" ? "neg" : undefined} />
@@ -504,7 +540,7 @@ export default function AnaliseRapidaPage() {
               <Metric label="Preço" value={fmtUsd(tech.price)} sub={`${fmtPct(tech.changePct)} no dia`} tone={(tech.changePct ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="RSI" value={tech.rsi != null ? tech.rsi.toFixed(1) : "—"} sub={tech.rsiSignal} />
               <Metric label="MACD" value={tech.macdTrend ?? "—"} sub={tech.macdHistogram != null ? `hist ${tech.macdHistogram.toFixed(3)}` : undefined} tone={tech.macdTrend === "bullish" ? "pos" : tech.macdTrend === "bearish" ? "neg" : undefined} />
-              <Metric label="RVOL" value={tech.rvol != null ? tech.rvol.toFixed(2) : "—"} sub={tech.rvolSignal} />
+              <Metric label="RVOL" value={tech.rvol != null ? tech.rvol.toFixed(2) : "—"} sub={rotuloRvol(tech.rvolSignal)} />
               <Metric label="MM20" value={fmtUsd(tech.sma20)} />
               <Metric label="MM50" value={fmtUsd(tech.sma50)} sub={tech.pctAboveSma50 != null ? `${fmtPct(tech.pctAboveSma50)} de distância` : undefined} tone={(tech.pctAboveSma50 ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="VWAP" value={fmtUsd(tech.vwap)} sub={tech.vwapSignal} />
@@ -560,6 +596,13 @@ export default function AnaliseRapidaPage() {
               <p className="font-mono text-sm text-muted-foreground">⚠ Reação a earnings: {reaction.error}</p>
             ) : reaction.summary ? (
               <>
+                {/* Datas de balanço de cópia vencida: painel completo e sem
+                    aviso não se distingue de um calculado sobre agenda atual. */}
+                {reaction.stale && (
+                  <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/40 text-yellow-400">
+                    datas de balanço de cache — rede instável
+                  </span>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Metric label="Eventos" value={String(reaction.summary.n_events)} sub={`threshold ±${reaction.summary.suggested_threshold_pct.toFixed(1)}%`} />
                   <Metric label="Fech. médio" value={fmtPct(reaction.summary.close_pct_mean)} sub={`|média| ${reaction.summary.close_pct_abs_mean.toFixed(2)}%`} tone={reaction.summary.close_pct_mean >= 0 ? "pos" : "neg"} />

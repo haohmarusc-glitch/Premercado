@@ -30,13 +30,25 @@ import json
 # do pacote. Só stdlib dentro dele, então o import flat é seguro.
 try:
     from bounded_parallel import deadline_exceeded
+    import earnings_dates as _earnings_dates
+    import market_data_provider
 except ImportError:
     from agent.bounded_parallel import deadline_exceeded
+    from agent import earnings_dates as _earnings_dates
+    from agent import market_data_provider
 
 import sys
 
 import pandas as pd
 import yfinance as yf
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 DEFAULT_TICKERS = ["NVDA", "SMCI", "AVGO", "SKHY", "ARM"]
 
@@ -147,12 +159,18 @@ def _trajetoria_resumo(events: list[dict]) -> dict | None:
 def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     t = yf.Ticker(ticker)
 
-    try:
-        earnings = t.get_earnings_dates(limit=lookback_events + 6)
-    except Exception as e:
-        return {"ticker": ticker, "error": f"falha ao buscar earnings dates: {type(e).__name__}: {e}"}
-
-    if earnings is None or earnings.empty:
+    # get_earnings_dates é a chamada mais instável do yfinance e não passa pela
+    # cadeia de fallback (que cuida de série de PREÇO). Sem retry nem cache, uma
+    # resposta vazia passageira derrubava o painel inteiro -- visto em produção
+    # (NBIS, 17/08/2026 11:36 BRT) minutos depois do MESMO script funcionar no
+    # terminal. Ver agent/earnings_dates.py.
+    _limite = lookback_events + 6
+    earnings, _fonte_datas, _erro_datas = _earnings_dates.buscar(
+        ticker, lambda: t.get_earnings_dates(limit=_limite), limit=_limite
+    )
+    if earnings is None:
+        return {"ticker": ticker, "error": f"falha ao buscar earnings dates: {_erro_datas}"}
+    if earnings.empty:
         return {"ticker": ticker, "error": "sem histórico de earnings dates disponível (ticker muito novo?)"}
 
     now = pd.Timestamp.now(tz=earnings.index.tz)
@@ -166,6 +184,16 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
         hist = t.history(start=start, auto_adjust=False)
     except Exception as e:
         return {"ticker": ticker, "error": f"falha ao buscar histórico de preço: {type(e).__name__}: {e}"}
+    # A barra do DIA CORRENTE vem sem Close antes do fechamento, e é a ÚLTIMA
+    # linha -- `hist["Close"].iloc[-1]` pegava NaN, que json_seguro converte em
+    # null, deixando current_price e os quatro níveis (que derivam dele) vazios
+    # na tela. Visto em produção 18/08/2026, SNDK: "base: —" com R1/R2/S1/S2
+    # todos em branco enquanto gap, fechamento e volume vinham certos.
+    #
+    # Este script chama t.history() DIRETO, sem passar pelo market_data_
+    # provider -- então a fachada que limpa isso lá não o alcança. Mesmo
+    # helper, aplicado aqui na mão.
+    hist = market_data_provider.sem_barra_incompleta(hist)
     if hist.empty:
         return {"ticker": ticker, "error": "sem histórico de preço no período"}
     if hist.index.tz is not None:
@@ -262,7 +290,14 @@ def analyze_ticker(ticker: str, lookback_events: int = 8) -> dict:
     if trajetoria:
         summary["trajetoria"] = trajetoria
 
-    return {"ticker": ticker, "summary": summary, "events": events}
+    saida = {"ticker": ticker, "summary": summary, "events": events}
+    # Mesmo vocabulário de degradação de get_trend.py: dado servido de cópia
+    # vencida vem MARCADO. O silêncio é que seria a piora -- um painel completo
+    # e sem aviso, calculado sobre uma agenda velha, não se distingue do bom.
+    if _fonte_datas == "cache_vencido":
+        saida["stale"] = True
+        saida["fonteDatasEarnings"] = _fonte_datas
+    return saida
 
 
 def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
@@ -314,7 +349,7 @@ def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: in
     #
     # ARMADILHA (visto em produção, NBIS 17/08/2026): essa janela olha pra
     # trás a partir de HOJE, então logo depois de um balanço ela ENGOLE o
-    # próprio pregão de reação. NBIS reportou em 12/08 e saltou +34,14%; três
+    # próprio pregão de reação. NBIS reportou em 12/08 e saltou +34,14%; DOIS
     # pregões depois o "run-up atual" saía +61,66% e o papel era classificado
     # "esticado" -- mas isso é a REAÇÃO já ocorrida, não a antecipação que o
     # indicador se propõe a medir (ex-evento o run-up era ~+20,5%). Qualquer
@@ -445,6 +480,6 @@ if __name__ == "__main__":
                 _saida.append({"ticker": tk, "error": "orçamento de tempo esgotado"})
                 continue
             _saida.append(analyze_ticker(tk, _lookback))
-        print(json.dumps(_saida, ensure_ascii=False))
+        print(json_seguro.dumps(_saida, ensure_ascii=False))
     else:
         main()

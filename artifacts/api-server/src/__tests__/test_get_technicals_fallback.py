@@ -43,6 +43,29 @@ def test_continua_pedindo_serie_ajustada():
     assert "auto_adjust=True" in _FONTE
 
 
+# ── RSI e base de volume ────────────────────────────────────────────────────
+#
+# Mesma limitação de import da docstring do módulo: dá para garantir QUAL
+# conta está escrita, não rodar a conta. A equivalência numérica entre Wilder
+# aqui e em get_trend está coberta em test_technicals_rsi_rvol.py, sobre a
+# cópia de tools.py que é importável.
+
+def test_rsi_e_de_wilder_nao_de_cutler():
+    """Este script serve /api/technicals — o painel "Técnica" da tela. Com
+    `rolling(14).mean()` (Cutler) aqui e Wilder em get_trend, os painéis
+    "Tendência" e "Técnica" mostravam RSIs diferentes para o mesmo ticker no
+    mesmo instante (NBIS 17/08/2026: 64,6 contra 67,2)."""
+    assert "ewm(alpha=1 / 14, min_periods=14)" in _FONTE
+    assert "clip(lower=0).rolling(14).mean()" not in _FONTE
+
+
+def test_base_de_volume_e_mediana():
+    """Média de 20 pregões é distorcida por um único dia de earnings (2-3x o
+    volume normal), deprimindo rvol/volumeRatio por um mês."""
+    assert "volume.rolling(20).median()" in _FONTE
+    assert "volume.rolling(20).mean()" not in _FONTE
+
+
 def test_nao_baixa_mais_o_historico_diario_direto_do_yfinance():
     """Se voltar um download direto da série DIÁRIA, a cadeia foi contornada e
     o módulo perde o cache vencido numa queda do Yahoo."""

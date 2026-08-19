@@ -26,6 +26,14 @@ import csv
 import datetime
 import io
 import sys, json, os
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 try:
     # Rodando como script standalone (spawn direto do .py, sem -m agent.xxx)
     # -- Python coloca o diretório do próprio script no sys.path.
@@ -157,7 +165,7 @@ if __name__ == "__main__":
         except ValueError:
             continue
 
-    print(json.dumps({
+    print(json_seguro.dumps({
         "congress": congress_trades(clean),
         "darkPool": dark_pool_flow(clean),
         "insiders": insider_trades(clean),

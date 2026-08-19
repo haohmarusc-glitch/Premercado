@@ -28,7 +28,21 @@ function fetchTechnicals(tickers: string[]): Promise<unknown> {
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
-      try { resolve(JSON.parse(out)); } catch { reject(new Error("Parse error")); }
+      try {
+        return resolve(JSON.parse(out));
+      } catch {
+        // As pontas do stdout no log. Sem isto o erro era só "Parse error", e
+        // descobrir a causa exigiu rodar o script à mão no container -- em
+        // 18/08/2026, para achar um `NaN` no meio do JSON (json.dumps do
+        // Python o emite; JSON.parse do Node o rejeita, e um campo derruba a
+        // resposta inteira). Mesmo remédio já aplicado em analysis.ts.
+        logger.error(
+          { stdoutHead: out.slice(0, 500), stdoutTail: out.slice(-500), bytes: out.length,
+            stderr: err.slice(-1000) },
+          "technicals: stdout não é JSON",
+        );
+        return reject(new Error("Parse error"));
+      }
     });
   })));
 }

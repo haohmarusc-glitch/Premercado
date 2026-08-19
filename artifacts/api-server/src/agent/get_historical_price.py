@@ -30,6 +30,14 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
 from security import sanitize_ticker
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 
 def run(ticker, dates):
     ticker = sanitize_ticker(ticker)
@@ -61,4 +69,4 @@ def run(ticker, dates):
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     result = run(args["ticker"], args.get("dates", []))
-    print(json.dumps(result))
+    print(json_seguro.dumps(result))

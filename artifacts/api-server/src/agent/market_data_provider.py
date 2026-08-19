@@ -110,7 +110,67 @@ def _yf_history_with_retry(ticker: str, period: str, auto_adjust: bool) -> pd.Da
     return None
 
 
+def sem_barra_incompleta(df):
+    """Descarta linhas sem `Close`. Devolve o df como veio se não der.
+
+    O yfinance inclui a barra do DIA CORRENTE mesmo antes de haver fechamento:
+    ela chega com Close vazio e vira a ÚLTIMA linha da série. Todo consumidor
+    que faz `close.iloc[-1]` pega NaN dali -- e NaN contamina em silêncio tudo
+    que deriva do preço.
+
+    Medido em produção 18/08/2026, dois painéis no mesmo dia:
+
+      Técnica            price=NaN, e como NaN não é JSON válido a resposta
+                         INTEIRA morria no JSON.parse do Node (500 na tela).
+      Reação a Earnings  current_price nulo, e com ele R1/R2/S1/S2 -- que
+                         derivam do preço -- todos vazios.
+
+    Filtrar aqui e não em cada chamador: são mais de vinte `Close.iloc[-1]`
+    espalhados pelos scripts, e só dois filtravam. Corrigir um a um é como se
+    chega ao terceiro incidente -- a fonte é o único lugar onde a garantia
+    vale para quem ainda vai ser escrito.
+
+    Só `Close`: linha com Volume ou Open faltando ainda tem fechamento
+    utilizável, e descartá-la jogaria fora pregão bom.
+    """
+    try:
+        if df is None or df.empty or "Close" not in df.columns:
+            return df
+        limpo = df[df["Close"].notna()]
+        # Série que ficaria VAZIA volta como estava: "sem dado utilizável" é
+        # decisão do chamador (que já trata `ok=False` e `len < N`), não deste
+        # filtro, e um df vazio esconderia a diferença entre "fonte não
+        # respondeu" e "respondeu só com barras incompletas".
+        return limpo if not limpo.empty else df
+    except Exception:  # noqa: BLE001 — filtro de higiene nunca derruba a busca
+        return df
+
+
+_sem_barra_incompleta = sem_barra_incompleta  # nome antigo, mantido
+
+
 def get_daily_history(
+    ticker: str, period: str = "6mo", *, auto_adjust: bool = False,
+    permitir_externa: bool = True,
+) -> HistoryResult:
+    """Fachada: delega e limpa a barra incompleta de QUALQUER caminho.
+
+    Envolver em vez de filtrar nos cinco `return` de dentro -- yfinance, cache,
+    cache vencido, externa e o caminho de erro. Um filtro por ramo dependeria
+    de quem adiciona o sexto lembrar de repetir.
+    """
+    res = _get_daily_history_bruto(
+        ticker, period, auto_adjust=auto_adjust, permitir_externa=permitir_externa
+    )
+    if res.df is not None:
+        res = HistoryResult(
+            df=sem_barra_incompleta(res.df), source=res.source,
+            is_stale=res.is_stale, warnings=res.warnings,
+        )
+    return res
+
+
+def _get_daily_history_bruto(
     ticker: str, period: str = "6mo", *, auto_adjust: bool = False,
     permitir_externa: bool = True,
 ) -> HistoryResult:

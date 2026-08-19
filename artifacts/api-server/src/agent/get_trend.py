@@ -11,9 +11,17 @@ Filosofia: calculadora, não decisor — expõe os componentes, não dá ordem d
 Input (stdin JSON):  {"tickers": ["NVDA", "SMCI"]}
 Output (stdout JSON): {"items": [{ticker, trend, score, components, news, confluence}, ...]}
 """
-import sys, json, os, time
+import sys, json, os, re, time, datetime
 import yfinance as yf
 import pandas as pd
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
+# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent.
+try:
+    import json_seguro
+except ImportError:
+    from agent import json_seguro
+
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
     from agent.http_retry import SESSION
@@ -29,6 +37,35 @@ except ImportError:
 #    candle diário não muda a cada minuto, e o Yahoo rate-limita IP do Replit.
 _CACHE_PATH = os.environ.get("TREND_CACHE_PATH", "/tmp/premercado_trend_cache.json")
 _TTL_SECONDS = int(os.environ.get("TREND_CACHE_TTL", "1800"))
+
+# Abertura do pregão americano em UTC. 9h30 ET = 13h30 UTC no horário de verão
+# (EDT) e 14h30 UTC fora dele (EST). Usamos SEMPRE 13h30, o limite mais cedo:
+# fora do horário de verão isso só invalida o cache uma hora antes do
+# necessário -- um recálculo a mais por dia, contra o risco de servir dado
+# pré-abertura depois do pregão começar. Constante em UTC de propósito, sem
+# zoneinfo: este script roda por spawn num container slim, e depender do banco
+# de fusos do sistema para uma regra de cache seria trocar um problema barato
+# por uma falha de import.
+_ABERTURA_UTC = datetime.time(13, 30)
+
+
+def _cruzou_abertura(gravado_em: float, agora: float) -> bool:
+    """A abertura do pregão ficou ENTRE a gravação do cache e agora?
+
+    Visto em produção (NBIS, 17/08/2026 10:37 BRT): o painel Tendência trazia
+    o fechamento de sexta ($277,68) enquanto os outros três painéis já
+    mostravam o preço ao vivo ($269,87) -- a entrada tinha sido gravada antes
+    da abertura e o TTL de 30min ainda não a tinha vencido. A análise com IA
+    citou o preço velho como "o preço atual" e abriu o texto dizendo que o
+    papel estava colado na máxima, num dia em que ele caía 2,66%.
+
+    TTL sozinho não resolve: o problema não é a entrada ser ANTIGA, é ela ser
+    de OUTRO regime de dado (pré-abertura contra pregão em curso).
+    """
+    gravado = datetime.datetime.utcfromtimestamp(gravado_em)
+    atual = datetime.datetime.utcfromtimestamp(agora)
+    abertura_de_hoje = datetime.datetime.combine(atual.date(), _ABERTURA_UTC)
+    return gravado < abertura_de_hoje <= atual
 
 def _cache_load() -> dict:
     try:
@@ -59,6 +96,26 @@ NEGATIVE = [
     "cuts", "cut", "weak", "lawsuit", "probe", "investigation", "recall",
     "bearish", "warning", "warns", "layoffs", "slump", "tumbles", "fraud",
 ]
+
+# Casamento por PALAVRA INTEIRA, não por substring.
+#
+# `"gains" in title` era substring: "against" contém "gains" (a-G-A-I-N-S-t), o
+# que dava ponto POSITIVO para toda manchete com "bet against", "case against",
+# "lawsuit against". "stops" contém "tops"; "commission"/"mission"/"permission"
+# contêm "miss"; "praised" contém "raised". Numa cobertura de infraestrutura de
+# IA, "mission-critical" aparece o tempo todo.
+#
+# O erro nem sempre virava rótulo errado -- muitas vezes empatava p e n, e o
+# empate faz a manchete ser DESCARTADA (nem positiva nem negativa). Ou seja,
+# ele apagava notícias em silêncio, que é pior que classificá-las mal: some do
+# `analisadas` × `positivas`/`negativas` sem deixar rastro.
+#
+# Efeito colateral bem-vindo: singular e plural na lista ("beat"/"beats",
+# "surge"/"surges") contavam DOIS pontos para a mesma palavra no texto. Com
+# \b cada ocorrência casa só a entrada exata, e o `set` mantém a contagem por
+# termo distinto, como era a intenção original.
+_POSITIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in POSITIVE) + r")\b")
+_NEGATIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in NEGATIVE) + r")\b")
 
 # ── Tradução via endpoint gratuito do Google Translate (sem API key) ─────────
 # Mesma abordagem de get_news_feed.py — só as headlines destacadas (ao usuário)
@@ -107,8 +164,8 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
                 ts = int(pd.Timestamp(pub).timestamp() * 1000)
         except Exception:
             ts = None
-        p = sum(1 for w in POSITIVE if w in title)
-        n = sum(1 for w in NEGATIVE if w in title)
+        p = len(set(_POSITIVE_RE.findall(title)))
+        n = len(set(_NEGATIVE_RE.findall(title)))
         if p > n:
             pos += 1
             scored.append({"title": raw_title[:120], "tone": "positivo", "ts": ts})
@@ -161,6 +218,71 @@ def price_structure(close: pd.Series, lookback: int = 60, window: int = 3) -> st
             return "baixa"
     return "indefinida"
 
+# ── Cruzamento de médias: NÍVEL e DIREÇÃO juntos ────────────────────────────
+#
+# "SMA20 acima ou abaixo da SMA50" é uma leitura ATRASADA quando tomada
+# sozinha. Depois de uma queda forte seguida de recuperação em V, a SMA20 fica
+# abaixo da SMA50 por semanas enquanto o preço já subiu muito -- o
+# "cruzamento de baixa" descreve o tombo passado, não a tendência atual.
+#
+# Visto em produção (NBIS, ago/2026): o papel caiu 48% em julho e recuperou 87%
+# em 12 pregões. Com o preço 21,7% ACIMA da SMA50 e as duas médias subindo, o
+# componente ainda marcava "baixa" e tirava 25 dos 100 pontos do score --
+# levando 65 para 40 e rebaixando "alta forte" para "alta". A análise com IA
+# repetia isso como "divergência interna que vale monitorar", quando era
+# defasagem mecânica de um evento já superado.
+#
+# A correção não é ignorar o cruzamento: é exigir que nível e direção
+# concordem. Quando discordam (nível diz baixa, inclinação diz alta), o
+# honesto é pontuar ZERO -- não há informação de tendência ali, nem pra um
+# lado nem pro outro. O mesmo vale do outro lado: um cruzamento de alta se
+# desfazendo também deixa de valer +25. Tratar só o caso de baixa embutiria
+# viés altista permanente no score.
+#
+# Duplicado em backtest.py::_classificar_cruzamento, que roda por spawn e não
+# importa do pacote -- test_backtest_confluencia.py amarra as duas cópias.
+CRUZAMENTO_JANELA = 5  # pregões para medir inclinação e fechamento do gap
+
+
+def classificar_cruzamento(sma20, sma50, sma20_antes, sma50_antes):
+    """(estado, nota, pontos) do componente SMA20 × SMA50.
+
+    `*_antes` são os valores de CRUZAMENTO_JANELA pregões atrás. Sem eles
+    (None/NaN, histórico curto), cai no comportamento antigo de dois estados.
+    """
+    acima = sma20 > sma50
+    tem_antes = (
+        sma20_antes is not None and sma50_antes is not None
+        and sma20_antes == sma20_antes and sma50_antes == sma50_antes  # descarta NaN
+        and sma50_antes != 0
+    )
+    if not tem_antes:
+        return ("alta" if acima else "baixa", None, 25 if acima else -25)
+
+    gap = (sma20 - sma50) / sma50
+    gap_antes = (sma20_antes - sma50_antes) / sma50_antes
+    sobe20 = sma20 > sma20_antes
+
+    if acima:
+        # Gap positivo encolhendo com a MM20 caindo: a alta está se desfazendo.
+        if not sobe20 and gap < gap_antes:
+            return ("alta",
+                    "cruzamento de alta ENFRAQUECENDO — MM20 caindo e encostando "
+                    "na MM50; nível e direção discordam",
+                    0)
+        return ("alta", None, 25)
+
+    # Gap negativo encolhendo (indo em direção a zero) com a MM20 subindo:
+    # o cruzamento é resíduo de uma queda anterior, não sinal atual.
+    if sobe20 and gap > gap_antes:
+        return ("baixa",
+                "cruzamento de baixa EM REVERSÃO — MM20 abaixo da MM50 mas subindo "
+                "e fechando a distância; defasagem da queda anterior, não "
+                "confirmação de baixa",
+                0)
+    return ("baixa", None, -25)
+
+
 # ── RSI de Wilder (igual metodologia já usada no projeto) ────────────────────
 def rsi_wilder(close: pd.Series, period: int = 14) -> float | None:
     delta = close.diff()
@@ -198,9 +320,18 @@ def for_ticker(ticker: str) -> dict:
         close = hist["Close"].dropna()
         price = float(close.iloc[-1])
 
-        sma20 = float(close.rolling(20).mean().iloc[-1])
-        sma50 = float(close.rolling(50).mean().iloc[-1])
+        sma20_serie = close.rolling(20).mean()
+        sma50_serie = close.rolling(50).mean()
+        sma20 = float(sma20_serie.iloc[-1])
+        sma50 = float(sma50_serie.iloc[-1])
         sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else None
+        # Valores de CRUZAMENTO_JANELA pregões atrás, para medir a direção das
+        # médias (ver classificar_cruzamento). None quando o histórico não alcança.
+        if len(sma20_serie) > CRUZAMENTO_JANELA:
+            sma20_antes = float(sma20_serie.iloc[-1 - CRUZAMENTO_JANELA])
+            sma50_antes = float(sma50_serie.iloc[-1 - CRUZAMENTO_JANELA])
+        else:
+            sma20_antes = sma50_antes = None
 
         ema12 = close.ewm(span=12).mean()
         ema26 = close.ewm(span=26).mean()
@@ -213,8 +344,13 @@ def for_ticker(ticker: str) -> dict:
         score = 0
         comp = {}
 
-        comp["maCruzamento"] = "alta" if sma20 > sma50 else "baixa"
-        score += 25 if sma20 > sma50 else -25
+        cruz_estado, cruz_nota, cruz_pontos = classificar_cruzamento(
+            sma20, sma50, sma20_antes, sma50_antes
+        )
+        comp["maCruzamento"] = cruz_estado
+        if cruz_nota:
+            comp["maCruzamentoNota"] = cruz_nota
+        score += cruz_pontos
 
         if sma200 is not None:
             comp["precoVsSma200"] = "acima" if price > sma200 else "abaixo"
@@ -309,8 +445,11 @@ if __name__ == "__main__":
     for t in tickers:
         key = f"trend:{str(t).upper()}"
         entry = cache.get(key)
-        # 1) Cache fresco → usa direto, sem tocar no Yahoo
-        if entry and (now - entry[0]) < _TTL_SECONDS:
+        # 1) Cache fresco → usa direto, sem tocar no Yahoo.
+        #    "Fresco" = dentro do TTL E do mesmo lado da abertura do pregão:
+        #    uma entrada gravada no pré-mercado não vale depois que o pregão
+        #    começou, por mais nova que seja (ver _cruzou_abertura).
+        if entry and (now - entry[0]) < _TTL_SECONDS and not _cruzou_abertura(entry[0], now):
             items.append(entry[1])
             continue
         # 2) Busca ao vivo
@@ -330,4 +469,4 @@ if __name__ == "__main__":
             items.append(result)
     if dirty:
         _cache_save(cache)
-    print(json.dumps({"items": items}, ensure_ascii=False))
+    print(json_seguro.dumps({"items": items}, ensure_ascii=False))

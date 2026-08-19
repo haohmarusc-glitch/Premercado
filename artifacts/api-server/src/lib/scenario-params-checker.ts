@@ -16,7 +16,7 @@
  * "aplicar sugestão" e nunca era usado pelo checker em background,
  * ver scenario-alert-checker.ts).
  */
-import { eq } from "drizzle-orm";
+import { eq, notInArray } from "drizzle-orm";
 import { db, portfolioPositionsTable, scenarioParamsTable, scenarioAlertSettingsTable, sectorMomentumTable } from "@workspace/db";
 import { diasAteAlvo } from "@workspace/scenario-math";
 import { isActivePosition } from "./portfolio-math";
@@ -61,6 +61,11 @@ export async function refreshScenarioParams(): Promise<void> {
     .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
     .from(portfolioPositionsTable);
   const tickers = [...new Set(rows.filter((r) => !r.isEtf && isActivePosition(r.quantity)).map((r) => r.ticker))];
+  // Sem nenhuma posição ativa, sai antes -- e de propósito NÃO limpa os
+  // órfãos aqui. `notInArray(ticker, [])` apagaria a tabela inteira, e
+  // "carteira vazia" é mais provável de ser anomalia momentânea (migração,
+  // consulta que voltou vazia) do que estado real. A limpeza só roda quando
+  // existe ao menos um ticker ativo para comparar, que é o caso do AVGO.
   if (!tickers.length) return;
 
   let out: string;
@@ -117,6 +122,26 @@ export async function refreshScenarioParams(): Promise<void> {
   if (skipped.length) {
     logger.warn({ skipped }, "Scenario params checker: tickers sem histórico suficiente, mantido valor anterior");
   }
+
+  // Órfãos: linha cujo ticker saiu da lista ativa (posição zerada). Sem esta
+  // limpeza a linha ficava para sempre, e o Painel de Cenários seguia
+  // carregando vol/beta de um papel que o usuário não tem mais -- visto em
+  // produção com AVGO (auditoria 17/08/2026), que precisou ser apagado à mão.
+  //
+  // DELETE simples em vez de marcar stale: o próprio ciclo recria a linha se
+  // a posição voltar, então não há nada a preservar. O dado é derivado, não
+  // é histórico.
+  const removidos = await db
+    .delete(scenarioParamsTable)
+    .where(notInArray(scenarioParamsTable.ticker, tickers))
+    .returning({ ticker: scenarioParamsTable.ticker });
+  if (removidos.length) {
+    logger.info(
+      { removidos: removidos.map((r) => r.ticker) },
+      "Scenario params checker: linhas removidas (ticker fora da lista ativa)",
+    );
+  }
+
   logger.info({ updated, total: tickers.length }, "Scenario params refreshed");
 }
 

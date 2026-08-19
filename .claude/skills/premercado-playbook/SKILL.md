@@ -74,6 +74,65 @@ nenhum, dia da semana, datas de earnings, "pós-earnings" fantasma) e dispara um
 de correção se achar erro. Se for adicionar um novo tipo de dado ao Veredito que o LLM pode
 citar errado, considere se ele merece uma checagem aqui também.
 
+### 2b. A mesma armadilha sem yfinance nenhum: duas IMPLEMENTAÇÕES do mesmo indicador
+
+O padrão acima não depende de ter duas FONTES — basta ter duas CONTAS para o mesmo nome.
+Visto em produção (NBIS, 17/08/2026): a tela mostrava "RSI 64,6" no painel Tendência e
+"RSI 67,2" no painel Técnica, mesmo ticker, mesmo instante. Não era cache velho nem fonte
+divergente: `get_trend.rsi_wilder` usa a suavização de Wilder (`ewm(alpha=1/14)`) e
+`tools.get_technical_indicators` usava `rolling(14).mean()`, que é a variante de **Cutler**
+— um indicador diferente, não um arredondamento do mesmo. Corrigido unificando em Wilder,
+que já era a metodologia de `get_trend`, `confluence_engine` e `backtest`.
+
+Por que passou despercebido tanto tempo: os dois números são plausíveis e ficam perto um do
+outro. Um `change_pct` com o sinal trocado (§2) salta aos olhos; um RSI 2,6 pontos fora não
+— só aparece quando alguém compara os dois painéis lado a lado, que foi exatamente o que
+aconteceu.
+
+**Heurística**: indicador com mais de uma implementação no repo é um `fast_info` esperando
+para acontecer. Antes de escrever RSI/ATR/MACD/VWAP/vol numa função nova, `grep` pelo nome
+— se já existe, importe ou copie a conta existente, nunca reescreva "do jeito que você
+lembra" (as variantes clássicas divergem de verdade: Wilder × Cutler × EMA no RSI, SMA ×
+EMA no ATR). Quando a duplicação for inevitável — os scripts `get_*.py` rodam por spawn e
+não conseguem importar do pacote —, **amarre as cópias com um teste**: já existe
+`test_backtest_confluencia.py` comparando `backtest._rsi_wilder_series` com
+`get_trend.rsi_wilder`, e `test_technicals_rsi_rvol.py` fazendo o mesmo para `tools.py`. O
+teste é o que impede as cópias de derivarem em silêncio depois.
+
+Um corolário que apareceu no mesmo incidente, e vale para qualquer estatística de janela
+móvel: **MÉDIA de 20 pregões é frágil a um único pregão-evento**. O RVOL usava a média de
+volume como base e um dia de earnings (2-3x o normal) inflava o denominador por um mês
+inteiro — NBIS fechou +8,88% com RVOL 1,01 ("normal") justamente porque tinha reportado 2
+pregões antes. Trocado por MEDIANA, que ignora o outlier sem precisar detectá-lo. Se uma
+base de comparação sua puder conter um dia de balanço/split/circuit breaker, prefira
+mediana a média.
+
+**Corrigir UMA cópia não é corrigir o bug.** A primeira tentativa unificou só
+`tools.py::get_technical_indicators` — a ferramenta do AGENTE — e o sintoma sobreviveu
+intacto, porque `/api/technicals` spawna `get_technicals.py`, que é a cópia da TELA. Eram
+quatro no total (contando `check_squeeze_setup` e a estratégia `"rsi"` do `backtest.py`,
+esta última discordando da estratégia `"confluencia"` do MESMO arquivo). Antes de declarar
+resolvido um bug de indicador, ache TODAS as cópias e confirme por qual delas o sintoma
+relatado passa — que raramente é a primeira que você achou.
+
+**Resultado da auditoria de 17/08/2026** (feita depois do RSI, aplicando esta heurística
+aos outros indicadores duplicados) — nenhum outro divergia:
+
+| Indicador | Cópias | Situação |
+|---|---|---|
+| ATR | 4 (`market_alerts`, `risk_manager`, `tools`, `ciclo_volatilidade`) | consistentes: TR = max(h−l, \|h−cAnt\|, \|l−cAnt\|) suavizado por **média simples** de 14 — não é o ATR clássico de Wilder, mas é o mesmo nas quatro |
+| MACD | 4 (`get_trend`, `get_technicals`, `tools`, `backtest`) | consistentes: `ewm(span=12/26/9).mean()` com o `adjust=True` padrão do pandas |
+| VWAP | 2 de sessão (`tools`, `get_technicals`) + 1 rolante | as duas de sessão idênticas; `confluence_engine.vwap_rolling` é OUTRO indicador **de propósito**, nomeado e documentado como tal |
+
+O `vwap_rolling` é o modelo a seguir quando a variante é intencional: nome qualificado e
+docstring dizendo por que difere. O que não pode existir é uma segunda conta chamando-se
+igual à primeira.
+
+`test_indicadores_consistentes.py` trava esse resultado (incluindo guardas de drift para
+ATR e MACD), e `test_technicals_rsi_rvol.py::test_nenhum_modulo_do_agente_usa_rsi_de_cutler`
+faz o mesmo para o RSI. Migrar o ATR para Wilder é uma decisão legítima — mas nas quatro
+cópias de uma vez, atualizando o teste junto, nunca numa só.
+
 ## 3. Subprocesso Python com timeout do lado Node: o processo tem que morrer de verdade
 
 `with ThreadPoolExecutor(...) as pool: ...` espera IMPLICITAMENTE todas as threads
