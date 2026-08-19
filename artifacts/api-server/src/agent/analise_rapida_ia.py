@@ -64,7 +64,17 @@ import time
 # orçamento em vez de herdar o do agente (que roda em janela de 10 min):
 # uma tentativa por provedor, sem retry no mesmo, deixando a cadeia de
 # fallback trocar de provedor em vez de insistir num que está lento.
-_LLM_TIMEOUT_S = float(os.environ.get("ANALISE_IA_LLM_TIMEOUT_S", "55"))
+#
+# 55 -> 75 em 19/08/2026. Com 55 o anthropic era CORTADO, não falhava:
+#
+#     [provider] anthropic failed after 55.1s: Request timed out or interrupted
+#
+# 55,1s contra um teto de 55s não é erro do provedor, é o nosso relógio
+# batendo. O anthropic leva ~40s nesta tela em dia bom, então 55 era margem
+# de 15s -- e um dia mais lento estourava. Pior: o corte gasta o slot inteiro
+# de uma das duas tentativas que o orçamento compra, sem produzir nem
+# resposta nem diagnóstico. 75 dá ~87% sobre o tempo típico.
+_LLM_TIMEOUT_S = float(os.environ.get("ANALISE_IA_LLM_TIMEOUT_S", "75"))
 os.environ["API_TIMEOUT_SECONDS"] = str(_LLM_TIMEOUT_S)
 os.environ["AGENT_MAX_RETRIES"] = "0"
 os.environ["AGENT_TRANSIENT_RETRIES"] = "0"
@@ -72,7 +82,7 @@ os.environ["AGENT_TRANSIENT_RETRIES"] = "0"
 # Teto do processo inteiro, incluindo imports, camada fundamental e LLM.
 # Tem que caber no timeout do Node com folga -- test_orcamento_analise_ia.py
 # lê os dois e falha se a invariante quebrar.
-_ORCAMENTO_TOTAL_S = float(os.environ.get("ANALISE_IA_ORCAMENTO_S", "135"))
+_ORCAMENTO_TOTAL_S = float(os.environ.get("ANALISE_IA_ORCAMENTO_S", "175"))
 _INICIO = time.monotonic()
 
 from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
@@ -155,7 +165,7 @@ MIN_TEXTO_CHARS = 200
 # tentativas de provedor (o fallback da Tarefa 0 so serve se houver tempo
 # para a segunda), precisa valer
 #     teto_fundamento + 2 x _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S
-# 25 + 2x55 = 135, exatamente o orcamento. Visto em producao (18/08/2026):
+# 25 + 2x75 = 175, exatamente o orcamento. Visto em producao (18/08/2026):
 # a primeira chamada consumiu o orcamento inteiro e a troca de provedor --
 # que existia justamente para esse caso -- ficou inalcancavel.
 _TETO_FUNDAMENTO_S = float(os.environ.get("ANALISE_IA_FUNDAMENTO_S", "25"))
