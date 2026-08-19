@@ -1100,7 +1100,23 @@ class FallbackClient:
     """
 
     def __init__(self):
-        self._order = [p for p in _provider_order() if _has_key(p)]
+        pedidos = _provider_order()
+        self._order = [p for p in pedidos if _has_key(p)]
+        # Quem ficou de fora por não ter chave no ambiente DESTE processo.
+        #
+        # Guardado, e não descartado, porque a exclusão era invisível: em
+        # 19/08/2026 a Análise com IA falhou com "All providers exhausted --
+        # condenados nesta run: openrouter | openai | kimi", que se lê como
+        # "tentei tudo que tenho". Anthropic e gemini nem tinham sido
+        # tentados -- sumiram aqui, sem uma linha de log -- e são justamente
+        # os dois que teriam respondido. O operador foi investigar as contas
+        # dos três que apareceram, que era o lugar errado.
+        self._sem_chave = [p for p in pedidos if p not in self._order]
+        if self._sem_chave:
+            faltando = ", ".join(f"{p} ({PROVIDERS[p]['api_key_env']})"
+                                 for p in self._sem_chave if p in PROVIDERS)
+            print(f"[provider] fora da cadeia por falta de chave: {faltando}",
+                  file=sys.stderr, flush=True)
         if not self._order:
             raise RuntimeError(
                 "No provider API keys found. Add at least one of: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, KIMI_API_KEY"
@@ -1176,6 +1192,21 @@ class FallbackClient:
             ),
             flush=True,
         )
+
+    def _nota_sem_chave(self) -> str:
+        """Sufixo que nomeia quem nunca entrou na cadeia, e por quê.
+
+        Vai no MESMO texto do erro, não só no log: a mensagem sobe até a tela
+        (o painel "Análise com IA" mostra o `error` cru), e é ali que alguém
+        decide onde investigar. Um erro que lista três contas quebradas sem
+        dizer que outras duas foram puladas manda o operador para o lugar
+        errado com toda a confiança do mundo.
+        """
+        if not self._sem_chave:
+            return ""
+        faltando = ", ".join(f"{p} (sem {PROVIDERS[p]['api_key_env']})"
+                             for p in self._sem_chave if p in PROVIDERS)
+        return f" -- nunca tentados, fora da cadeia por falta de chave: {faltando}"
 
     def pular_provedor_atual(self, motivo: str) -> bool:
         """Avança para o próximo provedor SEM condenar o atual.
@@ -1368,10 +1399,12 @@ class FallbackClient:
                 raise RuntimeError(
                     f"All providers exhausted. Last error: {safe_exc}"
                     + (f" -- condenados nesta run: {resumo}" if resumo else "")
+                    + self._nota_sem_chave()
                 ) from last_exc
         raise RuntimeError(
             "No providers available"
             + (f" -- todos condenados: {', '.join(self._mortos)}" if self._mortos else "")
+            + self._nota_sem_chave()
         )
 
 
