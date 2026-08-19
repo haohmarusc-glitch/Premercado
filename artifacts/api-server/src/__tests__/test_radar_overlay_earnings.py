@@ -94,12 +94,20 @@ def test_nota_de_divergencia_some_quando_a_fonte_responde(monkeypatch, tmp_path,
     Manter "fontes divergem: pode ser 01/09" embaixo da data que a Alpha
     Vantage confirmou seria pior que inútil: a tela contradiria o próprio dado.
     """
-    assert "nota" in embutido.EARNINGS["CRWD"]  # o embutido de fato tem a nota
+    # Escolhe o ticker anotado em tempo de execução em vez de fixar um nome:
+    # as notas SOMEM à medida que o calendário confirma as datas (foi o que
+    # aconteceu com CRWD, MRVL e ORCL em 19/08), e um teste preso a um ticker
+    # específico quebraria pelo próprio sucesso do que ele testa.
+    anotados = [t for t, v in embutido.EARNINGS.items() if "nota" in v]
+    if not anotados:
+        pytest.skip("nenhuma nota restante no calendário embutido -- "
+                    "a regra segue valendo, mas não há caso para exercitar")
+    alvo = anotados[0]
     r = _radar(monkeypatch, tmp_path=tmp_path, blob={
         "atualizado_em": "2026-08-19",
-        "earnings": {"CRWD": {"data": "2026-08-26", "quando": "AC"}},
+        "earnings": {alvo: {"data": embutido.EARNINGS[alvo]["data"], "quando": "AC"}},
     })
-    assert "nota" not in r.EARNINGS["CRWD"]
+    assert "nota" not in r.EARNINGS[alvo]
 
 
 def test_janela_invalida_vira_none_em_vez_de_passar_adiante(monkeypatch, tmp_path):

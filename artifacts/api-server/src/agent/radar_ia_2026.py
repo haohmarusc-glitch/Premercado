@@ -18,7 +18,15 @@ Ou importe no Premercado:
     from radar_ia_2026 import (correlacao, cluster_de, risco_portfolio,
                                earnings_proximos, alerta_contagio, DADOS)
 
-AVISO: dados estáticos — snapshot de 14/08/2026. Revalidar antes de operar.
+AVISO: o módulo tem TRÊS camadas com validades diferentes, e confundi-las é o
+erro que a auditoria de 17/08/2026 pegou:
+  - preço e faixa de 52 semanas: VIVOS (atualizar_min52_vivo, a cada chamada);
+  - correlações e calendário de earnings: recoletados por checker
+    (atualizar_correlacoes.py semanal, atualizar_earnings.py diário) e
+    aplicados como overlay no import;
+  - EVR, move implícito e reação histórica: transcrição MANUAL do OptionSlam,
+    sem fonte programática — envelhecem até alguém abrir o site.
+HOJE_SNAPSHOT descreve a última camada, não as duas primeiras.
 
 Adaptações feitas na integração ao Premercado (vs. o pacote original):
   - earnings_proximos() usa HOJE em BRT como referência default, não o
@@ -65,71 +73,82 @@ except ImportError:
 HOJE_SNAPSHOT = date(2026, 8, 14)  # data de referência dos dados
 
 # ============================================================================
-# 1. CALENDÁRIO DE EARNINGS (ago-set/2026)  "BO"=antes da abertura, "AC"=após
+# 1. CALENDÁRIO DE EARNINGS  "BO"=antes da abertura, "AC"=após o fechamento
 # ============================================================================
+#
+# Este dicionário deixou de ser a fonte de verdade: atualizar_earnings.py
+# busca o calendário na Alpha Vantage e o overlay abaixo o sobrescreve no
+# import. O que sobra aqui é o FALLBACK -- vale quando o overlay ainda não
+# rodou (primeiro boot, ou logo depois de um rebuild, que apaga o cache).
+#
+# Conferido contra o EARNINGS_CALENDAR em 19/08/2026 para 25 tickers; o resto
+# segue como veio da transcrição de 14/08 até o checker diário passar por
+# cima. Três datas estavam erradas na transcrição, e a pior delas por 15 dias:
+# BABA aparecia em 04/09 quando reporta em 20/08 -- um papel que o radar
+# mostraria como "sem catalisador" na véspera do catalisador.
+#
+# Quem editar à mão: `nota` é reservada a especulação SOBRE A DATA, e some
+# sozinha quando o overlay confirma. Nota sobre outra coisa não pertence aqui.
 EARNINGS = {
     # -- semicondutores --
-    "ADI":  {"data": "2026-08-19", "quando": None, "setor": "semis"},
-    "WOLF": {"data": "2026-08-19", "quando": None, "setor": "semis"},
-    "NVDA": {"data": "2026-08-26", "quando": "AC", "setor": "semis"},
-    "SNPS": {"data": "2026-08-26", "quando": None, "setor": "semis"},
-    "AVGO": {"data": "2026-09-03", "quando": "AC", "setor": "semis"},
-    "MU":   {"data": "2026-09-22", "quando": "AC", "setor": "semis"},
+    "ADI": {"data": "2026-08-19", "quando": "BO", "setor": "semis"},
+    "WOLF":{"data": "2026-08-19", "quando": None, "setor": "semis"},
+    "NVDA":{"data": "2026-08-26", "quando": "AC", "setor": "semis"},
+    "SNPS":{"data": "2026-08-26", "quando": None, "setor": "semis"},
+    "AVGO":{"data": "2026-09-02", "quando": "AC", "setor": "semis"},
+    "MU":  {"data": "2026-09-22", "quando": "AC", "setor": "semis"},
     # -- software/tech --
-    "INTU": {"data": "2026-08-25", "quando": None, "setor": "software"},
-    "CRM":  {"data": "2026-08-26", "quando": None, "setor": "software"},
-    "CRWD": {"data": "2026-08-26", "quando": None, "setor": "software",
-             "nota": "fontes divergem: pode ser 01/09"},
-    "S":    {"data": "2026-08-27", "quando": None, "setor": "software"},
-    "ADSK": {"data": "2026-08-27", "quando": "AC", "setor": "software"},
-    "PANW": {"data": "2026-09-01", "quando": None, "setor": "software"},
-    "MDB":  {"data": "2026-09-01", "quando": None, "setor": "software"},
-    "AI":   {"data": "2026-09-02", "quando": None, "setor": "software"},
-    "SNOW": {"data": "2026-09-02", "quando": None, "setor": "software"},
-    "ZS":   {"data": "2026-09-03", "quando": None, "setor": "software"},
-    "ORCL": {"data": "2026-09-08", "quando": None, "setor": "software",
-             "nota": "outra fonte: 14/09"},
-    "ADBE": {"data": "2026-09-10", "quando": None, "setor": "software"},
-    "CSCO": {"data": "2026-09-30", "quando": None, "setor": "networking"},
+    "INTU":{"data": "2026-08-25", "quando": "AC", "setor": "software"},
+    "CRM": {"data": "2026-08-26", "quando": "AC", "setor": "software"},
+    "CRWD":{"data": "2026-08-26", "quando": "AC", "setor": "software"},
+    "ADSK":{"data": "2026-08-27", "quando": "AC", "setor": "software"},
+    "S":   {"data": "2026-08-27", "quando": None, "setor": "software"},
+    "MDB": {"data": "2026-09-01", "quando": None, "setor": "software"},
+    "PANW":{"data": "2026-09-01", "quando": None, "setor": "software"},
+    "AI":  {"data": "2026-09-02", "quando": None, "setor": "software"},
+    "SNOW":{"data": "2026-09-02", "quando": None, "setor": "software"},
+    "ZS":  {"data": "2026-09-03", "quando": None, "setor": "software"},
+    "ORCL":{"data": "2026-09-08", "quando": None, "setor": "software"},
+    "ADBE":{"data": "2026-09-10", "quando": "AC", "setor": "software"},
+    "CSCO":{"data": "2026-09-30", "quando": None, "setor": "networking"},
     # -- varejo --
-    "HD":   {"data": "2026-08-18", "quando": "BO", "setor": "varejo"},
-    "LOW":  {"data": "2026-08-19", "quando": "BO", "setor": "varejo"},
-    "TJX":  {"data": "2026-08-19", "quando": None, "setor": "varejo"},
-    "TGT":  {"data": "2026-08-19", "quando": None, "setor": "varejo"},
-    "WMT":  {"data": "2026-08-20", "quando": None, "setor": "varejo"},
-    "ROST": {"data": "2026-08-20", "quando": None, "setor": "varejo"},
-    "BBY":  {"data": "2026-08-27", "quando": None, "setor": "varejo"},
-    "ULTA": {"data": "2026-08-27", "quando": "AC", "setor": "varejo"},
-    "DLTR": {"data": "2026-09-02", "quando": None, "setor": "varejo"},
-    "LULU": {"data": "2026-09-03", "quando": None, "setor": "varejo"},
-    "GME":  {"data": "2026-09-08", "quando": None, "setor": "varejo"},
-    "KR":   {"data": "2026-09-10", "quando": None, "setor": "varejo"},
-    "COST": {"data": "2026-09-24", "quando": None, "setor": "varejo"},
+    "HD":  {"data": "2026-08-18", "quando": "BO", "setor": "varejo"},
+    "LOW": {"data": "2026-08-19", "quando": "BO", "setor": "varejo"},
+    "TGT": {"data": "2026-08-19", "quando": None, "setor": "varejo"},
+    "TJX": {"data": "2026-08-19", "quando": None, "setor": "varejo"},
+    "ROST":{"data": "2026-08-20", "quando": None, "setor": "varejo"},
+    "WMT": {"data": "2026-08-20", "quando": "BO", "setor": "varejo"},
+    "BBY": {"data": "2026-08-27", "quando": "BO", "setor": "varejo"},
+    "DLTR":{"data": "2026-08-27", "quando": "BO", "setor": "varejo"},
+    "ULTA":{"data": "2026-08-27", "quando": "AC", "setor": "varejo"},
+    "LULU":{"data": "2026-09-03", "quando": None, "setor": "varejo"},
+    "GME": {"data": "2026-09-08", "quando": None, "setor": "varejo"},
+    "KR":  {"data": "2026-09-10", "quando": None, "setor": "varejo"},
+    "COST":{"data": "2026-09-24", "quando": None, "setor": "varejo"},
     # -- China ADRs --
-    "BIDU": {"data": "2026-08-18", "quando": None, "setor": "china"},
-    "NTES": {"data": "2026-08-20", "quando": "BO", "setor": "china"},
-    "XPEV": {"data": "2026-08-24", "quando": "BO", "setor": "china"},
-    "PDD":  {"data": "2026-08-24", "quando": "BO", "setor": "china",
-             "nota": "~24-25/08, não confirmado oficialmente"},
-    "BILI": {"data": "2026-08-27", "quando": None, "setor": "china"},
-    "BABA": {"data": "2026-09-04", "quando": None, "setor": "china"},
+    "BIDU":{"data": "2026-08-18", "quando": None, "setor": "china"},
+    "BABA":{"data": "2026-08-20", "quando": "BO", "setor": "china"},
+    "NTES":{"data": "2026-08-20", "quando": "BO", "setor": "china"},
+    "PDD": {"data": "2026-08-24", "quando": "BO", "setor": "china",
+            "nota": "~24-25/08, não confirmado oficialmente"},
+    "XPEV":{"data": "2026-08-24", "quando": "BO", "setor": "china"},
+    "BILI":{"data": "2026-08-27", "quando": "BO", "setor": "china"},
     # -- EV --
-    "LI":   {"data": "2026-08-27", "quando": None, "setor": "ev"},
-    "NIO":  {"data": "2026-09-01", "quando": None, "setor": "ev"},
+    "LI":  {"data": "2026-08-27", "quando": None, "setor": "ev"},
+    "NIO": {"data": "2026-09-01", "quando": None, "setor": "ev"},
     # -- outros --
-    "EL":   {"data": "2026-08-19", "quando": None, "setor": "outros"},
-    "DE":   {"data": "2026-08-20", "quando": None, "setor": "outros"},
-    "TOL":  {"data": "2026-08-18", "quando": None, "setor": "outros"},
-    "NKE":  {"data": "2026-09-29", "quando": None, "setor": "outros"},
+    "TOL": {"data": "2026-08-18", "quando": None, "setor": "outros"},
+    "EL":  {"data": "2026-08-19", "quando": "BO", "setor": "outros"},
+    "DE":  {"data": "2026-08-20", "quando": "BO", "setor": "outros"},
+    "NKE": {"data": "2026-09-29", "quando": None, "setor": "outros"},
     # -- tema IA (datas citadas na análise de volatilidade) --
-    "SNDK": {"data": "2026-11-05", "quando": None, "setor": "memoria"},
-    "STX":  {"data": "2026-10-28", "quando": None, "setor": "memoria"},
-    "LRCX": {"data": "2026-10-21", "quando": None, "setor": "equipamento"},
-    "KLAC": {"data": "2026-10-28", "quando": None, "setor": "equipamento"},
-    "ASML": {"data": "2026-10-14", "quando": None, "setor": "equipamento"},
-    "TSM":  {"data": "2026-10-15", "quando": None, "setor": "foundry"},
-    "MRVL": {"data": "2026-08-27", "quando": None, "setor": "semis",
-             "nota": "fontes divergem: 20 ou 27/08"},
+    "MRVL":{"data": "2026-08-27", "quando": "AC", "setor": "semis"},
+    "ASML":{"data": "2026-10-14", "quando": None, "setor": "equipamento"},
+    "TSM": {"data": "2026-10-15", "quando": None, "setor": "foundry"},
+    "LRCX":{"data": "2026-10-21", "quando": None, "setor": "equipamento"},
+    "KLAC":{"data": "2026-10-28", "quando": None, "setor": "equipamento"},
+    "STX": {"data": "2026-10-28", "quando": None, "setor": "memoria"},
+    "SNDK":{"data": "2026-11-05", "quando": None, "setor": "memoria"},
 }
 
 # ============================================================================
