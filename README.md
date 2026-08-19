@@ -181,11 +181,41 @@ Camada de dados estruturais sobre o tema de IA/semicondutores.
 earnings com EVR e move implícito, YTD/vol/beta por ticker, riscos mapeados,
 screening de proximidade da mínima de 52 semanas.
 
+O módulo tem **três camadas com validades diferentes**, e a tela rotula cada
+uma — confundi-las foi o erro que a auditoria de 17/08/2026 pegou:
+
+| Camada | Como atualiza | Cadência |
+| --- | --- | --- |
+| Preço e faixa de 52 semanas | `atualizar_min52_vivo()` na própria resposta | a cada request |
+| Correlações e vol medida | `atualizar_correlacoes.py` → overlay | semanal |
+| Calendário de earnings | `atualizar_earnings.py` → overlay | diário |
+| EVR, move implícito, reação histórica | transcrição manual do OptionSlam | quando alguém abre o site |
+
+`HOJE_SNAPSHOT` descreve a **última** linha, não as três primeiras.
+
 **Correlações vivas** (`atualizar_correlacoes.py`): recalcula a matriz completa
 do universo a partir de 6 meses de fechamentos do yfinance, sobre **retornos
 diários** (não nível de preço — dois papéis em tendência exibem correlação de
 nível altíssima sem co-movimento real). Grava um **overlay JSON** que o núcleo
 aplica por cima do snapshot embutido no import. Roda sozinho toda semana.
+
+**Calendário vivo** (`atualizar_earnings.py`): busca o `EARNINGS_CALENDAR` da
+Alpha Vantage e sobrescreve as datas e a janela (BO/AC) do calendário
+embutido. **Diário**, ao contrário das correlações: são os dois extremos da
+mesma escala — correlação de 6 meses se move devagar e o que importa é
+mudança de regime; data de earnings vira passado em dias, e a confirmação
+oficial sai na semana anterior, que é justo quando o dado importa.
+
+Pede o calendário **inteiro numa chamada só** e filtra local. O endpoint
+aceita `symbol`, mas o universo tem ~51 papéis e a cota diária compartilhada
+com o feed de notícias é 15 — pedir por ticker esgotaria a cota e derrubaria
+as notícias junto. (Medido: transcrevendo o universo à mão pelo MCP em
+19/08/2026, a chave estourou na 30ª chamada.)
+
+Quem editar o `EARNINGS` à mão: o campo `nota` é reservado a especulação
+**sobre a data** e o overlay o remove quando a fonte responde — manter
+"fontes divergem" embaixo da data confirmada faria a tela contradizer o
+próprio dado.
 
 **Parâmetros operacionais** (`parametros_volatilidade.py`):
 
@@ -313,6 +343,7 @@ autenticado), com trava e cadência coordenadas por linha única no Postgres
 | `scenario_params` | 24 h | Recalcula vol/beta e momentum do setor |
 | `entry_exit_study` | 24 h | Snapshot diário dos estudos + resolução |
 | `radar_correlacoes` | 7 dias | Correlações e vol medidas do radar |
+| `radar_earnings` | 24 h | Datas e janela (BO/AC) do calendário do radar |
 
 Fora desse ciclo, o **retrato de risco macro** roda pelo agendador interno
 (`node-cron` em `lib/scheduler.ts`), às 07:50 BRT em dias úteis. Não passa por
@@ -581,6 +612,8 @@ cd /opt/premercado
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.atualizar_correlacoes < /dev/null
 docker compose exec -T -w /app/artifacts/api-server/src app \
+  /app/.venv/bin/python -m agent.atualizar_earnings < /dev/null
+docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.parametros_volatilidade < /dev/null
 docker compose exec -T -w /app/artifacts/api-server/src app \
   /app/.venv/bin/python -m agent.earnings_reaction_analysis --tickers NVDA < /dev/null
@@ -595,8 +628,9 @@ docker compose exec -T -w /app/artifacts/api-server/src app \
 > `stdin.isatty()`, e `docker compose exec -T` deixa o stdin aberto sem TTY —
 > sem o redirecionamento, o script espera um EOF que nunca chega.
 
-> Um `--build` apaga `/var/cache/premercado`, onde mora o overlay de correlações.
-> O checker semanal regrava sozinho; para não esperar, rodar o comando acima.
+> Um `--build` apaga `/var/cache/premercado`, onde moram os overlays de
+> correlações e de earnings. Os checkers regravam sozinhos (7 dias e 24 h);
+> para não esperar, rodar os dois comandos acima.
 
 ---
 
@@ -614,6 +648,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #269 | Parâmetros de vol: stops, sizing, vol de carteira **com covariância**, stress; camada macro (FOMC) e sinal overnight |
 | #270 | Proxy líder por posição vindo do dado + refresh semanal automático |
 | #271 | Vol **medida por nós** substitui a coleta manual (contaminava stop e sizing) |
+| #345 | Calendário de earnings deixa de ser digitado: overlay diário da Alpha Vantage. Três datas estavam erradas na transcrição — BABA por 15 dias, na véspera do próprio catalisador |
 
 ### Backtest e exportação (ago/2026)
 

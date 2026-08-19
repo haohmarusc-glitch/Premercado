@@ -327,10 +327,12 @@ export const RadarSnapshotResponse = zod.object({
   "snapshot": zod.string().describe('YYYY-MM-DD do snapshot dos dados'),
   "correlacoes_janela_fim": zod.string().optional().describe('YYYY-MM-DD do fim da janela das correlacoes servidas'),
   "correlacoes_atualizado_em": zod.string().nullish(),
+  "earnings_atualizado_em": zod.string().nullish(),
   "earnings": zod.record(zod.string(), zod.object({
     "data": zod.string(),
     "quando": zod.string().nullish(),
     "setor": zod.string(),
+    "fonte": zod.string().optional(),
     "nota": zod.string().optional(),
   })),
   "min52": zod.record(zod.string(), zod.object({

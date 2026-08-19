@@ -35,6 +35,7 @@ import { checkScenarioAlerts } from "../lib/scenario-alert-checker";
 import { refreshScenarioParams } from "../lib/scenario-params-checker";
 import { refreshEntryExitStudies } from "../lib/entry-exit-study-checker";
 import { refreshRadarCorrelacoes } from "../lib/radar-correlacoes-checker";
+import { refreshRadarEarnings } from "../lib/radar-earnings-checker";
 import { state as agentState } from "../lib/runner";
 import { logger } from "../lib/logger";
 
@@ -78,6 +79,10 @@ const ETAPAS: Etapa[] = [
   // importa capturar é mudança de regime (par cruzando 0.70), não a
   // terceira casa decimal. Ver lib/radar-correlacoes-checker.ts.
   { nome: "radar_correlacoes", intervaloMs: 7 * 24 * 60 * MIN, run: refreshRadarCorrelacoes },
+  // Diário, ao contrário das correlações: data de earnings vira passado em
+  // dias e a confirmação oficial sai na semana anterior -- justo a janela
+  // em que o dado importa. Custa 1 chamada de API por dia.
+  { nome: "radar_earnings", intervaloMs: 24 * 60 * MIN, run: refreshRadarEarnings },
 ];
 
 type Cadencia = Record<string, number>;
