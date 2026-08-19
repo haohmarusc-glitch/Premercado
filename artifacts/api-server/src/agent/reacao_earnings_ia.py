@@ -106,6 +106,13 @@ SYSTEM = (
     "'esse papel tem tendido a', nunca 'sempre', 'toda vez' ou 'o papel cai "
     "quando'. Se `n_events` de um ticker for menor que 5, diga isso ao citá-lo.\n\n"
 
+    "Contagem de bucket ('esticados caíram, descontados subiram') vira frase "
+    "sobre O QUE ACONTECEU, nunca sobre o que acontece: 'nos casos esticados "
+    "a reação média foi X' é legítimo; 'papel em deságio tende a sofrer "
+    "reações mais severas' é previsão a partir de dois ou três pontos. Com "
+    "`n_events` abaixo de 6, os buckets têm poucos eventos cada e não "
+    "sustentam nem tendência.\n\n"
+
     "## 3. Todo número vem do JSON\n"
     "Não invente nem calcule. Campo ausente ou null não se menciona. A única "
     "conta permitida é comparar dois valores que estão lá (maior/menor/acima/"
@@ -172,6 +179,20 @@ def interpretar(dados: dict) -> dict:
         return {"error": (
             "Nenhum ticker da cesta produziu estatística — não há o que "
             "comparar. Veja o erro de cada papel na própria tela."
+        )}
+    # Com UM papel só não há cesta, e o texto degenera exatamente no que esta
+    # tela existe para não fazer. Medido em 19/08/2026 com WOLF sozinho: a
+    # seção "Quem se move junto" -- que é sobre co-movimento -- foi preenchida
+    # com a leitura individual (gap que atenua até o fechamento, trajetória
+    # pós-evento), que é o que `interpretResult` já mostra no card ao lado.
+    #
+    # Recusar é mais honesto e mais barato que redigir a duplicata.
+    if len(com_dados) < 2:
+        unico = str(com_dados[0].get("ticker") or "o papel")
+        return {"error": (
+            f"A leitura da cesta COMPARA papéis, e só {unico} produziu "
+            f"estatística. Com um papel só, o card dele já traz a leitura — "
+            f"rode com pelo menos dois tickers para a comparação valer."
         )}
 
     tickers = [str(r.get("ticker") or "?") for r in resultados]
