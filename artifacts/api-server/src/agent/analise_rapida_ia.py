@@ -82,6 +82,56 @@ _probe_boot()
 import yfinance as yf
 
 from agent.provider import get_client, get_run_usage, texto_da_resposta
+from agent.provider import _DEFAULT_ORDER as _ORDEM_PADRAO
+
+# Provedores que não CONVERGEM nesta tarefa -- não que estejam fora do ar.
+#
+# O deepseek (v4-pro e v4-flash) gasta o max_tokens inteiro raciocinando e
+# nunca chega à resposta. Medido quatro vezes em 18-19/08/2026, com duas
+# versões de modelo e duas versões do prompt:
+#
+#   v4-pro    teto 12.000   142,2s   0 chars   (17.806 chars de raciocínio)
+#   v4-flash  teto  6.000    54,2s   0 chars   (esgotou os 6.000 tokens)
+#   v4-flash  teto  6.000    52,7s   0 chars   (com o prompt 27% menor)
+#
+# Num prompt trivial ele responde em 1s. O problema é ESTA tarefa: redigir uma
+# análise longa e estruturada. Dobrar o teto dobrou o tempo sem produzir texto
+# -- o raciocínio se expande para preencher o que houver.
+#
+# Fica FORA daqui e DENTRO da cadeia global de propósito: o v4-flash é forte em
+# tool-calling, que é o formato do agente diário, e esse uso nunca falhou.
+# Excluí-lo lá puniria um caminho que funciona por causa de outro que não.
+#
+# Deriva de _DEFAULT_ORDER em vez de listar a ordem aqui: uma terceira cópia da
+# sequência divergiria das outras duas (provider.py e agent-budget.ts) na
+# primeira mudança -- é o padrão do playbook §10, e já mordeu neste repo.
+_SEM_CONVERGENCIA_AQUI = {"deepseek"}
+
+# Escotilha de saída, estreita e nomeada. Reabilitar um provedor excluído exige
+# pedir POR ELE -- um AGENT_PROVIDER_ORDER genérico não serve.
+#
+# A primeira versão desta exclusão só agia quando AGENT_PROVIDER_ORDER estava
+# vazia, e isso deixava uma porta dos fundos: bastaria alguém definir a ordem no
+# compose por outro motivo para o deepseek voltar à cadeia sem ninguém notar.
+#
+# O filtro agora vale para QUALQUER origem da ordem. O que se perderia com um
+# ban absoluto -- testar o provedor excluído sem editar código, que foi como a
+# medição acima foi produzida -- volta por esta variável, que tem de citar o
+# nome e portanto não acontece por acidente.
+_PERMITIR_ENV = "ANALISE_IA_PERMITIR"
+
+
+def _ordem_desta_tela(bruta: str = "", permitidos: str = "") -> list[str]:
+    """Ordem efetiva, já sem quem não converge aqui."""
+    origem = [p.strip() for p in bruta.split(",") if p.strip()] or list(_ORDEM_PADRAO)
+    liberados = {p.strip() for p in permitidos.split(",") if p.strip()}
+    return [p for p in origem if p not in (_SEM_CONVERGENCIA_AQUI - liberados)]
+
+
+os.environ["AGENT_PROVIDER_ORDER"] = ",".join(_ordem_desta_tela(
+    os.environ.get("AGENT_PROVIDER_ORDER", ""),
+    os.environ.get(_PERMITIR_ENV, ""),
+))
 from agent.security import sanitize_for_llm
 from agent import tools
 
