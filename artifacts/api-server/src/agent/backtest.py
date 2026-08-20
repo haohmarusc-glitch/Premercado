@@ -135,7 +135,7 @@ def _confluence_signals(close: pd.Series, score_threshold: float = 60.0) -> tupl
     sell_signal = score_series <= -score_threshold
     return buy_signal, sell_signal
 
-def _fetch_warmed_close(ticker, start, end):
+def _fetch_warmed_ohlc(ticker, start, end):
     """Busca o histórico com "aquecimento" (~320 dias corridos) antes de
     `start` pra indicadores de janela longa (SMA200, estrutura de 60
     pregões) já estarem válidos no primeiro dia do período pedido -- sem
@@ -149,10 +149,18 @@ def _fetch_warmed_close(ticker, start, end):
         return None, "Sem dados para o período"
     if hasattr(df.columns, "levels"):
         df.columns = df.columns.get_level_values(0)
-    close_full = df["Close"].dropna()
-    if len(close_full) < 50:
+    # OHLC inteiro, não só Close: desde 20/08/2026 a simulação executa no
+    # OPEN do pregão seguinte ao sinal e checa stop/target contra High/Low.
+    # Só com Close, o backtest executava num fechamento que ainda não
+    # conhecia (look-ahead) e não via stop tocado intradia.
+    ohlc_full = df[["Open", "High", "Low", "Close"]].rename(columns=str.lower).dropna(subset=["close"])
+    if len(ohlc_full) < 50:
         return None, "Dados insuficientes (mínimo 50 dias)"
-    return close_full, None
+    # Open/High/Low podem faltar em dado degradado; caem pro Close do dia --
+    # fill mais tardio e sem checagem intradia, mas ainda sem look-ahead.
+    for col in ("open", "high", "low"):
+        ohlc_full[col] = ohlc_full[col].fillna(ohlc_full["close"])
+    return ohlc_full, None
 
 def _build_signals(close_full, strategy, rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
     if strategy == "rsi":
@@ -173,19 +181,20 @@ def _build_signals(close_full, strategy, rsi_oversold=30.0, rsi_overbought=70.0,
         sell_signal_full = (ma20 < ma50) & (ma20.shift(1) >= ma50.shift(1))
         return buy_signal_full, sell_signal_full
 
-def _trim_to_window(close_full, buy_signal_full, sell_signal_full, start):
+def _trim_to_window(ohlc_full, buy_signal_full, sell_signal_full, start):
     # Recorta pro período pedido -- os indicadores já usaram o aquecimento,
     # a simulação/relatório olha só [start, end].
     start_ts = pd.Timestamp(start)
-    naive_index = close_full.index.tz_localize(None) if close_full.index.tz is not None else close_full.index
+    naive_index = ohlc_full.index.tz_localize(None) if ohlc_full.index.tz is not None else ohlc_full.index
     mask = naive_index >= start_ts
-    return close_full.loc[mask], buy_signal_full.loc[mask], sell_signal_full.loc[mask]
+    return ohlc_full.loc[mask], buy_signal_full.loc[mask], sell_signal_full.loc[mask]
 
-def _simulate(ticker, strategy, start, end, close, buy_signal, sell_signal,
+def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
               position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct):
-    if len(close) < 20:
+    if len(ohlc) < 20:
         return {"error": "Dados insuficientes no período pedido (mínimo 20 dias)"}
 
+    closes = ohlc["close"]
     initial_capital = 10000.0
     capital = initial_capital
     position = 0.0
@@ -193,7 +202,7 @@ def _simulate(ticker, strategy, start, end, close, buy_signal, sell_signal,
     entry_date = ""
     trades = []
     equity_curve = []  # mark-to-market diário: {date, equity, buyHoldEquity}
-    bh_shares = initial_capital / float(close.iloc[0])
+    bh_shares = initial_capital / float(closes.iloc[0])
 
     def fill_price(price, is_buy):
         slip = price * slippage_pct * (1 if is_buy else -1)
@@ -214,51 +223,77 @@ def _simulate(ticker, strategy, start, end, close, buy_signal, sell_signal,
         capital += net_proceeds
         position = 0.0
 
-    for i in range(len(close)):
-        raw_price = float(close.iloc[i])
-        date = str(close.index[i])[:10]
+    # O sinal do candle D só é conhecido no FECHAMENTO de D -- até 20/08/2026
+    # a simulação comprava nesse mesmo fechamento, ou seja, executava num
+    # preço que ainda não existia na hora da decisão (look-ahead, apontado
+    # por auditoria externa e confirmado aqui). Agora a decisão de D vira
+    # ordem na ABERTURA de D+1, e o sinal do último candle nunca executa --
+    # em operação real ele seria a ordem de amanhã.
+    pendente = None  # "buy" | "sell", carregado do candle anterior
+    for i in range(len(ohlc)):
+        open_ = float(ohlc["open"].iloc[i])
+        high = float(ohlc["high"].iloc[i])
+        low = float(ohlc["low"].iloc[i])
+        raw_close = float(closes.iloc[i])
+        date = str(ohlc.index[i])[:10]
 
-        if buy_signal.iloc[i] and position == 0 and capital > 0:
-            exec_price = fill_price(raw_price, True)
+        # 1) A decisão de ontem executa na abertura de hoje. A saída por
+        #    sinal também sai no open -- decidida ontem, executada no
+        #    primeiro preço disponível.
+        if pendente == "sell" and position > 0:
+            close_position(fill_price(open_, False), date, "signal")
+        elif pendente == "buy" and position == 0 and capital > 0:
+            exec_price = fill_price(open_, True)
             invest = capital * position_fraction
             commission = invest * commission_pct
             position = (invest - commission) / exec_price
             entry_price = exec_price
             entry_date = date
             capital -= invest
+        pendente = None
 
-        elif position > 0:
-            # SL/TP checam ANTES do sinal (baseado no Close diário -- mesma
-            # simplificação do resto do engine, que não usa High/Low
-            # intradiário -- então um SL pode não ser pego se o preço só
-            # tocou o nível intradia e fechou de volta acima dele).
-            stop_hit = stop_loss_pct is not None and raw_price <= entry_price * (1 - stop_loss_pct)
-            target_hit = take_profit_pct is not None and raw_price >= entry_price * (1 + take_profit_pct)
-            if stop_hit:
-                close_position(fill_price(raw_price, False), date, "stop_loss")
-            elif target_hit:
-                close_position(fill_price(raw_price, False), date, "take_profit")
-            elif sell_signal.iloc[i]:
-                close_position(fill_price(raw_price, False), date, "signal")
+        # 2) Stop/target contra o pregão INTEIRO -- inclusive no próprio dia
+        #    da entrada (a entrada é no open; o resto do pregão pode violar o
+        #    stop). Gap de abertura através do nível não tem fill no nível:
+        #    sai no open. Stop e target tocados no MESMO candle: o OHLC não
+        #    diz qual veio primeiro, então assume o STOP -- a política
+        #    otimista inflaria o resultado exatamente nos dias mais voláteis.
+        if position > 0:
+            stop_level = entry_price * (1 - stop_loss_pct) if stop_loss_pct is not None else None
+            target_level = entry_price * (1 + take_profit_pct) if take_profit_pct is not None else None
+            if stop_level is not None and open_ <= stop_level:
+                close_position(fill_price(open_, False), date, "stop_loss")
+            elif target_level is not None and open_ >= target_level:
+                close_position(fill_price(open_, False), date, "take_profit")
+            elif stop_level is not None and low <= stop_level:
+                close_position(fill_price(stop_level, False), date, "stop_loss")
+            elif target_level is not None and high >= target_level:
+                close_position(fill_price(target_level, False), date, "take_profit")
 
-        equity = capital + position * raw_price
+        # 3) O sinal de hoje (calculado no fechamento) vira a ordem de amanhã.
+        if buy_signal.iloc[i] and position == 0:
+            pendente = "buy"
+        elif sell_signal.iloc[i] and position > 0:
+            pendente = "sell"
+
+        equity = capital + position * raw_close
         equity_curve.append({
             "date": date,
             "equity": round(equity, 2),
-            "buyHoldEquity": round(bh_shares * raw_price, 2),
+            "buyHoldEquity": round(bh_shares * raw_close, 2),
         })
 
     # Close any open position at period end
     if position > 0:
-        last_price = float(close.iloc[-1])
-        close_position(fill_price(last_price, False), str(close.index[-1])[:10], "period_end")
+        last_price = float(closes.iloc[-1])
+        close_position(fill_price(last_price, False), str(ohlc.index[-1])[:10], "period_end")
         equity_curve[-1]["equity"] = round(capital, 2)
 
     final_value = capital
     total_return = (final_value - initial_capital) / initial_capital * 100
-    bh_return = (float(close.iloc[-1]) - float(close.iloc[0])) / float(close.iloc[0]) * 100
+    bh_return = (float(closes.iloc[-1]) - float(closes.iloc[0])) / float(closes.iloc[0]) * 100
 
-    days = (close.index[-1] - close.index[0]).days or 1
+    days = (ohlc.index[-1] - ohlc.index[0]).days or 1
     years = days / 365.25
     cagr = ((final_value / initial_capital) ** (1 / years) - 1) * 100 if years > 0 else 0
 
@@ -296,14 +331,14 @@ def run_backtest(ticker, start, end, strategy="rsi",
                  position_fraction=1.0, commission_pct=0.001, slippage_pct=0.0005,
                  stop_loss_pct=None, take_profit_pct=None,
                  rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0):
-    close_full, error = _fetch_warmed_close(ticker, start, end)
+    ohlc_full, error = _fetch_warmed_ohlc(ticker, start, end)
     if error:
         return {"error": error}
     buy_signal_full, sell_signal_full = _build_signals(
-        close_full, strategy, rsi_oversold, rsi_overbought, score_threshold
+        ohlc_full["close"], strategy, rsi_oversold, rsi_overbought, score_threshold
     )
-    close, buy_signal, sell_signal = _trim_to_window(close_full, buy_signal_full, sell_signal_full, start)
-    return _simulate(ticker, strategy, start, end, close, buy_signal, sell_signal,
+    ohlc, buy_signal, sell_signal = _trim_to_window(ohlc_full, buy_signal_full, sell_signal_full, start)
+    return _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
                      position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct)
 
 _SENSITIVITY_METRICS = ["totalReturn", "buyAndHoldReturn", "cagr", "sharpe", "maxDrawdown", "totalTrades", "winRate"]
@@ -324,18 +359,18 @@ def run_sensitivity_analysis(ticker, start, end, strategy="rsi",
     """Testa como o resultado muda ao variar RSI oversold/overbought (ou o
     score threshold, se a estratégia for confluencia) e stop-loss/take-profit,
     UM parâmetro por vez a partir da configuração base -- busca os dados
-    históricos UMA única vez (via _fetch_warmed_close) e reaproveita entre
+    históricos UMA única vez (via _fetch_warmed_ohlc) e reaproveita entre
     todas as combinações testadas."""
-    close_full, error = _fetch_warmed_close(ticker, start, end)
+    ohlc_full, error = _fetch_warmed_ohlc(ticker, start, end)
     if error:
         return {"error": error}
 
     def run_with(*, rsi_oversold=rsi_oversold, rsi_overbought=rsi_overbought,
                 score_threshold=score_threshold, stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct):
-        buy_full, sell_full = _build_signals(close_full, strategy, rsi_oversold, rsi_overbought, score_threshold)
-        close, buy_signal, sell_signal = _trim_to_window(close_full, buy_full, sell_full, start)
-        result = _simulate(ticker, strategy, start, end, close, buy_signal, sell_signal,
+        buy_full, sell_full = _build_signals(ohlc_full["close"], strategy, rsi_oversold, rsi_overbought, score_threshold)
+        ohlc, buy_signal, sell_signal = _trim_to_window(ohlc_full, buy_full, sell_full, start)
+        result = _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
                            position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct)
         if "error" in result:
             return result
@@ -518,27 +553,28 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
     grade só se o número de combinações justificasse, e cada eixo a mais
     multiplica o risco de garimpar ruído -- o próprio problema que este
     modo existe pra medir."""
-    close_full, error = _fetch_warmed_close(ticker, start, end)
+    ohlc_full, error = _fetch_warmed_ohlc(ticker, start, end)
     if error:
         return {"error": error}
 
     combos = _combos_de_params(strategy)
     # Sinais são construídos UMA vez por combinação sobre a série inteira
     # (com aquecimento) e depois fatiados por janela -- reconstruir por fold
-    # multiplicaria o custo sem mudar resultado nenhum.
+    # multiplicaria o custo sem mudar resultado nenhum. O OHLC recortado é o
+    # MESMO para todas as combinações; só os sinais variam.
+    ohlc_ref = None
     sinais = {}
     for i, params in enumerate(combos):
         buy_full, sell_full = _build_signals(
-            close_full, strategy,
+            ohlc_full["close"], strategy,
             params.get("rsi_oversold", rsi_oversold),
             params.get("rsi_overbought", rsi_overbought),
             params.get("score_threshold", score_threshold),
         )
-        close, buy, sell = _trim_to_window(close_full, buy_full, sell_full, start)
-        sinais[i] = (close, buy, sell)
+        ohlc_ref, buy, sell = _trim_to_window(ohlc_full, buy_full, sell_full, start)
+        sinais[i] = (buy, sell)
 
-    close_ref = sinais[0][0]
-    n = len(close_ref)
+    n = len(ohlc_ref)
     janelas = _janelas_walk_forward(n, treino_pregoes, teste_pregoes)
     if not janelas:
         return {"error": (f"Período curto demais: {n} pregões para treino de "
@@ -546,8 +582,8 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
                           f"Use um intervalo maior ou janelas menores.")}
 
     def simular(idx_combo, ini, fim, rotulo):
-        close, buy, sell = sinais[idx_combo]
-        c, b, s = close.iloc[ini:fim], buy.iloc[ini:fim], sell.iloc[ini:fim]
+        buy, sell = sinais[idx_combo]
+        c, b, s = ohlc_ref.iloc[ini:fim], buy.iloc[ini:fim], sell.iloc[ini:fim]
         if len(c) < _WF_MIN_PREGOES:
             return {"error": "janela curta demais"}
         return _simulate(ticker, strategy, str(c.index[0].date()), str(c.index[-1].date()),
@@ -569,20 +605,20 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
             # Nenhuma combinação negociou no treino: registrar e seguir, em
             # vez de escolher uma à toa e chamar de "otimizada".
             folds.append({
-                "treinoInicio": str(close_ref.index[ini_tr].date()),
-                "treinoFim": str(close_ref.index[fim_tr - 1].date()),
-                "testeInicio": str(close_ref.index[ini_te].date()),
-                "testeFim": str(close_ref.index[fim_te - 1].date()),
+                "treinoInicio": str(ohlc_ref.index[ini_tr].date()),
+                "treinoFim": str(ohlc_ref.index[fim_tr - 1].date()),
+                "testeInicio": str(ohlc_ref.index[ini_te].date()),
+                "testeFim": str(ohlc_ref.index[fim_te - 1].date()),
                 "semSinalNoTreino": True,
             })
             continue
 
         res_teste = simular(melhor_idx, ini_te, fim_te, "teste")
         folds.append({
-            "treinoInicio": str(close_ref.index[ini_tr].date()),
-            "treinoFim": str(close_ref.index[fim_tr - 1].date()),
-            "testeInicio": str(close_ref.index[ini_te].date()),
-            "testeFim": str(close_ref.index[fim_te - 1].date()),
+            "treinoInicio": str(ohlc_ref.index[ini_tr].date()),
+            "treinoFim": str(ohlc_ref.index[fim_tr - 1].date()),
+            "testeInicio": str(ohlc_ref.index[ini_te].date()),
+            "testeFim": str(ohlc_ref.index[fim_te - 1].date()),
             "melhorParams": combos[melhor_idx],
             "inSample": {k: melhor_res.get(k) for k in _SENSITIVITY_METRICS},
             "outOfSample": ({k: res_teste.get(k) for k in _SENSITIVITY_METRICS}

@@ -247,6 +247,12 @@ fixo.
   células ticker × regime, inclusive no downcycle (a MU caiu 32% e os shorts
   perderam 14,9%: o motor entra vendido depois da fraqueza confirmada e apanha
   do repique). O voto vendedor continua na leitura da tela.
+  A execução é **honesta desde 20/08/2026**: o sinal do candle D executa na
+  abertura de D+1 (antes executava no próprio fechamento de D — um preço que
+  não existia na hora da decisão), e stop/take-profit checam o pregão inteiro
+  via High/Low, com política conservadora (stop e target no mesmo candle →
+  assume o stop; gap de abertura através do nível → sai no open, sem fingir
+  fill no nível).
   **Importante**: como estratégia, o motor não tem edge demonstrado — ver o
   Diário de 20/08/2026. O valor dele hoje é como tela de leitura
 - **Risco**: correlação e exposição da carteira, métricas, beta intradiário,
@@ -696,6 +702,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #344 | Parâmetro impossível no ConfluenceEngine falha alto: `min_votes=6` com 5 sinais deixava o motor mudo em `flat` |
 | #358 | Diagnóstico do ConfluenceEngine: separa sinal de sizing (priors placeholder davam trades a 6% do capital), decompõe por direção, exposição e captura |
 | #359 | Long-only por padrão no `run_backtest` — shorts perderam em 6/6 células ticker × regime; e o veredito do diagnóstico no Diário |
+| #362 | Execução honesta nos dois motores: sinal de D executa na abertura de D+1 (era no próprio close de D — look-ahead) e stop/target checam High/Low com política conservadora |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -736,6 +743,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 |---|---|
 | #264 | Run-up pré-earnings × direção da reação ("bom não é bom o suficiente") |
 | #354 | Interpretação com IA da CESTA — a leitura por ticker já existe por regra; o que a IA acrescenta é a comparação |
+| #361 | Leitura de cesta estourava o body-parser: a tela mandava 107KB de eventos que o Python descarta; 413 virava 500 genérico no errorHandler |
 
 ### Segurança e infraestrutura
 
@@ -916,3 +924,46 @@ O que sobreviveu dos quatro documentos, reclassificado de sizing para
 LEITURA: divergência setorial (R6) e regime do basket como informação de
 tela, na família do risco macro das 07:50. Sem prazo — atrás de tudo que
 opera de verdade.
+
+### 20/08/2026 (parte 2) — um 413 fantasiado de 500, e a régua fica honesta
+
+**O incidente da noite.** A tela Reação a Earnings quebrou com "Internal
+server error" ao pedir a leitura de cesta — o log dizia a verdade:
+`PayloadTooLargeError, expected:107650 limit:102400`. Três defeitos
+encadeados (#361): a tela mandava os `results` inteiros (eventos e
+trajetórias que o Python descarta na entrada) e o dado do dia cruzou os
+~100KB do `express.json` global; o guarda de 256KB da rota era código morto
+atrás desse limite; e o errorHandler transformava qualquer erro em 500
+genérico. Consertos na ordem da causa: a tela passou a mandar só o que o
+prompt usa (`payloadDaInterpretacao`, ~10KB, tamanho independe do número de
+eventos), e erro de cliente já classificado (4xx + `expose`, contrato do
+http-errors) agora responde com o próprio status — o teste do handler
+reproduz o 413 com o parser real e corpo de 107KB, não um erro sintético.
+
+**A auditoria externa que valeu.** Chegou uma auditoria técnica do repo —
+a mais útil da série, porque as duas alegações críticas dela conferiram no
+código: (1) o backtest executava o sinal do candle D **no próprio fechamento
+de D** — look-ahead, nos dois motores (`_simulate` e o `run_backtest` da
+confluência); (2) stop/take-profit checavam **só o Close** — stop tocado
+intradia e devolvido não existia (limitação que o código até documentava em
+comentário). O ponto que a auditoria não fechou e que muda a leitura dela:
+os dois vieses eram **a favor** da estratégia, e mesmo com a régua generosa
+o diagnóstico já tinha dado negativo. Corrigir só piora os números — o
+veredito de arquivamento sai mais forte, não mais fraco.
+
+**O que mudou.** Sinal de D executa na abertura de D+1 (o sinal do último
+candle nunca executa — seria a ordem de amanhã); a busca traz OHLC e o
+stop/target checam gap de abertura e toque intradia, com política
+conservadora quando stop e target caem no mesmo candle (o OHLC não diz qual
+veio primeiro; assumir o target inflaria o resultado exatamente nos dias
+mais voláteis). O `run_backtest` da confluência ganhou slippage (5 bps por
+lado, o mesmo default do `backtest.py`). Os números do diagnóstico de
+ontem foram medidos com a régua velha — valem como TETO; re-rodar na VPS
+com a régua honesta fica pendente e só pode confirmar o arquivamento.
+
+**O que ficou da auditoria sem implementar.** Portfolio backtest, decision
+engine determinístico antes do LLM, bootstrap/Monte Carlo: instrumentos para
+validar um edge que primeiro precisa existir — arquivados junto com as
+specs, mesma prateleira, mesmo critério. Uma direção anotada como válida
+para o futuro: o Veredito devolver JSON estruturado e o texto virar
+renderização disso (a crítica à fragilidade do regex sobre prosa é justa).
