@@ -706,6 +706,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #363 | A régua ganha estatística: Sortino, Calmar, profit factor, expectancy e IC 95% por bootstrap na tela; embargo de 5 pregões no walk-forward; recalibração de Kelly exige 30 trades |
 | #364 | Auditor independente do backtest: segunda implementação do contrato de execução + coerência interna, com bateria sintética pendurada no CI — divergência entre motor e auditor quebra o build |
 | #365 | Backtest de carteira (modo B): capital único de $100k, cota patrimônio/n, caixa compartilhado, benchmark equal-weight, contribuição por ticker e concentração setorial medida |
+| #366 | Bootstrap de carteira soma contribuições em vez de compor pnls paralelos (IC 302%–50.073% numa carteira de +34% na primeira rodada real); exposição média exposta |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1083,3 +1084,31 @@ centavo aparece ou some), calendários divergentes entre tickers e a
 concentração MU+SNDK aparecendo como concentração, não como diversificação.
 
 Resta do roteiro: etapa 4 (Veredito estruturado — JSON antes do texto).
+
+### 20/08/2026 (parte 6) — a primeira rodada real da carteira, e o que ela ensinou
+
+A cesta padrão (15 tickers, 6 meses, confluência) respondeu a pergunta do
+modo: **+34,45% operada contra +56,32% do equal-weight parado — 21,9pp
+atrás**, com drawdown de −34,49% mesmo assim. A atribuição fecha (a soma
+das contribuições dá o retorno total) e conta a história: memória
+(MU+SNDK+WDC) fez 21,4pp dos 34,4; NVDA foi a pior contribuição (−1,59pp em
+3 trades — churn num papel que o buy & hold só segurou); e a exposição
+média de ~74% deixou ~1/4 do capital parado enquanto o benchmark corria
+100% investido. Concentração setorial: 99% dos dias com as 3 posições de
+memória abertas ao mesmo tempo — a "carteira" é uma aposta correlacionada,
+e o drawdown mostra. Terceira confirmação independente do veredito do
+diagnóstico, agora no nível que importa.
+
+E a rodada pegou um defeito meu: o IC por bootstrap veio **302% a 50.073%**
+numa carteira de +34%. A métrica compunha os pnls inteiros dos trades — o
+desenho certo para o motor por ticker, onde os trades são sequenciais com o
+capital todo — mas trades de carteira rodam em PARALELO com ~1/n cada:
+compor descreve uma carteira que não existe. Número certo da pergunta
+errada. O conserto (#366): o bootstrap de carteira reamostra as
+**contribuições em pontos do capital**, que são aditivas por construção, e
+a soma responde na escala do resultado. A exposição média entrou no payload
+e na leitura pelo mesmo motivo: é o número que explica o gap.
+
+A lição de método, para a régua: métrica herdada de outro contexto precisa
+re-derivar o próprio significado no contexto novo — o auditor confere se o
+número está CERTO; se ele responde a pergunta certa, só a leitura pega.

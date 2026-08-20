@@ -80,6 +80,31 @@ def test_trades_identicos_produzem_ic_degenerado_e_correto():
     assert out["winRateIc95"] == [100.0, 100.0]
 
 
+# ── _bootstrap_das_contribuicoes (a variante de carteira) ────────────────────
+
+def test_contribuicoes_somam_em_vez_de_compor():
+    """O defeito que a primeira rodada real expôs (20/08): compor pnls
+    inteiros de trades PARALELOS com ~1/n do capital cada deu IC de 302% a
+    50.073% numa carteira de +34%. Contribuições em pontos do capital são
+    aditivas: reamostrar e SOMAR responde na escala do resultado."""
+    contribs = [2.0] * 15  # 15 trades, 2pp cada -> carteira fez +30pp
+    out = bt._bootstrap_das_contribuicoes(contribs)
+    # Degenerado e correto: todos iguais, o IC colapsa exatamente na soma.
+    assert out["contribuicaoIc95"] == [30.0, 30.0]
+    assert "compostoIc95" not in out
+
+def test_ic_das_contribuicoes_contem_o_total_e_e_reproduzivel():
+    contribs = [9.1, 8.1, 4.2, 3.8, 3.4, 3.0, 1.9, 1.3, 0.9, 0.8, 0.7, -0.2, -0.4, -0.7, -1.6]
+    out = bt._bootstrap_das_contribuicoes(contribs)
+    lo, hi = out["contribuicaoIc95"]
+    assert lo <= sum(contribs) <= hi
+    assert lo < hi
+    assert out == bt._bootstrap_das_contribuicoes(contribs)
+
+def test_contribuicoes_com_amostra_pequena_avisam():
+    assert "aviso" in bt._bootstrap_das_contribuicoes([1.0] * 9)
+
+
 # ── integração via _simulate ─────────────────────────────────────────────────
 
 def _ohlc_flat(n=30, preco=100.0):

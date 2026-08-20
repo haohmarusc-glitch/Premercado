@@ -48,9 +48,17 @@ describe("interpretPortfolioResult", () => {
 
   it("IC do bootstrap cruzando o zero vira frase, não rodapé", () => {
     const notas = interpretPortfolioResult(base({
-      bootstrap: { nTrades: 12, amostras: 2000, compostoIc95: [-4.1, 9.8], winRateIc95: [30, 75] },
+      bootstrap: { nTrades: 12, amostras: 2000, contribuicaoIc95: [-4.1, 9.8], winRateIc95: [30, 75] },
     })).join(" ");
     expect(notas).toContain("não se distingue de sorte de sequência");
+  });
+
+  it("capital parado em caixa vira frase quando a exposição média fica baixa", () => {
+    const notas = interpretPortfolioResult(base({
+      exposicao: { pctDiasSemPosicao: 0.8, mediaPosicoesAbertas: 11, maxPosicoesSimultaneas: 14,
+                   picoExposicaoPct: 100, mediaExposicaoPct: 74 },
+    })).join(" ");
+    expect(notas).toContain("parado em caixa");
   });
 
   it("amostra pequena repassa o aviso do bootstrap", () => {

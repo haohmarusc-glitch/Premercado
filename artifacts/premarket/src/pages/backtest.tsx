@@ -30,6 +30,10 @@ interface BootstrapResumo {
   nTrades?: number;
   amostras?: number;
   compostoIc95?: [number, number];
+  /** Só no modo carteira: IC da SOMA das contribuições em pontos do capital
+   * — trades paralelos com ~1/n do capital cada não se compõem (o IC
+   * composto deu 302%–50.073% numa carteira de +34% na primeira rodada). */
+  contribuicaoIc95?: [number, number];
   winRateIc95?: [number, number];
 }
 
@@ -230,6 +234,9 @@ interface PortfolioResult {
     mediaPosicoesAbertas: number;
     maxPosicoesSimultaneas: number;
     picoExposicaoPct: number;
+    /** Média diária de investido/patrimônio — o número que explica o gap
+     * contra um benchmark 100% investido. Ausente em payload anterior. */
+    mediaExposicaoPct?: number;
   };
   porTicker: { ticker: string; trades: number; contribuicaoPct: number }[];
   porSetor: {
@@ -257,9 +264,14 @@ export function interpretPortfolioResult(r: PortfolioResult): string[] {
       notes.push(`Concentração em ${s.label}: ${s.pctDiasCom2ouMais.toFixed(0)}% dos dias com 2+ posições do mesmo grupo (${s.tickers.join(", ")}) — correlação alta faz disso o mesmo trade contado duas vezes.`);
     }
   }
-  const ic = r.bootstrap?.compostoIc95;
+  if (r.exposicao.mediaExposicaoPct != null && r.exposicao.mediaExposicaoPct < 85 && r.exposicao.pctDiasSemPosicao < 40) {
+    notes.push(`Exposição média de ${r.exposicao.mediaExposicaoPct.toFixed(0)}%: na média dos dias, ~${(100 - r.exposicao.mediaExposicaoPct).toFixed(0)}% do capital ficou parado em caixa enquanto o benchmark corria 100% investido — parte do gap está aí, não na seleção.`);
+  }
+  const ic = r.bootstrap?.contribuicaoIc95;
   if (ic && ic[0] <= 0 && ic[1] >= 0) {
-    notes.push(`O IC de 95% do composto dos trades (${ic[0]}% a ${ic[1]}%, bootstrap) cruza o zero — com essa amostra, o resultado não se distingue de sorte de sequência.`);
+    notes.push(`O IC de 95% da soma das contribuições (${ic[0]}pp a ${ic[1]}pp, bootstrap) cruza o zero — com essa amostra, o resultado não se distingue de sorte de sequência.`);
+  } else if (ic && ic[1] < 0) {
+    notes.push(`O IC de 95% da soma das contribuições (${ic[0]}pp a ${ic[1]}pp, bootstrap) é inteiro negativo — a perda não é azar de sequência; é o sinal.`);
   }
   if (r.bootstrap?.aviso) {
     notes.push(`Bootstrap: ${r.bootstrap.aviso}.`);
@@ -538,9 +550,9 @@ export default function BacktestPage() {
         ["Taxa de acerto", pct(p.winRate, 1)],
         ["Dias sem posição", `${p.exposicao.pctDiasSemPosicao}%`],
         ["Máx. posições simultâneas", p.exposicao.maxPosicoesSimultaneas],
-        ["IC 95% do composto (bootstrap)",
-         p.bootstrap?.compostoIc95
-           ? `${p.bootstrap.compostoIc95[0]}% a ${p.bootstrap.compostoIc95[1]}%`
+        ["IC 95% da soma das contribuições (bootstrap)",
+         p.bootstrap?.contribuicaoIc95
+           ? `${p.bootstrap.contribuicaoIc95[0]}pp a ${p.bootstrap.contribuicaoIc95[1]}pp`
            : (p.bootstrap?.aviso ?? "—")],
       ]));
       blocos.push("### Contribuição por ticker\n\n" + tabela(
@@ -993,7 +1005,7 @@ export default function BacktestPage() {
                 ) : (
                   <span>
                     IC 95% (bootstrap, {portfolioResult.bootstrap.amostras} reamostras de {portfolioResult.bootstrap.nTrades} trades):
-                    {" "}composto {portfolioResult.bootstrap.compostoIc95?.[0]}% a {portfolioResult.bootstrap.compostoIc95?.[1]}%
+                    {" "}soma das contribuições {portfolioResult.bootstrap.contribuicaoIc95?.[0]}pp a {portfolioResult.bootstrap.contribuicaoIc95?.[1]}pp
                     {" "}· win rate {portfolioResult.bootstrap.winRateIc95?.[0]}% a {portfolioResult.bootstrap.winRateIc95?.[1]}%
                   </span>
                 )}
@@ -1004,7 +1016,10 @@ export default function BacktestPage() {
               <span>Capital único: ${portfolioResult.initialCapital.toLocaleString()} · cota por entrada = patrimônio/{portfolioResult.tickersOk}</span>
               <span>{portfolioResult.exposicao.pctDiasSemPosicao}% dos dias sem posição</span>
               <span>máx. {portfolioResult.exposicao.maxPosicoesSimultaneas} posições simultâneas</span>
-              <span>pico de exposição {portfolioResult.exposicao.picoExposicaoPct}%</span>
+              <span>
+                exposição {portfolioResult.exposicao.mediaExposicaoPct != null
+                  ? `média ${portfolioResult.exposicao.mediaExposicaoPct}% · ` : ""}pico {portfolioResult.exposicao.picoExposicaoPct}%
+              </span>
               <span className={`font-bold ${portfolioResult.finalValue >= portfolioResult.initialCapital ? "text-green-400" : "text-red-400"}`}>
                 Final: ${portfolioResult.finalValue.toLocaleString()}
               </span>

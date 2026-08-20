@@ -276,6 +276,37 @@ def _metricas_da_curva(equity_valores: list) -> dict:
     return {"sharpe": sharpe, "sortino": sortino, "maxDrawdown": max_drawdown}
 
 
+def _bootstrap_das_contribuicoes(contribuicoes: list, amostras: int = _BOOTSTRAP_AMOSTRAS,
+                                 semente: int = 0) -> dict:
+    """A variante de CARTEIRA do _bootstrap_dos_trades.
+
+    Compor os pnls inteiros dos trades (a métrica do motor por ticker, onde
+    os trades são sequenciais com o capital todo) descreve uma carteira que
+    não existe quando os trades rodam em PARALELO com ~1/n do capital cada.
+    Visto na primeira rodada real (20/08/2026): IC de 302% a 50.073% numa
+    carteira que fez +34% -- número certo da pergunta errada. Aqui a
+    reamostragem é sobre as CONTRIBUIÇÕES em pontos do capital, que são
+    aditivas por construção (a soma delas É o retorno total da carteira;
+    test_backtest_carteira fixa isso), então a SOMA reamostrada responde na
+    escala do resultado. Mesma semente fixa, mesmo piso de amostra."""
+    n = len(contribuicoes)
+    if n < _BOOTSTRAP_MIN_TRADES:
+        return {"aviso": (f"{n} trades -- amostra pequena demais para intervalo "
+                          f"de confiança (mínimo {_BOOTSTRAP_MIN_TRADES})")}
+    rng = np.random.default_rng(semente)
+    c = np.asarray(contribuicoes, dtype=float)
+    reamostras = c[rng.integers(0, n, size=(amostras, n))]
+    somas = reamostras.sum(axis=1)
+    win_rates = (reamostras > 0).mean(axis=1) * 100.0
+
+    def _ic(valores):
+        lo, hi = np.percentile(valores, [2.5, 97.5])
+        return [round(float(lo), 2), round(float(hi), 2)]
+
+    return {"nTrades": n, "amostras": amostras,
+            "contribuicaoIc95": _ic(somas), "winRateIc95": _ic(win_rates)}
+
+
 def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
               position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct):
     if len(ohlc) < 20:
@@ -754,6 +785,10 @@ def run_portfolio_backtest(tickers, start, end, strategy="confluencia",
         "mediaPosicoesAbertas": round(sum(abertas) / len(abertas), 2),
         "maxPosicoesSimultaneas": max(abertas),
         "picoExposicaoPct": round(max(exposicao_pct), 1) if exposicao_pct else 0.0,
+        # A média é o número que explica o gap contra o equal-weight 100%
+        # investido: pico de 100% com média de 74% significa ~1/4 do capital
+        # parado em caixa na média dos dias.
+        "mediaExposicaoPct": round(sum(exposicao_pct) / len(exposicao_pct), 1) if exposicao_pct else 0.0,
     }
 
     # Concentração setorial FACTUAL: quantos dias a carteira segurou 2+
@@ -782,7 +817,8 @@ def run_portfolio_backtest(tickers, start, end, strategy="confluencia",
         "sortino": curva_m["sortino"], "calmar": calmar,
         "maxDrawdown": curva_m["maxDrawdown"],
         **_metricas_de_trades(trades),
-        "bootstrap": _bootstrap_dos_trades([t["pnl"] for t in trades]),
+        "bootstrap": _bootstrap_das_contribuicoes(
+            [(t["recebido"] - t["aporte"]) / initial_capital * 100 for t in trades]),
         "totalTrades": len(trades),
         "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
         "avgWin": round(avg_win, 2), "avgLoss": round(avg_loss, 2),
