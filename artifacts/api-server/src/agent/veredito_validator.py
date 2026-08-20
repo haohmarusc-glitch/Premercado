@@ -447,6 +447,221 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     return rep
 
 
+# ------------------------------------------------- bloco estruturado (20/08) ---
+#
+# Etapa 4 do motor de pesquisa auditável: o LLM passa a emitir, no FIM do
+# veredito, um bloco JSON com a decisão por ticker (action/confidence/
+# reason_codes), e o texto vira a EXPLICAÇÃO dessa estrutura -- não o
+# contrário. O motivo é a fragilidade que a auditoria externa apontou e que
+# os incidentes já tinham mostrado: regex sobre prosa detecta intenção de
+# compra "conservadoramente", e prosa financeira é semanticamente traiçoeira
+# ("apesar da deterioração, a assimetria favorece uma entrada..."). Com o
+# bloco, a intenção é DECLARADA; o regex vira contraprova (JSON x texto
+# divergirem é ERRO), e as regras determinísticas (concentração, veto de
+# earnings, razão contradita pelo dado) rodam sobre estrutura, não sobre
+# interpretação.
+
+ACOES_VALIDAS = {"COMPRAR", "AUMENTAR", "MANTER", "REDUZIR", "VENDER", "AGUARDAR"}
+ACOES_DE_COMPRA = {"COMPRAR", "AUMENTAR"}
+
+# Vocabulário CONHECIDO de reason_codes. Código fora da lista é WARN, não
+# ERROR: o vocabulário evolui, e travar um retry inteiro por um código novo
+# razoável seria pior que registrá-lo para promoção posterior. Os códigos
+# RSI_*/EARNINGS_* têm checagem dura contra o snapshot logo abaixo.
+REASON_CODES_CONHECIDOS = {
+    "RSI_SOBRECOMPRADO", "RSI_SOBREVENDIDO", "TENDENCIA_ALTA", "TENDENCIA_BAIXA",
+    "EARNINGS_PROXIMO", "RISCO_CORRELACAO", "MACRO_ADVERSO", "MACRO_FAVORAVEL",
+    "SUPORTE_PROXIMO", "RESISTENCIA_PROXIMA", "VOLUME_FRACO", "VOLUME_FORTE",
+    "VALUATION_ESTICADO", "VALUATION_DESCONTADO", "PLANO_DE_SAIDA",
+    "SENTIMENTO_EXTREMO", "CENARIO_EMPATE",
+}
+RSI_SOBRECOMPRADO_MIN = 65.0
+RSI_SOBREVENDIDO_MAX = 35.0
+# Janela do veto de catalisador (mesma convenção do ConfluenceEngine):
+# COMPRAR com earnings a <= 2 pregões exige EARNINGS_PROXIMO nos
+# reason_codes -- a compra pode até ser defensável, mas nunca inconsciente.
+EARNINGS_PROXIMO_DIAS = 2
+
+_BLOCO_JSON_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def extrair_bloco_estruturado(texto: str) -> tuple[dict | None, str | None]:
+    """(bloco, erro). Pega o ÚLTIMO bloco ```json``` que contenha "tickers"
+    -- o formato pede o bloco no fim, mas o texto pode legitimamente conter
+    outros trechos de código antes. Ausente -> (None, None); presente mas
+    inválido -> (None, motivo) para o retry corrigir com precisão."""
+    import json as _json
+    candidatos = [m.group(1) for m in _BLOCO_JSON_RE.finditer(texto)
+                  if '"tickers"' in m.group(1)]
+    if not candidatos:
+        return None, None
+    try:
+        bloco = _json.loads(candidatos[-1])
+    except ValueError as e:
+        return None, f"bloco JSON invalido: {e}"
+    if not isinstance(bloco, dict) or not isinstance(bloco.get("tickers"), list):
+        return None, 'bloco precisa ser um objeto com a lista "tickers"'
+    return bloco, None
+
+
+def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> ValidationReport:
+    """Schema + coerência do bloco contra o DADO do snapshot -- tudo
+    determinístico, nada de interpretação de prosa."""
+    rep = ValidationReport()
+    universo = list(snapshot.get("quotes", {}))
+    technicals: dict = snapshot.get("technicals", {})
+    earnings: dict = snapshot.get("earnings", {})
+    as_of = _parse_date(snapshot.get("as_of"))
+
+    vistos: list[str] = []
+    for item in bloco.get("tickers", []):
+        if not isinstance(item, dict) or not item.get("ticker"):
+            rep.add("ERROR", "BLOCO_ITEM_INVALIDO", f"item sem ticker: {item!r}")
+            continue
+        tk = str(item["ticker"]).upper()
+        if tk in vistos:
+            rep.add("ERROR", "BLOCO_TICKER_DUPLICADO",
+                    "ticker aparece duas vezes no bloco.", ticker=tk)
+            continue
+        vistos.append(tk)
+        if universo and tk not in universo:
+            rep.add("ERROR", "BLOCO_TICKER_DESCONHECIDO",
+                    f"{tk} não está na carteira do snapshot ({', '.join(universo)}).",
+                    ticker=tk)
+            continue
+
+        acao = str(item.get("action", "")).upper()
+        if acao not in ACOES_VALIDAS:
+            rep.add("ERROR", "BLOCO_ACTION_INVALIDA",
+                    f"action \"{item.get('action')}\" fora do vocabulário "
+                    f"{sorted(ACOES_VALIDAS)}.", ticker=tk)
+            continue
+
+        conf = item.get("confidence")
+        if not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.0):
+            rep.add("ERROR", "BLOCO_CONFIDENCE_INVALIDA",
+                    f"confidence {conf!r} precisa ser número em [0, 1].", ticker=tk)
+
+        codes = item.get("reason_codes")
+        if not isinstance(codes, list) or not codes:
+            rep.add("ERROR", "BLOCO_SEM_REASON_CODES",
+                    "reason_codes vazio: decisão sem razão declarada não é "
+                    "auditável.", ticker=tk)
+            codes = []
+        codes = [str(c).upper() for c in codes]
+        for c in codes:
+            if c not in REASON_CODES_CONHECIDOS:
+                rep.add("WARN", "BLOCO_REASON_DESCONHECIDO",
+                        f"reason_code \"{c}\" fora do vocabulário conhecido.",
+                        ticker=tk)
+
+        # Razão contradita pelo dado é pior que razão ausente: o leitor
+        # confia no rótulo. RSI_* só pode ser citado quando o RSI do
+        # snapshot sustenta.
+        rsi = (technicals.get(tk) or {}).get("rsi")
+        if isinstance(rsi, (int, float)):
+            if "RSI_SOBRECOMPRADO" in codes and rsi < RSI_SOBRECOMPRADO_MIN:
+                rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
+                        f"RSI_SOBRECOMPRADO com RSI {rsi:.1f} "
+                        f"(< {RSI_SOBRECOMPRADO_MIN:.0f}).", ticker=tk)
+            if "RSI_SOBREVENDIDO" in codes and rsi > RSI_SOBREVENDIDO_MAX:
+                rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
+                        f"RSI_SOBREVENDIDO com RSI {rsi:.1f} "
+                        f"(> {RSI_SOBREVENDIDO_MAX:.0f}).", ticker=tk)
+
+        # Veto de catalisador, agora sobre estrutura: comprar às vésperas de
+        # earnings sem declarar EARNINGS_PROXIMO é decisão inconsciente.
+        if acao in ACOES_DE_COMPRA and tk in earnings:
+            try:
+                dias = (_parse_date(earnings[tk]) - as_of).days
+            except Exception:
+                dias = None
+            if dias is not None and 0 <= dias <= EARNINGS_PROXIMO_DIAS \
+                    and "EARNINGS_PROXIMO" not in codes:
+                rep.add("ERROR", "BLOCO_COMPRA_SEM_VETO_DECLARADO",
+                        f"{acao} com earnings em {dias} pregão(ões) sem "
+                        f"EARNINGS_PROXIMO nos reason_codes.", ticker=tk)
+
+    # Completude: todo ticker da carteira precisa de um veredito -- omissão
+    # silenciosa é como o LLM "resolve" o ticker difícil.
+    for tk in universo:
+        if tk not in vistos:
+            rep.add("ERROR", "BLOCO_TICKER_FALTANDO",
+                    "sem entrada no bloco estruturado.", ticker=tk)
+
+    # Concentração sobre a DECLARAÇÃO (não sobre regex de prosa). Comprar o
+    # par correlacionado declarando RISCO_CORRELACAO é decisão consciente --
+    # mesma lógica da isenção que o lint dá ao texto que nomeia o risco.
+    compras_sem_risco_declarado = []
+    for item in bloco.get("tickers", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action", "")).upper() not in ACOES_DE_COMPRA:
+            continue
+        codes_item = [str(c).upper() for c in (item.get("reason_codes") or [])]
+        if "RISCO_CORRELACAO" not in codes_item:
+            compras_sem_risco_declarado.append(str(item.get("ticker", "")).upper())
+    for erro in checar_concentracao_veredito(compras_sem_risco_declarado):
+        rep.add("ERROR", "BLOCO_CONCENTRACAO", erro)
+
+    return rep
+
+
+def checar_bloco_vs_texto(bloco: dict, texto: str,
+                          universo: list[str]) -> ValidationReport:
+    """O texto e o bloco têm que contar a MESMA história. O regex de
+    intenção deixa de ser a fonte da verdade e vira CONTRAPROVA: prosa
+    dizendo comprar o que o bloco não manda comprar (ou o inverso) é a
+    divergência exata que a validação por regex sozinha não resolvia."""
+    rep = ValidationReport()
+    norm_text = _norm(texto)
+    acoes = {str(i.get("ticker", "")).upper(): str(i.get("action", "")).upper()
+             for i in bloco.get("tickers", []) if isinstance(i, dict)}
+
+    compras_no_texto = _tickers_com_intencao_de_compra(texto, universo)
+    for tk in compras_no_texto:
+        if acoes.get(tk) and acoes[tk] not in ACOES_DE_COMPRA:
+            rep.add("ERROR", "JSON_TEXTO_DIVERGEM",
+                    f"o texto recomenda comprar/aumentar, mas o bloco diz "
+                    f"{acoes[tk]}. Os dois têm que contar a mesma história.",
+                    ticker=tk)
+
+    for tk, acao in acoes.items():
+        if acao in ACOES_DE_COMPRA and tk.lower() not in norm_text:
+            rep.add("ERROR", "COMPRA_SEM_EXPLICACAO",
+                    f"o bloco manda {acao}, mas o ticker não aparece no "
+                    f"texto -- decisão sem explicação.", ticker=tk)
+
+    return rep
+
+
+def validar_veredito_completo(texto: str, snapshot: dict[str, Any],
+                              year: int | None = None) -> ValidationReport:
+    """O ponto de entrada do run_veredito desde 20/08/2026: lint da prosa +
+    bloco estruturado + coerência entre os dois, num relatório só (o retry
+    de correção recebe tudo junto). Bloco AUSENTE é ERROR: sem ele, a tela
+    e as regras determinísticas voltam a depender de interpretação de
+    prosa, que é o que esta etapa aposenta."""
+    # O lint e o cruzamento rodam sobre a PROSA (texto sem os blocos json):
+    # o bloco é estrutura, não prosa -- e o regex de intenção casa "compra"
+    # dentro de "RSI_SOBRECOMPRADO" do próprio bloco (pego por teste antes
+    # de ir a produção), o que acusaria divergência do veredito consigo
+    # mesmo.
+    texto_prosa = _BLOCO_JSON_RE.sub("", texto)
+    rep = lint_veredito(texto_prosa, snapshot, year=year)
+    bloco, erro = extrair_bloco_estruturado(texto)
+    if bloco is None:
+        rep.add("ERROR", "BLOCO_AUSENTE",
+                (erro or "faltou o bloco ```json``` final com a decisão por "
+                         "ticker (tickers/action/confidence/reason_codes)."))
+        return rep
+    sub = validar_bloco_estruturado(bloco, snapshot)
+    rep.issues.extend(sub.issues)
+    cruz = checar_bloco_vs_texto(bloco, texto_prosa, list(snapshot.get("quotes", {})))
+    rep.issues.extend(cruz.issues)
+    return rep
+
+
 if __name__ == "__main__":
     snap = {
         "as_of": "2026-07-31",

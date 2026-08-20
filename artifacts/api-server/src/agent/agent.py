@@ -26,7 +26,11 @@ from .report_validator import (
     lint_report,
     new_snapshot,
 )
-from .veredito_validator import lint_veredito, validate_snapshot
+from .veredito_validator import (
+    extrair_bloco_estruturado,
+    validar_veredito_completo,
+    validate_snapshot,
+)
 
 # Helpers de horário de Brasília moram em brt.py (fonte única) -- tools.py
 # também precisa deles e não pode importar agent.py, que importaria de volta.
@@ -513,7 +517,32 @@ Formato da resposta (Markdown):
   o que os técnicos dizem sobre timing, o que o plano de saída e os earnings
   próximos exigem de atenção, e como o pano de fundo macro/sentimento
   encaixa nisso tudo.
-- Termine com uma seção "Próximos passos" (até 3 itens curtos e acionáveis)."""
+- Depois, uma seção "Próximos passos" (até 3 itens curtos e acionáveis).
+- Por ÚLTIMO, obrigatoriamente, o bloco estruturado da decisão -- um bloco
+  de código ```json com este formato EXATO, cobrindo TODOS os tickers da
+  carteira, um por um:
+
+```json
+{{
+  "tickers": [
+    {{"ticker": "NVDA", "action": "MANTER", "confidence": 0.6,
+      "reason_codes": ["EARNINGS_PROXIMO", "RSI_SOBRECOMPRADO"]}}
+  ]
+}}
+```
+
+  Regras do bloco: `action` é um de COMPRAR | AUMENTAR | MANTER | REDUZIR |
+  VENDER | AGUARDAR; `confidence` é número de 0 a 1; `reason_codes` (1 a 4)
+  vem preferencialmente de: RSI_SOBRECOMPRADO, RSI_SOBREVENDIDO,
+  TENDENCIA_ALTA, TENDENCIA_BAIXA, EARNINGS_PROXIMO, RISCO_CORRELACAO,
+  MACRO_ADVERSO, MACRO_FAVORAVEL, SUPORTE_PROXIMO, RESISTENCIA_PROXIMA,
+  VOLUME_FRACO, VOLUME_FORTE, VALUATION_ESTICADO, VALUATION_DESCONTADO,
+  PLANO_DE_SAIDA, SENTIMENTO_EXTREMO, CENARIO_EMPATE.
+  O bloco e o texto têm que contar a MESMA história: o bloco é a decisão,
+  o texto é a explicação dela. Um validador determinístico confere os dois
+  entre si e contra os dados -- razão contradita pelo dado (ex.:
+  RSI_SOBREVENDIDO com RSI 50) e compra às vésperas de earnings sem
+  declarar EARNINGS_PROXIMO são erros que forçam correção."""
 
 
 def build_chat_prompt() -> str:
@@ -1576,7 +1605,10 @@ def run_veredito(progress_callback=None) -> str:
         deadline_ts=config.SOFT_DEADLINE_TS,
     )
 
-    lrep = lint_veredito(final_text, snapshot)
+    # Desde 20/08/2026 a validação cobre o lint da prosa E o bloco
+    # estruturado do fim (decisão por ticker em JSON) -- inclusive a
+    # coerência entre os dois. O retry recebe tudo num relatório só.
+    lrep = validar_veredito_completo(final_text, snapshot)
     if lrep.has_errors:
         print(f"[veredito_validator] lint errors, tentando 1 retry:\n{lrep.summary()}", file=sys.stderr, flush=True)
         if progress_callback:
@@ -1593,8 +1625,9 @@ def run_veredito(progress_callback=None) -> str:
                     {"role": "user", "content": (
                         "CORRIJA os seguintes erros factuais e reescreva o "
                         "veredito completo já corrigido (mesmo formato de "
-                        "antes, não apenas as partes erradas). Comece direto "
-                        "pelo veredito, sem nenhuma frase de introdução:\n"
+                        "antes, não apenas as partes erradas, incluindo o "
+                        "bloco ```json final). Comece direto pelo veredito, "
+                        "sem nenhuma frase de introdução:\n"
                         + lrep.summary()
                     )},
                 ],
@@ -1607,6 +1640,22 @@ def run_veredito(progress_callback=None) -> str:
             # com o texto original (com os erros já logados acima pro
             # operador investigar) em vez de propagar a exceção.
             print(f"[veredito_validator] retry de correção falhou: {e}", file=sys.stderr, flush=True)
+
+    # Se depois do retry ainda não há bloco estruturado VÁLIDO, o veredito
+    # sai marcado como degradado -- visível no texto, não só no log. A
+    # alternativa (segurar o veredito) puniria o operador pela falha do
+    # modelo; a degradação declarada segue a convenção do repo: dado
+    # estimado/incompleto nunca se apresenta como completo.
+    bloco, erro_bloco = extrair_bloco_estruturado(final_text)
+    if bloco is None:
+        detalhe = f" ({erro_bloco})" if erro_bloco else ""
+        print(f"[veredito_validator] veredito SEM bloco estruturado após retry{detalhe}",
+              file=sys.stderr, flush=True)
+        final_text += (
+            "\n\n> ⚠️ **Leitura degradada**: este veredito saiu sem o bloco "
+            "estruturado de decisão por ticker (o modelo não o produziu nem "
+            "no retry). As checagens determinísticas rodaram só sobre a "
+            "prosa." )
 
     return final_text
 
