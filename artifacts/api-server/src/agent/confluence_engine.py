@@ -285,11 +285,23 @@ def run_backtest(
     kelly_win_rate: float = 0.5,
     kelly_avg_win: float = 0.05,
     kelly_avg_loss: float = 0.03,
+    long_only: bool = True,
 ) -> dict:
     """kelly_win_rate/avg_win/avg_loss são priors PLACEHOLDER por padrão (primeira
     passada). Depois de rodar uma vez e extrair win_rate/avg_win/avg_loss REAIS
     dos trades fechados (ver scripts/backtest_confluence.py), rode de novo
-    passando esses valores reais para recalibrar o position sizing."""
+    passando esses valores reais para recalibrar o position sizing.
+
+    `long_only=True` por padrão desde 20/08/2026: "sell" FECHA uma posição
+    comprada, nunca abre short. O diagnóstico (scripts/diagnostico_confluence.py,
+    resultados em confluence_diagnostico_results.md) mediu os shorts perdendo
+    em SEIS de seis células ticker x regime -- inclusive no downcycle de
+    2022-23, onde a MU caiu 32% e os shorts ainda assim perderam 14,9%: o
+    motor entra vendido depois da fraqueza confirmada e apanha do repique (o
+    ativo subiu 11% nos dias em que a estratégia estava vendida). Remover o
+    short melhorou TODAS as células, o que é raro o bastante para virar
+    default. `long_only=False` fica para pesquisa/ablação -- é como o
+    diagnóstico continua medindo os dois lados."""
     signals = engine.evaluate_dataframe(df, sector_returns, event_dates)
     size_frac = engine.kelly_position_size(kelly_win_rate, kelly_avg_win, kelly_avg_loss)
 
@@ -306,7 +318,10 @@ def run_backtest(
         price = closes[i]
         action = actions[i]
 
-        if position == 0 and action in ("buy", "sell"):
+        # Em long_only, "sell" com posição zerada não faz nada: o voto
+        # vendedor continua VISÍVEL na leitura da tela (evaluate_dataframe não
+        # muda), só deixa de virar posição short aqui.
+        if position == 0 and (action == "buy" or (action == "sell" and not long_only)):
             position = 1 if action == "buy" else -1
             entry_price = price
             trades.append({

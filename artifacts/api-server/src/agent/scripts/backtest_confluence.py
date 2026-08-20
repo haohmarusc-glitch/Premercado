@@ -29,6 +29,14 @@ sector_returns, em CADA regime:
 
 Salva um relatório markdown comparativo único, com uma seção por regime x
 ticker.
+
+ATUALIZAÇÃO 20/08/2026 -- a tese do parágrafo acima foi REFUTADA pelo
+diagnóstico (scripts/diagnostico_confluence.py): no downcycle de 2022-23 a
+estratégia a 100% de exposição perdeu MAIS que o buy & hold na MU (-37,8%
+contra -32,2%), e no supercycle capturou fração pequena por passar ~71% dos
+pregões fora. Os shorts perderam em 6 de 6 células ticker x regime, e por
+isso run_backtest agora é long_only por default -- este grid mede a semântica
+nova; para os dois lados, use o diagnóstico.
 """
 import os
 import sys

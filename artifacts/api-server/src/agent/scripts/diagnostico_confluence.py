@@ -190,7 +190,10 @@ def _estado(p: int) -> str:
 
 def _diagnosticar(ticker: str, df: pd.DataFrame, sector_returns) -> str:
     engine = ConfluenceEngine(min_votes=MIN_VOTES, kelly_fraction=0.3)
-    res = run_backtest(df, engine, sector_returns=sector_returns)
+    # long_only=False de propósito: o diagnóstico mede o SINAL cru, dos dois
+    # lados. Foi a medição dos dois lados que justificou o default long_only
+    # do run_backtest -- herdá-lo aqui apagaria a régua que o sustenta.
+    res = run_backtest(df, engine, sector_returns=sector_returns, long_only=False)
     trades = res["trades"]
 
     dec = decompor_trades(trades)
