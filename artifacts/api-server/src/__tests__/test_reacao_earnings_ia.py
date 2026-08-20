@@ -221,3 +221,58 @@ def test_o_system_proibe_previsao_a_partir_de_bucket():
     aconteceu é legítimo; dizer o que acontece, não."""
     assert "nunca sobre o que acontece" in mod.SYSTEM
     assert "abaixo de 6" in mod.SYSTEM
+
+
+# ── correlações do radar no payload ─────────────────────────────────────────
+#
+# A seção "Quem se move junto" nasceu manca: só havia estatística POR PAPEL, e
+# co-movimento é propriedade de PARES. Na primeira cesta real (20/08/2026) o
+# modelo respondeu -- corretamente -- que não podia afirmar padrão conjunto.
+# O dado já existia na matriz do radar; agora ele viaja no prompt.
+
+def test_pares_da_cesta_vem_do_radar():
+    c = mod._correlacoes_da_cesta(["NVDA", "AVGO", "SMCI"])
+    assert c is not None
+    assert "AVGO|NVDA" in c["pares"]          # chave em ordem alfabética
+    assert 0 < c["pares"]["AVGO|NVDA"] <= 1
+    # A janela viaja junto (convenção 17): correlação sem data-fim parece
+    # medição de hoje mesmo vinda do snapshot embutido.
+    assert len(c["janela_fim"]) == 10
+
+
+def test_par_nao_medido_fica_fora_em_vez_de_virar_null():
+    """null no prompt convida o modelo a citá-lo; ausente já tem regra própria
+    no SYSTEM (não medido != zero)."""
+    c = mod._correlacoes_da_cesta(["NVDA", "AVGO", "SKHY"])
+    assert c is not None
+    assert not any("SKHY" in k for k in c["pares"])
+
+
+def test_cesta_sem_nenhum_par_vira_none():
+    assert mod._correlacoes_da_cesta(["ULTA", "KO"]) is None
+    assert mod._correlacoes_da_cesta([]) is None
+
+
+def test_ticker_duplicado_ou_minusculo_nao_duplica_par():
+    c = mod._correlacoes_da_cesta(["nvda", "NVDA", "avgo"])
+    assert list(c["pares"]) == ["AVGO|NVDA"]
+
+
+def test_o_system_ancora_o_comovimento_nas_correlacoes():
+    """As três regras que impedem a seção de voltar a ser manca OU virar
+    invenção: os limiares de leitura, ausente != zero, e o que dizer quando o
+    bloco inteiro não vier."""
+    assert "mesmo trade" in mod.SYSTEM
+    assert "não medido" in mod.SYSTEM.lower() or "NÃO MEDIDA" in mod.SYSTEM
+    assert "não pode ser afirmado" in mod.SYSTEM
+
+
+def test_as_correlacoes_entram_antes_da_chamada():
+    """Fonte, como os testes de ordem: o bloco tem que estar montado no
+    conteúdo antes do client.create."""
+    import pathlib
+    fonte = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if not l.strip().startswith("#")]
+    i_corr = next(i for i, l in enumerate(codigo) if "_correlacoes_da_cesta(" in l and "def " not in l)
+    i_create = next(i for i, l in enumerate(codigo) if "client.create(" in l)
+    assert i_corr < i_create
