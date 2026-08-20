@@ -188,6 +188,85 @@ interface BasketResult {
   error?: string;
 }
 
+/** Modo B (20/08/2026): capital ÚNICO de $100k, cota patrimônio/n por
+ * entrada, caixa compartilhado. Responde "o sistema melhora uma CARTEIRA?" —
+ * a pergunta que a cesta ($10k independentes por ticker) não alcança. */
+interface PortfolioTrade extends Trade {
+  ticker: string;
+  /** Dólares que a entrada tirou do caixa — com caixa escasso, menor que a cota. */
+  aporte: number;
+  recebido: number;
+}
+
+interface PortfolioResult {
+  strategy: string;
+  start: string;
+  end: string;
+  tickersRequested: number;
+  tickersOk: number;
+  failed: { ticker: string; error: string }[];
+  initialCapital: number;
+  finalValue: number;
+  totalReturn: number;
+  /** Buy & hold EQUAL-WEIGHT da mesma cesta (1/n, sem rebalanceamento). */
+  buyAndHoldReturn: number;
+  cagr: number;
+  sharpe: number;
+  sortino: number | null;
+  calmar: number | null;
+  maxDrawdown: number;
+  profitFactor: number | null;
+  expectancy: number | null;
+  payoff: number | null;
+  bootstrap: BootstrapResumo | null;
+  totalTrades: number;
+  winRate: number;
+  avgWin: number;
+  avgLoss: number;
+  trades: PortfolioTrade[];
+  equityCurve: EquityPoint[];
+  exposicao: {
+    pctDiasSemPosicao: number;
+    mediaPosicoesAbertas: number;
+    maxPosicoesSimultaneas: number;
+    picoExposicaoPct: number;
+  };
+  porTicker: { ticker: string; trades: number; contribuicaoPct: number }[];
+  porSetor: {
+    sector: string; label: string; tickers: string[];
+    maxSimultaneas: number; pctDiasCom2ouMais: number;
+  }[];
+  error?: string;
+}
+
+export function interpretPortfolioResult(r: PortfolioResult): string[] {
+  const notes: string[] = [];
+  const diff = r.totalReturn - r.buyAndHoldReturn;
+  if (Math.abs(diff) < 1) {
+    notes.push(`A carteira operada empatou com o buy & hold equal-weight (diferença de ${diff >= 0 ? "+" : ""}${diff.toFixed(2)}pp).`);
+  } else if (diff > 0) {
+    notes.push(`A carteira operada superou o buy & hold equal-weight em ${diff.toFixed(2)}pp (${r.totalReturn.toFixed(2)}% vs ${r.buyAndHoldReturn.toFixed(2)}%).`);
+  } else {
+    notes.push(`A carteira operada ficou ${Math.abs(diff).toFixed(2)}pp atrás do buy & hold equal-weight — com capital único, o conjunto rendeu mais parado do que operado.`);
+  }
+  if (r.exposicao.pctDiasSemPosicao >= 40) {
+    notes.push(`A carteira passou ${r.exposicao.pctDiasSemPosicao.toFixed(0)}% dos pregões sem NENHUMA posição — o custo dominante pode ser ausência, não seleção (mesmo padrão do diagnóstico de 20/08).`);
+  }
+  for (const s of r.porSetor) {
+    if (s.maxSimultaneas >= 2 && s.pctDiasCom2ouMais >= 10) {
+      notes.push(`Concentração em ${s.label}: ${s.pctDiasCom2ouMais.toFixed(0)}% dos dias com 2+ posições do mesmo grupo (${s.tickers.join(", ")}) — correlação alta faz disso o mesmo trade contado duas vezes.`);
+    }
+  }
+  const ic = r.bootstrap?.compostoIc95;
+  if (ic && ic[0] <= 0 && ic[1] >= 0) {
+    notes.push(`O IC de 95% do composto dos trades (${ic[0]}% a ${ic[1]}%, bootstrap) cruza o zero — com essa amostra, o resultado não se distingue de sorte de sequência.`);
+  }
+  if (r.bootstrap?.aviso) {
+    notes.push(`Bootstrap: ${r.bootstrap.aviso}.`);
+  }
+  return notes;
+}
+
 const today = new Date().toISOString().split("T")[0];
 const oneYearAgo = new Date(Date.now() - 365 * 86400000).toISOString().split("T")[0];
 const sixMonthsAgo = new Date(Date.now() - 182 * 86400000).toISOString().split("T")[0];
@@ -320,7 +399,7 @@ export function pregoesAproximados(start: string, end: string): number | null {
 }
 
 export default function BacktestPage() {
-  const [mode, setMode] = useState<"ticker" | "basket">("ticker");
+  const [mode, setMode] = useState<"ticker" | "basket" | "portfolio">("ticker");
   const [ticker, setTicker] = useState("NVDA");
   const [start, setStart] = useState(oneYearAgo);
   const [end, setEnd] = useState(today);
@@ -338,6 +417,7 @@ export default function BacktestPage() {
   const [objetivo, setObjetivo] = useState("sharpe");
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [basketResult, setBasketResult] = useState<BasketResult | null>(null);
+  const [portfolioResult, setPortfolioResult] = useState<PortfolioResult | null>(null);
   const [sensitivityResult, setSensitivityResult] = useState<SensitivityResult | null>(null);
   const [walkForwardResult, setWalkForwardResult] = useState<WalkForwardResult | null>(null);
 
@@ -350,6 +430,11 @@ export default function BacktestPage() {
     setMode("ticker");
     setStrategy("rsi");
     setStart(oneYearAgo);
+  }
+  function switchToPortfolio() {
+    setMode("portfolio");
+    setStrategy("confluencia");
+    setStart(sixMonthsAgo);
   }
 
   function riskParams() {
@@ -384,7 +469,8 @@ export default function BacktestPage() {
   // planilha de números sem a conclusão que a tela já sabe tirar.
   function montarRelatorioBacktest(): string | null {
     const blocos: string[] = [];
-    const alvo = mode === "basket" ? "cesta" : ticker.toUpperCase();
+    const alvo = mode === "basket" ? "cesta"
+      : mode === "portfolio" ? "carteira ($100k)" : ticker.toUpperCase();
     blocos.push(cabecalho(
       `Backtest — ${alvo}`,
       `Estratégia ${strategy.toUpperCase()} · período ${start} a ${end}`,
@@ -435,6 +521,35 @@ export default function BacktestPage() {
       blocos.push("## Leitura\n\n" + interpretBasketResult(basketResult).map((n) => `- ${n}`).join("\n"));
     }
 
+    if (mode === "portfolio" && portfolioResult && !portfolioResult.error) {
+      const p = portfolioResult;
+      blocos.push("## Carteira (capital único)\n\n" + itens([
+        ["Capital inicial", `$${p.initialCapital.toLocaleString()}`],
+        ["Valor final", `$${p.finalValue.toLocaleString()}`],
+        ["Retorno total", pct(p.totalReturn)],
+        ["Buy & hold equal-weight", pct(p.buyAndHoldReturn)],
+        ["Diferença", `${(p.totalReturn - p.buyAndHoldReturn).toFixed(2)}pp`],
+        ["CAGR", pct(p.cagr)],
+        ["Sharpe", p.sharpe.toFixed(2)],
+        ["Sortino", fmtMetrica(p.sortino)],
+        ["Calmar", fmtMetrica(p.calmar)],
+        ["Drawdown máximo", pct(p.maxDrawdown)],
+        ["Operações", p.totalTrades],
+        ["Taxa de acerto", pct(p.winRate, 1)],
+        ["Dias sem posição", `${p.exposicao.pctDiasSemPosicao}%`],
+        ["Máx. posições simultâneas", p.exposicao.maxPosicoesSimultaneas],
+        ["IC 95% do composto (bootstrap)",
+         p.bootstrap?.compostoIc95
+           ? `${p.bootstrap.compostoIc95[0]}% a ${p.bootstrap.compostoIc95[1]}%`
+           : (p.bootstrap?.aviso ?? "—")],
+      ]));
+      blocos.push("### Contribuição por ticker\n\n" + tabela(
+        ["Ticker", "Operações", "Contribuição"],
+        p.porTicker.map((r) => [r.ticker, r.trades, `${r.contribuicaoPct >= 0 ? "+" : ""}${r.contribuicaoPct.toFixed(2)}pp`]),
+      ));
+      blocos.push("## Leitura\n\n" + interpretPortfolioResult(p).map((n) => `- ${n}`).join("\n"));
+    }
+
     if (sensitivityResult && !sensitivityResult.error) {
       blocos.push("## Sensibilidade\n\n" + tabela(
         ["Parâmetro", "Valor", "Retorno", "Sharpe", "Drawdown", "Operações"],
@@ -469,6 +584,7 @@ export default function BacktestPage() {
   const temResultadoParaExportar = Boolean(
     (mode === "ticker" && result && !result.error) ||
     (mode === "basket" && basketResult) ||
+    (mode === "portfolio" && portfolioResult && !portfolioResult.error) ||
     (sensitivityResult && !sensitivityResult.error) ||
     (walkForwardResult && !walkForwardResult.error),
   );
@@ -501,6 +617,24 @@ export default function BacktestPage() {
       return data as BasketResult;
     },
     onSuccess: (data) => setBasketResult(data),
+  });
+
+  const runPortfolio = useMutation({
+    mutationFn: async () => {
+      // Sem positionFraction: na carteira a fração É a cota patrimônio/n,
+      // decidida pelo motor — mandar o campo sugeriria que ele é usado.
+      const { positionFraction: _ignorado, ...params } = riskParams();
+      const r = await fetch("/api/backtest/portfolio", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start, end, strategy, ...params }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Failed");
+      return data as PortfolioResult;
+    },
+    onSuccess: (data) => setPortfolioResult(data),
   });
 
   const runSensitivity = useMutation({
@@ -570,6 +704,16 @@ export default function BacktestPage() {
             >
               <Layers className="h-3 w-3" /> Cesta inteira
             </button>
+            <button
+              type="button"
+              onClick={switchToPortfolio}
+              title="Capital único de $100k dividido por cota patrimônio/n, caixa compartilhado — responde 'o sistema melhora uma carteira?', que a cesta ($10k independentes por ticker) não responde"
+              className={`px-3 py-1.5 rounded border font-mono text-xs transition-colors ${
+                mode === "portfolio" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/50"
+              }`}
+            >
+              Carteira ($100k)
+            </button>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -624,7 +768,11 @@ export default function BacktestPage() {
         )}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
-            { label: "Fração Posição (0.1–1.0)", val: positionFraction, set: setPositionFraction, step: "0.1" },
+            // Na carteira a fração é a COTA patrimônio/n decidida pelo motor:
+            // mostrar o campo sugeriria um controle que não existe.
+            ...(mode === "portfolio" ? [] : [
+              { label: "Fração Posição (0.1–1.0)", val: positionFraction, set: setPositionFraction, step: "0.1" },
+            ]),
             { label: "Comissão (ex: 0.001 = 0.1%)", val: commissionPct, set: setCommissionPct, step: "0.0001" },
             { label: "Slippage (ex: 0.0005)", val: slippagePct, set: setSlippagePct, step: "0.0001" },
           ].map(({ label, val, set, step }) => (
@@ -728,11 +876,15 @@ export default function BacktestPage() {
         )}
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => mode === "basket" ? runBasket.mutate() : run.mutate()}
-            disabled={mode === "basket" ? runBasket.isPending : (run.isPending || !ticker.trim())}
+            onClick={() => mode === "basket" ? runBasket.mutate()
+              : mode === "portfolio" ? runPortfolio.mutate() : run.mutate()}
+            disabled={mode === "basket" ? runBasket.isPending
+              : mode === "portfolio" ? runPortfolio.isPending
+              : (run.isPending || !ticker.trim())}
             className="px-6 py-2 bg-primary text-primary-foreground rounded font-mono text-sm font-bold disabled:opacity-50 flex items-center gap-2"
           >
-            {(mode === "basket" ? runBasket.isPending : run.isPending) ? (
+            {(mode === "basket" ? runBasket.isPending
+              : mode === "portfolio" ? runPortfolio.isPending : run.isPending) ? (
               <>
                 <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full" />
                 Executando...
@@ -781,20 +933,174 @@ export default function BacktestPage() {
         {mode === "basket" && runBasket.isError && (
           <p className="text-sm text-red-400 font-mono">{String(runBasket.error)}</p>
         )}
+        {mode === "portfolio" && runPortfolio.isError && (
+          <p className="text-sm text-red-400 font-mono">{String(runPortfolio.error)}</p>
+        )}
         {mode === "ticker" && runSensitivity.isError && (
           <p className="text-sm text-red-400 font-mono">{String(runSensitivity.error)}</p>
         )}
         {temResultadoParaExportar && (
           <div className="border-t border-border/40 pt-4">
             <ExportarRelatorio
-              titulo={`Backtest ${mode === "basket" ? "cesta" : ticker.toUpperCase()}`}
+              titulo={`Backtest ${mode === "basket" ? "cesta" : mode === "portfolio" ? "carteira" : ticker.toUpperCase()}`}
               mode="tela_backtest"
-              tickers={mode === "basket" ? [] : [ticker.toUpperCase()]}
+              tickers={mode === "ticker" ? [ticker.toUpperCase()] : []}
               construir={montarRelatorioBacktest}
             />
           </div>
         )}
       </div>
+
+      {/* Portfolio results — capital único */}
+      {mode === "portfolio" && portfolioResult && (
+        portfolioResult.error ? (
+          <div className="p-6 border border-red-500/30 rounded-lg bg-red-500/5 font-mono text-red-400 text-sm">
+            {portfolioResult.error}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Retorno Total", value: `${portfolioResult.totalReturn >= 0 ? "+" : ""}${portfolioResult.totalReturn.toFixed(2)}%`, color: portfolioResult.totalReturn >= 0 ? "text-green-400" : "text-red-400" },
+                { label: "B&H Equal-Weight", value: `${portfolioResult.buyAndHoldReturn >= 0 ? "+" : ""}${portfolioResult.buyAndHoldReturn.toFixed(2)}%`, color: portfolioResult.buyAndHoldReturn >= 0 ? "text-green-400" : "text-red-400" },
+                { label: "CAGR", value: `${portfolioResult.cagr >= 0 ? "+" : ""}${portfolioResult.cagr.toFixed(2)}%`, color: portfolioResult.cagr >= 0 ? "text-green-400" : "text-red-400" },
+                { label: "Sharpe Ratio", value: portfolioResult.sharpe.toFixed(2), color: portfolioResult.sharpe >= 1 ? "text-green-400" : portfolioResult.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="border border-border rounded-lg bg-card p-4">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
+                  <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: "Max Drawdown", value: `${portfolioResult.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
+                { label: "Win Rate", value: portfolioResult.totalTrades > 0 ? `${portfolioResult.winRate}%` : "—", color: portfolioResult.winRate > 50 ? "text-green-400" : "text-yellow-400" },
+                { label: "Sortino", value: fmtMetrica(portfolioResult.sortino), color: (portfolioResult.sortino ?? 0) >= 1 ? "text-green-400" : "text-yellow-400" },
+                { label: "Calmar", value: fmtMetrica(portfolioResult.calmar), color: (portfolioResult.calmar ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="border border-border rounded-lg bg-card p-4">
+                  <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
+                  <div className={`text-xl font-bold font-mono ${value === "—" ? "text-muted-foreground" : color}`}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {portfolioResult.bootstrap && (
+              <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground">
+                {portfolioResult.bootstrap.aviso ? (
+                  <span>Bootstrap: {portfolioResult.bootstrap.aviso}.</span>
+                ) : (
+                  <span>
+                    IC 95% (bootstrap, {portfolioResult.bootstrap.amostras} reamostras de {portfolioResult.bootstrap.nTrades} trades):
+                    {" "}composto {portfolioResult.bootstrap.compostoIc95?.[0]}% a {portfolioResult.bootstrap.compostoIc95?.[1]}%
+                    {" "}· win rate {portfolioResult.bootstrap.winRateIc95?.[0]}% a {portfolioResult.bootstrap.winRateIc95?.[1]}%
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground flex gap-4 flex-wrap">
+              <span>Capital único: ${portfolioResult.initialCapital.toLocaleString()} · cota por entrada = patrimônio/{portfolioResult.tickersOk}</span>
+              <span>{portfolioResult.exposicao.pctDiasSemPosicao}% dos dias sem posição</span>
+              <span>máx. {portfolioResult.exposicao.maxPosicoesSimultaneas} posições simultâneas</span>
+              <span>pico de exposição {portfolioResult.exposicao.picoExposicaoPct}%</span>
+              <span className={`font-bold ${portfolioResult.finalValue >= portfolioResult.initialCapital ? "text-green-400" : "text-red-400"}`}>
+                Final: ${portfolioResult.finalValue.toLocaleString()}
+              </span>
+            </div>
+
+            {portfolioResult.equityCurve.length > 0 && (
+              <div className="border border-border rounded-lg bg-card p-4">
+                <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-3">
+                  Equity da Carteira vs Buy &amp; Hold Equal-Weight
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <AreaChart data={portfolioResult.equityCurve} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="portfolioEquityGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f97316" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+                      tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={60} />
+                    <YAxis tick={{ fontSize: 10, fontFamily: "monospace", fill: "#6b7280" }}
+                      tickLine={false} axisLine={false} width={64}
+                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip
+                      contentStyle={{
+                        background: "hsl(var(--card))", border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px", fontFamily: "monospace", fontSize: "12px",
+                      }}
+                      labelStyle={{ color: "hsl(var(--muted-foreground))", marginBottom: 4 }}
+                      formatter={(val: number, name: string) => [`$${val.toLocaleString()}`, name === "equity" ? "Carteira" : "B&H equal-weight"]}
+                    />
+                    <Legend formatter={(value: string) => (value === "equity" ? "Carteira" : "B&H equal-weight")}
+                      wrapperStyle={{ fontFamily: "monospace", fontSize: "11px" }} />
+                    <Area type="monotone" dataKey="equity" stroke="#f97316" strokeWidth={1.5} fill="url(#portfolioEquityGradient)" dot={false} isAnimationActive={false} />
+                    <Area type="monotone" dataKey="buyHoldEquity" stroke="#6b7280" strokeWidth={1.5} fill="none" dot={false} strokeDasharray="4 3" isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="border border-border rounded-lg overflow-hidden overflow-x-auto">
+              <div className="px-4 py-2.5 border-b border-border bg-secondary/30 text-xs font-mono text-muted-foreground uppercase tracking-widest">
+                Contribuição por Ticker
+              </div>
+              <table className="w-full font-mono text-sm">
+                <thead>
+                  <tr className="border-b border-border/60">
+                    <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Ticker</th>
+                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Operações</th>
+                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Contribuição</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portfolioResult.porTicker.map((r) => (
+                    <tr key={r.ticker} className="border-b border-border/40 last:border-0">
+                      <td className="px-4 py-2.5 text-foreground">{r.ticker}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">{r.trades}</td>
+                      <td className={`px-4 py-2.5 text-right ${r.contribuicaoPct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        {r.contribuicaoPct >= 0 ? "+" : ""}{r.contribuicaoPct.toFixed(2)}pp
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {portfolioResult.porSetor.length > 0 && (
+              <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground space-y-1">
+                {portfolioResult.porSetor.map((s) => (
+                  <div key={s.sector}>
+                    {s.label} ({s.tickers.join(", ")}): máx. {s.maxSimultaneas} posições simultâneas
+                    {s.maxSimultaneas >= 2 && ` · ${s.pctDiasCom2ouMais}% dos dias com 2+ do mesmo grupo`}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {portfolioResult.failed.length > 0 && (
+              <div className="border border-yellow-500/30 rounded-lg bg-yellow-500/5 p-3 font-mono text-xs text-yellow-400">
+                Fora da carteira (sem dados): {portfolioResult.failed.map((f) => f.ticker).join(", ")} — excluídos também do benchmark.
+              </div>
+            )}
+
+            <div className="border border-border rounded-lg bg-card p-4">
+              <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2">Leitura</div>
+              <ul className="space-y-1.5">
+                {interpretPortfolioResult(portfolioResult).map((n, i) => (
+                  <li key={i} className="text-sm font-mono text-foreground/90 flex gap-2">
+                    <span className="text-primary shrink-0">›</span><span>{n}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )
+      )}
 
       {/* Basket results */}
       {mode === "basket" && basketResult && (

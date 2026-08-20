@@ -252,6 +252,30 @@ def _bootstrap_dos_trades(pnls: list, amostras: int = _BOOTSTRAP_AMOSTRAS,
             "compostoIc95": _ic(compostos), "winRateIc95": _ic(win_rates)}
 
 
+def _metricas_da_curva(equity_valores: list) -> dict:
+    """Sharpe, Sortino e max drawdown da equity dia a dia -- compartilhada
+    entre o backtest por ticker e o de carteira: a régua tem UMA definição de
+    cada métrica (o auditor a rederiva de forma independente; duplicar a
+    fórmula aqui criaria duas verdades para o mesmo nome)."""
+    serie = pd.Series(equity_valores, dtype=float)
+    ret = serie.pct_change().dropna()
+    sharpe = 0.0
+    if len(ret) > 0 and ret.std() > 0:
+        sharpe = round((ret.mean() / ret.std()) * math.sqrt(252), 2)
+    # Sortino: como o Sharpe, mas punindo só a volatilidade de queda -- uma
+    # estratégia que oscila para cima não é "arriscada" no sentido que
+    # importa. None quando não houve dia negativo: dividir por zero aqui
+    # viraria um número gigante lido como excelência.
+    negativos = ret[ret < 0]
+    sortino = None
+    if len(ret) > 0 and len(negativos) > 0 and negativos.std() > 0:
+        sortino = round((ret.mean() / negativos.std()) * math.sqrt(252), 2)
+    topo = serie.cummax()
+    dd = (serie - topo) / topo
+    max_drawdown = round(float(dd.min()) * 100, 2) if len(dd) else 0.0
+    return {"sharpe": sharpe, "sortino": sortino, "maxDrawdown": max_drawdown}
+
+
 def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
               position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct):
     if len(ohlc) < 20:
@@ -365,28 +389,12 @@ def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
     avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
 
-    # Sharpe/drawdown a partir da equity curve DA ESTRATÉGIA (não do
+    # Sharpe/Sortino/drawdown a partir da equity curve DA ESTRATÉGIA (não do
     # buy&hold do ticker -- as duas coisas coincidiam sempre que a
     # estratégia ficava 100% do tempo posicionada, mas divergem sempre que
     # ela fica fora do mercado por um período).
-    equity_series = pd.Series([e["equity"] for e in equity_curve])
-    daily_ret = equity_series.pct_change().dropna()
-    sharpe = 0.0
-    if len(daily_ret) > 0 and daily_ret.std() > 0:
-        sharpe = round((daily_ret.mean() / daily_ret.std()) * math.sqrt(252), 2)
-
-    rolling_max = equity_series.cummax()
-    drawdown = (equity_series - rolling_max) / rolling_max
-    max_drawdown = round(float(drawdown.min()) * 100, 2) if len(drawdown) else 0.0
-
-    # Sortino: como o Sharpe, mas punindo só a volatilidade de queda -- uma
-    # estratégia que oscila para cima não é "arriscada" no sentido que
-    # importa. None quando não houve dia negativo: dividir por zero aqui
-    # viraria um número gigante lido como excelência.
-    dias_negativos = daily_ret[daily_ret < 0]
-    sortino = None
-    if len(daily_ret) > 0 and len(dias_negativos) > 0 and dias_negativos.std() > 0:
-        sortino = round((daily_ret.mean() / dias_negativos.std()) * math.sqrt(252), 2)
+    curva_m = _metricas_da_curva([e["equity"] for e in equity_curve])
+    max_drawdown = curva_m["maxDrawdown"]
 
     # Calmar: CAGR / |max drawdown| -- retorno por unidade da pior dor.
     calmar = round(cagr / abs(max_drawdown), 2) if max_drawdown < 0 else None
@@ -395,8 +403,8 @@ def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
         "ticker": ticker, "strategy": strategy, "start": start, "end": end,
         "initialCapital": initial_capital, "finalValue": round(final_value, 2),
         "totalReturn": round(total_return, 2), "buyAndHoldReturn": round(bh_return, 2),
-        "cagr": round(cagr, 2), "sharpe": sharpe, "maxDrawdown": max_drawdown,
-        "sortino": sortino, "calmar": calmar,
+        "cagr": round(cagr, 2), "sharpe": curva_m["sharpe"], "maxDrawdown": max_drawdown,
+        "sortino": curva_m["sortino"], "calmar": calmar,
         **_metricas_de_trades(trades),
         "bootstrap": _bootstrap_dos_trades([t["pnl"] for t in trades]),
         "totalTrades": len(trades), "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
@@ -545,6 +553,244 @@ def run_basket_backtest(tickers, start, end, strategy="confluencia",
         "results": sorted(ok, key=lambda r: -r["totalReturn"]),
         "failed": failed,
     }
+
+# ============================================================================
+# CARTEIRA (modo B) -- capital ÚNICO
+# ============================================================================
+#
+# O modo cesta responde "a estratégia tem edge NESTE papel?" dando $10k
+# independentes a cada ticker. Esta função responde a pergunta que aquele
+# modo estruturalmente não alcança: "o sistema melhora uma CARTEIRA?" --
+# com caixa compartilhado, uma entrada só acontece se sobrar capital, e
+# cinco compras correlacionadas deixam de ser cinco apostas independentes
+# para virar concentração visível (auditoria de 20/08/2026, prioridade 3).
+#
+# Regras deliberadamente simples e auditáveis (nada de otimização de
+# covariância -- sofisticação de sizing sobre sinal sem edge medido é o que
+# o arquivamento das specs rejeitou):
+#   - cota-alvo por entrada = patrimônio/n, marcado no ÚLTIMO fechamento
+#     conhecido (a cota não pode usar o fechamento de hoje, que não existe
+#     na hora da abertura); caixa insuficiente entra com o que há; caixa
+#     zero derruba a ordem (não fica pendurada).
+#   - empate por caixa escasso no mesmo dia: ordem ALFABÉTICA. Arbitrária,
+#     mas determinística -- o auditor reproduz.
+#   - benchmark: buy & hold equal-weight (1/n no primeiro fechamento de
+#     cada ticker na janela, sem rebalanceamento).
+#   - execução por ticker: o MESMO contrato do _simulate (D+1 no open,
+#     stop/target contra o pregão inteiro, ambos no mesmo candle assume o
+#     stop). Com n=1 esta função tem que reproduzir o _simulate -- e o
+#     _simulate é auditado pela referência independente: a amarra fecha a
+#     cadeia (test_backtest_carteira.py).
+
+_CARTEIRA_CAPITAL = 100_000.0
+_CARTEIRA_MAX_TRADES_PAYLOAD = 50
+
+
+def run_portfolio_backtest(tickers, start, end, strategy="confluencia",
+                           commission_pct=0.001, slippage_pct=0.0005,
+                           stop_loss_pct=None, take_profit_pct=None,
+                           rsi_oversold=30.0, rsi_overbought=70.0,
+                           score_threshold=60.0, initial_capital=_CARTEIRA_CAPITAL,
+                           _dados=None):
+    """`_dados` é a costura de teste: {ticker: (ohlc, buy, sell)} pula o
+    fetch/sinais e deixa a suíte exercitar SÓ a mecânica de carteira, sem
+    rede -- o caminho real (VPS) sempre passa por _fetch_warmed_ohlc."""
+    dados = {}
+    failed = []
+    if _dados is not None:
+        dados = dict(_dados)
+    else:
+        for t in tickers:
+            ohlc_full, erro = _fetch_warmed_ohlc(t, start, end)
+            if erro:
+                failed.append({"ticker": t, "error": erro})
+                continue
+            buy_f, sell_f = _build_signals(ohlc_full["close"], strategy,
+                                           rsi_oversold, rsi_overbought, score_threshold)
+            ohlc, buy, sell = _trim_to_window(ohlc_full, buy_f, sell_f, start)
+            if len(ohlc) < 20:
+                failed.append({"ticker": t, "error": "Dados insuficientes no período pedido (mínimo 20 dias)"})
+                continue
+            dados[t] = (ohlc, buy, sell)
+
+    if not dados:
+        return {"error": "Nenhum ticker com dados suficientes no período", "failed": failed}
+
+    ordem = sorted(dados)
+    n = len(ordem)
+    calendario = sorted({d for t in ordem for d in dados[t][0].index})
+    linhas = {t: {d: i for i, d in enumerate(dados[t][0].index)} for t in ordem}
+
+    caixa = initial_capital
+    pos = {t: {"acoes": 0.0, "preco": None, "dia": None, "aporte": 0.0} for t in ordem}
+    pendente = {t: None for t in ordem}
+    ultimo_close = {t: None for t in ordem}
+    trades = []
+    curva = []
+    ocupacao = []      # (n_abertas, {tickers abertos}) por dia do calendário
+    exposicao_pct = []  # investido/patrimônio por dia
+
+    def _vender(t, preco_bruto, dia, motivo):
+        nonlocal caixa
+        p = pos[t]
+        exec_price = preco_bruto * (1 - slippage_pct)
+        bruto = p["acoes"] * exec_price
+        liquido = bruto - bruto * commission_pct
+        pnl_pct = (exec_price - p["preco"]) / p["preco"] * 100
+        trades.append({
+            "ticker": t, "entryDate": p["dia"], "exitDate": dia,
+            "entryPrice": round(p["preco"], 2), "exitPrice": round(exec_price, 2),
+            "pnl": round(pnl_pct, 2), "win": pnl_pct > 0,
+            # aporte/recebido em DÓLARES: é o que permite atribuir a
+            # contribuição de cada ticker ao resultado da carteira sem
+            # reconstruir a sequência de caixa.
+            "aporte": round(p["aporte"], 2), "recebido": round(liquido, 2),
+            "closedOpen": motivo == "period_end", "exitReason": motivo,
+        })
+        caixa += liquido
+        pos[t] = {"acoes": 0.0, "preco": None, "dia": None, "aporte": 0.0}
+
+    for data in calendario:
+        dia = str(data)[:10]
+        # Patrimônio de referência da cota, ANTES de qualquer execução do
+        # dia, marcado nos fechamentos de ontem.
+        marcado = caixa + sum(pos[t]["acoes"] * ultimo_close[t]
+                              for t in ordem if pos[t]["acoes"] > 0)
+        for t in ordem:
+            i = linhas[t].get(data)
+            if i is None:
+                continue  # ticker sem pregão nesta data: posição fica como está
+            ohlc, buy, sell = dados[t]
+            abre = float(ohlc["open"].iloc[i])
+            alta = float(ohlc["high"].iloc[i])
+            baixa = float(ohlc["low"].iloc[i])
+            fecha = float(ohlc["close"].iloc[i])
+
+            if pendente[t] == "vender" and pos[t]["acoes"] > 0:
+                _vender(t, abre, dia, "signal")
+            elif pendente[t] == "comprar" and pos[t]["acoes"] == 0 and caixa > 0:
+                aporte = min(caixa, marcado / n)
+                if aporte > 0:
+                    exec_price = abre * (1 + slippage_pct)
+                    pos[t] = {"acoes": (aporte - aporte * commission_pct) / exec_price,
+                              "preco": exec_price, "dia": dia, "aporte": aporte}
+                    caixa -= aporte
+            pendente[t] = None
+
+            if pos[t]["acoes"] > 0:
+                piso = pos[t]["preco"] * (1 - stop_loss_pct) if stop_loss_pct is not None else None
+                teto = pos[t]["preco"] * (1 + take_profit_pct) if take_profit_pct is not None else None
+                if piso is not None and abre <= piso:
+                    _vender(t, abre, dia, "stop_loss")
+                elif teto is not None and abre >= teto:
+                    _vender(t, abre, dia, "take_profit")
+                elif piso is not None and baixa <= piso:
+                    _vender(t, piso, dia, "stop_loss")
+                elif teto is not None and alta >= teto:
+                    _vender(t, teto, dia, "take_profit")
+
+            if bool(buy.iloc[i]) and pos[t]["acoes"] == 0:
+                pendente[t] = "comprar"
+            elif bool(sell.iloc[i]) and pos[t]["acoes"] > 0:
+                pendente[t] = "vender"
+
+            ultimo_close[t] = fecha
+
+        investido = sum(pos[t]["acoes"] * ultimo_close[t]
+                        for t in ordem if pos[t]["acoes"] > 0)
+        patrimonio = caixa + investido
+        ocupacao.append((sum(1 for t in ordem if pos[t]["acoes"] > 0),
+                         {u for u in ordem if pos[u]["acoes"] > 0}))
+        exposicao_pct.append(investido / patrimonio * 100 if patrimonio > 0 else 0.0)
+        curva.append({"date": dia, "equity": round(patrimonio, 2)})
+
+    for t in ordem:
+        if pos[t]["acoes"] > 0:
+            _vender(t, ultimo_close[t], str(calendario[-1])[:10], "period_end")
+    curva[-1]["equity"] = round(caixa, 2)
+
+    # Benchmark equal-weight: antes do primeiro pregão de um ticker na
+    # janela, a fatia dele conta como caixa parado.
+    alocacao = initial_capital / n
+    acoes_bh = {t: alocacao / float(dados[t][0]["close"].iloc[0]) for t in ordem}
+    ult_bh = {t: None for t in ordem}
+    for k, data in enumerate(calendario):
+        soma = 0.0
+        for t in ordem:
+            i = linhas[t].get(data)
+            if i is not None:
+                ult_bh[t] = float(dados[t][0]["close"].iloc[i])
+            soma += acoes_bh[t] * ult_bh[t] if ult_bh[t] is not None else alocacao
+        curva[k]["buyHoldEquity"] = round(soma, 2)
+
+    final_value = caixa
+    total_return = (final_value - initial_capital) / initial_capital * 100
+    bh_final = curva[-1]["buyHoldEquity"]
+    bh_return = (bh_final - initial_capital) / initial_capital * 100
+    dias_corridos = (calendario[-1] - calendario[0]).days or 1
+    anos = dias_corridos / 365.25
+    cagr = ((final_value / initial_capital) ** (1 / anos) - 1) * 100 if anos > 0 and final_value > 0 else 0
+    curva_m = _metricas_da_curva([p["equity"] for p in curva])
+    calmar = round(cagr / abs(curva_m["maxDrawdown"]), 2) if curva_m["maxDrawdown"] < 0 else None
+
+    wins = [t for t in trades if t["win"]]
+    losses = [t for t in trades if not t["win"]]
+    avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
+
+    contribuicao = {}
+    for tr in trades:
+        contribuicao[tr["ticker"]] = contribuicao.get(tr["ticker"], 0.0) + (tr["recebido"] - tr["aporte"])
+    por_ticker = sorted(
+        [{"ticker": t,
+          "trades": sum(1 for x in trades if x["ticker"] == t),
+          "contribuicaoPct": round(contribuicao.get(t, 0.0) / initial_capital * 100, 2)}
+         for t in ordem],
+        key=lambda r: -r["contribuicaoPct"])
+
+    abertas = [a for a, _ in ocupacao]
+    exposicao = {
+        "pctDiasSemPosicao": round(100 * sum(1 for a in abertas if a == 0) / len(abertas), 1),
+        "mediaPosicoesAbertas": round(sum(abertas) / len(abertas), 2),
+        "maxPosicoesSimultaneas": max(abertas),
+        "picoExposicaoPct": round(max(exposicao_pct), 1) if exposicao_pct else 0.0,
+    }
+
+    # Concentração setorial FACTUAL: quantos dias a carteira segurou 2+
+    # posições do mesmo grupo -- o mesmo trade contado duas vezes, na
+    # métrica que o validador do Veredito já usa para vetar compra dupla.
+    grupos = {}
+    for t in ordem:
+        grupos.setdefault(_sector_key_for(t), []).append(t)
+    por_setor = []
+    for chave, ts in sorted(grupos.items()):
+        if len(ts) < 2:
+            continue
+        conta = [sum(1 for t in ts if t in abertos) for _, abertos in ocupacao]
+        por_setor.append({
+            "sector": chave, "label": _SECTOR_LABEL_BY_KEY.get(chave, chave),
+            "tickers": ts, "maxSimultaneas": max(conta),
+            "pctDiasCom2ouMais": round(100 * sum(1 for c in conta if c >= 2) / len(conta), 1),
+        })
+
+    return {
+        "mode": "portfolio", "strategy": strategy, "start": start, "end": end,
+        "tickersRequested": len(tickers), "tickersOk": n, "failed": failed,
+        "initialCapital": initial_capital, "finalValue": round(final_value, 2),
+        "totalReturn": round(total_return, 2), "buyAndHoldReturn": round(bh_return, 2),
+        "cagr": round(cagr, 2), "sharpe": curva_m["sharpe"],
+        "sortino": curva_m["sortino"], "calmar": calmar,
+        "maxDrawdown": curva_m["maxDrawdown"],
+        **_metricas_de_trades(trades),
+        "bootstrap": _bootstrap_dos_trades([t["pnl"] for t in trades]),
+        "totalTrades": len(trades),
+        "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
+        "avgWin": round(avg_win, 2), "avgLoss": round(avg_loss, 2),
+        "trades": trades[-_CARTEIRA_MAX_TRADES_PAYLOAD:],
+        "equityCurve": curva,
+        "exposicao": exposicao, "porTicker": por_ticker, "porSetor": por_setor,
+    }
+
 
 # ============================================================================
 # WALK-FORWARD / OUT-OF-SAMPLE
@@ -813,6 +1059,15 @@ if __name__ == "__main__":
             **common)
     elif args.get("mode") == "sensitivity":
         result = run_sensitivity_analysis(args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"), **common)
+    elif args.get("mode") == "portfolio":
+        if not tickers:
+            result = {"error": "portfolio exige a lista de tickers"}
+        else:
+            # A carteira não tem position_fraction: a fração é a cota
+            # patrimônio/n, decidida pelo próprio motor.
+            sem_fracao = {k: v for k, v in common.items() if k != "position_fraction"}
+            result = run_portfolio_backtest(
+                tickers, args["start"], args["end"], args.get("strategy", "confluencia"), **sem_fracao)
     elif tickers:
         result = run_basket_backtest(tickers, args["start"], args["end"], args.get("strategy", "confluencia"), **common)
     else:
