@@ -241,7 +241,14 @@ fixo.
 - **Backtest** de estratégias por ticker, por cesta e análise de sensibilidade
 - **ConfluenceEngine** — sinal por consenso multi-indicador (trend, momentum,
   volatilidade, volume, setor). O catalisador de calendário **não é um voto: é
-  um veto** — perto do evento força "flat" independente dos outros sinais
+  um veto** — perto do evento força "flat" independente dos outros sinais.
+  O backtest é **long-only por padrão** desde 20/08/2026: "sell" fecha posição,
+  nunca abre short — o diagnóstico mediu os shorts perdendo em **6 de 6**
+  células ticker × regime, inclusive no downcycle (a MU caiu 32% e os shorts
+  perderam 14,9%: o motor entra vendido depois da fraqueza confirmada e apanha
+  do repique). O voto vendedor continua na leitura da tela.
+  **Importante**: como estratégia, o motor não tem edge demonstrado — ver o
+  Diário de 20/08/2026. O valor dele hoje é como tela de leitura
 - **Risco**: correlação e exposição da carteira, métricas, beta intradiário,
   position sizing
 - **Plano de Saída**: itens com prazo, revisados pelo agente
@@ -687,6 +694,8 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #277 | Tabela do e-mail vira `<table>` com estilo inline (Gmail no celular ignora o `<style>`) |
 | #278 | Rótulo para todo grupo do Radar, com teste que lê o Python e pega a deriva |
 | #344 | Parâmetro impossível no ConfluenceEngine falha alto: `min_votes=6` com 5 sinais deixava o motor mudo em `flat` |
+| #358 | Diagnóstico do ConfluenceEngine: separa sinal de sizing (priors placeholder davam trades a 6% do capital), decompõe por direção, exposição e captura |
+| #359 | Long-only por padrão no `run_backtest` — shorts perderam em 6/6 células ticker × regime; e o veredito do diagnóstico no Diário |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -859,5 +868,51 @@ permanentemente em `flat` — sem erro, sem sinal, sem nada que dissesse por qu�
 `backtest_confluence`: +1,61% da estratégia contra +771,47% de buy & hold na MU
 em dois anos, e Kelly recalibrado em **zero** em 3 dos 6 casos. Kelly zero não é
 sizing cauteloso — é a fórmula dizendo que não há edge para dimensionar. O
-`trade_journal` está vazio, então não há trade real para calibrar em cima. Fica
-aberto, e nenhum conserto de sizing resolve.
+`trade_journal` está vazio, então não há trade real para calibrar em cima. Ficou
+aberto até o dia seguinte — a entrada de 20/08 responde.
+
+### 20/08/2026 — o diagnóstico responde, e quatro specs vão para o arquivo
+
+O dia anterior terminou com uma pergunta ("por que +1,61% contra +771%?") e
+uma hipótese minha — "o sinal tem edge, o sizing esmaga". O diagnóstico
+(#358) respondeu, e a hipótese estava só meio certa.
+
+**O sizing era real, mas secundário.** Os priors placeholder do Kelly davam
+`size_frac=0,06`: cada trade do backtest arriscava 6% do capital, e o headline
+comparava isso com buy & hold a 100% — réguas diferentes. Corrigida a régua,
+porém, o sinal continuou ruim na maior parte das células:
+
+| | B&H | 100% exp. | só longs | só shorts | % fora |
+|---|---|---|---|---|---|
+| MU 2y | +773% | +16,8% | +41,0% | −17,2% | 72% |
+| AVGO 2y | +123% | −25,1% | +12,8% | −33,6% | 70% |
+| MRVL 2y | +244% | −51,5% | **−24,6%** | −35,7% | 73% |
+| MU 22-23 | −32% | **−37,8%** | −26,9% | −14,9% | 68% |
+| AVGO 22-23 | +36% | −7,4% | +0,7% | −8,1% | 69% |
+| MRVL 22-23 | −34% | −27,1% | +9,4% | −33,3% | 63% |
+
+Três leituras: os **shorts perdem em 6 de 6** (inclusive no downcycle — o
+motor entra vendido depois da fraqueza confirmada e apanha do repique); o
+custo dominante é **ausência** (~71% dos pregões fora, a MU fez +437% nesses
+dias, e dos 10 melhores dias dela o motor pegou 1); e a tese de projeto foi
+**refutada nos dois regimes** — no lateral, onde a confluência devia brilhar,
+a MU a 100% perdeu mais que o buy & hold. O caso MRVL 2y é pior que ausência
+de edge: os dias de "buy" renderam −24,6% dentro de um rali de +244% —
+seleção adversa.
+
+**A consequência no código** foi uma só, a única que o dado sustenta sem
+ressalva: `run_backtest` virou long-only por padrão (#359) — melhora as 6
+células. O resto virou arquivamento: os três backlogs de sinais de regime
+(R1–R9) e o spec de influência setorial recebidos no dia propõem modular
+`kelly_final = kelly_base × modifiers`, e o diagnóstico mostrou que
+`kelly_base` não tem o que modular. O critério foi combinado ANTES do
+resultado — "longs a 100% claramente positivos" — e deu positivo em 1 célula
+de 6. Dois agravantes documentados na análise: o repo já tinha um modificador
+de Kelly completo e testado (`apply_macro_risk_modifier`) com **zero
+chamadores** fora dos testes, e um dos specs citava como padrão de referência
+um arquivo que não existe e uma cadeia de fallback (Stooq) removida do repo.
+
+O que sobreviveu dos quatro documentos, reclassificado de sizing para
+LEITURA: divergência setorial (R6) e regime do basket como informação de
+tela, na família do risco macro das 07:50. Sem prazo — atrás de tudo que
+opera de verdade.
