@@ -91,6 +91,16 @@ SYSTEM = (
     "no mês pré-earnings previu a direção da reação?) e a `trajetoria` "
     "acumulada nos pregões seguintes.\n\n"
 
+    "Quando presente, o prompt traz também `correlacoes`: pares 'A|B' com a "
+    "correlação de RETORNOS DIÁRIOS entre os papéis da cesta, medida numa "
+    "janela de 6 meses (a data-fim acompanha). Leitura: >= 0,70 é na prática "
+    "o mesmo trade; 0,40 a 0,70 é fator compartilhado. Essa é a ÚNICA base "
+    "legítima para afirmar co-movimento na seção 'Quem se move junto' — "
+    "estatística de reação a earnings é por papel e não mede quem anda junto "
+    "no dia a dia. Par ausente do dicionário é correlação NÃO MEDIDA, não "
+    "correlação zero. Se `correlacoes` não vier, diga na seção que o "
+    "co-movimento diário não pode ser afirmado com os dados desta tela.\n\n"
+
     "## 1. Compare — não descreva um por um\n"
     "A tela JÁ mostra, ao lado de cada papel, a classe de volatilidade, o viés "
     "direcional e se o movimento amplia ao longo do pregão. Repetir isso em "
@@ -141,6 +151,46 @@ SYSTEM = (
     "## O que a cesta mostra\n## Quem se move junto\n"
     "## O sinal de run-up\n## Ressalvas\n"
 )
+
+
+def _correlacoes_da_cesta(tickers: list) -> dict | None:
+    """Pares de correlação que o Radar já mede, restritos à cesta.
+
+    A seção "Quem se move junto" nasceu manca: o payload só tinha estatística
+    POR PAPEL, e co-movimento é propriedade de PARES -- na primeira cesta real
+    (20/08/2026) o modelo respondeu, corretamente, que não podia afirmar
+    padrão conjunto. O dado que faltava já existia no repo: a matriz de
+    radar_ia_2026, recalculada toda semana pelo checker de correlações.
+
+    Import preguiçoso e falha silenciosa PARA O TEXTO, não para o log: sem os
+    pares a interpretação continua valendo (o SYSTEM manda declarar a
+    limitação), então derrubar a chamada por causa do enriquecimento seria
+    inverter a hierarquia do que importa.
+    """
+    try:
+        try:
+            from radar_ia_2026 import CORRELACOES_JANELA_FIM, correlacao
+        except ImportError:
+            from agent.radar_ia_2026 import CORRELACOES_JANELA_FIM, correlacao
+    except Exception as e:  # noqa: BLE001 -- qualquer falha de import degrada
+        print(f"[reacao_earnings_ia] correlações do radar indisponíveis: {e}",
+              file=sys.stderr, flush=True)
+        return None
+    unicos = sorted({str(t).upper() for t in tickers if t})
+    pares = {}
+    for i, a in enumerate(unicos):
+        for b in unicos[i + 1:]:
+            c = correlacao(a, b)
+            # Par não medido fica FORA em vez de virar null: null no prompt
+            # convida o modelo a mencioná-lo, e "não medido" já tem regra
+            # própria no SYSTEM (ausente != zero).
+            if c is not None:
+                pares[f"{a}|{b}"] = c
+    if not pares:
+        return None
+    # A janela viaja junto (convenção 17): correlação sem data-fim parece
+    # medição de hoje mesmo quando veio do snapshot embutido.
+    return {"janela_fim": CORRELACOES_JANELA_FIM, "pares": pares}
 
 
 def _compactar(resultados: list) -> str:
@@ -209,7 +259,15 @@ def interpretar(dados: dict) -> dict:
         cabecalho += f" Janela: últimos {lookback} earnings por ticker."
     if benchmark:
         cabecalho += f" Excesso medido contra {benchmark}."
-    conteudo = f"{cabecalho}\n\n{_compactar(resultados)}"
+    # Só os papéis COM estatística: a seção de co-movimento fala de quem está
+    # na comparação, e par de ticker ausente dela seria número sem dono.
+    corr = _correlacoes_da_cesta([r.get("ticker") for r in com_dados])
+    bloco_corr = ""
+    if corr:
+        bloco_corr = ("\n\ncorrelacoes (retornos diários, janela de 6 meses "
+                      f"até {corr['janela_fim']}): "
+                      + json.dumps(corr["pares"], ensure_ascii=False))
+    conteudo = f"{cabecalho}{bloco_corr}\n\n{_compactar(resultados)}"
 
     # Toco (resposta de uma linha) é falha conhecida — playbook §4. Sem este
     # laço, o toco virava erro na tela, o usuário clicava de novo e caía no
