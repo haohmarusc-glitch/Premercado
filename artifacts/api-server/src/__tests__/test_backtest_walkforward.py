@@ -53,12 +53,27 @@ def test_treino_sempre_vem_antes_do_teste():
         assert ini_tr < fim_tr < fim_te
 
 
+def test_embargo_separa_treino_de_teste():
+    """A fronteira treino|teste não é limpa: os últimos dias do treino e os
+    primeiros do teste compartilham janelas de indicador, e otimizar neles
+    para medir neles é vazamento suave. O embargo descarta esses pregões."""
+    for ini_tr, fim_tr, ini_te, _ in bt._janelas_walk_forward(800, 252, 63, embargo=5):
+        assert ini_te - fim_tr == 5
+    # 0 desliga e restaura a fronteira contígua (escolha legítima de pesquisa)
+    for _, fim_tr, ini_te, _ in bt._janelas_walk_forward(800, 252, 63, embargo=0):
+        assert ini_te == fim_tr
+
+
 def test_periodo_curto_nao_gera_janela():
     assert bt._janelas_walk_forward(200, treino=252, teste=63) == []
 
 
 def test_janela_exata_gera_um_fold():
-    assert len(bt._janelas_walk_forward(315, treino=252, teste=63)) == 1
+    # 252 de treino + 5 de embargo (default) + 63 de teste = 320 pregões.
+    assert len(bt._janelas_walk_forward(320, treino=252, teste=63)) == 1
+    # Um a menos e o fold não cabe: o embargo CONSOME pregões de verdade,
+    # não é só um deslocamento de rótulo.
+    assert bt._janelas_walk_forward(319, treino=252, teste=63) == []
 
 
 # ── grade de parâmetros ────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import sys, json, math
+import numpy as np
 import yfinance as yf
 import pandas as pd
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
@@ -189,6 +190,68 @@ def _trim_to_window(ohlc_full, buy_signal_full, sell_signal_full, start):
     mask = naive_index >= start_ts
     return ohlc_full.loc[mask], buy_signal_full.loc[mask], sell_signal_full.loc[mask]
 
+# ── Métricas de auditoria (20/08/2026) ───────────────────────────────────────
+# totalReturn/winRate sozinhos não separam sorte de edge: um retorno bonito
+# pode ser um único trade gigante (profit factor conta isso), e um win rate de
+# 60% em 8 trades não sustenta nada (o bootstrap conta isso). São métricas do
+# RELATÓRIO da régua -- nenhuma entra em decisão de sinal.
+
+_BOOTSTRAP_AMOSTRAS = 2000
+_BOOTSTRAP_MIN_TRADES = 10
+
+
+def _metricas_de_trades(trades: list) -> dict:
+    """Profit factor, expectancy e payoff sobre o pnl (%) dos trades fechados.
+
+    profitFactor None quando não há perdas: o valor seria infinito, e
+    "infinito" numa tabela vira confiança -- a ausência de perdas em amostra
+    pequena é justamente o caso em que menos se sabe."""
+    pnls = [t["pnl"] for t in trades]
+    if not pnls:
+        return {"profitFactor": None, "expectancy": None, "payoff": None}
+    ganhos = [p for p in pnls if p > 0]
+    perdas = [p for p in pnls if p <= 0]
+    soma_perdas = abs(sum(perdas))
+    media_ganho = sum(ganhos) / len(ganhos) if ganhos else None
+    media_perda = abs(sum(perdas) / len(perdas)) if perdas else None
+    return {
+        "profitFactor": round(sum(ganhos) / soma_perdas, 2) if soma_perdas > 0 else None,
+        "expectancy": round(sum(pnls) / len(pnls), 2),
+        "payoff": (round(media_ganho / media_perda, 2)
+                   if media_ganho is not None and media_perda not in (None, 0) else None),
+    }
+
+
+def _bootstrap_dos_trades(pnls: list, amostras: int = _BOOTSTRAP_AMOSTRAS,
+                          semente: int = 0) -> dict:
+    """IC de 95% por bootstrap do composto dos trades e do win rate.
+
+    Responde "quanto deste número é sorte de sequência?": reamostra os trades
+    com reposição e olha a distribuição do composto. Semente FIXA de
+    propósito -- o IC precisa ser reproduzível para ser auditável (duas
+    rodadas com ICs diferentes viram discussão sobre o gerador, não sobre a
+    estratégia). O IC é sobre o composto dos pnls por trade (o sinal);
+    equity com fração de capital é outra pergunta. Com menos de
+    _BOOTSTRAP_MIN_TRADES devolve aviso em vez de um intervalo que fingiria
+    sustentação estatística."""
+    n = len(pnls)
+    if n < _BOOTSTRAP_MIN_TRADES:
+        return {"aviso": (f"{n} trades -- amostra pequena demais para intervalo "
+                          f"de confiança (mínimo {_BOOTSTRAP_MIN_TRADES})")}
+    rng = np.random.default_rng(semente)
+    p = np.asarray(pnls, dtype=float) / 100.0
+    reamostras = p[rng.integers(0, n, size=(amostras, n))]
+    compostos = (np.prod(1.0 + reamostras, axis=1) - 1.0) * 100.0
+    win_rates = (reamostras > 0).mean(axis=1) * 100.0
+
+    def _ic(valores):
+        lo, hi = np.percentile(valores, [2.5, 97.5])
+        return [round(float(lo), 2), round(float(hi), 2)]
+
+    return {"nTrades": n, "amostras": amostras,
+            "compostoIc95": _ic(compostos), "winRateIc95": _ic(win_rates)}
+
+
 def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
               position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct):
     if len(ohlc) < 20:
@@ -316,11 +379,26 @@ def _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
     drawdown = (equity_series - rolling_max) / rolling_max
     max_drawdown = round(float(drawdown.min()) * 100, 2) if len(drawdown) else 0.0
 
+    # Sortino: como o Sharpe, mas punindo só a volatilidade de queda -- uma
+    # estratégia que oscila para cima não é "arriscada" no sentido que
+    # importa. None quando não houve dia negativo: dividir por zero aqui
+    # viraria um número gigante lido como excelência.
+    dias_negativos = daily_ret[daily_ret < 0]
+    sortino = None
+    if len(daily_ret) > 0 and len(dias_negativos) > 0 and dias_negativos.std() > 0:
+        sortino = round((daily_ret.mean() / dias_negativos.std()) * math.sqrt(252), 2)
+
+    # Calmar: CAGR / |max drawdown| -- retorno por unidade da pior dor.
+    calmar = round(cagr / abs(max_drawdown), 2) if max_drawdown < 0 else None
+
     return {
         "ticker": ticker, "strategy": strategy, "start": start, "end": end,
         "initialCapital": initial_capital, "finalValue": round(final_value, 2),
         "totalReturn": round(total_return, 2), "buyAndHoldReturn": round(bh_return, 2),
         "cagr": round(cagr, 2), "sharpe": sharpe, "maxDrawdown": max_drawdown,
+        "sortino": sortino, "calmar": calmar,
+        **_metricas_de_trades(trades),
+        "bootstrap": _bootstrap_dos_trades([t["pnl"] for t in trades]),
         "totalTrades": len(trades), "winRate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
         "avgWin": round(avg_win, 2), "avgLoss": round(avg_loss, 2),
         "trades": trades[-30:],
@@ -341,7 +419,8 @@ def run_backtest(ticker, start, end, strategy="rsi",
     return _simulate(ticker, strategy, start, end, ohlc, buy_signal, sell_signal,
                      position_fraction, commission_pct, slippage_pct, stop_loss_pct, take_profit_pct)
 
-_SENSITIVITY_METRICS = ["totalReturn", "buyAndHoldReturn", "cagr", "sharpe", "maxDrawdown", "totalTrades", "winRate"]
+_SENSITIVITY_METRICS = ["totalReturn", "buyAndHoldReturn", "cagr", "sharpe", "maxDrawdown",
+                        "totalTrades", "winRate", "profitFactor", "expectancy"]
 
 # Faixas testadas na análise de sensibilidade -- um parâmetro de cada vez a
 # partir da configuração base do usuário (não um grid cartesiano completo,
@@ -497,20 +576,32 @@ def run_basket_backtest(tickers, start, end, strategy="confluencia",
 # contagem).
 _WF_TREINO_PREGOES = 252
 _WF_TESTE_PREGOES = 63
+# Pregões DESCARTADOS entre o fim do treino e o início do teste. A fronteira
+# treino|teste não é limpa: os últimos dias do treino e os primeiros do teste
+# compartilham as mesmas janelas de indicador (SMA, RSI, estrutura de 60
+# pregões, cruzamento de 5), então o parâmetro escolhido "no treino" foi, em
+# parte, escolhido olhando dias cujo desdobramento imediato cai dentro do
+# teste -- vazamento suave que infla o out-of-sample. 5 = CRUZAMENTO_JANELA,
+# o horizonte do sinal mais lento a reagir. 0 desliga (útil em pesquisa
+# comparativa).
+_WF_EMBARGO_PREGOES = 5
 # Piso do _simulate; janela menor que isso não produz simulação válida.
 _WF_MIN_PREGOES = 20
 
 
-def _janelas_walk_forward(n: int, treino: int, teste: int) -> list[tuple[int, int, int, int]]:
-    """Janelas (ini_treino, fim_treino, ini_teste, fim_teste) por POSIÇÃO.
+def _janelas_walk_forward(n: int, treino: int, teste: int,
+                          embargo: int = _WF_EMBARGO_PREGOES) -> list[tuple[int, int, int, int]]:
+    """Janelas (ini_treino, fim_treino, ini_teste, fim_teste) por POSIÇÃO,
+    com `embargo` pregões descartados entre fim_treino e ini_teste.
 
     Avança um bloco de teste por vez, então as janelas de teste NÃO se
     sobrepõem -- se sobrepusessem, o mesmo pregão entraria várias vezes no
     resultado agregado e inflaria a confiança."""
     janelas = []
     ini = 0
-    while ini + treino + teste <= n:
-        janelas.append((ini, ini + treino, ini + treino, ini + treino + teste))
+    while ini + treino + embargo + teste <= n:
+        janelas.append((ini, ini + treino,
+                        ini + treino + embargo, ini + treino + embargo + teste))
         ini += teste
     return janelas
 
@@ -546,7 +637,7 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
                      stop_loss_pct=None, take_profit_pct=None,
                      rsi_oversold=30.0, rsi_overbought=70.0, score_threshold=60.0,
                      treino_pregoes=_WF_TREINO_PREGOES, teste_pregoes=_WF_TESTE_PREGOES,
-                     objetivo="sharpe"):
+                     embargo_pregoes=_WF_EMBARGO_PREGOES, objetivo="sharpe"):
     """Otimiza na janela de treino, mede na de teste, avança e repete.
 
     stop-loss/take-profit ficam FIXOS no que o usuário configurou: entram na
@@ -575,10 +666,11 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
         sinais[i] = (buy, sell)
 
     n = len(ohlc_ref)
-    janelas = _janelas_walk_forward(n, treino_pregoes, teste_pregoes)
+    janelas = _janelas_walk_forward(n, treino_pregoes, teste_pregoes, embargo_pregoes)
     if not janelas:
         return {"error": (f"Período curto demais: {n} pregões para treino de "
-                          f"{treino_pregoes} + teste de {teste_pregoes}. "
+                          f"{treino_pregoes} + embargo de {embargo_pregoes} + "
+                          f"teste de {teste_pregoes}. "
                           f"Use um intervalo maior ou janelas menores.")}
 
     def simular(idx_combo, ini, fim, rotulo):
@@ -628,6 +720,7 @@ def run_walk_forward(ticker, start, end, strategy="rsi",
     return {
         "ticker": ticker, "strategy": strategy, "objetivo": objetivo,
         "treinoPregoes": treino_pregoes, "testePregoes": teste_pregoes,
+        "embargoPregoes": embargo_pregoes,
         "combinacoesTestadas": len(combos),
         "folds": folds,
         "resumo": _resumo_walk_forward(folds),
@@ -708,10 +801,14 @@ if __name__ == "__main__":
         score_threshold=float(args.get("scoreThreshold", 60.0)),
     )
     if args.get("mode") == "walkforward":
+        # embargo aceita 0 explícito (desligar é escolha legítima de
+        # pesquisa), então o teste é contra None/"" e não truthiness.
+        _embargo = args.get("embargoPregoes")
         result = run_walk_forward(
             args["ticker"], args["start"], args["end"], args.get("strategy", "rsi"),
             treino_pregoes=int(args.get("treinoPregoes") or _WF_TREINO_PREGOES),
             teste_pregoes=int(args.get("testePregoes") or _WF_TESTE_PREGOES),
+            embargo_pregoes=int(_embargo) if _embargo not in (None, "") else _WF_EMBARGO_PREGOES,
             objetivo=args.get("objetivo") or "sharpe",
             **common)
     elif args.get("mode") == "sensitivity":
