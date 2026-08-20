@@ -704,6 +704,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #359 | Long-only por padrão no `run_backtest` — shorts perderam em 6/6 células ticker × regime; e o veredito do diagnóstico no Diário |
 | #362 | Execução honesta nos dois motores: sinal de D executa na abertura de D+1 (era no próprio close de D — look-ahead) e stop/target checam High/Low com política conservadora |
 | #363 | A régua ganha estatística: Sortino, Calmar, profit factor, expectancy e IC 95% por bootstrap na tela; embargo de 5 pregões no walk-forward; recalibração de Kelly exige 30 trades |
+| #364 | Auditor independente do backtest: segunda implementação do contrato de execução + coerência interna, com bateria sintética pendurada no CI — divergência entre motor e auditor quebra o build |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1010,3 +1011,40 @@ base ainda não deu), Monte Carlo/probability of ruin (instrumentos de um
 edge que não existe ainda), e o pacote `quant_core` unificado (a duplicação
 é deliberada — scripts standalone — e os testes de sincronia são a
 mitigação; promover a refactor agora seria risco sem pergunta nova).
+
+### 20/08/2026 (parte 4) — o auditor independente: o motor deixa de se julgar sozinho
+
+Etapa 2 do roteiro. O look-ahead removido no #362 viveu anos no motor sem um
+teste piscar — porque todos os testes conferiam o que o motor dizia fazer
+usando o próprio motor como referência. `scripts/auditor_backtest.py` quebra
+a circularidade com três peças: uma **segunda implementação do contrato de
+execução** (burra de propósito — loop dia a dia, floats crus, estrutura
+diferente, e um teste de fonte garante que ela não delega ao motor); um
+**diff linha a linha** de trades, equity e agregados com tolerância só para
+o arredondamento de apresentação; e a **coerência interna** — as métricas
+publicadas têm que sair das partes publicadas do mesmo resultado (finalValue
+do último ponto da equity, drawdown da equity, winRate dos trades), que pega
+a classe de bug em que a simulação acerta e a agregação mente.
+
+A bateria sintética (bordas de stop/gap, ambos-no-mesmo-candle, fricções,
+corte do payload em 30 trades, passeios aleatórios com o gerador de sinais
+real) roda **no CI a cada push**: a partir de agora, mudar a semântica de
+execução do motor sem mudar a referência junto quebra o build — o alarme que
+faltou nos anos do look-ahead. E o teste mais importante da suíte nova não é
+o que passa limpo: é o que **planta defeitos** (preço trocado, trade sumido,
+equity inflada, drawdown zerado) e exige que cada um seja apontado com nome.
+Auditor que não pega defeito plantado é decoração.
+
+Modo real na VPS (audita um ticker de verdade, dados vivos):
+
+```bash
+docker compose exec -T -w /app/artifacts/api-server/src/agent/scripts app \
+  /app/.venv/bin/python3 auditor_backtest.py --ticker NVDA \
+  --start 2024-08-01 --end 2026-08-01 --strategy rsi < /dev/null
+```
+
+Fora do escopo, de propósito: os indicadores (RSI, médias, score) não são
+auditados aqui — as cópias entre módulos já têm testes de sincronia, e uma
+segunda implementação de indicador seria manutenção dupla sem pergunta nova.
+Próximas etapas do roteiro: backtest de carteira (modo B) e o Veredito
+estruturado (JSON antes do texto).
