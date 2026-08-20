@@ -1,4 +1,4 @@
-import express, { type Express, type ErrorRequestHandler } from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -6,11 +6,8 @@ import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import {
-  observar5xx,
-  marcarEntradaNoRouter,
-  marcarOrigemErrorHandler,
-} from "./middleware/observar-5xx";
+import { observar5xx, marcarEntradaNoRouter } from "./middleware/observar-5xx";
+import { errorHandler } from "./middleware/error-handler";
 import { montarEstatico, servirEstaticoLigado } from "./lib/servir-estatico";
 
 const app: Express = express();
@@ -159,22 +156,8 @@ if (servirEstaticoLigado()) {
   montarEstatico(app);
 }
 
-// Handler de erro global -- rotas devem chamar next(e) no catch em vez de
-// responder o erro cru (String(e) vazava mensagem/stack interno pro
-// cliente). O rastreio completo vai só pro Pino; o cliente recebe sempre
-// uma mensagem genérica. Precisa vir depois de todas as rotas e ter
-// exatamente 4 parâmetros para o Express reconhecer como error handler.
-const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
-  // err.body (corpo bruto que body-parser anexa quando o JSON é inválido,
-  // pra ajudar a debugar o parse) é redigido em lib/logger.ts -- vaza
-  // literalmente qualquer coisa que o cliente mandou, incluindo senha em
-  // texto puro em /auth/login (visto em produção: senha real gravada em
-  // claro no log depois de um erro de parse).
-  logger.error({ err }, "Unhandled route error");
-  marcarOrigemErrorHandler(res);
-  if (res.headersSent) return;
-  res.status(500).json({ error: "Internal server error" });
-};
+// Vive em middleware/error-handler.ts (o porquê está lá). Precisa vir
+// depois de todas as rotas para o Express usá-lo como error handler.
 app.use(errorHandler);
 
 export default app;

@@ -170,9 +170,14 @@ function runReacaoIA(payload: object, exec: Execucao): Promise<unknown> {
   });
 }
 
-// Teto do corpo aceito. A cesta cabe com folga; corpo maior é anomalia, não uso
-// legítimo -- e viraria custo de token.
-const LIMITE_CORPO_IA = 256 * 1024;
+// Teto do corpo aceito. NOTA: o express.json() global barra em ~100KB ANTES
+// desta linha (413), então este guarda só vê corpos menores que isso -- ele
+// existe para anomalia estrutural (um corpo quase todo lixo vira custo de
+// token), não para tamanho bruto. Foi descoberto do jeito ruim em 20/08/2026:
+// 256KB aqui sugeria que a rota aceitava até isso, e a tela estourou nos
+// 100KB do parser com um 500 genérico. O conserto real foi a tela parar de
+// mandar os `events` que o servidor descarta (ver payloadDaInterpretacao).
+const LIMITE_CORPO_IA = 96 * 1024;
 
 // Toda chamada de LLM aparece na tela Gastos com IA, que lê de agent_runs.
 // Falha aqui não derruba a resposta: o texto já foi gerado e pago; perder o
