@@ -40,3 +40,16 @@ export function daysUntilBRT(dateStr: string, now: Date = new Date()): number {
   const diffMs = Date.parse(`${dateStr}T00:00:00Z`) - Date.parse(`${todayBRTDateString(now)}T00:00:00Z`);
   return Math.round(diffMs / 86_400_000);
 }
+
+/**
+ * "YYYY-MM-DD" -> "DD/MM/YYYY" SEM passar por Date: `new Date("2026-08-26")`
+ * é meia-noite UTC, e `toLocaleDateString` num navegador em BRT (UTC-3)
+ * volta pra 21h do dia 25 — visto em 20/08/2026 no painel de earnings do
+ * Veredito: NVDA 26/08 exibida como "25/08/2026" na MESMA linha que dizia
+ * "em 6d" (o contador usa daysUntilBRT, que compara em UTC e acertava).
+ * String pura não tem fuso pra errar.
+ */
+export function formatarDataBRT(dateStr: string): string {
+  const [y, m, d] = dateStr.slice(0, 10).split("-");
+  return y && m && d ? `${d}/${m}/${y}` : dateStr;
+}

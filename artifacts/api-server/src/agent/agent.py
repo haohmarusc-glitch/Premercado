@@ -537,7 +537,9 @@ Formato da resposta (Markdown):
   TENDENCIA_ALTA, TENDENCIA_BAIXA, EARNINGS_PROXIMO, RISCO_CORRELACAO,
   MACRO_ADVERSO, MACRO_FAVORAVEL, SUPORTE_PROXIMO, RESISTENCIA_PROXIMA,
   VOLUME_FRACO, VOLUME_FORTE, VALUATION_ESTICADO, VALUATION_DESCONTADO,
-  PLANO_DE_SAIDA, SENTIMENTO_EXTREMO, CENARIO_EMPATE.
+  RUNUP_ESTICADO, PLANO_DE_SAIDA, SENTIMENTO_EXTREMO, CENARIO_EMPATE.
+  (RUNUP_ESTICADO é alta pré-earnings acumulada no preço; VALUATION_ESTICADO
+  é múltiplo caro -- não confunda os dois.)
   O bloco e o texto têm que contar a MESMA história: o bloco é a decisão,
   o texto é a explicação dela. Um validador determinístico confere os dois
   entre si e contra os dados -- razão contradita pelo dado (ex.:

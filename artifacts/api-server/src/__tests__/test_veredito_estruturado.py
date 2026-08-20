@@ -126,6 +126,16 @@ def test_ticker_fora_da_carteira_e_duplicado_sao_erros():
     erros = _erros(validar_bloco_estruturado(bloco, _snapshot()))
     assert {"BLOCO_TICKER_DESCONHECIDO", "BLOCO_TICKER_DUPLICADO"} <= erros
 
+def test_runup_esticado_e_vocabulario_conhecido():
+    """Promovido do primeiro veredito real: o modelo usou VALUATION_ESTICADO
+    para run-up de preço -- o rótulo certo agora existe e não gera WARN."""
+    bloco = _bloco(_item("MU", codes=["RUNUP_ESTICADO"]),
+                   _item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snapshot())
+    assert "BLOCO_REASON_DESCONHECIDO" not in _codigos(rep)
+
+
 def test_reason_code_novo_e_warn_nao_error():
     """O vocabulário evolui; código novo razoável não pode custar um retry."""
     bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO", "GAP_ABERTO"]),

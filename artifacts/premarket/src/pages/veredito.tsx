@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MarkdownContent } from "@/components/markdown";
-import { formatDateTime, daysUntilBRT } from "@/lib/format";
+import { formatDateTime, daysUntilBRT, formatarDataBRT } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Sparkles, RefreshCw, Target, Activity, Flag, Calendar, Globe, AlertTriangle } from "lucide-react";
 import { useTacticalContext, tacticalSignal } from "@/hooks/use-tactical-context";
@@ -288,7 +288,7 @@ export default function VereditoPage() {
                   <div key={e.ticker} className="flex items-center justify-between gap-2 text-xs font-mono">
                     <span className="font-bold">{e.ticker}</span>
                     <span className="text-muted-foreground">
-                      {e.earningsDate ? new Date(e.earningsDate).toLocaleDateString("pt-BR") : "—"}
+                      {e.earningsDate ? formatarDataBRT(e.earningsDate) : "—"}
                     </span>
                     <span className={cn(d != null && d <= 3 ? "text-amber-400" : "text-muted-foreground")}>
                       {d == null ? "" : d === 0 ? "hoje" : d < 0 ? `há ${Math.abs(d)}d` : `em ${d}d`}

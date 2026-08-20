@@ -474,6 +474,11 @@ REASON_CODES_CONHECIDOS = {
     "SUPORTE_PROXIMO", "RESISTENCIA_PROXIMA", "VOLUME_FRACO", "VOLUME_FORTE",
     "VALUATION_ESTICADO", "VALUATION_DESCONTADO", "PLANO_DE_SAIDA",
     "SENTIMENTO_EXTREMO", "CENARIO_EMPATE",
+    # Promovido em 20/08/2026: no primeiro veredito real do contrato, o
+    # modelo usou VALUATION_ESTICADO para descrever run-up pré-earnings de
+    # +15% (MRVL) -- evidência de preço esticado, não de múltiplo. O rótulo
+    # certo merecia existir; é a evolução de vocabulário que o WARN permite.
+    "RUNUP_ESTICADO",
 }
 RSI_SOBRECOMPRADO_MIN = 65.0
 RSI_SOBREVENDIDO_MAX = 35.0

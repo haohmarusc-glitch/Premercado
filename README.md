@@ -708,6 +708,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #365 | Backtest de carteira (modo B): capital único de $100k, cota patrimônio/n, caixa compartilhado, benchmark equal-weight, contribuição por ticker e concentração setorial medida |
 | #366 | Bootstrap de carteira soma contribuições em vez de compor pnls paralelos (IC 302%–50.073% numa carteira de +34% na primeira rodada real); exposição média exposta |
 | #367 | Veredito estruturado: o LLM declara a decisão por ticker em JSON (action/confidence/reason_codes), o validador confere schema, dado, concentração e coerência JSON↔texto |
+| #368 | Painel de earnings do Veredito mostrava a data um dia antes (new Date de data-só é meia-noite UTC); RUNUP_ESTICADO promovido ao vocabulário do bloco |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1156,3 +1157,29 @@ o lint e o cruzamento agora rodam sobre a prosa SEM os blocos json.
 Com isso o roteiro da auditoria fecha: etapas 1–4 entregues no mesmo dia em
 que a auditoria chegou. O que segue de fora, segue pelo mesmo critério de
 sempre — evidência primeiro.
+
+### 20/08/2026 (parte 8) — o primeiro veredito do contrato novo, e o que a leitura dele pegou
+
+O contrato da etapa 4 funcionou de primeira em produção: bloco completo (6
+tickers), vocabulário limpo, confidences com gradação sensata, e coerência
+JSON↔texto perfeita — cada action do bloco batia com a recomendação da
+prosa. Sem retry visível, sem leitura degradada.
+
+E a auditoria do resultado pegou dois itens (#368):
+
+**O painel "Earnings próximos" mostrava a data um dia antes** — NVDA
+26/08 exibida como "25/08/2026" na mesma linha em que o contador dizia
+"em 6d". Armadilha nº 6 do playbook na renderização:
+`new Date("2026-08-26")` é meia-noite UTC, e `toLocaleDateString` num
+navegador em BRT volta pra 21h do dia 25. O contador acertava porque
+`daysUntilBRT` compara em UTC — o painel se contradizia sozinho.
+Conserto: `formatarDataBRT` formata a string sem passar por `Date`
+(string pura não tem fuso pra errar); `macro.tsx` já fazia certo com
+`T00:00:00`, o veredito.tsx era a cópia sem o antídoto. Varredura nas
+demais chamadas de `toLocaleDateString`: só esta recebia data-sem-hora.
+
+**RUNUP_ESTICADO entrou no vocabulário** — no primeiro veredito real, o
+modelo usou VALUATION_ESTICADO para descrever o run-up pré-earnings de
++15% da MRVL: evidência de preço esticado, não de múltiplo caro. O rótulo
+certo agora existe (com a distinção explicada no prompt), exatamente pela
+via que o desenho previu: vocabulário evolui por promoção, não por trava.
