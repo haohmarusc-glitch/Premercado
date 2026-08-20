@@ -174,6 +174,32 @@ export function amostraDaCesta(results: ReactionResult[] | null): string {
     : `Amostra de ${min} a ${max} earnings por ticker`;
 }
 
+/**
+ * O corpo que vai para /earnings-reaction/ia — SEM os `events`.
+ *
+ * O servidor descarta os eventos de qualquer jeito (o prompt usa só ticker,
+ * summary, error e stale), mas a tela mandava os results inteiros: 8 eventos
+ * x 5 tickers x trajetórias diárias ≈ 107KB, contra o limite de 100KB do
+ * body-parser global. Em 20/08/2026 isso virou 413 -> 500 "Internal server
+ * error" na tela — e só quando o dado do dia cruzava o limite: a MESMA cesta
+ * tinha rodado duas vezes mais cedo no mesmo dia. Enviar o formato enxuto
+ * (~10KB) elimina a classe do problema em vez de negociar com o limite.
+ */
+export function payloadDaInterpretacao(
+  results: ReactionResult[], lookback: number, benchmark: string,
+): object {
+  return {
+    results: results.map((r) => ({
+      ticker: r.ticker,
+      ...(r.error != null ? { error: r.error } : {}),
+      ...(r.summary != null ? { summary: r.summary } : {}),
+      ...((r as { stale?: boolean }).stale ? { stale: true } : {}),
+    })),
+    lookback,
+    benchmark,
+  };
+}
+
 export function interpretResult(r: ReactionResult): string[] {
   if (!r.summary) return [];
   const s = r.summary;
@@ -492,11 +518,9 @@ export default function EarningsReactionPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          results,
-          lookback: parseInt(lookback, 10) || 8,
-          benchmark: benchmarkEfetivo,
-        }),
+        body: JSON.stringify(
+          payloadDaInterpretacao(results ?? [], parseInt(lookback, 10) || 8, benchmarkEfetivo),
+        ),
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na interpretação com IA");
