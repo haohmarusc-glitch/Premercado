@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDate, formatDateTime, todayBRTDateString, daysUntilBRT } from "../lib/format";
+import { formatDate, formatDateTime, todayBRTDateString, daysUntilBRT, formatarDataBRT } from "../lib/format";
 
 describe("formatDate", () => {
   it("formata data ISO corretamente", () => {
@@ -65,5 +65,22 @@ describe("daysUntilBRT", () => {
     } finally {
       process.env.TZ = originalTZ;
     }
+  });
+});
+
+describe("formatarDataBRT", () => {
+  it("formata YYYY-MM-DD sem passar por Date (o shift UTC do painel de earnings)", () => {
+    // O bug de 20/08/2026: new Date("2026-08-26").toLocaleDateString("pt-BR")
+    // num navegador em BRT mostra 25/08 -- a data da NVDA um dia antes, na
+    // mesma linha em que o contador (correto) dizia "em 6d".
+    expect(formatarDataBRT("2026-08-26")).toBe("26/08/2026");
+  });
+
+  it("aceita timestamp ISO completo usando só a parte da data", () => {
+    expect(formatarDataBRT("2026-08-26T00:00:00.000Z")).toBe("26/08/2026");
+  });
+
+  it("string fora do formato volta como veio em vez de virar Invalid Date", () => {
+    expect(formatarDataBRT("sem-data")).toBe("sem-data");
   });
 });
