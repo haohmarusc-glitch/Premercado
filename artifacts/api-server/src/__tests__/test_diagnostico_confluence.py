@@ -89,9 +89,10 @@ def _indice(n=10, inicio="2026-01-05"):
 
 
 def test_dia_da_entrada_nao_recebe_o_retorno():
-    """A entrada é no FECHAMENTO do dia (semântica de run_backtest): o retorno
-    daquele pregão aconteceu antes de existir posição. Atribuí-lo à estratégia
-    daria crédito por um movimento que ela não capturou."""
+    """A entrada é na ABERTURA do dia (run_backtest executa em D+1 desde
+    20/08/2026), mas o retorno close-a-close daquele pregão inclui o gap
+    noturno ANTERIOR à posição. Atribuí-lo inteiro à estratégia daria crédito
+    por um gap que ela não capturou -- a exclusão é a borda conservadora."""
     idx = _indice()
     pos = diag.serie_de_posicao(idx, [_trade(str(idx[2])[:10], str(idx[5])[:10], 1, 0.05)])
     assert pos[idx[2]] == 0     # dia da entrada: fora

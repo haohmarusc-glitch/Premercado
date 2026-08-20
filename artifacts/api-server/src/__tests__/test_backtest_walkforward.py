@@ -7,7 +7,8 @@ medido em OUTRA, que o otimizador nunca viu. Um teste que só conferisse
 "devolve números" passaria mesmo se a implementação medisse in-sample por
 engano -- exatamente o defeito que este modo existe pra corrigir.
 
-Sem rede: _fetch_warmed_close é mockado com séries sintéticas.
+Sem rede: _fetch_warmed_ohlc é mockado com OHLC sintético derivado de um
+passeio aleatório (open = close da véspera; high/low envelopam os dois).
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_backtest_walkforward.py -v
 """
@@ -18,11 +19,20 @@ import pytest
 from agent import backtest as bt
 
 
-def _serie(n: int, seed: int = 0, drift: float = 0.0003, vol: float = 0.02) -> pd.Series:
+def _serie(n: int, seed: int = 0, drift: float = 0.0003, vol: float = 0.02) -> pd.DataFrame:
+    """OHLC sintético no contrato de _fetch_warmed_ohlc: open = close da
+    véspera (gap zero), high/low envelopando open e close -- o suficiente
+    pra simulação D+1 ter um open real pra executar."""
     rng = np.random.default_rng(seed)
-    precos = 100 * np.cumprod(1 + drift + rng.normal(0, vol, n))
-    idx = pd.date_range(end=pd.Timestamp("2026-08-14"), periods=n, freq="B")
-    return pd.Series(precos, index=idx)
+    close = pd.Series(100 * np.cumprod(1 + drift + rng.normal(0, vol, n)),
+                      index=pd.date_range(end=pd.Timestamp("2026-08-14"), periods=n, freq="B"))
+    open_ = close.shift(1).fillna(close.iloc[0])
+    return pd.DataFrame({
+        "open": open_,
+        "high": pd.concat([open_, close], axis=1).max(axis=1) * 1.005,
+        "low": pd.concat([open_, close], axis=1).min(axis=1) * 0.995,
+        "close": close,
+    })
 
 
 # ── janelas ────────────────────────────────────────────────────────────────
@@ -77,13 +87,13 @@ def test_objetivo_ignora_janela_sem_negocio():
 # ── run_walk_forward (integração, com fetch mockado) ──────────────────────
 
 def test_periodo_curto_devolve_erro_explicativo(monkeypatch):
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(120), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(120), None))
     out = bt.run_walk_forward("XXX", "2026-01-01", "2026-08-14")
     assert "error" in out and "curto demais" in out["error"]
 
 
 def test_walk_forward_mede_no_periodo_que_nao_otimizou(monkeypatch):
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=7), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=7), None))
     out = bt.run_walk_forward("XXX", "2024-01-01", "2026-08-14",
                               treino_pregoes=252, teste_pregoes=63)
     assert "error" not in out
@@ -96,7 +106,7 @@ def test_walk_forward_mede_no_periodo_que_nao_otimizou(monkeypatch):
 
 
 def test_resumo_reporta_degradacao(monkeypatch):
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=11), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=11), None))
     out = bt.run_walk_forward("XXX", "2024-01-01", "2026-08-14")
     r = out["resumo"]
     assert r["nFolds"] > 0
@@ -108,7 +118,7 @@ def test_resumo_reporta_degradacao(monkeypatch):
 def test_resumo_mede_estabilidade_do_parametro(monkeypatch):
     """Parâmetro diferente a cada janela indica busca perseguindo ruído --
     vale mais que qualquer retorno bonito, então tem que ser reportado."""
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=3), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=3), None))
     out = bt.run_walk_forward("XXX", "2024-01-01", "2026-08-14")
     r = out["resumo"]
     assert "parametrosDistintosEscolhidos" in r
@@ -118,7 +128,7 @@ def test_resumo_mede_estabilidade_do_parametro(monkeypatch):
 def test_resumo_confronta_buy_and_hold_nas_mesmas_janelas(monkeypatch):
     """Retorno positivo pode ser só o mercado subindo -- sem o confronto na
     MESMA janela de teste, o número engana."""
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=5), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=5), None))
     r = bt.run_walk_forward("XXX", "2024-01-01", "2026-08-14")["resumo"]
     assert "buyAndHoldMedioOutOfSample" in r
     assert "foldsQueVenceramBuyHold" in r
@@ -126,7 +136,7 @@ def test_resumo_confronta_buy_and_hold_nas_mesmas_janelas(monkeypatch):
 
 
 def test_estrategia_sem_parametro_roda_sem_otimizar(monkeypatch):
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=9), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=9), None))
     out = bt.run_walk_forward("XXX", "2024-01-01", "2026-08-14", strategy="ma_cross")
     assert out["combinacoesTestadas"] == 1
     assert out["resumo"]["parametroEstavel"] is True
@@ -136,7 +146,7 @@ def test_fold_sem_sinal_no_treino_e_registrado_nao_escondido(monkeypatch):
     """Se nenhuma combinação negociou no treino, o fold precisa aparecer
     marcado -- escolher um parâmetro à toa e chamar de otimizado seria pior
     que não ter o fold."""
-    monkeypatch.setattr(bt, "_fetch_warmed_close", lambda *a, **k: (_serie(700, seed=13), None))
+    monkeypatch.setattr(bt, "_fetch_warmed_ohlc", lambda *a, **k: (_serie(700, seed=13), None))
     # RSI impossível de disparar: nunca há trade no treino.
     monkeypatch.setattr(bt, "_RSI_OVERSOLD_GRID", (0.5,))
     monkeypatch.setattr(bt, "_RSI_OVERBOUGHT_GRID", (99.9,))

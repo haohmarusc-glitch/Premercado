@@ -286,6 +286,7 @@ def run_backtest(
     kelly_avg_win: float = 0.05,
     kelly_avg_loss: float = 0.03,
     long_only: bool = True,
+    slippage_pct: float = 0.0005,
 ) -> dict:
     """kelly_win_rate/avg_win/avg_loss são priors PLACEHOLDER por padrão (primeira
     passada). Depois de rodar uma vez e extrair win_rate/avg_win/avg_loss REAIS
@@ -301,7 +302,18 @@ def run_backtest(
     ativo subiu 11% nos dias em que a estratégia estava vendida). Remover o
     short melhorou TODAS as células, o que é raro o bastante para virar
     default. `long_only=False` fica para pesquisa/ablação -- é como o
-    diagnóstico continua medindo os dois lados."""
+    diagnóstico continua medindo os dois lados.
+
+    Execução na barra SEGUINTE ao sinal desde 20/08/2026: o candle i só é
+    conhecido no próprio fechamento, então agir "no close de i" usava um
+    preço que ainda não existia na hora da decisão (look-ahead, apontado por
+    auditoria externa e confirmado aqui -- e viés a FAVOR da estratégia, o
+    que torna os resultados negativos do diagnóstico um piso, não um teto).
+    O fill é no open de i+1 quando a série tem coluna `open`; série só-close
+    (stub de teste, dado degradado) usa o close de i+1 -- fill mais tardio,
+    ainda sem look-ahead. O sinal do último candle nunca executa: em operação
+    real ele seria a ordem de amanhã. `slippage_pct` é o custo de fricção por
+    lado (default 5 bps, o mesmo de backtest.py)."""
     signals = engine.evaluate_dataframe(df, sector_returns, event_dates)
     size_frac = engine.kelly_position_size(kelly_win_rate, kelly_avg_win, kelly_avg_loss)
 
@@ -312,27 +324,32 @@ def run_backtest(
     trades = []
 
     closes = df["close"].values
+    fills = df["open"].values if "open" in df.columns else closes
     actions = signals["action"].values
 
-    for i in range(1, len(df)):
-        price = closes[i]
+    for i in range(len(df) - 1):
         action = actions[i]
+        # A decisão do candle i executa no candle i+1.
+        price = float(fills[i + 1])
+        data_exec = str(df.index[i + 1])[:10]
 
         # Em long_only, "sell" com posição zerada não faz nada: o voto
         # vendedor continua VISÍVEL na leitura da tela (evaluate_dataframe não
         # muda), só deixa de virar posição short aqui.
         if position == 0 and (action == "buy" or (action == "sell" and not long_only)):
             position = 1 if action == "buy" else -1
-            entry_price = price
+            # Compra paga o slippage pra cima; short entra vendendo mais barato.
+            entry_price = price * (1 + slippage_pct * position)
             trades.append({
-                "entry_date": str(df.index[i])[:10], "entry_price": float(price),
+                "entry_date": data_exec, "entry_price": float(entry_price),
                 "direction": position, "size_frac": size_frac,
             })
 
         elif position != 0 and (action == "flat" or action == ("sell" if position == 1 else "buy")):
-            pnl_pct = (price - entry_price) / entry_price * position
+            exit_price = price * (1 - slippage_pct * position)
+            pnl_pct = (exit_price - entry_price) / entry_price * position
             capital *= (1 + pnl_pct * trades[-1]["size_frac"])
-            trades[-1].update({"exit_date": str(df.index[i])[:10], "exit_price": float(price), "pnl_pct": float(pnl_pct)})
+            trades[-1].update({"exit_date": data_exec, "exit_price": float(exit_price), "pnl_pct": float(pnl_pct)})
             position = 0
             entry_price = None
 

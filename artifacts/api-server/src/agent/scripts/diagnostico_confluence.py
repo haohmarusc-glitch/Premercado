@@ -115,12 +115,16 @@ def decompor_trades(trades: list) -> dict:
 def serie_de_posicao(indice: pd.DatetimeIndex, trades: list) -> pd.Series:
     """Posição vigente para ATRIBUIR o retorno de cada pregão.
 
-    A entrada acontece no fechamento do dia da entrada (semântica de
-    run_backtest), então o primeiro retorno que a posição captura é o do
-    pregão SEGUINTE -- e o último é o do próprio dia de saída. Por isso o
-    intervalo é (entry_date, exit_date]: exclusivo na entrada, inclusivo na
-    saída. Errar essa borda desloca a atribuição em um dia e, em papel que
-    gapa 10% em earnings, um dia é a análise inteira.
+    Desde 20/08/2026 o run_backtest executa na ABERTURA do pregão seguinte
+    ao sinal (antes: no próprio fechamento do sinal -- look-ahead). O
+    retorno close-a-close do dia da entrada inclui o gap noturno anterior à
+    posição, então continua atribuído a "fora": a posição só capturou o
+    trecho open->close daquele dia, e creditar o dia inteiro daria a ela um
+    gap que ela não pegou. É aproximação conservadora; o último dia contado
+    é o próprio dia de saída. Por isso o intervalo segue (entry_date,
+    exit_date]: exclusivo na entrada, inclusivo na saída. Errar essa borda
+    desloca a atribuição em um dia e, em papel que gapa 10% em earnings, um
+    dia é a análise inteira.
     """
     pos = pd.Series(0, index=indice, dtype=int)
     for t in trades:
