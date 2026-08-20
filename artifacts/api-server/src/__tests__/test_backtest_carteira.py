@@ -173,6 +173,19 @@ def test_contribuicao_por_ticker_soma_o_retorno_total():
     soma = sum(r["contribuicaoPct"] for r in res["porTicker"])
     assert soma == pytest.approx(res["totalReturn"], abs=0.02)
 
+def test_bootstrap_da_carteira_e_sobre_contribuicoes():
+    """A carteira usa a variante aditiva, nunca a composta do motor por
+    ticker -- e a exposição média sai junto (é o número que explica o gap
+    contra um benchmark 100% investido)."""
+    a = _ohlc(_flat())
+    res = bt.run_portfolio_backtest(
+        ["AA"], "2026-01-05", "2026-02-06", **_SEM_FRICCAO,
+        _dados={"AA": (a, *_sinais(a, compras=[0]))})
+    # 1 trade: aviso de amostra, e jamais um compostoIc95.
+    assert "aviso" in res["bootstrap"]
+    assert res["exposicao"]["mediaExposicaoPct"] > 90  # comprado quase o período todo
+
+
 def test_concentracao_setorial_e_medida():
     """MU e SNDK são do MESMO grupo (memória): segurar os dois ao mesmo tempo
     tem que aparecer como concentração, não como diversificação."""
