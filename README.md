@@ -707,6 +707,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #364 | Auditor independente do backtest: segunda implementação do contrato de execução + coerência interna, com bateria sintética pendurada no CI — divergência entre motor e auditor quebra o build |
 | #365 | Backtest de carteira (modo B): capital único de $100k, cota patrimônio/n, caixa compartilhado, benchmark equal-weight, contribuição por ticker e concentração setorial medida |
 | #366 | Bootstrap de carteira soma contribuições em vez de compor pnls paralelos (IC 302%–50.073% numa carteira de +34% na primeira rodada real); exposição média exposta |
+| #367 | Veredito estruturado: o LLM declara a decisão por ticker em JSON (action/confidence/reason_codes), o validador confere schema, dado, concentração e coerência JSON↔texto |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1112,3 +1113,46 @@ e na leitura pelo mesmo motivo: é o número que explica o gap.
 A lição de método, para a régua: métrica herdada de outro contexto precisa
 re-derivar o próprio significado no contexto novo — o auditor confere se o
 número está CERTO; se ele responde a pergunta certa, só a leitura pega.
+
+### 20/08/2026 (parte 7) — o Veredito declara a decisão: JSON antes do texto
+
+Etapa 4 do roteiro, a última e mais invasiva. O problema que ela aposenta é
+o que a auditoria chamou de fragilidade semântica: o validador detectava
+intenção de compra com regex sobre prosa livre, e prosa financeira é
+traiçoeira ("apesar da deterioração, a assimetria favorece uma entrada caso
+o suporte seja recuperado" — comprar ou não?). Regras determinísticas sobre
+interpretação herdam a fragilidade da interpretação.
+
+Agora o Veredito termina, obrigatoriamente, com um bloco ```json — a
+decisão por ticker: `action` (COMPRAR/AUMENTAR/MANTER/REDUZIR/VENDER/
+AGUARDAR), `confidence` (0–1) e `reason_codes` de um vocabulário conhecido
+(código novo é WARN, não trava retry — vocabulário evolui). O texto vira a
+EXPLICAÇÃO da estrutura, e o validador ganhou três frentes novas, todas
+determinísticas:
+
+- **Schema e completude**: todo ticker da carteira precisa de entrada
+  (omitir o ticker difícil é como o modelo "resolve" a parte difícil);
+  action fora do vocabulário, confidence fora de [0,1] e decisão sem razão
+  declarada são erros.
+- **Coerência com o dado**: RSI_SOBREVENDIDO com RSI 50 é erro (razão
+  contradita pelo dado é pior que razão ausente — o leitor confia no
+  rótulo); COMPRAR com earnings a ≤2 pregões sem declarar EARNINGS_PROXIMO
+  é erro (o veto de catalisador do Confluence, agora sobre estrutura); a
+  concentração por correlação roda sobre a DECLARAÇÃO de compra, com
+  isenção para quem declara RISCO_CORRELACAO — decisão consciente.
+- **JSON ↔ texto**: o regex de intenção vira contraprova — prosa mandando
+  comprar o que o bloco não manda (ou compra no bloco de ticker que a prosa
+  nem menciona) é erro. Divergir de si mesmo era exatamente o que a
+  validação só-prosa não conseguia ver.
+
+Tudo passa pelo retry de correção existente, num relatório único. Se mesmo
+após o retry o bloco não vier, o veredito sai com marca visível de
+**leitura degradada** — a convenção do repo: dado incompleto nunca se
+apresenta como completo. E o desenvolvimento pegou um bug antes de
+produção: o regex de intenção casava "compra" dentro de
+"RSI_SOBRECOMPRADO" do próprio bloco — o veredito divergiria de si mesmo;
+o lint e o cruzamento agora rodam sobre a prosa SEM os blocos json.
+
+Com isso o roteiro da auditoria fecha: etapas 1–4 entregues no mesmo dia em
+que a auditoria chegou. O que segue de fora, segue pelo mesmo critério de
+sempre — evidência primeiro.
