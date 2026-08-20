@@ -705,6 +705,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #362 | Execução honesta nos dois motores: sinal de D executa na abertura de D+1 (era no próprio close de D — look-ahead) e stop/target checam High/Low com política conservadora |
 | #363 | A régua ganha estatística: Sortino, Calmar, profit factor, expectancy e IC 95% por bootstrap na tela; embargo de 5 pregões no walk-forward; recalibração de Kelly exige 30 trades |
 | #364 | Auditor independente do backtest: segunda implementação do contrato de execução + coerência interna, com bateria sintética pendurada no CI — divergência entre motor e auditor quebra o build |
+| #365 | Backtest de carteira (modo B): capital único de $100k, cota patrimônio/n, caixa compartilhado, benchmark equal-weight, contribuição por ticker e concentração setorial medida |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1048,3 +1049,37 @@ auditados aqui — as cópias entre módulos já têm testes de sincronia, e uma
 segunda implementação de indicador seria manutenção dupla sem pergunta nova.
 Próximas etapas do roteiro: backtest de carteira (modo B) e o Veredito
 estruturado (JSON antes do texto).
+
+### 20/08/2026 (parte 5) — o backtest de carteira: a pergunta que a cesta não alcança
+
+Etapa 3 do roteiro. O modo cesta dá $10.000 independentes a cada ticker e
+responde "a estratégia tem edge NESTE papel?". A pergunta operacional é
+outra: **"o sistema melhora uma carteira?"** — com capital único, uma
+entrada só acontece se sobrar caixa, e cinco compras correlacionadas deixam
+de ser cinco apostas independentes.
+
+O modo novo (`run_portfolio_backtest`, botão "Carteira ($100k)" na tela):
+capital único de $100k; **cota-alvo por entrada = patrimônio/n**, marcada no
+fechamento de ontem (a cota não pode usar o fechamento de hoje, que não
+existe na hora da abertura); caixa insuficiente entra com o que há; empate
+por caixa escasso resolvido em ordem alfabética — arbitrária, mas
+**determinística**, que é o que o auditor exige. Benchmark: buy & hold
+equal-weight (1/n, sem rebalanceamento). Execução por ticker: o mesmo
+contrato do `_simulate` (D+1 no open, stops contra o pregão inteiro).
+
+Deliberadamente FORA: otimização de covariância e Kelly por posição —
+sofisticação de sizing sobre sinal sem edge medido é o que o arquivamento
+das specs rejeitou. O que entra no lugar é medição factual: **contribuição
+por ticker** (em pontos do capital — a soma fecha com o retorno total, e um
+teste garante), **exposição** (% dias sem posição, máx. simultâneas, pico) e
+**concentração setorial** (% dias com 2+ posições do mesmo grupo — o "mesmo
+trade contado duas vezes" que o validador do Veredito já veta ao vivo).
+
+A amarra de auditoria que fecha a cadeia: **carteira com n=1 tem que
+reproduzir o `_simulate`** — e o `_simulate` é conferido pela referência
+independente do #364. Testado junto com caixa escasso (a cota diz 75k, o
+caixa tem 50k: entra 50k), conservação (preço parado + fricção zero = nem um
+centavo aparece ou some), calendários divergentes entre tickers e a
+concentração MU+SNDK aparecendo como concentração, não como diversificação.
+
+Resta do roteiro: etapa 4 (Veredito estruturado — JSON antes do texto).

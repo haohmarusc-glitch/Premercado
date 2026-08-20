@@ -183,4 +183,49 @@ router.post("/backtest/basket", async (req, res, next): Promise<void> => {
   }
 });
 
+// POST /backtest/portfolio — modo B (20/08/2026): capital ÚNICO de $100k
+// dividido por cota patrimônio/n, caixa compartilhado, benchmark buy & hold
+// equal-weight. Responde "o sistema melhora uma CARTEIRA?" — a pergunta que
+// o modo cesta ($10k independentes por ticker) estruturalmente não alcança.
+// Sem positionFraction: a fração É a cota, decidida pelo motor.
+router.post("/backtest/portfolio", async (req, res, next): Promise<void> => {
+  const { start, end, strategy } = req.body;
+  if (!start || !end) {
+    res.status(400).json({ error: "start, end are required" });
+    return;
+  }
+
+  let tickers: string[] = Array.isArray(req.body.tickers)
+    ? req.body.tickers.map((t: unknown) => String(t).toUpperCase())
+    : [];
+  if (!tickers.length) {
+    const settings = await getOrCreateSettings();
+    tickers = settings.tickers;
+  }
+  if (!tickers.length) {
+    res.status(400).json({ error: "nenhum ticker configurado para a carteira" });
+    return;
+  }
+
+  const commissionPct  = clamp(req.body.commissionPct, 0, 0.05, 0.001);
+  const slippagePct    = clamp(req.body.slippagePct,   0, 0.05, 0.0005);
+  const stopLossPct    = optionalPct(req.body.stopLossPct);
+  const takeProfitPct  = optionalPct(req.body.takeProfitPct);
+  const rsiOversold    = clamp(req.body.rsiOversold,   1,  49, 30);
+  const rsiOverbought  = clamp(req.body.rsiOverbought, 51, 99, 70);
+  const scoreThreshold = clamp(req.body.scoreThreshold, 5, 100, 60);
+
+  try {
+    const data = await runBacktestScript({
+      mode: "portfolio", tickers, start, end,
+      strategy: strategy ?? "confluencia",
+      commissionPct, slippagePct,
+      stopLossPct, takeProfitPct, rsiOversold, rsiOverbought, scoreThreshold,
+    }, 20_000 * Math.max(1, tickers.length));
+    res.json(data);
+  } catch (e: unknown) {
+    next(e);
+  }
+});
+
 export default router;
