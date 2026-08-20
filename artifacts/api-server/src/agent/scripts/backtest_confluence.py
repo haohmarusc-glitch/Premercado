@@ -197,6 +197,20 @@ def _run_for_ticker(ticker: str, dfs: dict, regime_label: str) -> str:
     print(f"win_rate real: {best['win_rate']:.4f}  avg_win real: {best['avg_win']:.4f}  "
           f"avg_loss_abs real: {best['avg_loss_abs']:.4f}  (priors placeholder eram 0.5/0.05/0.03)")
 
+    # Kelly calibrado de amostra pequena é pior que o placeholder: win_rate e
+    # avg_win/avg_loss de N pequeno têm erro padrão maior que o efeito que se
+    # quer capturar, e a fórmula transforma esse ruído em tamanho de posição
+    # (auditoria de 20/08/2026). Abaixo do piso, o certo é DECLARAR a
+    # insuficiência -- não recalibrar com número bonito e frágil.
+    KELLY_MIN_TRADES = 30
+    if best["num_trades"] < KELLY_MIN_TRADES:
+        msg = (f"Recalibração de Kelly PULADA: {best['num_trades']} trades no melhor "
+               f"min_votes (mínimo {KELLY_MIN_TRADES}) -- amostra não sustenta "
+               f"win_rate/avg_win como estimativa de sizing.")
+        print("\n" + msg)
+        md_sections.append("\n" + msg + "\n")
+        return "\n".join(md_sections)
+
     engine_best = ConfluenceEngine(min_votes=best["min_votes"], kelly_fraction=0.3)
     recalibrated = run_backtest(
         df, engine_best, sector_returns=sector_returns,

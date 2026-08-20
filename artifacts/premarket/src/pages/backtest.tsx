@@ -22,6 +22,17 @@ interface EquityPoint {
   buyHoldEquity: number;
 }
 
+/** IC de 95% por bootstrap dos trades (semente fixa no Python — o mesmo
+ * histórico produz o mesmo intervalo, requisito para ser auditável). Vem só
+ * com `aviso` quando a amostra de trades não sustenta intervalo nenhum. */
+interface BootstrapResumo {
+  aviso?: string;
+  nTrades?: number;
+  amostras?: number;
+  compostoIc95?: [number, number];
+  winRateIc95?: [number, number];
+}
+
 interface BacktestResult {
   ticker: string;
   strategy: string;
@@ -34,6 +45,15 @@ interface BacktestResult {
   cagr: number;
   sharpe: number;
   maxDrawdown: number;
+  // Métricas de auditoria (20/08/2026). Opcionais e anuláveis: resultado de
+  // cesta antigo ou payload de versão anterior não as tem, e `null` é como o
+  // Python declara "não computável" (ex.: profit factor sem perdas).
+  sortino?: number | null;
+  calmar?: number | null;
+  profitFactor?: number | null;
+  expectancy?: number | null;
+  payoff?: number | null;
+  bootstrap?: BootstrapResumo | null;
   totalTrades: number;
   winRate: number;
   avgWin: number;
@@ -41,6 +61,11 @@ interface BacktestResult {
   trades: Trade[];
   equityCurve: EquityPoint[];
   error?: string;
+}
+
+/** "—" para métrica não computável — a régua declara ausência, não inventa. */
+function fmtMetrica(v: number | null | undefined, casas = 2): string {
+  return v == null || !Number.isFinite(v) ? "—" : v.toFixed(casas);
 }
 
 const EXIT_REASON_LABEL: Record<string, string> = {
@@ -97,6 +122,9 @@ interface WalkForwardResult {
   objetivo: string;
   treinoPregoes: number;
   testePregoes: number;
+  /** Pregões descartados entre treino e teste (embargo anti-vazamento,
+   * 20/08/2026). Ausente em payload de versão anterior. */
+  embargoPregoes?: number;
   combinacoesTestadas: number;
   folds: WalkForwardFold[];
   resumo: {
@@ -219,6 +247,17 @@ function interpretTickerResult(result: BacktestResult): string[] {
 
     if (result.totalTrades < 5) {
       notes.push(`Amostra pequena (${result.totalTrades} operação${result.totalTrades === 1 ? "" : "ões"}) — os números acima têm baixa significância estatística; considere um período mais longo.`);
+    }
+
+    // A pergunta que o retorno sozinho não responde: esse número sobrevive a
+    // reembaralhar os próprios trades? IC cruzando o zero = indistinguível de
+    // sorte de sequência COM ESTA amostra — não prova que não há edge, prova
+    // que esta amostra não o demonstra.
+    const ic = result.bootstrap?.compostoIc95;
+    if (ic && ic[0] <= 0 && ic[1] >= 0) {
+      notes.push(`O IC de 95% do composto dos trades (${ic[0]}% a ${ic[1]}%, bootstrap) cruza o zero — com essa amostra, o resultado não se distingue de sorte de sequência.`);
+    } else if (ic && ic[1] < 0) {
+      notes.push(`O IC de 95% do composto dos trades (${ic[0]}% a ${ic[1]}%, bootstrap) é inteiro negativo — a perda não é azar de sequência; é o sinal.`);
     }
 
     const lastTrade = result.trades[result.trades.length - 1];
@@ -358,9 +397,19 @@ export default function BacktestPage() {
         ["Diferença", `${(result.totalReturn - result.buyAndHoldReturn).toFixed(2)}pp`],
         ["CAGR", pct(result.cagr)],
         ["Sharpe", result.sharpe.toFixed(2)],
+        ["Sortino", fmtMetrica(result.sortino)],
+        ["Calmar", fmtMetrica(result.calmar)],
+        ["Profit factor", fmtMetrica(result.profitFactor)],
+        ["Expectancy por trade", result.expectancy == null ? "—" : pct(result.expectancy)],
         ["Drawdown máximo", pct(result.maxDrawdown)],
         ["Operações", result.totalTrades],
-        ["Taxa de acerto", pct(result.winRate * 100, 1)],
+        // winRate já chega em % do Python; multiplicar por 100 de novo
+        // exportava "+5500.0%" (bug até 20/08/2026).
+        ["Taxa de acerto", pct(result.winRate, 1)],
+        ["IC 95% do composto (bootstrap)",
+         result.bootstrap?.compostoIc95
+           ? `${result.bootstrap.compostoIc95[0]}% a ${result.bootstrap.compostoIc95[1]}%`
+           : (result.bootstrap?.aviso ?? "—")],
       ]));
       if (result.trades.length) {
         blocos.push("### Operações\n\n" + tabela(
@@ -400,7 +449,8 @@ export default function BacktestPage() {
       const r = walkForwardResult.resumo;
       blocos.push("## Walk-forward (out-of-sample)\n\n" + itens([
         ["Janelas", r.nFolds],
-        ["Treino / teste (pregões)", `${walkForwardResult.treinoPregoes} / ${walkForwardResult.testePregoes}`],
+        ["Treino / teste (pregões)", `${walkForwardResult.treinoPregoes} / ${walkForwardResult.testePregoes}`
+          + (walkForwardResult.embargoPregoes != null ? ` (embargo ${walkForwardResult.embargoPregoes})` : "")],
         ["Objetivo", walkForwardResult.objetivo],
         ["Retorno médio in-sample", fmtPctNum(r.retornoMedioInSample)],
         ["Retorno médio out-of-sample", fmtPctNum(r.retornoMedioOutOfSample)],
@@ -910,6 +960,38 @@ export default function BacktestPage() {
                 </div>
               ))}
             </div>
+
+            {/* Métricas de auditoria — presentes só em payload novo; "—" é
+                métrica não computável (ex.: Sortino sem dia negativo). */}
+            {result.sortino !== undefined && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Sortino", value: fmtMetrica(result.sortino), color: (result.sortino ?? 0) >= 1 ? "text-green-400" : "text-yellow-400" },
+                  { label: "Calmar", value: fmtMetrica(result.calmar), color: (result.calmar ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
+                  { label: "Profit Factor", value: fmtMetrica(result.profitFactor), color: (result.profitFactor ?? 0) >= 1 ? "text-green-400" : "text-red-400" },
+                  { label: "Expectancy", value: result.expectancy == null ? "—" : `${result.expectancy >= 0 ? "+" : ""}${result.expectancy.toFixed(2)}%`, color: (result.expectancy ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="border border-border rounded-lg bg-card p-4">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
+                    <div className={`text-xl font-bold font-mono ${value === "—" ? "text-muted-foreground" : color}`}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {result.bootstrap && (
+              <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground">
+                {result.bootstrap.aviso ? (
+                  <span>Bootstrap: {result.bootstrap.aviso}.</span>
+                ) : (
+                  <span>
+                    IC 95% (bootstrap, {result.bootstrap.amostras} reamostras de {result.bootstrap.nTrades} trades):
+                    {" "}composto {result.bootstrap.compostoIc95?.[0]}% a {result.bootstrap.compostoIc95?.[1]}%
+                    {" "}· win rate {result.bootstrap.winRateIc95?.[0]}% a {result.bootstrap.winRateIc95?.[1]}%
+                  </span>
+                )}
+              </div>
+            )}
 
             <div className="border border-border rounded-lg bg-card p-3 font-mono text-xs text-muted-foreground flex gap-4 flex-wrap">
               <span>{result.ticker} · {result.strategy.toUpperCase()}</span>

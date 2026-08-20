@@ -703,6 +703,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #358 | Diagnóstico do ConfluenceEngine: separa sinal de sizing (priors placeholder davam trades a 6% do capital), decompõe por direção, exposição e captura |
 | #359 | Long-only por padrão no `run_backtest` — shorts perderam em 6/6 células ticker × regime; e o veredito do diagnóstico no Diário |
 | #362 | Execução honesta nos dois motores: sinal de D executa na abertura de D+1 (era no próprio close de D — look-ahead) e stop/target checam High/Low com política conservadora |
+| #363 | A régua ganha estatística: Sortino, Calmar, profit factor, expectancy e IC 95% por bootstrap na tela; embargo de 5 pregões no walk-forward; recalibração de Kelly exige 30 trades |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -967,3 +968,45 @@ validar um edge que primeiro precisa existir — arquivados junto com as
 specs, mesma prateleira, mesmo critério. Uma direção anotada como válida
 para o futuro: o Veredito devolver JSON estruturado e o texto virar
 renderização disso (a crítica à fragilidade do regex sobre prosa é justa).
+
+### 20/08/2026 (parte 3) — o roteiro do motor de pesquisa auditável, e a etapa 1
+
+A auditoria externa pedia, no fundo, uma coisa: que o Premercado deixasse de
+ser "agente de análise com validação" e ganhasse um **motor de pesquisa
+auditável** — DADOS → QUANT → RISCO → DECISÃO → LLM só explicando. O roteiro
+decidido, em ordem de valor por esforço e sempre sobre a premissa de que a
+régua vem antes da estratégia:
+
+1. **Estatística na régua** (#363, esta entrada) — feita.
+2. **Auditor independente** (item 38 da auditoria): um segundo simulador,
+   mínimo e burro de propósito, que replica trades/equity/métricas do motor
+   principal e faz DIFF linha a linha. O motor não pode ser o único juiz de
+   si mesmo.
+3. **Backtest de carteira (modo B)**: capital único, exposição por setor,
+   caixa — responde "o sistema melhora uma CARTEIRA?", que o modo
+   $10k-por-ticker não responde.
+4. **Veredito estruturado**: o LLM devolve JSON (`action`, `confidence`,
+   `reason_codes`) e o texto vira renderização; o validador confere
+   JSON ↔ texto em vez de regex sobre prosa. A maior mudança, por último —
+   mexe no coração do Veredito.
+
+O que a etapa 1 entregou: **Sortino, Calmar, profit factor, expectancy e
+payoff** no `_simulate` e na tela do Backtest; **IC de 95% por bootstrap**
+(2 000 reamostras, semente fixa — reproduzível é requisito de auditoria) do
+composto dos trades e do win rate, com a leitura interpretada dizendo a
+frase que importa: *IC cruzando o zero = resultado indistinguível de sorte
+de sequência com esta amostra*. No walk-forward, **embargo de 5 pregões**
+entre treino e teste (os últimos dias do treino compartilham janelas de
+indicador com os primeiros do teste — otimizar neles e medir neles é
+vazamento suave; 5 = a janela do cruzamento, o sinal mais lento). E a
+recalibração de Kelly do grid agora **exige 30 trades** — Kelly calibrado de
+amostra pequena é pior que o placeholder, porque transforma erro padrão em
+tamanho de posição. De brinde, um bug antigo no relatório exportado: a taxa
+de acerto era multiplicada por 100 duas vezes ("+5500.0%").
+
+O que segue explicitamente fora, com o mesmo critério de sempre: pesos por
+voto no Confluence e veto gradual de earnings (precisam de evidência que a
+base ainda não deu), Monte Carlo/probability of ruin (instrumentos de um
+edge que não existe ainda), e o pacote `quant_core` unificado (a duplicação
+é deliberada — scripts standalone — e os testes de sincronia são a
+mitigação; promover a refactor agora seria risco sem pergunta nova).
