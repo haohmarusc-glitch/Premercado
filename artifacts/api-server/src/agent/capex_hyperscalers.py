@@ -69,7 +69,23 @@ HYPERSCALERS = [
 # calendário típico das big techs (reportam entre 3 e 6 semanas depois) sem
 # fingir precisão que não temos.
 DIAS_ATE_DIVULGAR = 45
-TRIMESTRES_GUARDADOS = 12
+
+# Quantos trimestres o AGREGADO publica. Era 12 (3 anos), o suficiente para o
+# Veredito, que só cita o trimestre mais recente. A primeira rodada com
+# profundidade real (25/08/2026) mostrou o custo disso no outro consumidor: os
+# 12 trimestres publicados são 11 "acelerando" e 1 "estável" -- o buildout de
+# IA não teve interrupção nesses três anos, então o experimento de regime não
+# tem lado de contraste e a hipótese fica INTESTÁVEL, não reprovada.
+#
+# 40 trimestres alcançam 2022-2023, quando os hiperescaladores de fato
+# CORTARAM capex. O critério de aprovação do experimento não muda uma vírgula
+# (6+ trimestres de cada lado, p<=0,05, 0,05pp/dia): o que muda é o quanto de
+# história a régua alcança. Afrouxar o critério porque reprovou seria ajustar
+# a régua ao resultado; dar mais dados à mesma régua é o contrário disso.
+#
+# O dado já está no disco -- o overlay guarda 40 trimestres brutos desde o
+# conserto da regressão de profundidade --, então isto não custa rede nenhuma.
+TRIMESTRES_GUARDADOS = 40
 
 # Profundidade mínima por empresa. Descoberto na PRIMEIRA rodada real
 # (25/08/2026): o yfinance devolve só ~4-5 trimestres de fluxo de caixa, e
@@ -83,10 +99,9 @@ TRIMESTRES_GUARDADOS = 12
 # profundidade que ela é a única a ter.
 PROFUNDIDADE_MINIMA = 10
 
-# Quantos trimestres BRUTOS por empresa o overlay guarda. O agregado publica
-# 12; o bruto guarda mais porque é dele que a profundidade é reconstruída
-# quando uma coleta vem curta. 40 trimestres = 10 anos, folga confortável
-# sobre o mínimo e ainda um arquivo pequeno.
+# Quantos trimestres BRUTOS por empresa o overlay guarda -- é dele que a
+# profundidade é reconstruída quando uma coleta vem curta. 40 trimestres = 10
+# anos, e é este teto que de fato limita o agregado.
 TRIMESTRES_BRUTOS_GUARDADOS = 40
 
 # O plano gratuito da Alpha Vantage limita 5 chamadas POR MINUTO. Cinco
@@ -308,15 +323,32 @@ def combinar(principal: list, complemento: list) -> list:
     return sorted(por_trimestre.values(), key=lambda l: l["trimestre"])
 
 
+def _profundidade_apos_mesclar(linhas: list, guardadas: list) -> int:
+    """Quantos trimestres DISTINTOS existiriam depois da mesclagem."""
+    return len({l["trimestre"] for l in list(guardadas or []) + list(linhas or [])
+                if l.get("trimestre")})
+
+
 def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             profundidade_minima: int = PROFUNDIDADE_MINIMA,
-            pausa_s: float = PAUSA_ENTRE_CHAMADAS_AV_S) -> dict:
+            pausa_s: float = PAUSA_ENTRE_CHAMADAS_AV_S,
+            guardado: dict | None = None) -> dict:
     """{ticker: [linhas]} + relatório de falhas. Funções injetáveis para a
     suíte exercitar a cascata sem rede.
 
-    A AV é chamada quando o yfinance vem VAZIO ou RASO -- ver
-    PROFUNDIDADE_MINIMA para o incidente que motivou o "raso"."""
+    `guardado` é o histórico bruto que o overlay já tem, e serve APENAS para
+    decidir se vale gastar cota -- os dados devolvidos aqui continuam sendo só
+    os coletados agora; quem mescla é `montar`. Sem ele, a decisão olhava a
+    profundidade da COLETA, e como o yfinance devolve sempre os mesmos ~5
+    trimestres, a Alpha Vantage era chamada toda semana para rebuscar história
+    que já estava no disco: cinco chamadas de um orçamento de 15/dia gastas
+    sem produzir nada de novo.
+
+    A AV é chamada quando o yfinance vem VAZIO (aí não há trimestre recente,
+    e histórico guardado não substitui dado fresco) ou quando nem a mesclagem
+    alcançaria PROFUNDIDADE_MINIMA."""
     alvo = tickers or [t for t, _ in HYPERSCALERS]
+    guardado = guardado or {}
     por_empresa, falhas, rasos = {}, [], []
     usou_av = False
     for t in alvo:
@@ -325,9 +357,17 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             linhas = yf_fn(t)
         except Exception as e:
             print(f"[capex] yfinance falhou em {t}: {type(e).__name__}: {e}", file=sys.stderr)
-        if len(linhas) < profundidade_minima:
+        no_disco = guardado.get(t) or []
+        profundidade = _profundidade_apos_mesclar(linhas, no_disco)
+        if linhas and profundidade >= profundidade_minima:
+            # O caso comum em regime de cruzeiro: yfinance traz o trimestre
+            # recente, o overlay traz o alcance, e a cota fica intacta. Dito
+            # em voz alta porque "não gastou cota" precisa ter motivo visível.
+            print(f"[capex] {t}: {len(linhas)} do yfinance + {len(no_disco)} guardados "
+                  f"= {profundidade} trimestres, sem gastar Alpha Vantage", file=sys.stderr)
+        else:
             motivo = ("sem capex no yfinance" if not linhas
-                      else f"só {len(linhas)} trimestres no yfinance "
+                      else f"só {profundidade} trimestres somando yfinance e overlay "
                            f"(mínimo {profundidade_minima} para variação a/a e regime)")
             print(f"[capex] {t}: {motivo}, complementando com Alpha Vantage", file=sys.stderr)
             if usou_av and pausa_s > 0:
@@ -340,7 +380,7 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             except Exception as e:
                 print(f"[capex] alpha vantage falhou em {t}: {type(e).__name__}: {e}",
                       file=sys.stderr)
-            if len(linhas) < profundidade_minima:
+            if _profundidade_apos_mesclar(linhas, no_disco) < profundidade_minima:
                 rasos.append(t)
         if linhas:
             por_empresa[t] = linhas
@@ -388,7 +428,8 @@ def montar(tickers=None, *, bruto_anterior=None, **kw) -> dict:
     `mesclar_bruto` para o motivo de a mesclagem não ser opcional na
     prática."""
     alvo = list(tickers) if tickers else [t for t, _ in HYPERSCALERS]
-    col = coletar(alvo, **kw)
+    # O guardado entra na DECISÃO de gastar cota, não nos dados coletados.
+    col = coletar(alvo, guardado=bruto_anterior or {}, **kw)
     por_empresa = mesclar_bruto(bruto_anterior or {}, col["porEmpresa"])
 
     profundidade = kw.get("profundidade_minima", PROFUNDIDADE_MINIMA)
