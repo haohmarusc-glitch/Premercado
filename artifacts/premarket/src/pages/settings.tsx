@@ -344,7 +344,7 @@ export default function Settings() {
                 <tr className="text-xs text-muted-foreground uppercase border-b border-border">
                   <th className="text-left py-1.5 pr-2">Provedor</th>
                   <th className="text-right py-1.5 px-2">Custo</th>
-                  <th className="text-right py-1.5 px-2">Runs</th>
+                  <th className="text-right py-1.5 px-2">Execuções</th>
                   <th className="text-right py-1.5 pl-2">Chamadas</th>
                 </tr>
               </thead>

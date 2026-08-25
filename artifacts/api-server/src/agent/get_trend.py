@@ -117,29 +117,26 @@ NEGATIVE = [
 _POSITIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in POSITIVE) + r")\b")
 _NEGATIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in NEGATIVE) + r")\b")
 
-# ── Tradução via endpoint gratuito do Google Translate (sem API key) ─────────
-# Mesma abordagem de get_news_feed.py — só as headlines destacadas (ao usuário)
-# são traduzidas; a classificação de sentimento usa o título original em inglês.
+# ── Tradução das manchetes (agent/traducao.py) ───────────────────────────────
+# Só as headlines destacadas (ao usuário) são traduzidas; a classificação de
+# sentimento usa o título original em inglês.
+#
+# Este arquivo tinha a SUA PRÓPRIA cópia da chamada ao endpoint gratuito do
+# Google, dentro de `except: pass`. Quando esse endpoint passou a devolver 429
+# (bloqueio de tráfego automatizado), o conserto de 25/08/2026 criou
+# agent/traducao.py -- cache em disco -> Google -> LLM da cadeia -- e migrou
+# get_news_feed.py. As cópias daqui e de get_market_alerts_snapshot.py ficaram
+# para trás e seguiram devolvendo inglês em silêncio, porque copiar o padrão é
+# fácil e migrar todas as cópias exige procurar por elas.
 def _translate_join(texts: list[str]) -> list[str]:
     if not texts:
         return texts
-    joined = "\n".join(texts)
     try:
-        r = SESSION.get(
-            "https://translate.googleapis.com/translate_a/single",
-            params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=12,
-        )
-        r.raise_for_status()
-        data = r.json()
-        translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
-        lines = translated.split("\n")
-        if len(lines) == len(texts):
-            return [ln.strip() for ln in lines]
-    except Exception:
-        pass
-    return texts
+        from traducao import traduzir
+    except ImportError:
+        from agent.traducao import traduzir
+    traduzidos, _origens = traduzir(list(texts))
+    return traduzidos
 
 def news_sentiment(ticker: str, max_items: int = 8) -> dict:
     try:

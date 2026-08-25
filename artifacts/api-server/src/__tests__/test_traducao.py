@@ -200,3 +200,86 @@ def test_llm_aceita_array_embrulhado_em_markdown(tmp_path, monkeypatch):
     )
     monkeypatch.setitem(__import__("sys").modules, "provider", fake_provider)
     assert traducao._llm(["a", "b"]) == ["um", "dois"]
+
+
+# ── o ponto único é único mesmo ──────────────────────────────────────────────
+
+def test_so_traducao_py_fala_com_o_google():
+    """O conserto de 25/08/2026 criou este módulo e migrou get_news_feed.py --
+    mas get_trend.py e get_market_alerts_snapshot.py tinham CÓPIAS da mesma
+    chamada, e seguiram devolvendo inglês em silêncio quando o endpoint
+    passou a responder 429. Copiar o padrão é fácil; achar todas as cópias
+    depois, não. Este teste faz a procura no lugar de quem vier depois."""
+    import pathlib
+    from agent import traducao
+    agente = pathlib.Path(traducao.__file__).parent
+    culpados = [py.name for py in agente.rglob("*.py")
+                if py.name != "traducao.py"
+                and "translate.googleapis.com" in py.read_text(encoding="utf-8")]
+    assert culpados == [], (
+        f"tradução fora do ponto único em {culpados} -- quando o Google cai, "
+        f"essas telas voltam ao inglês sem avisar")
+
+
+# ── lote que falha não pode derrubar o que traduziria ────────────────────────
+
+def test_lote_ruim_e_dividido_em_vez_de_perdido(tmp_path):
+    """Tudo-ou-nada devolvia ao inglês manchetes que traduziriam sem
+    problema: basta UMA resposta malformada no lote."""
+    def _llm_chato(textos):
+        # Falha em qualquer lote que contenha o texto problemático.
+        if any("veneno" in t for t in textos):
+            return None
+        return [f"[pt] {t}" for t in textos]
+
+    entrada = ["bom um", "bom dois", "veneno", "bom três"]
+    saida, origens = traducao.traduzir(
+        entrada, google=lambda t: None, llm=_llm_chato,
+        cache_path=str(tmp_path / "cache.json"))
+    assert saida[0] == "[pt] bom um" and saida[3] == "[pt] bom três"
+    assert saida[2] == "veneno", "o item ruim fica no original"
+    assert origens == ["llm", "llm", "original", "llm"]
+
+
+def test_divisao_nao_recursiona_sem_fim(tmp_path):
+    chamadas = []
+
+    def _sempre_falha(textos):
+        chamadas.append(len(textos))
+        return None
+
+    entrada = [f"texto {i}" for i in range(8)]
+    saida, origens = traducao.traduzir(
+        entrada, google=lambda t: None, llm=_sempre_falha,
+        cache_path=str(tmp_path / "cache.json"))
+    assert saida == entrada and set(origens) == {"original"}
+    assert len(chamadas) < 40, f"divisão descontrolada: {len(chamadas)} chamadas"
+
+
+def test_teto_de_tokens_acompanha_o_tamanho_do_lote():
+    """max_tokens fixo em 2000 raspava o teto num lote cheio: a resposta vinha
+    truncada, o array não fechava e o lote inteiro era descartado. O português
+    sai mais comprido que o inglês, e o JSON ainda cobra aspas e vírgulas."""
+    vistos = {}
+
+    class _Resp:
+        content = [type("B", (), {"type": "text", "text": '["a"]'})()]
+
+    class _Cliente:
+        models = {"flash": "m"}
+
+        def create(self, **kw):
+            vistos.update(kw)
+            return _Resp()
+
+    import sys as _sys
+    import types
+    _sys.modules["provider"] = types.SimpleNamespace(
+        get_client=lambda: _Cliente(),
+        texto_da_resposta=lambda r: '["a"]')
+    try:
+        traducao._llm(["x" * 3500])
+        assert vistos["max_tokens"] > 2000, (
+            f"teto de {vistos['max_tokens']} para 3500 chars volta a truncar")
+    finally:
+        _sys.modules.pop("provider", None)

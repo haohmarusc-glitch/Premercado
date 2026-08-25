@@ -96,29 +96,22 @@ _QUOTED_RE = re.compile(r'"([^"]{8,})"')
 
 
 def _translate_batch(texts: list[str]) -> list[str]:
-    """en->pt-BR via endpoint gratuito do Google Translate (mesmo padrão de
-    get_news_feed.py). Uma única requisição pra todas as manchetes da run.
-    Retorna os originais se algo falhar (timeout, rede bloqueada, etc.)."""
+    """en->pt-BR via agent/traducao.py (cache em disco -> Google -> LLM).
+
+    Era uma cópia local da chamada ao endpoint gratuito do Google, dentro de
+    try/except -- quando ele passou a responder 429, as manchetes citadas nos
+    alertas voltaram ao inglês sem que nada aparecesse. A migração para o
+    ponto único ficou para trás em 25/08/2026 porque o conserto olhou só
+    get_news_feed.py; esta cópia e a de get_trend.py só apareceram no sweep
+    seguinte."""
     if not texts:
         return texts
-    from agent.http_retry import SESSION
-    joined = "\n".join(texts)
     try:
-        r = SESSION.get(
-            "https://translate.googleapis.com/translate_a/single",
-            params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=12,
-        )
-        r.raise_for_status()
-        data = r.json()
-        translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
-        lines = translated.split("\n")
-        if len(lines) == len(texts):
-            return [ln.strip() for ln in lines]
-    except Exception as e:
-        print(f"[get_market_alerts_snapshot] translation failed: {e}", file=sys.stderr)
-    return texts
+        from traducao import traduzir
+    except ImportError:
+        from agent.traducao import traduzir
+    traduzidos, _origens = traduzir(list(texts))
+    return traduzidos
 
 
 def _translate_alert_headlines(alerts: list) -> None:

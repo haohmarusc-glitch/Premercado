@@ -40,6 +40,11 @@ CACHE_PATH = os.environ.get("TRADUCAO_CACHE_PATH") or "/var/cache/premercado/tra
 MAX_ENTRADAS = 3000
 LIMITE_LOTE_CHARS = 3500
 
+# Quantas vezes um lote que falhou pode ser dividido ao meio antes de desistir
+# (ver _tentar_lote). Cinco divisões cobrem lotes de até 32 textos até o item
+# isolado -- além disso o gasto de tentativas não compensa o que se recupera.
+_MAX_DIVISOES = 5
+
 
 def _chave(texto: str) -> str:
     return hashlib.sha1(re.sub(r"\s+", " ", texto).strip().encode("utf-8")).hexdigest()[:16]
@@ -128,9 +133,17 @@ def _llm(textos: list) -> list | None:
             from agent.provider import get_client, texto_da_resposta
         client = get_client()
         modelo = client.models.get("flash") or next(iter(client.models.values()))
+        # Teto dimensionado pela ENTRADA, não fixo. Era 2000 para lotes de até
+        # LIMITE_LOTE_CHARS: o português sai ~20% mais comprido que o inglês,
+        # acentuação tokeniza pior, e o array JSON ainda cobra aspas, vírgulas
+        # e escapes. Um lote cheio raspava o teto, e o efeito de raspar é
+        # traiçoeiro -- a resposta vem truncada, o array não fecha, o lote
+        # inteiro é descartado e TUDO volta em inglês. Melhor gastar teto
+        # sobrando do que perder o lote.
+        teto = max(1200, int(sum(len(t) for t in textos) / 2) + 400)
         resp = client.create(
             model=modelo,
-            max_tokens=2000,
+            max_tokens=teto,
             system=_SYSTEM_TRADUCAO,
             tools=[],
             messages=[{"role": "user", "content": json.dumps(textos, ensure_ascii=False)}],
@@ -167,6 +180,31 @@ def _lotes(textos: list, limite: int = LIMITE_LOTE_CHARS) -> list:
     return lotes
 
 
+def _tentar_lote(fn, lote_idx: list, textos: list, saida: list, origens: list,
+                 novos: dict, camada: str, profundidade: int = 0) -> list:
+    """Aplica `fn` ao lote; se falhar, tenta as duas metades. Devolve os
+    índices que continuaram sem tradução.
+
+    Sem a divisão, um lote é tudo-ou-nada: uma única resposta malformada
+    devolve ao inglês manchetes que teriam traduzido sem problema. Dividir
+    troca uma falha total por uma parcial, e o custo é limitado -- a recursão
+    para em lotes de um item, então são no máximo ~log2(n) tentativas extras
+    no caminho ruim e ZERO no caminho bom, que é o normal."""
+    traduzidos = fn([textos[i] for i in lote_idx])
+    if traduzidos is not None:
+        for i, tr in zip(lote_idx, traduzidos):
+            saida[i], origens[i] = tr, camada
+            novos[_chave(textos[i])] = tr
+        return []
+    if len(lote_idx) <= 1 or profundidade >= _MAX_DIVISOES:
+        return list(lote_idx)
+    meio = len(lote_idx) // 2
+    return (_tentar_lote(fn, lote_idx[:meio], textos, saida, origens, novos,
+                         camada, profundidade + 1)
+            + _tentar_lote(fn, lote_idx[meio:], textos, saida, origens, novos,
+                           camada, profundidade + 1))
+
+
 def traduzir(textos: list, *, google=_google, llm=_llm,
              cache_path: str = CACHE_PATH, usar_llm: bool = True) -> tuple:
     """(traduzidos, origens) — origens[i] ∈ cache|google|llm|original|vazio.
@@ -197,13 +235,8 @@ def traduzir(textos: list, *, google=_google, llm=_llm,
             continue
         restantes = []
         for lote_idx in _lotes_de_indices(pendentes, textos):
-            traduzidos = fn([textos[i] for i in lote_idx])
-            if traduzidos is None:
-                restantes.extend(lote_idx)
-                continue
-            for i, tr in zip(lote_idx, traduzidos):
-                saida[i], origens[i] = tr, camada
-                novos[_chave(textos[i])] = tr
+            restantes.extend(_tentar_lote(fn, lote_idx, textos, saida,
+                                          origens, novos, camada))
         pendentes = restantes
 
     if pendentes:

@@ -57,7 +57,7 @@ export default function ShortPage() {
                 <th className="text-right px-3 py-2.5">Preço</th>
                 <th className="text-right px-3 py-2.5">Short % Float</th>
                 <th className="text-right px-3 py-2.5">Days to Cover</th>
-                <th className="text-right px-3 py-2.5">Shares Short</th>
+                <th className="text-right px-3 py-2.5">Ações vendidas a descoberto</th>
                 <th className="text-right px-3 py-2.5">Δ vs mês ant.</th>
                 <th className="text-left px-3 py-2.5">Risco Squeeze</th>
               </tr>

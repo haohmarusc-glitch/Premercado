@@ -59,8 +59,8 @@ export default function OptionsPage() {
                 <th className="text-right px-3 py-2.5">Put/Call</th>
                 <th className="text-left px-3 py-2.5">Sentimento</th>
                 <th className="text-right px-3 py-2.5">IV ATM</th>
-                <th className="text-right px-3 py-2.5">Vol Calls</th>
-                <th className="text-right px-3 py-2.5">Vol Puts</th>
+                <th className="text-right px-3 py-2.5">Vol. calls</th>
+                <th className="text-right px-3 py-2.5">Vol. puts</th>
               </tr>
             </thead>
             <tbody>

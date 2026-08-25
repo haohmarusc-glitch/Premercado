@@ -839,7 +839,7 @@ export default function BacktestPage() {
           )}
           {strategy === "confluencia" && (
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-mono text-muted-foreground uppercase">Threshold do Score</label>
+              <label className="text-[10px] font-mono text-muted-foreground uppercase">Limiar do score</label>
               <input
                 type="number" step="5" min="5" max="100" value={scoreThreshold}
                 onChange={(e) => setScoreThreshold(e.target.value)}
@@ -976,7 +976,7 @@ export default function BacktestPage() {
                 { label: "Retorno Total", value: `${portfolioResult.totalReturn >= 0 ? "+" : ""}${portfolioResult.totalReturn.toFixed(2)}%`, color: portfolioResult.totalReturn >= 0 ? "text-green-400" : "text-red-400" },
                 { label: "B&H Equal-Weight", value: `${portfolioResult.buyAndHoldReturn >= 0 ? "+" : ""}${portfolioResult.buyAndHoldReturn.toFixed(2)}%`, color: portfolioResult.buyAndHoldReturn >= 0 ? "text-green-400" : "text-red-400" },
                 { label: "CAGR", value: `${portfolioResult.cagr >= 0 ? "+" : ""}${portfolioResult.cagr.toFixed(2)}%`, color: portfolioResult.cagr >= 0 ? "text-green-400" : "text-red-400" },
-                { label: "Sharpe Ratio", value: portfolioResult.sharpe.toFixed(2), color: portfolioResult.sharpe >= 1 ? "text-green-400" : portfolioResult.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
+                { label: "Índice de Sharpe", value: portfolioResult.sharpe.toFixed(2), color: portfolioResult.sharpe >= 1 ? "text-green-400" : portfolioResult.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="border border-border rounded-lg bg-card p-4">
                   <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
@@ -986,8 +986,8 @@ export default function BacktestPage() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { label: "Max Drawdown", value: `${portfolioResult.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
-                { label: "Win Rate", value: portfolioResult.totalTrades > 0 ? `${portfolioResult.winRate}%` : "—", color: portfolioResult.winRate > 50 ? "text-green-400" : "text-yellow-400" },
+                { label: "Drawdown máx.", value: `${portfolioResult.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
+                { label: "Taxa de acerto", value: portfolioResult.totalTrades > 0 ? `${portfolioResult.winRate}%` : "—", color: portfolioResult.winRate > 50 ? "text-green-400" : "text-yellow-400" },
                 { label: "Sortino", value: fmtMetrica(portfolioResult.sortino), color: (portfolioResult.sortino ?? 0) >= 1 ? "text-green-400" : "text-yellow-400" },
                 { label: "Calmar", value: fmtMetrica(portfolioResult.calmar), color: (portfolioResult.calmar ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
               ].map(({ label, value, color }) => (
@@ -1157,9 +1157,9 @@ export default function BacktestPage() {
                     <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Ticker</th>
                     <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Retorno</th>
                     <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Buy&Hold</th>
-                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Trades</th>
-                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Win Rate</th>
-                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Max DD</th>
+                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Operações</th>
+                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Taxa de acerto</th>
+                    <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Drawdown máx.</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1193,8 +1193,8 @@ export default function BacktestPage() {
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Tickers</th>
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Retorno Médio</th>
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Buy&Hold Médio</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Trades</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Win Rate</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Operações</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Taxa de acerto</th>
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Bateu B&H</th>
                     </tr>
                   </thead>
@@ -1260,7 +1260,7 @@ export default function BacktestPage() {
                 { label: "Retorno Total", value: `${result.totalReturn >= 0 ? "+" : ""}${result.totalReturn.toFixed(2)}%`, color: result.totalReturn >= 0 ? "text-green-400" : "text-red-400" },
                 { label: "Buy & Hold", value: `${result.buyAndHoldReturn >= 0 ? "+" : ""}${result.buyAndHoldReturn.toFixed(2)}%`, color: result.buyAndHoldReturn >= 0 ? "text-green-400" : "text-red-400" },
                 { label: "CAGR", value: `${result.cagr >= 0 ? "+" : ""}${result.cagr.toFixed(2)}%`, color: result.cagr >= 0 ? "text-green-400" : "text-red-400" },
-                { label: "Sharpe Ratio", value: result.sharpe.toFixed(2), color: result.sharpe >= 1 ? "text-green-400" : result.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
+                { label: "Índice de Sharpe", value: result.sharpe.toFixed(2), color: result.sharpe >= 1 ? "text-green-400" : result.sharpe >= 0 ? "text-yellow-400" : "text-red-400" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="border border-border rounded-lg bg-card p-4">
                   <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
@@ -1270,8 +1270,8 @@ export default function BacktestPage() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { label: "Max Drawdown", value: `${result.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
-                { label: "Win Rate", value: `${result.winRate}%`, color: result.winRate > 50 ? "text-green-400" : "text-yellow-400" },
+                { label: "Drawdown máx.", value: `${result.maxDrawdown.toFixed(2)}%`, color: "text-red-400" },
+                { label: "Taxa de acerto", value: `${result.winRate}%`, color: result.winRate > 50 ? "text-green-400" : "text-yellow-400" },
                 { label: "Média Ganho", value: `+${result.avgWin.toFixed(2)}%`, color: "text-green-400" },
                 { label: "Média Perda", value: `${result.avgLoss.toFixed(2)}%`, color: "text-red-400" },
               ].map(({ label, value, color }) => (
@@ -1289,8 +1289,8 @@ export default function BacktestPage() {
                 {[
                   { label: "Sortino", value: fmtMetrica(result.sortino), color: (result.sortino ?? 0) >= 1 ? "text-green-400" : "text-yellow-400" },
                   { label: "Calmar", value: fmtMetrica(result.calmar), color: (result.calmar ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
-                  { label: "Profit Factor", value: fmtMetrica(result.profitFactor), color: (result.profitFactor ?? 0) >= 1 ? "text-green-400" : "text-red-400" },
-                  { label: "Expectancy", value: result.expectancy == null ? "—" : `${result.expectancy >= 0 ? "+" : ""}${result.expectancy.toFixed(2)}%`, color: (result.expectancy ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
+                  { label: "Fator de lucro", value: fmtMetrica(result.profitFactor), color: (result.profitFactor ?? 0) >= 1 ? "text-green-400" : "text-red-400" },
+                  { label: "Expectativa por operação", value: result.expectancy == null ? "—" : `${result.expectancy >= 0 ? "+" : ""}${result.expectancy.toFixed(2)}%`, color: (result.expectancy ?? 0) >= 0 ? "text-green-400" : "text-red-400" },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="border border-border rounded-lg bg-card p-4">
                     <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1">{label}</div>
@@ -1597,9 +1597,9 @@ export default function BacktestPage() {
                       <th className="text-left px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Valor</th>
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Retorno</th>
                       <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Sharpe</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Max DD</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Trades</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Win Rate</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Drawdown máx.</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Operações</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] text-muted-foreground uppercase">Taxa de acerto</th>
                     </tr>
                   </thead>
                   <tbody>

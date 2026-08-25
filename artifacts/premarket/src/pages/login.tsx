@@ -42,7 +42,7 @@ export default function LoginPage() {
           <Activity className="h-6 w-6" />
           <span>PRÉ-MERCADO</span>
         </div>
-        <p className="text-xs text-muted-foreground mb-6">Agent Command Center</p>
+        <p className="text-xs text-muted-foreground mb-6">Central de comando do agente</p>
 
         <div className="flex gap-1 mb-5 border border-border rounded-md p-1">
           {([
