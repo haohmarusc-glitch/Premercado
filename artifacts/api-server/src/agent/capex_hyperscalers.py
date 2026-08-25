@@ -70,6 +70,18 @@ HYPERSCALERS = [
 DIAS_ATE_DIVULGAR = 45
 TRIMESTRES_GUARDADOS = 12
 
+# Profundidade mínima por empresa. Descoberto na PRIMEIRA rodada real
+# (25/08/2026): o yfinance devolve só ~4-5 trimestres de fluxo de caixa, e
+# com isso (a) a variação a/a fica indisponível -- precisa de 5 trimestres --
+# e (b) exigir que as CINCO empresas tenham o mesmo trimestre deixou apenas
+# TRÊS trimestres completos, todos "acelerando": o experimento de regime não
+# tinha lado de contraste para medir. A Alpha Vantage devolve 81 trimestres.
+# Por isso a cascata deixou de ser "yfinance OU AV" e virou "yfinance,
+# COMPLEMENTADO pela AV quando o histórico é raso": a fonte rápida e sem cota
+# continua servindo o trimestre recente, e a cota só é gasta pela
+# profundidade que ela é a única a ter.
+PROFUNDIDADE_MINIMA = 10
+
 
 # ── conta pura ───────────────────────────────────────────────────────────────
 
@@ -218,6 +230,20 @@ def _do_alpha_vantage(ticker: str) -> list:
     chave = _api_key()
     if not chave:
         return []
+    # A cota é de 15/dia e compartilhada com o calendário de earnings e as
+    # notícias. Debitar é o ponto: orçamento que alguém não debita é
+    # orçamento que não protege ninguém (mesma regra de
+    # atualizar_earnings.py). Cinco chamadas por SEMANA cabem com folga --
+    # mas só se estiverem contadas.
+    try:
+        from provider_health import consumir_orcamento_diario
+    except ImportError:
+        from agent.provider_health import consumir_orcamento_diario
+    orcamento = int(os.environ.get("AGENT_ALPHAVANTAGE_MAX_DIA", "15"))
+    if not consumir_orcamento_diario("alphavantage", orcamento):
+        print(f"[capex] cota diária da Alpha Vantage ({orcamento}) esgotada — "
+              f"{ticker} fica com o histórico raso do yfinance", file=sys.stderr)
+        return []
     r = SESSION.get("https://www.alphavantage.co/query",
                     params={"function": "CASH_FLOW", "symbol": ticker, "apikey": chave},
                     timeout=20)
@@ -237,29 +263,55 @@ def _do_alpha_vantage(ticker: str) -> list:
     return saida
 
 
-def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage) -> dict:
+def combinar(principal: list, complemento: list) -> list:
+    """Une as duas fontes por trimestre, com a PRINCIPAL vencendo o empate.
+
+    O yfinance é a fonte primária (rápida, sem cota) e cobre o trimestre
+    recente; a Alpha Vantage entra pela profundidade. Onde as duas têm o
+    mesmo trimestre, fica o valor do yfinance -- trocar a fonte de um
+    trimestre para o outro no meio da série criaria degrau artificial na
+    variação t/t, que é justamente o número que se lê aqui."""
+    por_trimestre = {l["trimestre"]: l for l in complemento if l.get("trimestre")}
+    por_trimestre.update({l["trimestre"]: l for l in principal if l.get("trimestre")})
+    return sorted(por_trimestre.values(), key=lambda l: l["trimestre"])
+
+
+def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
+            profundidade_minima: int = PROFUNDIDADE_MINIMA) -> dict:
     """{ticker: [linhas]} + relatório de falhas. Funções injetáveis para a
-    suíte exercitar a cascata sem rede."""
+    suíte exercitar a cascata sem rede.
+
+    A AV é chamada quando o yfinance vem VAZIO ou RASO -- ver
+    PROFUNDIDADE_MINIMA para o incidente que motivou o "raso"."""
     alvo = tickers or [t for t, _ in HYPERSCALERS]
-    por_empresa, falhas = {}, []
+    por_empresa, falhas, rasos = {}, [], []
     for t in alvo:
         linhas = []
         try:
             linhas = yf_fn(t)
         except Exception as e:
             print(f"[capex] yfinance falhou em {t}: {type(e).__name__}: {e}", file=sys.stderr)
-        if not linhas:
-            print(f"[capex] {t}: sem capex no yfinance, tentando Alpha Vantage", file=sys.stderr)
+        if len(linhas) < profundidade_minima:
+            motivo = ("sem capex no yfinance" if not linhas
+                      else f"só {len(linhas)} trimestres no yfinance "
+                           f"(mínimo {profundidade_minima} para variação a/a e regime)")
+            print(f"[capex] {t}: {motivo}, complementando com Alpha Vantage", file=sys.stderr)
             try:
-                linhas = av_fn(t)
+                linhas = combinar(linhas, av_fn(t))
             except Exception as e:
-                print(f"[capex] alpha vantage falhou em {t}: {type(e).__name__}: {e}", file=sys.stderr)
+                print(f"[capex] alpha vantage falhou em {t}: {type(e).__name__}: {e}",
+                      file=sys.stderr)
+            if len(linhas) < profundidade_minima:
+                rasos.append(t)
         if linhas:
             por_empresa[t] = linhas
         else:
             falhas.append(t)
             print(f"[capex] {t}: SEM DADO nas duas fontes", file=sys.stderr)
-    return {"porEmpresa": por_empresa, "falhas": falhas}
+    if rasos:
+        print(f"[capex] histórico ainda raso em {', '.join(rasos)} -- variação a/a e "
+              f"experimento de regime ficam limitados", file=sys.stderr)
+    return {"porEmpresa": por_empresa, "falhas": falhas, "rasos": rasos}
 
 
 def montar(tickers=None, **kw) -> dict:
@@ -271,6 +323,7 @@ def montar(tickers=None, **kw) -> dict:
         "empresasPedidas": len(tickers or HYPERSCALERS),
         "empresasComDado": len(col["porEmpresa"]),
         "falhas": col["falhas"],
+        "historicoRaso": col.get("rasos", []),
         "fontes": fontes,
         "trimestres": agregado,
         "resumo": resumo(agregado),
@@ -330,9 +383,10 @@ if __name__ == "__main__":
         sys.exit(0)
     r = dados["resumo"]
     if r.get("disponivel"):
+        yoy = f"{r['variacaoYoYPct']}%" if r.get("variacaoYoYPct") is not None else "indisponível"
         print(f"{r['trimestre']}: US$ {r['totalUsdBi']} bi de capex somado "
               f"({len(r['empresas'])} empresas) — {r['direcao']} "
-              f"(t/t {r['variacaoQoQPct']}%, a/a {r['variacaoYoYPct']}%)")
+              f"(t/t {r['variacaoQoQPct']}%, a/a {yoy})")
     else:
         print(f"sem trimestre completo: {r.get('nota')}")
     if dados["falhas"]:

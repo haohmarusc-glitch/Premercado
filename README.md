@@ -714,6 +714,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #370 | Cartão da análise 8 linkava `/sector-ai` (nome do arquivo) em vez de `/setor/ia` (rota real) — 404 no clique; teste passa a cobrar cada destino contra as rotas do App |
 | #371 | Manchetes voltaram ao inglês em silêncio (Google Translate grátis passou a responder 429 dentro de um `except: pass`): tradução ganha cache em disco, fallback de LLM, motivo no log e selo "original em inglês" na tela |
 | #372 | A tese de IA/data center vira dado: capex dos hiperescaladores como fato datado no Veredito (com razão checável), fator de energia na análise 9 e o experimento de regime com critério declarado antes |
+| #373 | Primeira rodada real do capex expôs histórico raso (yfinance dá ~4 trimestres, Alpha Vantage 81): a cascata passa a COMPLEMENTAR por profundidade, com a cota debitada |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1317,3 +1318,35 @@ declarada é que reprove por amostra: capex dá ~4 pontos por ano. Se reprovar,
 fica registrado que reprovou, e a tese segue valendo como contexto medido —
 que é onde ela já está. Se passar, o desfecho não é ligar nada: é levar ao
 walk-forward com embargo antes de qualquer mudança de decisão.
+
+### 25/08/2026 (parte 3) — a primeira rodada do capex, e o que ela revelou
+
+O coletor entregou o número certo já na estreia: **US$ 148,4 bi de capex
+somado em 2026Q1, cinco empresas, +13,6% t/t**. Mas dois sintomas na mesma
+saída apontaram um defeito meu: a variação **a/a veio indisponível**, e o
+experimento de regime encontrou apenas **três trimestres completos — os três
+"acelerando"**, ou seja, sem lado de contraste para medir.
+
+Mesma causa: o yfinance devolve só ~4-5 trimestres de fluxo de caixa. A
+variação a/a precisa de cinco; exigir que as CINCO empresas tenham o mesmo
+trimestre come o resto. A Alpha Vantage devolve **81 trimestres** — e a
+minha cascata só a chamava quando o yfinance vinha *vazio*, nunca quando
+vinha *raso*.
+
+Corrigido em #373: a cascata passou de "yfinance OU Alpha Vantage" para
+"yfinance, **complementado** pela AV quando o histórico é raso". A fonte
+rápida e sem cota continua servindo o trimestre recente; a cota só é gasta
+pela profundidade que ela é a única a ter — e agora é **debitada** do
+orçamento compartilhado (a mesma regra do calendário de earnings: orçamento
+que ninguém debita não protege ninguém). No empate de trimestre o yfinance
+vence, porque trocar de fonte no meio da série criaria degrau artificial
+justo na variação t/t, que é o número que se lê.
+
+O ponto de método: o experimento **reprovou como previsto**, mas o critério
+mostrou *por quê* — "amostra de trimestres insuficiente (acelerando=3,
+resto=0)". Fosse um p-valor solto, teria virado "sem efeito"; com o critério
+declarado antes, virou um diagnóstico acionável sobre a FONTE, não uma
+conclusão errada sobre a tese. E fica registrada a possibilidade real de que,
+mesmo com histórico fundo, não exista contraste: se o capex acelerou em todo
+trimestre do período de IA, "capex acelerando" é constante na amostra — e
+constante não prevê nada, por construção.

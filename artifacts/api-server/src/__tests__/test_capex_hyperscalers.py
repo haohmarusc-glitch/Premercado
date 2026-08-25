@@ -114,19 +114,52 @@ def test_sem_trimestre_completo_declara_em_vez_de_inventar():
 
 # ── cascata de fontes ────────────────────────────────────────────────────────
 
-def test_alpha_vantage_so_e_chamada_quando_o_yfinance_falha():
-    """A cota da AV é de 15/dia e já é disputada por earnings e notícias --
-    gastar cinco chamadas aqui trocaria fato novo por fato existente."""
+def test_yfinance_profundo_dispensa_a_alpha_vantage():
+    """A cota da AV é de 15/dia e disputada com earnings e notícias: quando o
+    yfinance já traz histórico suficiente, não se gasta chamada."""
+    fundo = [_linha(f"202{a}-{m}-28", 30e9) for a in range(3, 6) for m in ("03", "06", "09", "12")]
     chamou_av = []
-    cx.coletar(["MSFT"], yf_fn=lambda t: [_linha("2026-06-30", 35e9)],
-               av_fn=lambda t: chamou_av.append(t) or [])
+    cx.coletar(["MSFT"], yf_fn=lambda t: fundo, av_fn=lambda t: chamou_av.append(t) or [])
     assert chamou_av == []
+
+
+def test_yfinance_raso_e_complementado_pela_alpha_vantage(capsys):
+    """O incidente da primeira rodada real (25/08/2026): o yfinance devolve
+    ~4-5 trimestres, e com isso a variação a/a some e o experimento de regime
+    fica sem lado de contraste. A AV tem 81 trimestres -- ela entra pela
+    PROFUNDIDADE, não só quando a primária falha."""
+    raso = [_linha("2026-03-31", 35e9), _linha("2026-06-30", 40e9)]
+    profundo = [_linha(f"202{a}-{m}-28", 20e9) for a in range(3, 6) for m in ("03", "06", "09", "12")]
+    col = cx.coletar(["MSFT"], yf_fn=lambda t: raso, av_fn=lambda t: profundo)
+    linhas = col["porEmpresa"]["MSFT"]
+    assert len(linhas) > len(raso), "a série tem que ficar mais funda"
+    assert "só 2 trimestres no yfinance" in capsys.readouterr().err
+
+
+def test_no_empate_de_trimestre_o_yfinance_vence():
+    """Trocar a fonte no meio da série criaria degrau artificial justamente
+    na variação t/t, que é o número que se lê."""
+    yf = [{**_linha("2026-06-30", 40e9), "fonte": "yfinance"}]
+    av = [{**_linha("2026-06-30", 39e9), "fonte": "alpha_vantage"},
+          {**_linha("2026-03-31", 30e9), "fonte": "alpha_vantage"}]
+    combinado = cx.combinar(yf, av)
+    por_t = {l["trimestre"]: l for l in combinado}
+    assert por_t["2026Q2"]["capexUsd"] == 40e9
+    assert por_t["2026Q2"]["fonte"] == "yfinance"
+    assert len(combinado) == 2, "o trimestre que só a AV tem entra"
+
+
+def test_historico_ainda_raso_e_declarado(capsys):
+    col = cx.coletar(["MSFT"], yf_fn=lambda t: [_linha("2026-06-30", 35e9)],
+                     av_fn=lambda t: [])
+    assert col["rasos"] == ["MSFT"]
+    assert "histórico ainda raso" in capsys.readouterr().err
 
 def test_cai_para_alpha_vantage_quando_o_yfinance_vem_vazio(capsys):
     col = cx.coletar(["MSFT"], yf_fn=lambda t: [],
                      av_fn=lambda t: [_linha("2026-06-30", 35e9, fonte="alpha_vantage")])
     assert col["porEmpresa"]["MSFT"][0]["fonte"] == "alpha_vantage"
-    assert "tentando Alpha Vantage" in capsys.readouterr().err
+    assert "sem capex no yfinance" in capsys.readouterr().err
 
 def test_ticker_sem_dado_nas_duas_fontes_e_declarado(capsys):
     col = cx.coletar(["XYZ"], yf_fn=lambda t: [], av_fn=lambda t: [])
