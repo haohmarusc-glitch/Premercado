@@ -218,3 +218,52 @@ def test_prompt_do_veredito_especifica_o_bloco():
     assert '"reason_codes"' in trecho
     for acao in ("COMPRAR", "AGUARDAR", "VENDER"):
         assert acao in trecho
+
+
+# ── capex: a tese de data center como razão CHECÁVEL (25/08/2026) ────────────
+
+def _snap_capex(direcao="acelerando"):
+    return _snapshot(capex_hyperscalers={
+        "disponivel": True, "trimestre": "2026Q2", "totalUsdBi": 152.4,
+        "variacaoQoQPct": 16.0 if direcao == "acelerando" else -12.0,
+        "variacaoYoYPct": 80.0, "direcao": direcao,
+        "disponivelEm": "2026-08-14", "empresas": ["AMZN", "GOOGL", "META", "MSFT", "ORCL"],
+    })
+
+
+def test_capex_acelerando_com_o_dado_acelerando_passa():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAPEX_ACELERANDO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_capex("acelerando"))
+    assert "BLOCO_CAPEX_CONTRADITO" not in _erros(rep)
+    assert "BLOCO_REASON_DESCONHECIDO" not in _codigos(rep)
+
+
+def test_capex_acelerando_com_o_dado_desacelerando_e_erro():
+    """Sem esta checagem, CAPEX_ACELERANDO viraria o rótulo bonito que
+    justifica qualquer compra -- a tese usada como enfeite."""
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAPEX_ACELERANDO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_capex("desacelerando"))
+    assert "BLOCO_CAPEX_CONTRADITO" in _erros(rep)
+
+
+def test_citar_capex_sem_o_dado_no_snapshot_e_erro():
+    """Razão sem fato por trás: o overlay pode estar velho ou ausente, e o
+    modelo não pode preencher a lacuna de memória."""
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAPEX_ACELERANDO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snapshot())  # sem capex
+    assert "BLOCO_CAPEX_SEM_DADO" in _erros(rep)
+
+
+def test_prompt_ensina_o_capex_como_contexto_nao_gatilho():
+    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "agent.py"
+             ).read_text(encoding="utf-8")
+    trecho = fonte.split("def build_veredito_prompt", 1)[1].split("\ndef ", 1)[0]
+    assert "capex_hyperscalers" in trecho
+    assert "CAPEX_ACELERANDO" in trecho
+    # Sem depender de quebra de linha: o prompt tem que ensinar as duas
+    # coisas -- que é contexto de tese e que NÃO dispara operação.
+    assert "CONTEXTO de tese" in trecho
+    assert "gatilho de operação" in trecho

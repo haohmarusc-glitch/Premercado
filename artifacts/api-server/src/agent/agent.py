@@ -498,6 +498,13 @@ Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
 **NÃO USE:** save_observation, alertas (list/create/delete_alert),
 update_exit_plan_item, create_exit_plan_item, EDGAR, opções.
 
+Quando o snapshot trouxer `capex_hyperscalers`, ele é o capex somado de
+Microsoft, Alphabet, Amazon, Meta e Oracle no último trimestre em que TODAS
+reportaram -- a medida direta do buildout de data centers. Cite o número, o
+trimestre e a variação, e use CAPEX_ACELERANDO/CAPEX_DESACELERANDO só na
+direção que o dado mostra (o validador confere). Ele é CONTEXTO de tese, não
+gatilho de operação: capex trimestral não diz o que o papel faz amanhã.
+
 Cuidado ao usar os termos "distribuição"/"acumulação": distribuição
 institucional é padrão de TOPO (mãos fortes vendendo pra mãos fracas perto
 de uma máxima/exaustão de alta) e acumulação é padrão de FUNDO (mãos fortes
@@ -537,7 +544,8 @@ Formato da resposta (Markdown):
   TENDENCIA_ALTA, TENDENCIA_BAIXA, EARNINGS_PROXIMO, RISCO_CORRELACAO,
   MACRO_ADVERSO, MACRO_FAVORAVEL, SUPORTE_PROXIMO, RESISTENCIA_PROXIMA,
   VOLUME_FRACO, VOLUME_FORTE, VALUATION_ESTICADO, VALUATION_DESCONTADO,
-  RUNUP_ESTICADO, PLANO_DE_SAIDA, SENTIMENTO_EXTREMO, CENARIO_EMPATE.
+  RUNUP_ESTICADO, PLANO_DE_SAIDA, SENTIMENTO_EXTREMO, CENARIO_EMPATE,
+  CAPEX_ACELERANDO, CAPEX_DESACELERANDO.
   (RUNUP_ESTICADO é alta pré-earnings acumulada no preço; VALUATION_ESTICADO
   é múltiplo caro -- não confunda os dois.)
   O bloco e o texto têm que contar a MESMA história: o bloco é a decisão,
@@ -1576,6 +1584,25 @@ def _build_veredito_snapshot(tickers: list[str]) -> dict:
     return {"as_of": as_of, "quotes": quotes, "technicals": technicals, "earnings": earnings}
 
 
+def _capex_do_snapshot() -> dict | None:
+    """Resumo do capex dos hiperescaladores para o snapshot do Veredito.
+
+    Lido do OVERLAY (escrito pelo checker semanal), nunca da rede: o veredito
+    não pode ficar refém de uma cotação de capex no meio da geração. Ausente
+    ou ilegível vira None -- o prompt simplesmente não cita o que não tem.
+    """
+    try:
+        from .capex_hyperscalers import ler_overlay
+        dados = ler_overlay()
+        if not dados:
+            return None
+        r = dados.get("resumo") or {}
+        return r if r.get("disponivel") else None
+    except Exception as e:
+        print(f"[veredito] capex indisponível: {e}", file=sys.stderr, flush=True)
+        return None
+
+
 def run_veredito(progress_callback=None) -> str:
     client = _get_client()
     tickers = config.PORTFOLIO_TICKERS
@@ -1585,6 +1612,13 @@ def run_veredito(progress_callback=None) -> str:
     if progress_callback:
         progress_callback("[Veredito] Validando dados antes da análise...")
     snapshot = _build_veredito_snapshot(tickers)
+    # Capex dos hiperescaladores: a tese de IA/data center como FATO datado
+    # no snapshot, do mesmo jeito que preço e RSI -- e portanto sujeita ao
+    # validador. Sem isso, "a tese está ganhando tração" só existiria como
+    # opinião do modelo.
+    capex = _capex_do_snapshot()
+    if capex:
+        snapshot["capex_hyperscalers"] = capex
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)

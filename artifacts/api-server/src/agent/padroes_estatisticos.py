@@ -73,6 +73,19 @@ FATORES = [
     ("Juros 10y (^TNX)", "^TNX", "variacao_nivel"),
     ("Dólar (UUP)", "UUP", "retorno"),
     ("Volatilidade (^VIX)", "^VIX", "variacao_nivel"),
+    # Energia para data center (25/08/2026). A tese de IA/data center tem um
+    # gargalo físico que virou preço: energia. As geradoras independentes
+    # (VST) passaram a negociar como proxy do buildout, e -- diferente de um
+    # ETF de semis -- NÃO são mecanicamente coladas aos papéis da carteira.
+    # É isso que torna o R² aqui informação nova em vez de tautologia:
+    # regredir NVDA contra SMH responde "semicondutor anda junto?" (sabemos
+    # que sim, 0,82); contra VST responde "quanto deste papel é a tese de
+    # data center e não semis genérico?".
+    #
+    # Limitação declarada: é um NOME, não um índice -- carrega notícia
+    # idiossincrática (regulatória, de contrato) que não é a tese. Por isso
+    # entra como fator medido com R² ao lado, nunca como sinal.
+    ("Energia p/ data center (VST)", "VST", "retorno"),
 ]
 
 

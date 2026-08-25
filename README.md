@@ -713,6 +713,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #369 | Menu "As 10 Análises" com selo de origem por análise, e a análise de padrões (sazonalidade, dia da semana, eventos macro, fatores) com bootstrap, permutação e correção de Holm |
 | #370 | Cartão da análise 8 linkava `/sector-ai` (nome do arquivo) em vez de `/setor/ia` (rota real) — 404 no clique; teste passa a cobrar cada destino contra as rotas do App |
 | #371 | Manchetes voltaram ao inglês em silêncio (Google Translate grátis passou a responder 429 dentro de um `except: pass`): tradução ganha cache em disco, fallback de LLM, motivo no log e selo "original em inglês" na tela |
+| #372 | A tese de IA/data center vira dado: capex dos hiperescaladores como fato datado no Veredito (com razão checável), fator de energia na análise 9 e o experimento de regime com critério declarado antes |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1269,3 +1270,50 @@ porque três consumidores dependiam da função quebrada: o feed de notícias, o
 marcador do gráfico e o Estudo de Entrada/Saída. Consertar só o que o
 usuário viu teria deixado os outros dois quebrados — a lição nº 2b do
 playbook, aprendida no incidente do RSI.
+
+### 25/08/2026 (parte 2) — a tese de IA/data center vira dado
+
+Observação do usuário, e ela estava certa: *"a tese de IA/data centers está
+ganhando tração — um ponto positivo fundamental que não aparece na
+estatística"*. Estatística de preço mede o que já aconteceu; a tração do
+buildout é fundamento. A pergunta foi se dá para virar fator nas análises.
+
+Dá — e o dado existe, limpo e auditável: o capex de quem constrói os data
+centers. A Microsoft sozinha saiu de **US$ 64,6 bi** (ano fiscal 2025) para
+**US$ 115,9 bi** (2026), com o trimestre de junho ainda 16% acima do de
+março. Não é vago; é linha de demonstração financeira.
+
+Foi implementado nas **três** formas pedidas, cada uma no lugar que ela
+aguenta:
+
+**1. Fato datado no Veredito.** `capex_hyperscalers.py` soma MSFT, GOOGL,
+AMZN, META e ORCL por trimestre-calendário (os anos fiscais diferem; os
+trimestres não), com fonte yfinance e Alpha Vantage só de fallback — a cota
+de 15/dia já é disputada por earnings e notícias. Entra no snapshot como
+fato, e portanto **sujeito ao validador**: os reason_codes
+`CAPEX_ACELERANDO`/`CAPEX_DESACELERANDO` só passam se o dado estiver naquela
+direção, e citá-los sem dado no snapshot é erro. Duas armadilhas tratadas
+explicitamente: cada linha carrega `disponivelEm` (o capex do trimestre
+encerrado em 30/06 só existe para o mercado semanas depois — usá-lo antes é
+o mesmo look-ahead do backtest antigo), e trimestre com empresa faltando é
+marcado `completo: false`, porque somar parcial produz uma "queda de capex"
+que é só calendário. Atualização semanal por checker: o dado é trimestral.
+
+**2. Fator diário na análise 9.** Entrou energia (VST). O motivo de ser
+energia e não outro ETF de semis: o gargalo físico do buildout virou preço
+nas geradoras independentes, e elas **não** são mecanicamente coladas à
+carteira — regredir NVDA contra SMH responde "semicondutor anda junto?"
+(sabemos que sim, 0,82); contra VST responde "quanto deste papel é a tese de
+data center e não semis genérico?". Com R² ao lado, como todos os outros.
+
+**3. O multiplicador de decisão — como experimento, não como chave.**
+`scripts/capex_regime_teste.py` mede se o regime de capex separa os retornos,
+com o critério de aprovação **fixado no código antes de qualquer rodada**
+(mesmo protocolo do arquivamento de 20/08): 6+ trimestres e 120+ pregões de
+cada lado, p ≤ 0,05 por permutação, e diferença ≥ 0,05pp/dia — significância
+estatística sem relevância operacional não paga corretagem. O regime diário é
+ancorado na **data de divulgação**, nunca no fim do trimestre. A expectativa
+declarada é que reprove por amostra: capex dá ~4 pontos por ano. Se reprovar,
+fica registrado que reprovou, e a tese segue valendo como contexto medido —
+que é onde ela já está. Se passar, o desfecho não é ligar nada: é levar ao
+walk-forward com embargo antes de qualquer mudança de decisão.
