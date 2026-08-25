@@ -712,6 +712,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #368 | Painel de earnings do Veredito mostrava a data um dia antes (new Date de data-só é meia-noite UTC); RUNUP_ESTICADO promovido ao vocabulário do bloco |
 | #369 | Menu "As 10 Análises" com selo de origem por análise, e a análise de padrões (sazonalidade, dia da semana, eventos macro, fatores) com bootstrap, permutação e correção de Holm |
 | #370 | Cartão da análise 8 linkava `/sector-ai` (nome do arquivo) em vez de `/setor/ia` (rota real) — 404 no clique; teste passa a cobrar cada destino contra as rotas do App |
+| #371 | Manchetes voltaram ao inglês em silêncio (Google Translate grátis passou a responder 429 dentro de um `except: pass`): tradução ganha cache em disco, fallback de LLM, motivo no log e selo "original em inglês" na tela |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1233,3 +1234,38 @@ A sensibilidade a fatores (setor, juros, dólar, VIX) entrou junto porque não
 é caça a padrão escondido, é medição de exposição — com R² ao lado do beta,
 que é o número que impede a leitura errada: beta 1,4 com R² 0,02 significa
 "quando esse fator se move, o papel faz o que quiser".
+
+### 25/08/2026 — a manchete em inglês, e a falha que não gritava
+
+A bolinha amarela de notícia no gráfico apareceu com manchete **em inglês**.
+O feed já traduzia para pt-BR desde sempre — a tradução é que tinha parado,
+sem uma linha de log dizendo por quê.
+
+Causa, reproduzida em 30 segundos: o endpoint gratuito do Google Translate
+passou a responder **HTTP 429** (bloqueio de tráfego automatizado). O código
+era uma chamada única dentro de `try/except: pass`, devolvendo o texto
+ORIGINAL em qualquer falha. O problema nunca foi a tradução falhar — foi
+ela falhar **em silêncio**, a armadilha nº 1 desta casa.
+
+`agent/traducao.py` substitui aquilo por três camadas: **cache em disco**
+(manchete repete entre telas, recargas e tickers do mesmo lote — é o que
+evita martelar o endpoint e provocar o próprio 429), **Google gratuito**
+(rápido e sem chave quando funciona) e **LLM da cadeia existente** (o app já
+tem provedor, orçamento e a tela de Gastos com IA; dez manchetes curtas
+custam quase nada, e só o que sobrou das camadas anteriores chega lá). Cada
+falha agora **nomeia o motivo** no stderr: status HTTP, contagem de linhas
+divergente, array do LLM com tamanho errado.
+
+Duas decisões que parecem detalhe e não são. Primeira: quando o Google
+devolve número de linhas diferente do enviado, o **lote inteiro é
+descartado** — parear 3 traduções com 2 textos trocaria a manchete de uma
+notícia pela de outra, o que é pior que não traduzir. Segunda: `traduzir()`
+devolve a **origem** de cada texto (cache/google/llm/original), e a notícia
+que voltou em inglês ganha o selo **"original em inglês"** na tela — o
+leitor não precisa deduzir que aquilo foi uma falha.
+
+O conserto ficou no ponto único (`translate_all` delega ao módulo novo)
+porque três consumidores dependiam da função quebrada: o feed de notícias, o
+marcador do gráfico e o Estudo de Entrada/Saída. Consertar só o que o
+usuário viu teria deixado os outros dois quebrados — a lição nº 2b do
+playbook, aprendida no incidente do RSI.
