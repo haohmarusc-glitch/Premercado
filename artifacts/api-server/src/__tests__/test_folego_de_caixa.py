@@ -26,16 +26,16 @@ _HOJE = "2026-08-25"
 
 def _bal(fim, caixa=1e9, divida=3e9, ac=2e9, pc=1e9, acoes=150e6):
     return {"trimestre": fc.trimestre_calendario(fim), "fimFiscal": fim,
-            "disponivelEm": fc.disponivel_em(fim), "caixaUsd": caixa,
-            "dividaUsd": divida, "ativoCirculanteUsd": ac,
-            "passivoCirculanteUsd": pc, "acoesEmCirculacao": acoes,
+            "disponivelEm": fc.disponivel_em(fim), "caixa": caixa,
+            "divida": divida, "ativoCirculante": ac,
+            "passivoCirculante": pc, "acoesEmCirculacao": acoes,
             "fonte": "yfinance"}
 
 
 def _flu(fim, ocf=-50e6, capex=120e6):
     return {"trimestre": fc.trimestre_calendario(fim), "fimFiscal": fim,
-            "disponivelEm": fc.disponivel_em(fim), "caixaOperacionalUsd": ocf,
-            "capexUsd": capex, "fonte": "yfinance"}
+            "disponivelEm": fc.disponivel_em(fim), "caixaOperacional": ocf,
+            "capex": capex, "fonte": "yfinance"}
 
 
 def _serie(caixas=None, ocfs=None, dividas=None, acoes=None):
@@ -73,7 +73,7 @@ def test_trimestre_fechado_mas_nao_divulgado_nao_entra():
 def test_empresa_queimando_ganha_folego_em_trimestres():
     r = fc.avaliar(_serie())
     # OCF -50M e capex 120M -> FCF -170M por trimestre; caixa 700M.
-    assert r["queimaMediaUsd"] == pytest.approx(170e6)
+    assert r["queimaMedia"] == pytest.approx(170e6)
     assert r["folegoTrimestres"] == pytest.approx(4.1, abs=0.1)
     assert r["geraCaixa"] is False
 
@@ -87,7 +87,7 @@ def test_quem_gera_caixa_nao_recebe_numero_de_folego():
 
 
 def test_queima_abaixo_do_piso_nao_vira_folego_gigante():
-    assert fc.folego_trimestres(1e9, fc.QUEIMA_MINIMA_USD - 1) is None
+    assert fc.folego_trimestres(1e9, fc.QUEIMA_MINIMA - 1) is None
     assert fc.folego_trimestres(1e9, 100e6) == 10.0
 
 
@@ -101,23 +101,23 @@ def test_queima_usa_a_media_da_janela_nao_o_ultimo_trimestre():
     """Um trimestre com pagamento concentrado viraria pânico; um com
     recebimento atrasado viraria falsa calma."""
     # Três trimestres neutros e um de queima forte.
-    linhas = [{"fcfUsd": 0.0}, {"fcfUsd": 0.0}, {"fcfUsd": 0.0}, {"fcfUsd": -400e6}]
+    linhas = [{"fcf": 0.0}, {"fcf": 0.0}, {"fcf": 0.0}, {"fcf": -400e6}]
     assert fc.queima_media(linhas, trimestres=4) == pytest.approx(100e6)
 
 
 def test_janela_inteira_no_denominador_e_nao_so_os_trimestres_de_queima():
     """Um ano queimando todo trimestre tem queima média MAIOR que um ano com
     a mesma queima concentrada num trimestre só -- a conta tem que dizer isso."""
-    concentrada = fc.queima_media([{"fcfUsd": 0.0}] * 3 + [{"fcfUsd": -400e6}], 4)
-    espalhada = fc.queima_media([{"fcfUsd": -100e6}] * 4, 4)
+    concentrada = fc.queima_media([{"fcf": 0.0}] * 3 + [{"fcf": -400e6}], 4)
+    espalhada = fc.queima_media([{"fcf": -100e6}] * 4, 4)
     assert concentrada == espalhada == pytest.approx(100e6)
-    pior = fc.queima_media([{"fcfUsd": -400e6}] * 4, 4)
+    pior = fc.queima_media([{"fcf": -400e6}] * 4, 4)
     assert pior > espalhada
 
 
 def test_periodo_sem_queima_devolve_zero_e_nao_none():
     """Zero é uma afirmação (não queimou); None é ausência de dado."""
-    assert fc.queima_media([{"fcfUsd": 10e6}, {"fcfUsd": 20e6}]) == 0.0
+    assert fc.queima_media([{"fcf": 10e6}, {"fcf": 20e6}]) == 0.0
     assert fc.queima_media([]) is None
     assert fc.queima_media([{"outro": 1}]) is None
 
@@ -253,7 +253,7 @@ def test_mesclar_guarda_o_alcance_do_bruto_anterior():
 def test_no_empate_de_trimestre_o_novo_vence():
     antigo = {"WOLF": {"balanco": [_bal("2026-06-30", caixa=1e9)], "fluxo": []}}
     novo = {"WOLF": {"balanco": [_bal("2026-06-30", caixa=2e9)], "fluxo": []}}
-    assert fc.mesclar_bruto(antigo, novo)["WOLF"]["balanco"][0]["caixaUsd"] == 2e9
+    assert fc.mesclar_bruto(antigo, novo)["WOLF"]["balanco"][0]["caixa"] == 2e9
 
 
 def test_montar_com_guardado_nao_encolhe_a_serie():
@@ -373,3 +373,101 @@ def test_av_json_desiste_sozinho_com_o_disjuntor_armado(monkeypatch):
 def test_sem_chave_nao_arma_nem_estoura(monkeypatch):
     monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
     assert fc._av_json("BALANCE_SHEET", "WOLF") is None
+
+
+# ── quem queima é quem TERMINA com menos caixa ───────────────────────────────
+#
+# A primeira versão somava só os trimestres NEGATIVOS. Parecia conservador e
+# estava errado: empresa com três trimestres fortes e um fraco virava
+# "queimando", e dividir o caixa por essa queima fantasma produzia fôlego
+# absurdo. Na primeira rodada real (25/08/2026): GOOGL com 165,7 trimestres
+# (41 anos) e TSLA com 158,4 -- aritmética certa sobre pergunta errada.
+
+def test_um_trimestre_fraco_no_ano_bom_nao_e_queima():
+    """O caso GOOGL: FCF muito positivo em três trimestres e negativo em um."""
+    linhas = [{"fcf": 20e9}, {"fcf": 18e9}, {"fcf": 22e9}, {"fcf": -5.9e9}]
+    assert fc.queima_media(linhas) == 0.0
+    assert fc.folego_trimestres(242e9, fc.queima_media(linhas)) is None
+
+
+def test_o_caso_googl_nao_produz_mais_41_anos_de_folego():
+    r = fc.avaliar(_serie(caixas=[242e9] * 5,
+                          ocfs=[30e9, 28e9, 32e9, 30e9, -5.9e9]))
+    assert r["geraCaixa"] is True
+    assert r["folegoTrimestres"] is None, "165,7 trimestres não é fôlego, é ruído"
+
+
+def test_queima_liquida_desconta_os_trimestres_bons():
+    """Metade queimando e metade gerando o mesmo tanto não é queima nenhuma."""
+    assert fc.queima_media([{"fcf": -100e6}, {"fcf": 100e6},
+                            {"fcf": -100e6}, {"fcf": 100e6}]) == 0.0
+    # Já com o bom cobrindo só parte do ruim, sobra queima líquida.
+    assert fc.queima_media([{"fcf": -100e6}, {"fcf": 50e6},
+                            {"fcf": -100e6}, {"fcf": 50e6}]) == pytest.approx(25e6)
+
+
+def test_queimador_de_verdade_continua_com_folego():
+    """O conserto não pode apagar o sinal de quem queima mesmo (perfil WOLF)."""
+    r = fc.avaliar(_serie())
+    assert r["geraCaixa"] is False
+    assert r["folegoTrimestres"] == pytest.approx(4.1, abs=0.1)
+
+
+# ── deterioração recente não pode se esconder na janela ──────────────────────
+
+def test_janela_positiva_com_ultimo_trimestre_queimando_e_declarada():
+    """É o preço de olhar o líquido: uma virada recente fica atrás dos
+    trimestres bons. Em vez de encurtar a janela, o sinal é declarado."""
+    assert fc.piorando([{"fcf": 20e9}, {"fcf": 18e9},
+                        {"fcf": 22e9}, {"fcf": -5.9e9}]) is True
+
+
+def test_quem_vai_bem_ate_o_fim_nao_e_marcado():
+    assert fc.piorando([{"fcf": 10e9}] * 4) is False
+
+
+def test_quem_ja_queima_no_liquido_nao_precisa_do_aviso():
+    """Aviso de deterioração em quem já está com fôlego contado seria ruído --
+    o número do fôlego já diz o que precisa ser dito."""
+    assert fc.piorando([{"fcf": -100e6}] * 4) is False
+
+
+def test_avaliar_publica_o_aviso_de_piora():
+    r = fc.avaliar(_serie(ocfs=[30e9, 28e9, 32e9, 30e9, -5.9e9]))
+    assert r["piorando"] is True and r["geraCaixa"] is True
+
+
+# ── moeda: nem todo mundo reporta em dólar ───────────────────────────────────
+
+def test_a_moeda_do_balanco_e_declarada_e_nao_presumida():
+    """A SK Hynix reporta em WON: o campo chamado `caixaUsd` trouxe 54
+    TRILHÕES na primeira rodada real -- número certo, rótulo mentiroso."""
+    b = [{**_bal(f), "moeda": "KRW"} for f in _FINS]
+    fl = [{**_flu(f), "moeda": "KRW"} for f in _FINS]
+    r = fc.avaliar(fc.montar_serie(b, fl, hoje=_HOJE))
+    assert r["moeda"] == "KRW"
+
+
+def test_nenhum_campo_do_resumo_afirma_dolar():
+    """Amarra por leitura das chaves: o sufixo Usd é uma afirmação sobre a
+    moeda, e afirmá-la sem conferir foi o defeito."""
+    r = fc.avaliar(_serie())
+    assert [k for k in r if k.lower().endswith("usd")] == []
+
+
+def test_folego_e_liquidez_nao_dependem_da_moeda():
+    """São RAZÕES: numerador e denominador na mesma moeda, quociente igual em
+    qualquer uma. Por isso o fôlego da SK Hynix vale mesmo sem conversão."""
+    em_dolar = fc.avaliar(_serie())
+    b = [{**_bal(f, caixa=c * 1380, divida=3e9 * 1380), "moeda": "KRW"}
+         for f, c in zip(_FINS, [1.4e9, 1.2e9, 1.0e9, 0.85e9, 0.7e9])]
+    fl = [{**_flu(f, ocf=-50e6 * 1380, capex=120e6 * 1380), "moeda": "KRW"}
+          for f in _FINS]
+    em_won = fc.avaliar(fc.montar_serie(b, fl, hoje=_HOJE))
+    assert em_won["folegoTrimestres"] == pytest.approx(em_dolar["folegoTrimestres"])
+    assert em_won["caixa"] != em_dolar["caixa"], "os absolutos, sim, mudam"
+
+
+def test_moeda_ausente_vira_none_e_nao_dolar_por_omissao():
+    r = fc.avaliar(_serie())
+    assert r["moeda"] is None

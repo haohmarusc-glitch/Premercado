@@ -507,8 +507,11 @@ gatilho de operação: capex trimestral não diz o que o papel faz amanhã.
 
 Quando o snapshot trouxer `folego_de_caixa`, ele traz, por ticker, o balanço
 do último trimestre DIVULGADO: caixa, dívida líquida, fluxo de caixa livre e
-`folegoTrimestres` -- quantos trimestres o caixa cobre na queima média do
-último ano. `geraCaixa: true` significa que a empresa não queima, e nesse caso
+`folegoTrimestres` -- quantos trimestres o caixa cobre na queima líquida do
+último ano. Os valores absolutos estão na MOEDA declarada em `moeda`, que nem
+sempre é dólar (a SK Hynix reporta em won); nunca some valores de moedas
+diferentes. `piorando: true` avisa que a janela fecha positiva mas o último
+trimestre queimou -- vale citar como deterioração recente. `geraCaixa: true` significa que a empresa não queima, e nesse caso
 `folegoTrimestres` vem nulo de propósito: fôlego de quem gera caixa não é um
 número, é a ausência do problema. Use CAIXA_CURTO só com fôlego abaixo de 4
 trimestres e CAIXA_CONFORTAVEL só acima (o validador confere).
