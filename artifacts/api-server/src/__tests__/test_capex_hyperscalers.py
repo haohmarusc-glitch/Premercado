@@ -115,8 +115,9 @@ def test_sem_trimestre_completo_declara_em_vez_de_inventar():
 # ── cascata de fontes ────────────────────────────────────────────────────────
 
 def test_yfinance_profundo_dispensa_a_alpha_vantage():
-    """A cota da AV é de 15/dia e disputada com earnings e notícias: quando o
-    yfinance já traz histórico suficiente, não se gasta chamada."""
+    """A chave da AV permite 25 chamadas/dia e nós nos limitamos a 15,
+    disputadas com earnings e notícias: quando o yfinance já traz histórico
+    suficiente, não se gasta chamada."""
     fundo = [_linha(f"202{a}-{m}-28", 30e9) for a in range(3, 6) for m in ("03", "06", "09", "12")]
     chamou_av = []
     cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: fundo, av_fn=lambda t: chamou_av.append(t) or [])
@@ -223,7 +224,9 @@ def test_aviso_de_limite_vira_erro_nomeado(monkeypatch):
     import sys as _sys
     _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
         get=lambda *a, **k: _Resp()))
-    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(_api_key=lambda: "chave")
+    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(
+            _api_key=lambda: "chave",
+            censurar_chave=lambda t: str(t).replace("chave", "***"))
     _sys.modules["provider_health"] = types.SimpleNamespace(
         consumir_orcamento_diario=lambda *a, **k: True)
     try:
@@ -243,7 +246,9 @@ def test_resposta_sem_quarterly_reports_tambem_grita(monkeypatch):
 
     _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
         get=lambda *a, **k: _Resp()))
-    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(_api_key=lambda: "chave")
+    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(
+            _api_key=lambda: "chave",
+            censurar_chave=lambda t: str(t).replace("chave", "***"))
     _sys.modules["provider_health"] = types.SimpleNamespace(
         consumir_orcamento_diario=lambda *a, **k: True)
     try:
@@ -438,3 +443,69 @@ def test_o_agregado_publica_a_historia_que_o_bruto_guarda():
     d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(fins), av_fn=lambda t: [])
     assert len(d["trimestres"]) == cx.TRIMESTRES_BRUTOS_GUARDADOS
     assert d["trimestres"][0]["trimestre"] < "2020Q1", "a janela alcança o ciclo anterior"
+
+
+# ── a chave não pode vazar no log ────────────────────────────────────────────
+#
+# Quando a cota estoura, a Alpha Vantage responde com um aviso que ECOA a
+# chave em texto claro. Os pontos que imprimem esse aviso estavam escrevendo a
+# credencial no stderr do container -- de onde ela vai para o log do Docker,
+# para o terminal de quem roda o comando, e para onde essa saída for colada.
+
+def test_aviso_de_cota_nao_carrega_a_chave(monkeypatch):
+    from agent import alpha_vantage_provider as avp
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "SEGREDO123456789")
+    aviso = ("We have detected your API key as SEGREDO123456789 and our "
+             "standard API rate limit is 25 requests per day.")
+    limpo = avp.censurar_chave(aviso)
+    assert "SEGREDO123456789" not in limpo
+    assert "25 requests per day" in limpo, "o motivo tem que sobreviver à censura"
+
+
+def test_censura_nao_estraga_mensagem_sem_chave(monkeypatch):
+    from agent import alpha_vantage_provider as avp
+    monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "SEGREDO123456789")
+    assert avp.censurar_chave("limite diário atingido") == "limite diário atingido"
+
+
+def test_sem_chave_configurada_a_censura_nao_apaga_tudo(monkeypatch):
+    """Chave vazia não pode virar um replace('') que estoura a mensagem."""
+    from agent import alpha_vantage_provider as avp
+    monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+    assert avp.censurar_chave("aviso qualquer") == "aviso qualquer"
+
+
+def test_os_tres_pontos_que_logam_aviso_da_av_censuram():
+    """Amarra por leitura de fonte: reintroduzir o aviso cru em qualquer um
+    deles põe a credencial no log de novo."""
+    import pathlib
+    base = pathlib.Path(cx.__file__).parent
+    for arquivo, marca in (("capex_hyperscalers.py", "aviso em vez de dados"),
+                           ("atualizar_earnings.py", "aviso em vez de CSV"),
+                           ("alpha_vantage_provider.py", "sem série")):
+        fonte = (base / arquivo).read_text(encoding="utf-8")
+        # rindex: a frase também aparece em comentário mais acima; o que
+        # interessa é o ponto onde ela é de fato emitida.
+        i = fonte.rindex(marca)
+        assert "censurar_chave" in fonte[i - 200:i + 300], \
+            f"{arquivo} loga aviso da AV sem censurar"
+
+
+# ── a cota vai para quem está mais raso ──────────────────────────────────────
+
+def test_a_fila_da_alpha_vantage_comeca_pelo_mais_raso():
+    """Em 25/08/2026 a cota acabou no meio da fila e quem ficou de fora foram
+    META e ORCL -- por serem os últimos da lista fixa, não por precisarem
+    menos. Com a ordem por carência, a cota do dia vai para o buraco maior."""
+    pedidos = []
+    guardado = {"MSFT": _serie(_FUNDOS), "META": _serie(["2026-06-30"]), "ORCL": []}
+    cx.coletar(["MSFT", "META", "ORCL"], pausa_s=0, guardado=guardado,
+               yf_fn=lambda t: [], av_fn=lambda t: pedidos.append(t) or [])
+    assert pedidos == ["ORCL", "META", "MSFT"]
+
+
+def test_empate_de_profundidade_e_resolvido_pelo_nome():
+    pedidos = []
+    cx.coletar(["ORCL", "META", "AMZN"], pausa_s=0,
+               yf_fn=lambda t: [], av_fn=lambda t: pedidos.append(t) or [])
+    assert pedidos == ["AMZN", "META", "ORCL"], "ordem tem que ser reproduzível"
