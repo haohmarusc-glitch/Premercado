@@ -36,6 +36,7 @@ import { refreshScenarioParams } from "../lib/scenario-params-checker";
 import { refreshEntryExitStudies } from "../lib/entry-exit-study-checker";
 import { refreshRadarCorrelacoes } from "../lib/radar-correlacoes-checker";
 import { refreshRadarEarnings } from "../lib/radar-earnings-checker";
+import { refreshCapexHyperscalers } from "../lib/capex-checker";
 import { state as agentState } from "../lib/runner";
 import { logger } from "../lib/logger";
 
@@ -83,6 +84,9 @@ const ETAPAS: Etapa[] = [
   // dias e a confirmação oficial sai na semana anterior -- justo a janela
   // em que o dado importa. Custa 1 chamada de API por dia.
   { nome: "radar_earnings", intervaloMs: 24 * 60 * MIN, run: refreshRadarEarnings },
+  // Semanal: capex é dado TRIMESTRAL -- entre divulgações passam ~13
+  // semanas e o número não muda no meio (ver lib/capex-checker.ts).
+  { nome: "capex_hyperscalers", intervaloMs: 7 * 24 * 60 * MIN, run: refreshCapexHyperscalers },
 ];
 
 type Cadencia = Record<string, number>;

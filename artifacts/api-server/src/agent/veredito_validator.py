@@ -479,6 +479,10 @@ REASON_CODES_CONHECIDOS = {
     # +15% (MRVL) -- evidência de preço esticado, não de múltiplo. O rótulo
     # certo merecia existir; é a evolução de vocabulário que o WARN permite.
     "RUNUP_ESTICADO",
+    # 25/08/2026: a tese de IA/data center vira razão DECLARÁVEL -- e, por
+    # isso, checável. Só vale quando o capex agregado do snapshot está
+    # mesmo na direção citada (ver BLOCO_CAPEX_CONTRADITO abaixo).
+    "CAPEX_ACELERANDO", "CAPEX_DESACELERANDO",
 }
 RSI_SOBRECOMPRADO_MIN = 65.0
 RSI_SOBREVENDIDO_MAX = 35.0
@@ -573,6 +577,28 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
                 rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
                         f"RSI_SOBREVENDIDO com RSI {rsi:.1f} "
                         f"(> {RSI_SOBREVENDIDO_MAX:.0f}).", ticker=tk)
+
+        # A tese de data center só pode ser citada na direção que o dado
+        # mostra. Sem isto, CAPEX_ACELERANDO viraria o rótulo bonito que
+        # justifica qualquer compra -- exatamente o que a validação por
+        # razão existe para impedir.
+        capex = snapshot.get("capex_hyperscalers") or {}
+        direcao = str(capex.get("direcao") or "")
+        if direcao:
+            if "CAPEX_ACELERANDO" in codes and direcao != "acelerando":
+                rep.add("ERROR", "BLOCO_CAPEX_CONTRADITO",
+                        f"CAPEX_ACELERANDO, mas o capex agregado de "
+                        f"{capex.get('trimestre')} está {direcao} "
+                        f"(t/t {capex.get('variacaoQoQPct')}%).", ticker=tk)
+            if "CAPEX_DESACELERANDO" in codes and direcao != "desacelerando":
+                rep.add("ERROR", "BLOCO_CAPEX_CONTRADITO",
+                        f"CAPEX_DESACELERANDO, mas o capex agregado de "
+                        f"{capex.get('trimestre')} está {direcao} "
+                        f"(t/t {capex.get('variacaoQoQPct')}%).", ticker=tk)
+        elif "CAPEX_ACELERANDO" in codes or "CAPEX_DESACELERANDO" in codes:
+            rep.add("ERROR", "BLOCO_CAPEX_SEM_DADO",
+                    "cita a direção do capex, mas o snapshot do dia não tem "
+                    "o dado agregado -- razão sem fato por trás.", ticker=tk)
 
         # Veto de catalisador, agora sobre estrutura: comprar às vésperas de
         # earnings sem declarar EARNINGS_PROXIMO é decisão inconsciente.
