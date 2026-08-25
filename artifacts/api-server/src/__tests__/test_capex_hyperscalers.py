@@ -15,6 +15,8 @@ Sem rede: a cascata yfinance -> Alpha Vantage é injetada.
 
 Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_capex_hyperscalers.py -v
 """
+import sys
+
 import pytest
 
 from agent import capex_hyperscalers as cx
@@ -24,6 +26,43 @@ def _linha(trimestre_fim, capex, fonte="yfinance"):
     return {"trimestre": cx.trimestre_calendario(trimestre_fim), "fimFiscal": trimestre_fim,
             "capexUsd": float(capex), "disponivelEm": cx.disponivel_em(trimestre_fim),
             "fonte": fonte}
+
+
+@pytest.fixture
+def stub_av(monkeypatch):
+    """Registra os módulos de import PLANO que o coletor usa quando roda como
+    script solto, e devolve uma função para trocar a resposta HTTP.
+
+    Duas armadilhas que este fixture existe para fechar, ambas vividas em
+    25/08/2026:
+
+    1. Stub PARCIAL muda o comportamento em silêncio. Um SimpleNamespace com
+       só os nomes que o teste lembrou faz o `from alpha_vantage_provider
+       import ...` lá dentro falhar, cair no fallback `from agent....` e
+       exercitar outro caminho sem dizer nada. Por isso o namespace é montado
+       A PARTIR do módulo real, trocando só `_api_key`.
+    2. sys.modules é GLOBAL. Registrado na mão, o stub vazava deste arquivo
+       para outros testes da suíte -- e um teste que pedia "sem chave
+       configurada" recebia a chave falsa daqui. monkeypatch.setitem desfaz
+       ao fim de cada teste."""
+    import types as _types
+    from agent import alpha_vantage_provider as _real
+
+    nomes = {k: getattr(_real, k) for k in dir(_real) if not k.startswith("__")}
+    nomes["_api_key"] = lambda: "chave"  # a única coisa de fato substituída
+    monkeypatch.setitem(sys.modules, "alpha_vantage_provider",
+                        _types.SimpleNamespace(**nomes))
+    monkeypatch.setitem(sys.modules, "provider_health", _types.SimpleNamespace(
+        consumir_orcamento_diario=lambda *a, **k: True))
+
+    def responder(corpo: dict):
+        class _Resp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return corpo
+        monkeypatch.setitem(sys.modules, "http_retry", _types.SimpleNamespace(
+            SESSION=_types.SimpleNamespace(get=lambda *a, **k: _Resp())))
+    return responder
 
 
 # ── trimestre-calendário: somar maçãs com maçãs ──────────────────────────────
@@ -206,56 +245,22 @@ def test_overlay_corrompido_avisa_e_degrada(tmp_path, capsys):
 
 # ── throttle da Alpha Vantage: 200 OK com aviso não é "sem dados" ────────────
 
-def test_aviso_de_limite_vira_erro_nomeado(monkeypatch):
+def test_aviso_de_limite_vira_erro_nomeado(stub_av):
     """O plano grátis limita 5 chamadas/minuto e responde ao estouro com
     200 OK + JSON de aviso. Lido como lista vazia, isso deixou GOOGL e META
     rasos SEM dizer por quê (segunda rodada real, 25/08/2026) -- a terceira
     falha silenciosa da mesma família no mesmo dia."""
-    import types
-
-    class _Resp:
-        status_code = 200
-        def raise_for_status(self): pass
-        def json(self):
-            return {"Information": "Thank you for using Alpha Vantage! Our standard "
-                                    "API rate limit is 5 requests per minute."}
-
-    monkeypatch.setattr(cx, "_api_key_ou_none", lambda: "chave", raising=False)
-    import sys as _sys
-    _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
-        get=lambda *a, **k: _Resp()))
-    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(
-            _api_key=lambda: "chave",
-            censurar_chave=lambda t: str(t).replace("chave", "***"))
-    _sys.modules["provider_health"] = types.SimpleNamespace(
-        consumir_orcamento_diario=lambda *a, **k: True)
-    try:
+    stub_av({"Information": "Thank you for using Alpha Vantage! Our standard "
+                            "API rate limit is 5 requests per minute."})
+    with pytest.raises(RuntimeError, match="aviso em vez de dados"):
         cx._do_alpha_vantage("GOOGL")
-        assert False, "aviso de limite tem que virar erro, não lista vazia"
-    except RuntimeError as e:
-        assert "aviso em vez de dados" in str(e)
 
-
-def test_resposta_sem_quarterly_reports_tambem_grita(monkeypatch):
-    import types, sys as _sys
-
-    class _Resp:
-        status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"symbol": "GOOGL"}
-
-    _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
-        get=lambda *a, **k: _Resp()))
-    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(
-            _api_key=lambda: "chave",
-            censurar_chave=lambda t: str(t).replace("chave", "***"))
-    _sys.modules["provider_health"] = types.SimpleNamespace(
-        consumir_orcamento_diario=lambda *a, **k: True)
-    try:
+def test_resposta_sem_quarterly_reports_tambem_grita(stub_av):
+    """200 OK com corpo inesperado também não é "sem dados": tratar como
+    lista vazia é a mesma cegueira, só com outra roupa."""
+    stub_av({"symbol": "GOOGL"})
+    with pytest.raises(RuntimeError, match="sem quarterlyReports"):
         cx._do_alpha_vantage("GOOGL")
-        assert False, "resposta sem quarterlyReports tem que gritar"
-    except RuntimeError as e:
-        assert "sem quarterlyReports" in str(e)
 
 
 def test_chamadas_a_av_sao_espacadas(monkeypatch):
@@ -509,3 +514,55 @@ def test_empate_de_profundidade_e_resolvido_pelo_nome():
     cx.coletar(["ORCL", "META", "AMZN"], pausa_s=0,
                yf_fn=lambda t: [], av_fn=lambda t: pedidos.append(t) or [])
     assert pedidos == ["AMZN", "META", "ORCL"], "ordem tem que ser reproduzível"
+
+
+# ── disjuntor de limite diário da Alpha Vantage ──────────────────────────────
+#
+# 25/08/2026: a AV recusou por limite diário na PRIMEIRA chamada e o coletor
+# tentou os outros quatro assim mesmo, debitando o nosso orçamento e dormindo
+# 13s entre cada uma para receber a mesma recusa. A recusa é da CHAVE.
+
+@pytest.fixture(autouse=True)
+def _disjuntor_limpo():
+    from agent import alpha_vantage_provider as avp
+    avp._resetar_limite_diario()
+    yield
+    avp._resetar_limite_diario()
+
+
+def test_limite_diario_na_primeira_para_a_fila():
+    from agent import alpha_vantage_provider as avp
+    chamadas = []
+
+    def _av(t):
+        chamadas.append(t)
+        avp.marcar_limite_diario()
+        raise RuntimeError("limite diário")
+
+    col = cx.coletar(["MSFT", "GOOGL", "AMZN"], pausa_s=0,
+                     yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=_av)
+    assert chamadas == ["AMZN"], "só o primeiro da fila (ordem por carência)"
+    assert sorted(col["rasos"]) == ["AMZN", "GOOGL", "MSFT"]
+
+
+def test_com_o_disjuntor_armado_a_pausa_nao_e_paga(monkeypatch):
+    """Cinco tickers a 13s dariam quase um minuto esperando por nada."""
+    from agent import alpha_vantage_provider as avp
+    import time as _time
+    dormiu = []
+    monkeypatch.setattr(_time, "sleep", lambda s: dormiu.append(s))
+    monkeypatch.setattr(cx.time, "sleep", lambda s: dormiu.append(s))
+    avp.marcar_limite_diario()
+    cx.coletar(["MSFT", "GOOGL"], pausa_s=13, yf_fn=lambda t: _serie(["2026-06-30"]),
+               av_fn=lambda t: (_ for _ in ()).throw(AssertionError("nem devia chamar")))
+    assert dormiu == []
+
+
+def test_o_yfinance_do_ticker_pulado_nao_e_jogado_fora():
+    """Desistir da AV não pode desistir do que o yfinance já trouxe."""
+    from agent import alpha_vantage_provider as avp
+    avp.marcar_limite_diario()
+    col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(["2026-06-30"]),
+                     av_fn=lambda t: [])
+    assert col["porEmpresa"]["MSFT"], "o trimestre recente do yfinance fica"
+    assert col["falhas"] == []

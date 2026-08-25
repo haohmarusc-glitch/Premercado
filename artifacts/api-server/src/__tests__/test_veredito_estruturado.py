@@ -267,3 +267,98 @@ def test_prompt_ensina_o_capex_como_contexto_nao_gatilho():
     # coisas -- que é contexto de tese e que NÃO dispara operação.
     assert "CONTEXTO de tese" in trecho
     assert "gatilho de operação" in trecho
+
+
+# ── fôlego de caixa: solidez financeira como razão CHECÁVEL (25/08/2026) ─────
+#
+# "A empresa tem caixa" é das afirmações mais fáceis de fazer sem olhar o
+# balanço, e por isso das que mais precisam de conferência. Mesma regra do
+# capex: o rótulo só vale na direção que o número do snapshot sustenta.
+
+def _snap_folego(**campos):
+    base = {"disponivel": True, "trimestre": "2026Q2", "disponivelEm": "2026-08-14",
+            "caixaUsd": 700e6, "dividaLiquidaUsd": 2.3e9, "liquidezCorrente": 2.0,
+            "fcfTrimestralUsd": -170e6, "queimaMediaUsd": 170e6,
+            "trimestresDeQueima": 4, "folegoTrimestres": 4.1, "geraCaixa": False,
+            "quebraDeSerie": False, "trimestresNaSerie": 5}
+    base.update(campos)
+    return _snapshot(folego_de_caixa={"MU": base})
+
+
+def test_caixa_curto_com_folego_curto_passa():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", action="AGUARDAR", codes=["CAIXA_CURTO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_folego(folegoTrimestres=2.1))
+    assert "BLOCO_CAIXA_CONTRADITO" not in _erros(rep)
+    assert "BLOCO_REASON_DESCONHECIDO" not in _codigos(rep)
+
+
+def test_caixa_curto_em_empresa_que_gera_caixa_e_erro():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", action="AGUARDAR", codes=["CAIXA_CURTO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(
+        bloco, _snap_folego(geraCaixa=True, folegoTrimestres=None))
+    assert "BLOCO_CAIXA_CONTRADITO" in _erros(rep)
+
+
+def test_caixa_confortavel_com_folego_curto_e_erro():
+    """A direção que mais interessa vetar: dizer que está tudo bem no caixa de
+    quem tem menos de um ano de fôlego."""
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAIXA_CONFORTAVEL"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_folego(folegoTrimestres=1.5))
+    assert "BLOCO_CAIXA_CONTRADITO" in _erros(rep)
+
+
+def test_caixa_confortavel_em_quem_gera_caixa_passa():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAIXA_CONFORTAVEL"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(
+        bloco, _snap_folego(geraCaixa=True, folegoTrimestres=None))
+    assert "BLOCO_CAIXA_CONTRADITO" not in _erros(rep)
+
+
+def test_citar_caixa_sem_o_balanco_no_snapshot_e_erro():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAIXA_CURTO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snapshot())  # sem fôlego
+    assert "BLOCO_CAIXA_SEM_DADO" in _erros(rep)
+
+
+def test_balanco_reestruturado_sem_quebra_marcada_e_erro():
+    """O rótulo existe para o modelo declarar que a comparação a/a não vale --
+    não para enfeitar um balanço que não teve evento nenhum."""
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["BALANCO_REESTRUTURADO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_folego(quebraDeSerie=False))
+    assert "BLOCO_CAIXA_CONTRADITO" in _erros(rep)
+
+
+def test_balanco_reestruturado_com_quebra_marcada_passa():
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["BALANCO_REESTRUTURADO"]), _item("SNDK"))
+    rep = validar_bloco_estruturado(bloco, _snap_folego(quebraDeSerie=True))
+    assert "BLOCO_CAIXA_CONTRADITO" not in _erros(rep)
+
+
+def test_folego_de_outro_ticker_nao_vale_para_este():
+    """O snapshot é por ticker: usar o balanço da NVDA para justificar a MU
+    seria pior que não conferir nada."""
+    bloco = _bloco(_item("NVDA", action="AGUARDAR", codes=["EARNINGS_PROXIMO"]),
+                   _item("MU", codes=["CAIXA_CONFORTAVEL"]), _item("SNDK"))
+    snap = _snapshot(folego_de_caixa={"NVDA": {"disponivel": True,
+                                               "geraCaixa": True,
+                                               "folegoTrimestres": None}})
+    rep = validar_bloco_estruturado(bloco, snap)
+    assert "BLOCO_CAIXA_SEM_DADO" in _erros(rep)
+
+
+def test_prompt_ensina_o_folego_como_contexto_nao_gatilho():
+    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "agent.py"
+             ).read_text(encoding="utf-8")
+    trecho = fonte.split("def build_veredito_prompt", 1)[1].split("\ndef ", 1)[0]
+    assert "folego_de_caixa" in trecho
+    for codigo in ("CAIXA_CURTO", "CAIXA_CONFORTAVEL", "BALANCO_REESTRUTURADO"):
+        assert codigo in trecho
+    assert "CONTEXTO de risco de tese" in trecho
+    assert "não gatilho" in trecho

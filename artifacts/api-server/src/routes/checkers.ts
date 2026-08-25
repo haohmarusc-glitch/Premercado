@@ -37,6 +37,7 @@ import { refreshEntryExitStudies } from "../lib/entry-exit-study-checker";
 import { refreshRadarCorrelacoes } from "../lib/radar-correlacoes-checker";
 import { refreshRadarEarnings } from "../lib/radar-earnings-checker";
 import { refreshCapexHyperscalers } from "../lib/capex-checker";
+import { refreshFolegoDeCaixa } from "../lib/folego-checker";
 import { state as agentState } from "../lib/runner";
 import { logger } from "../lib/logger";
 
@@ -87,6 +88,9 @@ const ETAPAS: Etapa[] = [
   // Semanal: capex é dado TRIMESTRAL -- entre divulgações passam ~13
   // semanas e o número não muda no meio (ver lib/capex-checker.ts).
   { nome: "capex_hyperscalers", intervaloMs: 7 * 24 * 60 * MIN, run: refreshCapexHyperscalers },
+  // Balanço é trimestral, como o capex -- semanal pega qualquer
+  // divulgação dentro de poucos dias sem reconfirmar o mesmo número 90x.
+  { nome: "folego_de_caixa", intervaloMs: 7 * 24 * 60 * MIN, run: refreshFolegoDeCaixa },
 ];
 
 type Cadencia = Record<string, number>;

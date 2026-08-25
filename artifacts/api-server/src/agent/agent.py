@@ -505,6 +505,21 @@ trimestre e a variação, e use CAPEX_ACELERANDO/CAPEX_DESACELERANDO só na
 direção que o dado mostra (o validador confere). Ele é CONTEXTO de tese, não
 gatilho de operação: capex trimestral não diz o que o papel faz amanhã.
 
+Quando o snapshot trouxer `folego_de_caixa`, ele traz, por ticker, o balanço
+do último trimestre DIVULGADO: caixa, dívida líquida, fluxo de caixa livre e
+`folegoTrimestres` -- quantos trimestres o caixa cobre na queima média do
+último ano. `geraCaixa: true` significa que a empresa não queima, e nesse caso
+`folegoTrimestres` vem nulo de propósito: fôlego de quem gera caixa não é um
+número, é a ausência do problema. Use CAIXA_CURTO só com fôlego abaixo de 4
+trimestres e CAIXA_CONFORTAVEL só acima (o validador confere).
+
+`quebraDeSerie: true` significa que a dívida ou a quantidade de ações deu um
+salto grande num único trimestre -- reestruturação, emissão ou recompra
+grande. Nesse caso NÃO compare com o ano anterior: a comparação mede
+contabilidade, não operação. Declare BALANCO_REESTRUTURADO e diga o que a
+comparação deixa de valer. Como o capex, isto é CONTEXTO de risco de tese,
+não gatilho: balanço trimestral não diz o que o papel faz amanhã.
+
 Cuidado ao usar os termos "distribuição"/"acumulação": distribuição
 institucional é padrão de TOPO (mãos fortes vendendo pra mãos fracas perto
 de uma máxima/exaustão de alta) e acumulação é padrão de FUNDO (mãos fortes
@@ -1603,6 +1618,27 @@ def _capex_do_snapshot() -> dict | None:
         return None
 
 
+def _folego_do_snapshot(tickers: list[str]) -> dict | None:
+    """Fôlego de caixa por ticker para o snapshot do Veredito.
+
+    Lido do OVERLAY (escrito pelo checker semanal), nunca da rede -- mesma
+    regra do capex: o veredito não pode ficar refém de uma busca de balanço no
+    meio da geração. Só entram os tickers do dia que têm dado; ausência vira
+    ausência, e o prompt simplesmente não cita o que não tem."""
+    try:
+        from .folego_de_caixa import ler_overlay
+        dados = ler_overlay()
+        if not dados:
+            return None
+        resumo = dados.get("resumo") or {}
+        saida = {tk: resumo[tk] for tk in tickers
+                 if (resumo.get(tk) or {}).get("disponivel")}
+        return saida or None
+    except Exception as e:
+        print(f"[veredito] fôlego de caixa indisponível: {e}", file=sys.stderr, flush=True)
+        return None
+
+
 def run_veredito(progress_callback=None) -> str:
     client = _get_client()
     tickers = config.PORTFOLIO_TICKERS
@@ -1619,6 +1655,12 @@ def run_veredito(progress_callback=None) -> str:
     capex = _capex_do_snapshot()
     if capex:
         snapshot["capex_hyperscalers"] = capex
+    # Fôlego de caixa: o outro lado do balanço da mesma tese. O capex diz
+    # quanto o comprador de data center investe; isto diz quanto o fornecedor
+    # aguenta esperando o investimento chegar.
+    folego = _folego_do_snapshot(tickers)
+    if folego:
+        snapshot["folego_de_caixa"] = folego
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)

@@ -258,9 +258,13 @@ def _do_alpha_vantage(ticker: str) -> list:
     earnings e notícias), por isso só roda quando o yfinance veio vazio ou
     raso demais para variação a/a -- ver PROFUNDIDADE_MINIMA."""
     try:
-        from alpha_vantage_provider import _api_key, censurar_chave  # type: ignore
+        from alpha_vantage_provider import (  # type: ignore
+            _api_key, aviso_e_limite_diario, censurar_chave,
+            limite_diario_batido, marcar_limite_diario)
     except ImportError:
-        from agent.alpha_vantage_provider import _api_key, censurar_chave  # type: ignore
+        from agent.alpha_vantage_provider import (  # type: ignore
+            _api_key, aviso_e_limite_diario, censurar_chave,
+            limite_diario_batido, marcar_limite_diario)
     try:
         from http_retry import SESSION
     except ImportError:
@@ -268,6 +272,11 @@ def _do_alpha_vantage(ticker: str) -> list:
     chave = _api_key()
     if not chave:
         return []
+    # A recusa por limite diário é da CHAVE: depois da primeira, insistir nos
+    # outros tickers só gasta débito e 13s de pausa por nada.
+    if limite_diario_batido():
+        raise RuntimeError("Alpha Vantage já recusou por limite diário nesta "
+                           "rodada -- pulando o resto")
     # O teto REAL da chave é 25/dia (a própria AV diz isso na mensagem de
     # estouro); AGENT_ALPHAVANTAGE_MAX_DIA=15 é um limite nosso, mais apertado
     # de propósito, compartilhado com o calendário de earnings e as notícias.
@@ -295,6 +304,8 @@ def _do_alpha_vantage(ticker: str) -> list:
     aviso = (dados.get("Note") or dados.get("Information")
              or dados.get("Error Message"))
     if aviso:
+        if aviso_e_limite_diario(aviso):
+            marcar_limite_diario()
         # Censurado: esse aviso ecoa a chave em texto claro (visto em
         # 25/08/2026), e a mensagem termina no stderr do container.
         raise RuntimeError("Alpha Vantage respondeu aviso em vez de dados: "
@@ -333,6 +344,19 @@ def _profundidade_apos_mesclar(linhas: list, guardadas: list) -> int:
     """Quantos trimestres DISTINTOS existiriam depois da mesclagem."""
     return len({l["trimestre"] for l in list(guardadas or []) + list(linhas or [])
                 if l.get("trimestre")})
+
+
+def _limite_batido() -> bool:
+    """Disjuntor da AV, consultado por import tardio para a suíte poder
+    injetar av_fn sem arrastar o provider junto."""
+    try:
+        try:
+            from alpha_vantage_provider import limite_diario_batido
+        except ImportError:
+            from agent.alpha_vantage_provider import limite_diario_batido
+        return limite_diario_batido()
+    except Exception:
+        return False
 
 
 def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
@@ -382,6 +406,17 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             motivo = ("sem capex no yfinance" if not linhas
                       else f"só {profundidade} trimestres somando yfinance e overlay "
                            f"(mínimo {profundidade_minima} para variação a/a e regime)")
+            if _limite_batido():
+                # Sem isto o disjuntor pouparia a chamada mas não a ESPERA: a
+                # pausa acontece aqui, antes de a AV ter chance de recusar.
+                print(f"[capex] {t}: Alpha Vantage já recusou por limite diário "
+                      f"nesta rodada — nem tento", file=sys.stderr)
+                rasos.append(t)
+                if linhas:
+                    por_empresa[t] = linhas
+                else:
+                    falhas.append(t)
+                continue
             print(f"[capex] {t}: {motivo}, complementando com Alpha Vantage", file=sys.stderr)
             if usou_av and pausa_s > 0:
                 # 5 chamadas/minuto no plano grátis: sem espaçar, as últimas
