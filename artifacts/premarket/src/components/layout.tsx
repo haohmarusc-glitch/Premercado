@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useRef, useEffect, useState } from "react";
-import { Activity, Satellite, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit, Target, Sparkles, Crosshair, ScanSearch, Waves } from "lucide-react";
+import { Activity, Satellite, LayoutDashboard, History, Database, Play, Settings, ListChecks, Bell, MessageSquare, Briefcase, Zap, Calculator, Sun, Moon, Eye, BookOpen, Calendar, TrendingUp, FlaskConical, LineChart, Flame, Users, Layers, Newspaper, Globe, Radar, Monitor, Smartphone, Menu, CandlestickChart, LogOut, UserCog, Flag, Bitcoin, Gauge, DollarSign, Orbit, Target, Sparkles, Crosshair, ScanSearch, Waves, Library } from "lucide-react";
 import { useViewMode } from "@/lib/view-mode";
 import { useAuth } from "@/lib/auth";
 import { useActivityHeartbeatEffect } from "@/hooks/use-activity-heartbeat";
@@ -274,6 +274,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <nav className="p-4 space-y-1">
             {navLink("/", <LayoutDashboard className="h-4 w-4" />, "Dashboard")}
             {navLink("/screener", <Radar className="h-4 w-4" />, "Screener")}
+            {navLink("/analises", <Library className="h-4 w-4" />, "As 10 Análises")}
             {navLink("/history", <History className="h-4 w-4" />, "History")}
             {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
             {user?.isAdmin && navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}

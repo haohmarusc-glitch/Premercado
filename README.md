@@ -325,11 +325,12 @@ num painel de risco, silêncio lido como calmaria é pior que erro.
 
 ## Telas
 
-36 telas React. As principais:
+37 telas React. As principais:
 
 | Tela | Conteúdo |
 |---|---|
 | Dashboard | Relatório do dia, status do agente, cards de mercado |
+| As 10 Análises | Índice das dez análises pedidas, com selo de origem (medida/parcial/fora) e a análise de padrões com teste de significância |
 | Carteira / Performance | Posições, lotes, P&L, curva |
 | Cenários | Probabilidade de empate, termômetro diário |
 | Veredito do Dia | Síntese opinativa validada |
@@ -709,6 +710,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #366 | Bootstrap de carteira soma contribuições em vez de compor pnls paralelos (IC 302%–50.073% numa carteira de +34% na primeira rodada real); exposição média exposta |
 | #367 | Veredito estruturado: o LLM declara a decisão por ticker em JSON (action/confidence/reason_codes), o validador confere schema, dado, concentração e coerência JSON↔texto |
 | #368 | Painel de earnings do Veredito mostrava a data um dia antes (new Date de data-só é meia-noite UTC); RUNUP_ESTICADO promovido ao vocabulário do bloco |
+| #369 | Menu "As 10 Análises" com selo de origem por análise, e a análise de padrões (sazonalidade, dia da semana, eventos macro, fatores) com bootstrap, permutação e correção de Holm |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1183,3 +1185,50 @@ modelo usou VALUATION_ESTICADO para descrever o run-up pré-earnings de
 +15% da MRVL: evidência de preço esticado, não de múltiplo caro. O rótulo
 certo agora existe (com a distinção explicada no prompt), exatamente pela
 via que o desenho previu: vocabulário evolui por promoção, não por trava.
+
+### 20/08/2026 (parte 9) — as dez análises, e o selo que separa medida de opinião
+
+Chegaram dez prompts de "análise institucional" (Goldman, Morgan Stanley,
+Bridgewater, JPMorgan, BlackRock, Citadel, Harvard, Bain, Renaissance,
+McKinsey) para virarem funções do app, por ticker. O pedido veio com a
+pergunta certa junto: *o que tem validação e consistência de verdade?*
+
+A auditoria de cada uma contra as fontes reais do repo deu três grupos:
+
+| # | Análise | Selo | Por quê |
+|---|---|---|---|
+| 1 | Screening (Goldman) | PARCIAL | Técnicos, alvo de analista e short são medidos; "rating de moat" e "nota de risco 1-10" não têm fonte |
+| 2 | DCF (Morgan Stanley) | PARCIAL | FMP entrega DCF e múltiplos (exige chave); valor justo único esconde a dependência das premissas |
+| 3 | Risco (Bridgewater) | MEDIDA | Correlação, concentração, beta, stress e sizing já existem medidos |
+| 4 | Earnings (JPMorgan) | MEDIDA | Reação histórica auditada, calendário confirmado, implied move por opções; segmento/guidance exigiriam 10-K e transcrição |
+| 5 | Portfólio (BlackRock) | **FORA** | Alocação entre classes, ETFs de renda fixa e estratégia fiscal: sem dado no app, e é aconselhamento pessoal |
+| 6 | Técnica (Citadel) | MEDIDA | Tudo já existe; padrões gráficos nomeados ficam de fora (reconhecimento subjetivo, não reproduzível) |
+| 7 | Dividendos (Harvard) | **FORA** | Carteira de semis quase não paga dividendo, e a parte fiscal do prompt é a regra americana |
+| 8 | Competitiva (Bain) | PARCIAL | A metade quantitativa é medível; moat, gestão e market share de 3 anos seriam texto convincente sem número |
+| 9 | Padrões (Renaissance) | MEDIDA | **Construída agora** — a única que não existia em tela nenhuma |
+| 10 | Macro (McKinsey) | PARCIAL | O retrato de hoje é medido; "outlook do Fed para 12 meses" é previsão |
+
+O que ficou claro na varredura: **oito das dez já existiam**, espalhadas em
+telas próprias. O que faltava não era capacidade — era o índice e,
+principalmente, o **selo de origem**. Um LLM responde "market share dos
+últimos 3 anos" com a mesma fluência com que responde "RSI de hoje", e é
+assim que estimativa vira dado na cabeça de quem lê. O menu novo carrega o
+selo em cada cartão, e as duas análises FORA continuam listadas **com o
+motivo** — sumir com elas faria o leitor achar que foi esquecimento.
+
+A análise 9 foi a única construída, e é a mais fácil de fazer errado:
+varrer 12 meses + 5 dias da semana + eventos macro dá ~17 testes, e a 5% um
+em cada vinte "dá significativo" por acaso — com uma história convincente
+pronta depois de encontrado. Por isso cada padrão sai com amostra, IC 95%
+por bootstrap (semente fixa) e p-valor de **permutação** (não-paramétrico:
+retorno diário tem cauda gorda, e o t superestima significância justo nos
+extremos), tudo corrigido por **Holm-Bonferroni**. O veredito conta quantos
+sobrevivem — e quando a resposta é "nenhum", que é o caso comum, ele diz
+isso em vez de listar o mês menos ruim como se fosse edge. O teste central
+da suíte é exatamente esse: série de ruído puro **não pode** produzir
+padrão; se alguém afrouxar a correção, é ele que cai.
+
+A sensibilidade a fatores (setor, juros, dólar, VIX) entrou junto porque não
+é caça a padrão escondido, é medição de exposição — com R² ao lado do beta,
+que é o número que impede a leitura errada: beta 1,4 com R² 0,02 significa
+"quando esse fator se move, o papel faz o que quiser".
