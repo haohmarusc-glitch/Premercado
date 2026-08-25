@@ -119,7 +119,7 @@ def test_yfinance_profundo_dispensa_a_alpha_vantage():
     yfinance já traz histórico suficiente, não se gasta chamada."""
     fundo = [_linha(f"202{a}-{m}-28", 30e9) for a in range(3, 6) for m in ("03", "06", "09", "12")]
     chamou_av = []
-    cx.coletar(["MSFT"], yf_fn=lambda t: fundo, av_fn=lambda t: chamou_av.append(t) or [])
+    cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: fundo, av_fn=lambda t: chamou_av.append(t) or [])
     assert chamou_av == []
 
 
@@ -130,7 +130,7 @@ def test_yfinance_raso_e_complementado_pela_alpha_vantage(capsys):
     PROFUNDIDADE, não só quando a primária falha."""
     raso = [_linha("2026-03-31", 35e9), _linha("2026-06-30", 40e9)]
     profundo = [_linha(f"202{a}-{m}-28", 20e9) for a in range(3, 6) for m in ("03", "06", "09", "12")]
-    col = cx.coletar(["MSFT"], yf_fn=lambda t: raso, av_fn=lambda t: profundo)
+    col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: raso, av_fn=lambda t: profundo)
     linhas = col["porEmpresa"]["MSFT"]
     assert len(linhas) > len(raso), "a série tem que ficar mais funda"
     assert "só 2 trimestres no yfinance" in capsys.readouterr().err
@@ -150,32 +150,32 @@ def test_no_empate_de_trimestre_o_yfinance_vence():
 
 
 def test_historico_ainda_raso_e_declarado(capsys):
-    col = cx.coletar(["MSFT"], yf_fn=lambda t: [_linha("2026-06-30", 35e9)],
+    col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: [_linha("2026-06-30", 35e9)],
                      av_fn=lambda t: [])
     assert col["rasos"] == ["MSFT"]
     assert "histórico ainda raso" in capsys.readouterr().err
 
 def test_cai_para_alpha_vantage_quando_o_yfinance_vem_vazio(capsys):
-    col = cx.coletar(["MSFT"], yf_fn=lambda t: [],
+    col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: [],
                      av_fn=lambda t: [_linha("2026-06-30", 35e9, fonte="alpha_vantage")])
     assert col["porEmpresa"]["MSFT"][0]["fonte"] == "alpha_vantage"
     assert "sem capex no yfinance" in capsys.readouterr().err
 
 def test_ticker_sem_dado_nas_duas_fontes_e_declarado(capsys):
-    col = cx.coletar(["XYZ"], yf_fn=lambda t: [], av_fn=lambda t: [])
+    col = cx.coletar(["XYZ"], pausa_s=0, yf_fn=lambda t: [], av_fn=lambda t: [])
     assert col["falhas"] == ["XYZ"] and not col["porEmpresa"]
     assert "SEM DADO nas duas fontes" in capsys.readouterr().err
 
 def test_excecao_numa_fonte_nao_derruba_a_coleta(capsys):
     def _explode(t):
         raise RuntimeError("rede fora")
-    col = cx.coletar(["MSFT"], yf_fn=_explode,
+    col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=_explode,
                      av_fn=lambda t: [_linha("2026-06-30", 35e9)])
     assert "MSFT" in col["porEmpresa"]
     assert "yfinance falhou" in capsys.readouterr().err
 
 def test_montar_declara_fontes_e_cobertura():
-    d = cx.montar(["MSFT", "AMZN"],
+    d = cx.montar(["MSFT", "AMZN"], pausa_s=0,
                   yf_fn=lambda t: [_linha("2026-06-30", 35e9)], av_fn=lambda t: [])
     assert d["empresasPedidas"] == 2 and d["empresasComDado"] == 2
     assert d["fontes"] == ["yfinance"]
@@ -185,7 +185,7 @@ def test_montar_declara_fontes_e_cobertura():
 
 def test_overlay_faz_ida_e_volta(tmp_path):
     caminho = str(tmp_path / "capex.json")
-    d = cx.montar(["MSFT"], yf_fn=lambda t: [_linha("2026-06-30", 35e9)], av_fn=lambda t: [])
+    d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: [_linha("2026-06-30", 35e9)], av_fn=lambda t: [])
     assert cx.gravar_overlay(d, caminho) is True
     assert cx.ler_overlay(caminho)["resumo"]["totalUsdBi"] == d["resumo"]["totalUsdBi"]
 
@@ -197,3 +197,72 @@ def test_overlay_corrompido_avisa_e_degrada(tmp_path, capsys):
     open(caminho, "w").write("{quebrado")
     assert cx.ler_overlay(caminho) is None
     assert "overlay ilegível" in capsys.readouterr().err
+
+
+# ── throttle da Alpha Vantage: 200 OK com aviso não é "sem dados" ────────────
+
+def test_aviso_de_limite_vira_erro_nomeado(monkeypatch):
+    """O plano grátis limita 5 chamadas/minuto e responde ao estouro com
+    200 OK + JSON de aviso. Lido como lista vazia, isso deixou GOOGL e META
+    rasos SEM dizer por quê (segunda rodada real, 25/08/2026) -- a terceira
+    falha silenciosa da mesma família no mesmo dia."""
+    import types
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"Information": "Thank you for using Alpha Vantage! Our standard "
+                                    "API rate limit is 5 requests per minute."}
+
+    monkeypatch.setattr(cx, "_api_key_ou_none", lambda: "chave", raising=False)
+    import sys as _sys
+    _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
+        get=lambda *a, **k: _Resp()))
+    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(_api_key=lambda: "chave")
+    _sys.modules["provider_health"] = types.SimpleNamespace(
+        consumir_orcamento_diario=lambda *a, **k: True)
+    try:
+        cx._do_alpha_vantage("GOOGL")
+        assert False, "aviso de limite tem que virar erro, não lista vazia"
+    except RuntimeError as e:
+        assert "aviso em vez de dados" in str(e)
+
+
+def test_resposta_sem_quarterly_reports_tambem_grita(monkeypatch):
+    import types, sys as _sys
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"symbol": "GOOGL"}
+
+    _sys.modules["http_retry"] = types.SimpleNamespace(SESSION=types.SimpleNamespace(
+        get=lambda *a, **k: _Resp()))
+    _sys.modules["alpha_vantage_provider"] = types.SimpleNamespace(_api_key=lambda: "chave")
+    _sys.modules["provider_health"] = types.SimpleNamespace(
+        consumir_orcamento_diario=lambda *a, **k: True)
+    try:
+        cx._do_alpha_vantage("GOOGL")
+        assert False, "resposta sem quarterlyReports tem que gritar"
+    except RuntimeError as e:
+        assert "sem quarterlyReports" in str(e)
+
+
+def test_chamadas_a_av_sao_espacadas(monkeypatch):
+    """Sem espaçar, as últimas da fila voltam com aviso de limite -- que é
+    exatamente o que aconteceu com GOOGL e META."""
+    dormidas = []
+    monkeypatch.setattr(cx.time, "sleep", lambda s: dormidas.append(s))
+    cx.coletar(["MSFT", "GOOGL", "AMZN"], yf_fn=lambda t: [],
+               av_fn=lambda t: [_linha("2026-06-30", 30e9)], pausa_s=13)
+    # três tickers -> duas pausas (a primeira chamada não espera)
+    assert dormidas == [13, 13]
+
+
+def test_um_ticker_so_nao_dorme_a_toa(monkeypatch):
+    dormidas = []
+    monkeypatch.setattr(cx.time, "sleep", lambda s: dormidas.append(s))
+    cx.coletar(["MSFT"], yf_fn=lambda t: [], av_fn=lambda t: [_linha("2026-06-30", 30e9)],
+               pausa_s=13)
+    assert dormidas == []

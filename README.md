@@ -715,6 +715,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #371 | Manchetes voltaram ao inglês em silêncio (Google Translate grátis passou a responder 429 dentro de um `except: pass`): tradução ganha cache em disco, fallback de LLM, motivo no log e selo "original em inglês" na tela |
 | #372 | A tese de IA/data center vira dado: capex dos hiperescaladores como fato datado no Veredito (com razão checável), fator de energia na análise 9 e o experimento de regime com critério declarado antes |
 | #373 | Primeira rodada real do capex expôs histórico raso (yfinance dá ~4 trimestres, Alpha Vantage 81): a cascata passa a COMPLEMENTAR por profundidade, com a cota debitada |
+| #374 | Throttle da Alpha Vantage (5 chamadas/min, aviso em 200 OK) lido como "sem dados" deixava GOOGL raso em silêncio: aviso vira erro nomeado e as chamadas passam a ser espaçadas |
 
 ### Diversificação de fontes de dado (ago/2026)
 
@@ -1350,3 +1351,28 @@ conclusão errada sobre a tese. E fica registrada a possibilidade real de que,
 mesmo com histórico fundo, não exista contraste: se o capex acelerou em todo
 trimestre do período de IA, "capex acelerando" é constante na amostra — e
 constante não prevê nada, por construção.
+
+### 25/08/2026 (parte 4) — o capex quase dobra em um ano, e a terceira falha silenciosa do dia
+
+A segunda rodada trouxe o número que faltava: **US$ 181,5 bi de capex somado
+em 2026Q2 — +22,3% t/t e +86,5% a/a**. A tese do usuário, medida: o capex
+agregado dos cinco hiperescaladores quase dobrou em doze meses.
+
+Mas o experimento de regime ainda travou em quatro trimestres completos, e o
+log dizia onde: **GOOGL seguia raso mesmo depois da Alpha Vantage** — que
+tem 81 trimestres. A causa foi a terceira falha silenciosa da mesma família
+no mesmo dia (depois do 413 disfarçado de 500 e do Google Translate 429): o
+plano gratuito da AV limita **5 chamadas por minuto**, e responde ao estouro
+com **200 OK e um JSON de aviso**. Meu código lia `quarterlyReports` ausente
+como "sem dados" e seguia em frente.
+
+Consertado em #374 com o antídoto que já existia no repo — `atualizar_earnings.py`
+detecta exatamente esse aviso desde a coleta de earnings. Agora o aviso vira
+erro nomeado (com o texto da AV no log) e as chamadas são **espaçadas**: o
+checker é semanal e ninguém espera na tela, então um minuto de coleta não
+custa nada. Resposta sem `quarterlyReports` também grita, em vez de degradar.
+
+Vale registrar o padrão: **três incidentes idênticos em estrutura num só
+dia**, todos "a fonte respondeu algo diferente do esperado e o código
+converteu isso em vazio/genérico". A defesa nunca é prever a falha — é
+nunca deixar o caminho de erro passar sem nome.
