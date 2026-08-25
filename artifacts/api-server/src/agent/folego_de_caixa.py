@@ -30,7 +30,14 @@ certo com leitura errada:
    TRIMESTRES_DE_QUEIMA; um trimestre com pagamento concentrado viraria
    pânico, e um com recebimento atrasado viraria falsa calma.
 
-4. REESTRUTURAÇÃO QUEBRA A SÉRIE. Este foi o caso que motivou o cuidado: as
+4. MOEDA DO BALANÇO. Nem todo mundo reporta em dólar: a SK Hynix reporta em
+   WON, e na primeira rodada real (25/08/2026) o campo chamado `caixaUsd`
+   trouxe 54 TRILHÕES -- número certo, rótulo mentiroso. Os campos perderam o
+   sufixo `Usd` e cada linha carrega `moeda`. As RAZÕES (fôlego em trimestres,
+   liquidez corrente) não precisam de conversão: numerador e denominador estão
+   na mesma moeda, então o quociente vale em qualquer uma.
+
+5. REESTRUTURAÇÃO QUEBRA A SÉRIE. Este foi o caso que motivou o cuidado: as
    manchetes da WOLF em 25/08/2026 traziam "smaller net loss, and positive
    full year net income of $4.4 million" -- lucro anual positivo convivendo
    com prejuízo trimestral, o assinatura de ganho não-recorrente de
@@ -93,7 +100,7 @@ SALTO_DE_QUEBRA_PCT = 40.0
 # Piso de queima para o fôlego existir. Abaixo de um milhão de dólares por
 # trimestre a divisão vira ruído: caixa/queima explode e o número deixa de
 # significar qualquer coisa.
-QUEIMA_MINIMA_USD = 1_000_000.0
+QUEIMA_MINIMA = 1_000_000.0
 
 PAUSA_ENTRE_CHAMADAS_AV_S = float(os.environ.get("FOLEGO_PAUSA_AV_S", "13"))
 
@@ -152,27 +159,47 @@ def fluxo_livre(operacional, capex):
 
 
 def queima_media(linhas: list, trimestres: int = TRIMESTRES_DE_QUEIMA) -> float | None:
-    """Média do FCF NEGATIVO dos últimos trimestres, em módulo.
+    """Queima LÍQUIDA por trimestre na janela, em módulo. Zero para quem
+    termina a janela com caixa a mais; None quando não há FCF nenhum.
 
-    Devolve None quando não há FCF suficiente, e 0.0 quando o período não
-    queimou -- que é diferente de "não sei", e por isso não vira None."""
-    fcfs = [l["fcfUsd"] for l in linhas if l.get("fcfUsd") is not None]
+    A primeira versão somava só os trimestres NEGATIVOS. Parecia conservador
+    e estava errado: uma empresa com três trimestres fortemente positivos e um
+    negativo era classificada como "queimando", e a divisão do caixa por essa
+    queima fantasma produzia fôlego absurdo. Na primeira rodada real
+    (25/08/2026) isso deu GOOGL com 165,7 trimestres (41 anos) e TSLA com
+    158,4 -- aritmética certa sobre uma pergunta errada.
+
+    Quem queima é quem termina o período com MENOS caixa do que começou. Se o
+    líquido da janela é positivo, a empresa se paga, e fôlego não se aplica --
+    é exatamente a armadilha 2, que a versão anterior deixava passar."""
+    fcfs = [l["fcf"] for l in linhas if l.get("fcf") is not None]
     if not fcfs:
         return None
     janela = fcfs[-trimestres:]
-    queimas = [-f for f in janela if f < 0]
-    if not queimas:
+    liquido = sum(janela)
+    if liquido >= 0:
         return 0.0
-    # Divide pela JANELA inteira, não só pelos trimestres que queimaram: um
-    # ano com três trimestres neutros e um de queima forte tem queima média
-    # menor que um ano queimando todo trimestre, e a conta tem que dizer isso.
-    return round(sum(queimas) / len(janela), 2)
+    return round(-liquido / len(janela), 2)
+
+
+def piorando(linhas: list, trimestres: int = TRIMESTRES_DE_QUEIMA) -> bool:
+    """A janela fecha positiva mas o trimestre MAIS RECENTE queimou.
+
+    É o preço de olhar o líquido da janela: uma virada recente fica escondida
+    atrás dos trimestres bons que vieram antes. Em vez de encurtar a janela
+    (que reintroduziria o ruído de um trimestre só), o sinal é declarado à
+    parte -- quem lê decide o peso."""
+    fcfs = [l["fcf"] for l in linhas if l.get("fcf") is not None]
+    if len(fcfs) < 2:
+        return False
+    janela = fcfs[-trimestres:]
+    return sum(janela) >= 0 and janela[-1] < 0
 
 
 def folego_trimestres(caixa, queima) -> float | None:
     """Quantos trimestres o caixa cobre na queima média. None para quem não
     queima -- ver armadilha 2 no topo."""
-    if caixa is None or queima is None or queima < QUEIMA_MINIMA_USD:
+    if caixa is None or queima is None or queima < QUEIMA_MINIMA:
         return None
     return round(caixa / queima, 1)
 
@@ -207,12 +234,12 @@ def montar_serie(balanco: list, fluxo: list, hoje: str | None = None) -> list:
     saida = []
     for t in sorted(por_trimestre):
         linha = dict(por_trimestre[t])
-        linha["fcfUsd"] = fluxo_livre(linha.get("caixaOperacionalUsd"),
-                                      linha.get("capexUsd"))
-        linha["dividaLiquidaUsd"] = divida_liquida(linha.get("caixaUsd"),
-                                                   linha.get("dividaUsd"))
+        linha["fcf"] = fluxo_livre(linha.get("caixaOperacional"),
+                                      linha.get("capex"))
+        linha["dividaLiquida"] = divida_liquida(linha.get("caixa"),
+                                                   linha.get("divida"))
         linha["liquidezCorrente"] = liquidez_corrente(
-            linha.get("ativoCirculanteUsd"), linha.get("passivoCirculanteUsd"))
+            linha.get("ativoCirculante"), linha.get("passivoCirculante"))
         saida.append(linha)
 
     # Quebra de série: comparada com o trimestre IMEDIATAMENTE anterior da
@@ -220,7 +247,7 @@ def montar_serie(balanco: list, fluxo: list, hoje: str | None = None) -> list:
     for i, linha in enumerate(saida):
         ant = saida[i - 1] if i else None
         linha["quebraDeSerie"] = bool(ant and (
-            _saltou(linha.get("dividaUsd"), ant.get("dividaUsd"))
+            _saltou(linha.get("divida"), ant.get("divida"))
             or _saltou(linha.get("acoesEmCirculacao"), ant.get("acoesEmCirculacao"))))
 
     hoje = hoje or today_brt().isoformat()
@@ -235,18 +262,23 @@ def avaliar(serie: list) -> dict:
         return {"disponivel": False, "nota": "sem balanço divulgado"}
     ultimo = serie[-1]
     queima = queima_media(serie)
-    caixa = ultimo.get("caixaUsd")
+    caixa = ultimo.get("caixa")
     folego = folego_trimestres(caixa, queima)
-    gera_caixa = queima is not None and queima < QUEIMA_MINIMA_USD
+    gera_caixa = queima is not None and queima < QUEIMA_MINIMA
     return {
         "disponivel": True,
         "trimestre": ultimo["trimestre"],
         "disponivelEm": ultimo.get("disponivelEm"),
-        "caixaUsd": caixa,
-        "dividaLiquidaUsd": ultimo.get("dividaLiquidaUsd"),
+        # Declarada, não presumida: os valores absolutos abaixo estão NESTA
+        # moeda, e comparar SKHY (won) com NVDA (dólar) sem converter é somar
+        # maçã com laranja. As razões (fôlego, liquidez) não dependem dela.
+        "moeda": ultimo.get("moeda"),
+        "piorando": piorando(serie),
+        "caixa": caixa,
+        "dividaLiquida": ultimo.get("dividaLiquida"),
         "liquidezCorrente": ultimo.get("liquidezCorrente"),
-        "fcfTrimestralUsd": ultimo.get("fcfUsd"),
-        "queimaMediaUsd": queima,
+        "fcfTrimestral": ultimo.get("fcf"),
+        "queimaMedia": queima,
         "trimestresDeQueima": TRIMESTRES_DE_QUEIMA,
         "folegoTrimestres": folego,
         "geraCaixa": gera_caixa,
@@ -262,21 +294,21 @@ def avaliar(serie: list) -> dict:
 # O yfinance troca o rótulo das linhas entre versões e entre empresas; cada
 # tupla é uma lista de sinônimos, na ordem de preferência.
 _LINHAS_BALANCO = {
-    "caixaUsd": ("Cash Cash Equivalents And Short Term Investments",
+    "caixa": ("Cash Cash Equivalents And Short Term Investments",
                  "Cash And Cash Equivalents", "CashAndCashEquivalents"),
-    "dividaUsd": ("Total Debt", "TotalDebt"),
-    "ativoCirculanteUsd": ("Current Assets", "Total Current Assets"),
-    "passivoCirculanteUsd": ("Current Liabilities", "Total Current Liabilities"),
-    "patrimonioUsd": ("Stockholders Equity", "Total Stockholder Equity"),
+    "divida": ("Total Debt", "TotalDebt"),
+    "ativoCirculante": ("Current Assets", "Total Current Assets"),
+    "passivoCirculante": ("Current Liabilities", "Total Current Liabilities"),
+    "patrimonio": ("Stockholders Equity", "Total Stockholder Equity"),
     "acoesEmCirculacao": ("Ordinary Shares Number", "Share Issued"),
 }
 _LINHAS_FLUXO = {
-    "caixaOperacionalUsd": ("Operating Cash Flow", "Total Cash From Operating Activities"),
-    "capexUsd": ("Capital Expenditure", "CapitalExpenditures", "Capital Expenditures"),
+    "caixaOperacional": ("Operating Cash Flow", "Total Cash From Operating Activities"),
+    "capex": ("Capital Expenditure", "CapitalExpenditures", "Capital Expenditures"),
 }
 
 
-def _colher(df, mapa: dict) -> list:
+def _colher(df, mapa: dict, moeda: str | None = None) -> list:
     """DataFrame do yfinance (linhas = contas, colunas = datas) -> [linha]."""
     if df is None or getattr(df, "empty", True):
         return []
@@ -286,7 +318,7 @@ def _colher(df, mapa: dict) -> list:
         t = trimestre_calendario(data)
         if not t:
             continue
-        linha = {"trimestre": t, "fimFiscal": data,
+        linha = {"trimestre": t, "fimFiscal": data, "moeda": moeda,
                  "disponivelEm": disponivel_em(data), "fonte": "yfinance"}
         achou = False
         for campo, nomes in mapa.items():
@@ -302,11 +334,25 @@ def _colher(df, mapa: dict) -> list:
     return saida
 
 
+def _moeda_do_balanco(t) -> str | None:
+    """A moeda em que a empresa REPORTA, que não é sempre dólar.
+
+    `financialCurrency` é o campo do yfinance para isso -- diferente de
+    `currency`, que é a moeda da COTAÇÃO. A SK Hynix negocia em dólar como ADR
+    e reporta em won; confundir os dois é o que produziu "54 mil bilhões de
+    dólares em caixa" na primeira rodada real."""
+    try:
+        return (t.info or {}).get("financialCurrency") or None
+    except Exception:
+        return None
+
+
 def _do_yfinance(ticker: str) -> dict:
     import yfinance as yf
     t = yf.Ticker(ticker)
-    return {"balanco": _colher(t.quarterly_balance_sheet, _LINHAS_BALANCO),
-            "fluxo": _colher(t.quarterly_cashflow, _LINHAS_FLUXO)}
+    moeda = _moeda_do_balanco(t)
+    return {"balanco": _colher(t.quarterly_balance_sheet, _LINHAS_BALANCO, moeda),
+            "fluxo": _colher(t.quarterly_cashflow, _LINHAS_FLUXO, moeda)}
 
 
 def _av_json(funcao: str, ticker: str) -> dict | None:
@@ -359,16 +405,16 @@ def _av_json(funcao: str, ticker: str) -> dict | None:
 
 
 _AV_BALANCO = {
-    "caixaUsd": ("cashAndCashEquivalentsAtCarryingValue", "cashAndShortTermInvestments"),
-    "dividaUsd": ("shortLongTermDebtTotal",),
-    "ativoCirculanteUsd": ("totalCurrentAssets",),
-    "passivoCirculanteUsd": ("totalCurrentLiabilities",),
-    "patrimonioUsd": ("totalShareholderEquity",),
+    "caixa": ("cashAndCashEquivalentsAtCarryingValue", "cashAndShortTermInvestments"),
+    "divida": ("shortLongTermDebtTotal",),
+    "ativoCirculante": ("totalCurrentAssets",),
+    "passivoCirculante": ("totalCurrentLiabilities",),
+    "patrimonio": ("totalShareholderEquity",),
     "acoesEmCirculacao": ("commonStockSharesOutstanding",),
 }
 _AV_FLUXO = {
-    "caixaOperacionalUsd": ("operatingCashflow",),
-    "capexUsd": ("capitalExpenditures",),
+    "caixaOperacional": ("operatingCashflow",),
+    "capex": ("capitalExpenditures",),
 }
 
 
@@ -387,6 +433,7 @@ def _do_alpha_vantage(ticker: str) -> dict:
             if not t:
                 continue
             linha = {"trimestre": t, "fimFiscal": data,
+                     "moeda": rel.get("reportedCurrency") or None,
                      "disponivelEm": disponivel_em(data), "fonte": "alpha_vantage"}
             achou = False
             for campo, nomes in mapa.items():
@@ -597,20 +644,26 @@ if __name__ == "__main__":
         }))
         sys.exit(0)
 
-    print(f"{'TICKER':<8}{'TRI':<8}{'CAIXA(bi)':>11}{'DÍV.LÍQ(bi)':>13}"
-          f"{'FCF(bi)':>10}{'FÔLEGO':>10}  AVISO")
+    # Valores em BILHÕES DA MOEDA DO BALANÇO -- a coluna existe porque somar
+    # won com dólar seria erro, e esconder a moeda convidaria a somar.
+    print(f"{'TICKER':<7}{'TRI':<8}{'MOEDA':<7}{'CAIXA(bi)':>12}"
+          f"{'DÍV.LÍQ(bi)':>13}{'FCF(bi)':>11}{'FÔLEGO':>13}   AVISOS")
     for tk in sorted(dados["resumo"]):
         r = dados["resumo"][tk]
         if not r.get("disponivel"):
-            print(f"{tk:<8}{'—':<8}{r.get('nota', '')}")
+            print(f"{tk:<7}{'—':<8}{r.get('nota', '')}")
             continue
         folego = ("gera caixa" if r["geraCaixa"]
                   else f"{r['folegoTrimestres']} tri" if r["folegoTrimestres"] is not None
                   else "—")
-        aviso = "série quebrada (reestruturação?)" if r["quebraDeSerie"] else ""
-        print(f"{tk:<8}{r['trimestre']:<8}{_bi(r['caixaUsd']):>11}"
-              f"{_bi(r['dividaLiquidaUsd']):>13}{_bi(r['fcfTrimestralUsd']):>10}"
-              f"{folego:>10}  {aviso}")
+        avisos = []
+        if r["quebraDeSerie"]:
+            avisos.append("série quebrada (reestruturação?)")
+        if r["piorando"]:
+            avisos.append("último trimestre queimou")
+        print(f"{tk:<7}{r['trimestre']:<8}{(r.get('moeda') or '?'):<7}"
+              f"{_bi(r['caixa']):>12}{_bi(r['dividaLiquida']):>13}"
+              f"{_bi(r['fcfTrimestral']):>11}{folego:>13}   {', '.join(avisos)}")
     if dados["falhas"]:
         print(f"\nsem balanço: {', '.join(dados['falhas'])}")
     if dados["serieRasa"]:

@@ -277,8 +277,9 @@ def test_prompt_ensina_o_capex_como_contexto_nao_gatilho():
 
 def _snap_folego(**campos):
     base = {"disponivel": True, "trimestre": "2026Q2", "disponivelEm": "2026-08-14",
-            "caixaUsd": 700e6, "dividaLiquidaUsd": 2.3e9, "liquidezCorrente": 2.0,
-            "fcfTrimestralUsd": -170e6, "queimaMediaUsd": 170e6,
+            "moeda": "USD", "piorando": False,
+            "caixa": 700e6, "dividaLiquida": 2.3e9, "liquidezCorrente": 2.0,
+            "fcfTrimestral": -170e6, "queimaMedia": 170e6,
             "trimestresDeQueima": 4, "folegoTrimestres": 4.1, "geraCaixa": False,
             "quebraDeSerie": False, "trimestresNaSerie": 5}
     base.update(campos)
