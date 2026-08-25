@@ -47,6 +47,23 @@ services:
       # nomeado pra sobreviver a `up --build`: sem isso todo deploy recomeça
       # baixando tudo do Yahoo de novo, justo no momento de maior pressa.
       - histcache:/var/cache/premercado/hist
+      # TODO o resto de /var/cache/premercado, pelo mesmo motivo -- que só
+      # ficou visível em 25/08/2026. Só o subdiretório hist/ tinha volume, e
+      # os overlays (earnings, correlações, capex, traduções) viviam na camada
+      # gravável do container: cada `up --build` apagava os quatro. O ritual de
+      # "rodar atualizar_earnings depois de todo deploy" era sintoma disto.
+      #
+      # No capex o custo virou dado errado, não só trabalho repetido: o
+      # coletor mescla com o histórico guardado para não gastar cota
+      # rebuscando o que já tem, e com o overlay zerado ele recomeça do
+      # zero -- gastando cinco chamadas de um orçamento diário que o próprio
+      # deploy também tinha acabado de zerar (ver AGENT_PROVIDER_HEALTH_PATH).
+      # Resultado real: META e ORCL ficaram com 5 trimestres em vez de 40.
+      #
+      # Os dois convivem: o Docker ordena os mounts por profundidade de
+      # destino, então hist/ é montado por cima deste, independentemente da
+      # ordem em que aparecem aqui.
+      - appcache:/var/cache/premercado
     healthcheck:
       test:
         - CMD
@@ -83,5 +100,6 @@ services:
 volumes:
   pgdata:
   histcache:
+  appcache:
   caddy_data:
   caddy_config:

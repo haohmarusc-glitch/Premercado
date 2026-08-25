@@ -29,10 +29,11 @@ Duas armadilhas tratadas explicitamente:
    que é só calendário. O agregado marca `completo: false` e o consumidor
    mostra o aviso em vez do número.
 
-Fonte: yfinance (grátis, sem cota) com Alpha Vantage como fallback -- a cota
-da AV é de 15 chamadas/dia e já é disputada pelo calendário de earnings e
-pelas notícias, então gastar cinco delas aqui seria trocar um fato novo por
-um fato existente. A fonte usada é declarada em cada linha.
+Fonte: yfinance (grátis, sem cota) com Alpha Vantage complementando a
+profundidade -- a chave da AV permite 25 chamadas/dia e nós nos limitamos a
+15, disputadas com o calendário de earnings e com as notícias, então a cota só
+é gasta pelo que o overlay ainda não tem. A fonte usada é declarada em cada
+linha.
 
 Rodar (na VPS, dentro do container):
     docker compose exec -T -w /app/artifacts/api-server/src app \
@@ -257,9 +258,9 @@ def _do_alpha_vantage(ticker: str) -> list:
     earnings e notícias), por isso só roda quando o yfinance veio vazio ou
     raso demais para variação a/a -- ver PROFUNDIDADE_MINIMA."""
     try:
-        from alpha_vantage_provider import _api_key  # type: ignore
+        from alpha_vantage_provider import _api_key, censurar_chave  # type: ignore
     except ImportError:
-        from agent.alpha_vantage_provider import _api_key  # type: ignore
+        from agent.alpha_vantage_provider import _api_key, censurar_chave  # type: ignore
     try:
         from http_retry import SESSION
     except ImportError:
@@ -267,11 +268,13 @@ def _do_alpha_vantage(ticker: str) -> list:
     chave = _api_key()
     if not chave:
         return []
-    # A cota é de 15/dia e compartilhada com o calendário de earnings e as
-    # notícias. Debitar é o ponto: orçamento que alguém não debita é
-    # orçamento que não protege ninguém (mesma regra de
-    # atualizar_earnings.py). Cinco chamadas por SEMANA cabem com folga --
-    # mas só se estiverem contadas.
+    # O teto REAL da chave é 25/dia (a própria AV diz isso na mensagem de
+    # estouro); AGENT_ALPHAVANTAGE_MAX_DIA=15 é um limite nosso, mais apertado
+    # de propósito, compartilhado com o calendário de earnings e as notícias.
+    # Debitar é o ponto: orçamento que alguém não debita é orçamento que não
+    # protege ninguém (mesma regra de atualizar_earnings.py) -- e ele também
+    # precisa SOBREVIVER ao deploy, senão a nossa conta zera enquanto a da AV
+    # continua (ver provider_health._PATH).
     try:
         from provider_health import consumir_orcamento_diario
     except ImportError:
@@ -292,7 +295,10 @@ def _do_alpha_vantage(ticker: str) -> list:
     aviso = (dados.get("Note") or dados.get("Information")
              or dados.get("Error Message"))
     if aviso:
-        raise RuntimeError(f"Alpha Vantage respondeu aviso em vez de dados: {str(aviso)[:180]}")
+        # Censurado: esse aviso ecoa a chave em texto claro (visto em
+        # 25/08/2026), e a mensagem termina no stderr do container.
+        raise RuntimeError("Alpha Vantage respondeu aviso em vez de dados: "
+                           f"{censurar_chave(aviso)[:180]}")
     if "quarterlyReports" not in dados:
         raise RuntimeError(f"Alpha Vantage sem quarterlyReports para {ticker}: "
                            f"{str(dados)[:180]}")
@@ -351,7 +357,14 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
     guardado = guardado or {}
     por_empresa, falhas, rasos = {}, [], []
     usou_av = False
-    for t in alvo:
+    # Quem está mais raso é atendido primeiro. A cota pode acabar no meio da
+    # fila -- aconteceu em 25/08/2026, e quem ficou de fora foram META e ORCL
+    # simplesmente por serem os últimos da lista fixa. Com a ordem por
+    # carência, a cota de cada dia vai para o buraco maior e a profundidade
+    # converge em poucas rodadas em vez de os mesmos dois ficarem sempre para
+    # trás. Empate resolvido pelo nome, para a ordem ser reproduzível.
+    ordem = sorted(alvo, key=lambda t: (len(guardado.get(t) or []), t))
+    for t in ordem:
         linhas = []
         try:
             linhas = yf_fn(t)

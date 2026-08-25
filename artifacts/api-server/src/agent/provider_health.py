@@ -51,8 +51,14 @@ try:
 except ImportError:  # execução standalone
     from brt import today_brt
 
+# Em /var/cache/premercado (volume nomeado), não em /tmp. O orçamento diário
+# da Alpha Vantage mora aqui, e /tmp morre junto com o container: cada
+# `up --build` zerava o contador enquanto a AV seguia contando o dia dela.
+# Em 25/08/2026 isso apareceu do jeito mais claro possível -- a nossa conta
+# achava que havia cota, e a resposta da AV foi "sua chave já bateu o limite
+# de 25 requisições por dia". Orçamento que o deploy zera não é orçamento.
 _PATH = os.environ.get(
-    "AGENT_PROVIDER_HEALTH_PATH", "/tmp/premercado_provider_health.json"
+    "AGENT_PROVIDER_HEALTH_PATH", "/var/cache/premercado/provider_health.json"
 )
 
 # 3 falhas seguidas antes de abrir: uma falha isolada (timeout de rede

@@ -92,6 +92,27 @@ def _api_key() -> str:
     return os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
 
 
+def censurar_chave(texto) -> str:
+    """Tira a chave de qualquer mensagem antes dela virar log.
+
+    Não é paranoia genérica: quando a cota estoura, a Alpha Vantage responde
+    com um aviso que ECOA A CHAVE em texto claro -- "We have detected your API
+    key as XXXX and our standard API rate limit is 25 requests per day". Os
+    três pontos do repo que imprimem esse aviso estavam, portanto, escrevendo
+    a credencial no stderr do container, de onde ela vai para o log do Docker,
+    para o terminal de quem roda o comando e para qualquer lugar em que essa
+    saída for colada. Visto na rodada de 25/08/2026.
+
+    Substituição literal pelo valor da chave, não regex de "coisa que parece
+    chave": o que precisa sumir é este segredo, e casar por formato erraria
+    para mais (censurando ticker) e para menos (chave em outro formato)."""
+    texto = str(texto)
+    chave = _api_key()
+    if chave and len(chave) >= 8:
+        texto = texto.replace(chave, "***")
+    return texto
+
+
 def fetch_daily_history(ticker: str, period: str = "6mo") -> pd.DataFrame | None:
     """Histórico diário no mesmo formato de `yf.Ticker(...).history()`.
 
@@ -137,8 +158,8 @@ def fetch_daily_history(ticker: str, period: str = "6mo") -> pd.DataFrame | None
             # Nunca tratar como "sem dado hoje" em silêncio: é a diferença
             # entre "o mercado não abriu" e "estamos cegos".
             motivo = body.get("Note") or body.get("Information") or body.get("Error Message")
-            print(f"[alpha_vantage_provider] {ticker}: sem série ({str(motivo)[:160]!r})",
-                  file=sys.stderr)
+            print(f"[alpha_vantage_provider] {ticker}: sem série "
+                  f"({censurar_chave(motivo)[:160]!r})", file=sys.stderr)
             return None
 
         df = pd.DataFrame.from_dict(serie, orient="index")

@@ -139,7 +139,14 @@ def baixar_calendario(horizonte: str = HORIZONTE_DEFAULT) -> str:
                       or body.get("Error Message") or texto[:160])
         except ValueError:
             motivo = texto[:160]
-        raise RuntimeError(f"Alpha Vantage respondeu aviso em vez de CSV: {str(motivo)[:200]}")
+        # Censurado: o aviso de cota da AV ecoa a chave em texto claro, e esta
+        # mensagem vai para o log do container.
+        try:
+            from alpha_vantage_provider import censurar_chave
+        except ImportError:
+            from agent.alpha_vantage_provider import censurar_chave
+        raise RuntimeError("Alpha Vantage respondeu aviso em vez de CSV: "
+                           f"{censurar_chave(motivo)[:200]}")
 
     if "reportDate" not in texto:
         raise RuntimeError(f"CSV sem a coluna reportDate: {texto[:160]!r}")
