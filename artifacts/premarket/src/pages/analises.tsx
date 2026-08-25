@@ -103,7 +103,7 @@ export const ANALISES: Analise[] = [
     selo: "PARCIAL",
     medido: "A metade quantitativa: market cap, receita, margens, gasto em P&D e múltiplos dos pares — tudo verificável.",
     ressalva: "Moat por marca/custo/rede/switching, nota de qualidade de gestão e market share dos últimos 3 anos não têm fonte no app: seriam texto convincente sem número atrás. Se um dia entrar, entra como leitura declarada de IA sobre a tabela medida — nunca como medição.",
-    destinos: [{ rotulo: "Setor IA", href: "/sector-ai" }],
+    destinos: [{ rotulo: "Setor IA", href: "/setor/ia" }],
   },
   {
     n: 9, titulo: "Padrões e anomalias", casa: "Renaissance Technologies",
@@ -119,7 +119,7 @@ export const ANALISES: Analise[] = [
     selo: "PARCIAL",
     medido: "CPI, Fed funds, curva de juros, desemprego, Fear & Greed, performance setorial e o risco macro diário de seis fontes — mais o beta medido de cada papel a juros, dólar e setor (análise 9).",
     ressalva: "\"Outlook do Fed para 6–12 meses\" e recomendação de rotação setorial são previsão, não medição. O app mostra o retrato de hoje e a sensibilidade medida; a previsão fica com quem decide.",
-    destinos: [{ rotulo: "Macro", href: "/macro" }, { rotulo: "Risco Macro", href: "/macro" }],
+    destinos: [{ rotulo: "Macro / Risco Macro", href: "/macro" }],
   },
 ];
 

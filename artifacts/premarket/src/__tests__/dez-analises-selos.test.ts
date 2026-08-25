@@ -9,6 +9,8 @@
  * FORA, passa a quebrar o build.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { ANALISES } from "../pages/analises";
 
 describe("As 10 Análises — selos de origem", () => {
@@ -57,5 +59,39 @@ describe("As 10 Análises — selos de origem", () => {
     // app; dividendos numa carteira de semis, com regra fiscal americana,
     // daria conselho errado com cara de precisão.
     expect(ANALISES.filter((a) => a.selo === "FORA").map((a) => a.n)).toEqual([5, 7]);
+  });
+});
+
+describe("As 10 Análises — os links existem de verdade", () => {
+  // O incidente de 25/08/2026: o cartão da análise 8 apontava para
+  // "/sector-ai" (o nome do ARQUIVO, pages/sector-ai.tsx) enquanto a rota
+  // declarada é "/setor/ia" -- clique levava a 404. Um menu-índice cujo
+  // link não abre é pior que não ter o link: ele afirma que a tela existe.
+  // Este teste lê as rotas do App.tsx e cobra cada destino.
+  const app = readFileSync(join(__dirname, "..", "App.tsx"), "utf-8");
+  const rotas = new Set(
+    [...app.matchAll(/path="([^"]+)"/g)].map((m) => m[1]),
+  );
+
+  it("o App declara as rotas que o teste vai conferir", () => {
+    expect(rotas.size).toBeGreaterThan(20);
+    expect(rotas.has("/analises")).toBe(true);
+  });
+
+  it("todo destino de cartão aponta para uma rota declarada", () => {
+    for (const a of ANALISES) {
+      for (const d of a.destinos ?? []) {
+        expect(rotas.has(d.href), `análise ${a.n}: "${d.rotulo}" → ${d.href} não é rota do App`).toBe(true);
+      }
+    }
+  });
+
+  it("um cartão não repete a mesma página com rótulos diferentes", () => {
+    // Dois links para /macro chamados "Macro" e "Risco Macro" sugeriam duas
+    // telas onde só existe uma.
+    for (const a of ANALISES) {
+      const hrefs = (a.destinos ?? []).map((d) => d.href);
+      expect(new Set(hrefs).size, `análise ${a.n} repete destino`).toBe(hrefs.length);
+    }
   });
 });

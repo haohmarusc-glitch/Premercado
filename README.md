@@ -711,6 +711,7 @@ Agrupado por tema. Números são links no GitHub (`haohmarusc-glitch/Premercado`
 | #367 | Veredito estruturado: o LLM declara a decisão por ticker em JSON (action/confidence/reason_codes), o validador confere schema, dado, concentração e coerência JSON↔texto |
 | #368 | Painel de earnings do Veredito mostrava a data um dia antes (new Date de data-só é meia-noite UTC); RUNUP_ESTICADO promovido ao vocabulário do bloco |
 | #369 | Menu "As 10 Análises" com selo de origem por análise, e a análise de padrões (sazonalidade, dia da semana, eventos macro, fatores) com bootstrap, permutação e correção de Holm |
+| #370 | Cartão da análise 8 linkava `/sector-ai` (nome do arquivo) em vez de `/setor/ia` (rota real) — 404 no clique; teste passa a cobrar cada destino contra as rotas do App |
 
 ### Diversificação de fontes de dado (ago/2026)
 
