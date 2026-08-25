@@ -6,7 +6,6 @@ Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, sou
 import sys, json, re
 import yfinance as yf
 from security import sanitize_ticker, friendly_error
-from http_retry import SESSION
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
 # duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
 # (imports planos) e como membro do pacote agent.
@@ -19,44 +18,26 @@ except ImportError:
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
 
-# ── Tradução via endpoint gratuito do Google Translate (sem API key) ──────────
-def _translate_join(texts: list[str]) -> list[str]:
-    """Traduz uma lista de textos (en->pt-BR) numa única requisição.
-    Retorna os originais se algo falhar."""
+def translate_all(texts: list[str]) -> list[str]:
+    """Traduz en->pt-BR, devolvendo os ORIGINAIS quando não dá.
+
+    Delega para agent/traducao.py (cache em disco -> Google gratuito -> LLM
+    da cadeia, com o motivo de cada falha no stderr). Era uma chamada única
+    ao endpoint gratuito do Google dentro de `except: pass`: quando ele
+    passou a responder 429, todos os consumidores -- feed de notícias,
+    marcador do gráfico e o Estudo de Entrada/Saída -- voltaram ao inglês
+    em silêncio. Consertar só um consumidor teria deixado os outros dois
+    quebrados, então o conserto ficou aqui, no ponto único.
+    """
     if not texts:
         return texts
-    joined = "\n".join(texts)
     try:
-        r = SESSION.get(
-            "https://translate.googleapis.com/translate_a/single",
-            params={"client": "gtx", "sl": "en", "tl": "pt-BR", "dt": "t", "q": joined},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=12,
-        )
-        r.raise_for_status()
-        data = r.json()
-        translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
-        lines = translated.split("\n")
-        if len(lines) == len(texts):
-            return [ln.strip() for ln in lines]
-    except Exception:
-        pass
-    return texts
+        from traducao import traduzir
+    except ImportError:
+        from agent.traducao import traduzir
+    traduzidos, _origens = traduzir(list(texts))
+    return traduzidos
 
-def translate_all(texts: list[str]) -> list[str]:
-    """Traduz em lotes respeitando limite de tamanho da URL."""
-    out: list[str] = []
-    batch: list[str] = []
-    size = 0
-    for t in texts:
-        if size + len(t) > 3500 and batch:
-            out.extend(_translate_join(batch))
-            batch, size = [], 0
-        batch.append(t)
-        size += len(t) + 1
-    if batch:
-        out.extend(_translate_join(batch))
-    return out
 
 # ── Relevância: a matéria de fato fala deste ticker? ───────────────────────────
 #
@@ -220,7 +201,17 @@ if __name__ == "__main__":
     items = [for_ticker(t, max_items, tickers, names) for t in tickers]
 
     if do_translate:
-        # Junta todos os textos (title + summary) numa lista, traduz em lote e devolve.
+        # Junta todos os textos (title + summary) numa lista, traduz em lote e
+        # devolve. Desde 25/08/2026 via agent/traducao.py: cache em disco ->
+        # Google gratuito -> LLM da cadeia, com o MOTIVO de cada falha no
+        # stderr. Antes era uma chamada só ao Google dentro de um
+        # `except: pass` -- quando o endpoint passou a responder 429, a
+        # manchete voltava em inglês sem uma linha de log dizendo por quê, e
+        # a bolinha de notícia do gráfico ficou em inglês em produção.
+        try:
+            from traducao import traduzir
+        except ImportError:
+            from agent.traducao import traduzir
         refs = []  # (item_dict, field)
         texts = []
         for it in items:
@@ -230,8 +221,16 @@ if __name__ == "__main__":
                         refs.append((n, field))
                         texts.append(n[field])
         if texts:
-            translated = translate_all(texts)
-            for (n, field), tr in zip(refs, translated):
+            translated, origens = traduzir(texts)
+            for (n, field), tr, origem in zip(refs, translated, origens):
                 n[field] = tr
+                # `traduzido` fica FALSE quando o texto voltou em inglês: a
+                # tela mostra o selo em vez de o leitor descobrir sozinho.
+                # Basta um campo não traduzido para o item inteiro ser
+                # marcado -- meia notícia traduzida não é notícia traduzida.
+                if origem == "original":
+                    n["traduzido"] = False
+                elif "traduzido" not in n:
+                    n["traduzido"] = True
 
     print(json_seguro.dumps({"items": items}))

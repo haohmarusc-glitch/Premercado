@@ -917,9 +917,19 @@ function PriceChart({ ticker }: { ticker: string }) {
                 ) : (
                   <p className="text-sm font-semibold text-foreground leading-snug">{n.title}</p>
                 )}
-                {(n.source || fmtNewsDate(n.published)) && (
-                  <p className="text-xs text-muted-foreground font-mono mt-1">
-                    {[n.source, fmtNewsDate(n.published)].filter(Boolean).join(" · ")}
+                {(n.source || fmtNewsDate(n.published) || (n as { traduzido?: boolean }).traduzido === false) && (
+                  <p className="text-xs text-muted-foreground font-mono mt-1 flex items-center gap-2 flex-wrap">
+                    <span>{[n.source, fmtNewsDate(n.published)].filter(Boolean).join(" · ")}</span>
+                    {/* A tradução tem três camadas e ainda assim pode falhar
+                        (o endpoint gratuito do Google devolve 429). Quando
+                        volta em inglês, o selo diz -- em 25/08/2026 a
+                        manchete apareceu em inglês na bolinha do gráfico e
+                        não havia nada indicando que aquilo era uma falha. */}
+                    {(n as { traduzido?: boolean }).traduzido === false && (
+                      <span className="px-1.5 py-0.5 rounded border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 text-[10px]">
+                        original em inglês
+                      </span>
+                    )}
                   </p>
                 )}
                 {n.summary && (
