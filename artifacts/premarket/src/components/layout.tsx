@@ -266,7 +266,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Agent Command Center</p>
+          <p className="text-xs text-muted-foreground mt-2 font-mono uppercase">Central de comando do agente</p>
           {user && <p className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono truncate">{user.email}</p>}
         </div>
         
@@ -277,7 +277,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {navLink("/analises", <Library className="h-4 w-4" />, "As 10 Análises")}
             {navLink("/history", <History className="h-4 w-4" />, "History")}
             {navLink("/observations", <Database className="h-4 w-4" />, "Observations")}
-            {user?.isAdmin && navLink("/runs", <ListChecks className="h-4 w-4" />, "Runs")}
+            {user?.isAdmin && navLink("/runs", <ListChecks className="h-4 w-4" />, "Execuções")}
             {user?.isAdmin && navLink("/ai-spend", <DollarSign className="h-4 w-4" />, "Gastos com IA")}
             {user?.isAdmin && navLink("/users", <UserCog className="h-4 w-4" />, "Usuários")}
             {navLink("/alerts", <Bell className="h-4 w-4" />, "Alerts", firingCount)}
