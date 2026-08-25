@@ -29,7 +29,14 @@ Duas decisões metodológicas que definem a honestidade do teste:
    médias com isso. O script CALCULA e MOSTRA o poder da amostra em vez de
    produzir um p-valor bonito sobre nada.
 
-Rodar (na VPS, dentro do container -- precisa de rede):
+O capex vem do OVERLAY que o coletor semanal grava, não de coleta própria.
+Na primeira semana este script chamava `montar()` direto e gastava as cinco
+chamadas de Alpha Vantage a cada rodada -- num orçamento de 15/dia dividido
+com earnings e notícias, rodar o experimento duas vezes esgotava a cota e
+fazia a COLETA seguinte vir rasa. Um experimento não pode degradar o dado que
+ele mede. Com `--coletar` a coleta é forçada, para quando for essa a intenção.
+
+Rodar (na VPS, dentro do container -- lê o overlay, não usa rede):
     docker compose exec -T -w /app/artifacts/api-server/src/agent/scripts app \
       /app/.venv/bin/python3 capex_regime_teste.py < /dev/null
 """
@@ -42,7 +49,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 import padroes_estatisticos as pe  # noqa: E402
-from capex_hyperscalers import montar as montar_capex  # noqa: E402
+import capex_hyperscalers as cap  # noqa: E402
 
 # ── CRITÉRIO DE APROVAÇÃO, DECLARADO ANTES DE QUALQUER RODADA ────────────────
 #
@@ -130,12 +137,39 @@ def avaliar(resultado: dict, n_trimestres_por_regime: dict) -> tuple:
     return (not motivos), motivos
 
 
-def main() -> int:
+def carregar_capex(coletar: bool = False, *, overlay=cap.ler_overlay,
+                   montar=cap.montar) -> dict | None:
+    """Overlay por padrão; rede só sob pedido explícito.
+
+    Devolve None quando não há overlay -- em vez de coletar por conta
+    própria, o script diz qual comando gera o dado. Cair na rede
+    silenciosamente é como a cota foi parar em zero na primeira semana."""
+    if coletar:
+        return montar()
+    dados = overlay()
+    if dados and dados.get("trimestres"):
+        return dados
+    return None
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     print("CRITÉRIO (declarado antes da rodada): "
           f"{MIN_TRIMESTRES_POR_REGIME}+ trimestres e {MIN_PREGOES_POR_REGIME}+ pregões "
           f"de cada lado, p<={ALFA}, diferença >= {MIN_DIFERENCA_DIARIA_PP}pp/dia\n")
 
-    capex = montar_capex()
+    forcar_coleta = "--coletar" in argv
+    capex = carregar_capex(forcar_coleta)
+    if capex is None:
+        print("sem overlay de capex em "
+              f"{cap.OVERLAY_PATH_DEFAULT} -- rode o coletor primeiro:\n"
+              "  docker compose exec -T -w /app/artifacts/api-server/src app \\\n"
+              "    /app/.venv/bin/python -m agent.capex_hyperscalers < /dev/null\n"
+              "(ou passe --coletar para coletar aqui, gastando cota da Alpha Vantage)",
+              file=sys.stderr)
+        return 2
+    print(f"capex: {'coletado agora' if forcar_coleta else 'lido do overlay'}"
+          f" (coletadoEm={capex.get('coletadoEm')})")
     trimestres = capex.get("trimestres", [])
     completos = [t for t in trimestres if t.get("completo") and t.get("variacaoQoQPct") is not None]
     contagem: dict = {}

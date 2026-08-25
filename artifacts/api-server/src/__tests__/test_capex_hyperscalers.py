@@ -149,11 +149,13 @@ def test_no_empate_de_trimestre_o_yfinance_vence():
     assert len(combinado) == 2, "o trimestre que só a AV tem entra"
 
 
-def test_historico_ainda_raso_e_declarado(capsys):
+def test_coleta_rasa_e_declarada(capsys):
     col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: [_linha("2026-06-30", 35e9)],
                      av_fn=lambda t: [])
     assert col["rasos"] == ["MSFT"]
-    assert "histórico ainda raso" in capsys.readouterr().err
+    # A frase fala da COLETA, não do histórico: o overlay guardado pode cobrir
+    # a profundidade, e `montar` é quem decide isso depois da mesclagem.
+    assert "coleta rasa" in capsys.readouterr().err
 
 def test_cai_para_alpha_vantage_quando_o_yfinance_vem_vazio(capsys):
     col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: [],
@@ -266,3 +268,93 @@ def test_um_ticker_so_nao_dorme_a_toa(monkeypatch):
     cx.coletar(["MSFT"], yf_fn=lambda t: [], av_fn=lambda t: [_linha("2026-06-30", 30e9)],
                pausa_s=13)
     assert dormidas == []
+
+
+# ── profundidade não regride ─────────────────────────────────────────────────
+#
+# O defeito real: o coletor grava o overlay inteiro a cada rodada, então uma
+# rodada com a cota da Alpha Vantage esgotada devolvia a série ao tamanho raso
+# do yfinance. A profundidade conquistada na semana anterior sumia, e o
+# experimento de regime perdia o lado de contraste.
+
+def _serie(fins, fonte="yfinance"):
+    return [_linha(f, 30e9, fonte) for f in fins]
+
+
+_FUNDOS = ["2024-03-31", "2024-06-30", "2024-09-30", "2024-12-31",
+           "2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31",
+           "2026-03-31", "2026-06-30"]
+
+
+def test_mesclar_guarda_o_alcance_do_historico_anterior():
+    anterior = {"MSFT": _serie(_FUNDOS)}
+    novo = {"MSFT": _serie(["2026-06-30"])}
+    assert len(cx.mesclar_bruto(anterior, novo)["MSFT"]) == len(_FUNDOS)
+
+
+def test_no_empate_de_trimestre_o_novo_vence():
+    anterior = {"MSFT": [_linha("2026-06-30", 30e9)]}
+    novo = {"MSFT": [_linha("2026-06-30", 35e9)]}
+    linhas = cx.mesclar_bruto(anterior, novo)["MSFT"]
+    assert len(linhas) == 1 and linhas[0]["capexUsd"] == 35e9
+
+
+def test_mesclar_aceita_empresa_nova_e_empresa_so_guardada():
+    m = cx.mesclar_bruto({"MSFT": _serie(["2026-03-31"])}, {"AMZN": _serie(["2026-06-30"])})
+    assert sorted(m) == ["AMZN", "MSFT"]
+
+
+def test_mesclar_corta_no_teto_de_trimestres_brutos():
+    demais = [f"20{a:02d}-03-31" for a in range(0, 60)]
+    m = cx.mesclar_bruto({"MSFT": _serie(demais)}, {})
+    assert len(m["MSFT"]) == cx.TRIMESTRES_BRUTOS_GUARDADOS
+    assert m["MSFT"][-1]["trimestre"] == cx.trimestre_calendario(demais[-1])
+
+
+def test_montar_com_guardado_nao_encolhe_a_serie():
+    fundo = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(_FUNDOS), av_fn=lambda t: [])
+    raso = cx.montar(["MSFT"], pausa_s=0, bruto_anterior=fundo["porEmpresa"],
+                     yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=lambda t: [])
+    assert len(raso["porEmpresa"]["MSFT"]) == len(_FUNDOS)
+    assert raso["historicoRaso"] == []
+
+
+def test_sem_guardado_a_serie_rasa_e_declarada_rasa():
+    d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=lambda t: [])
+    assert d["historicoRaso"] == ["MSFT"]
+
+
+def test_falha_total_com_historico_guardado_vira_usandoGuardado(capsys):
+    fundo = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(_FUNDOS), av_fn=lambda t: [])
+    d = cx.montar(["MSFT"], pausa_s=0, bruto_anterior=fundo["porEmpresa"],
+                  yf_fn=lambda t: [], av_fn=lambda t: [])
+    assert d["usandoGuardado"] == ["MSFT"] and d["falhas"] == []
+    assert "histórico guardado" in capsys.readouterr().err
+
+
+def test_falha_total_sem_historico_continua_falha():
+    d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: [], av_fn=lambda t: [])
+    assert d["falhas"] == ["MSFT"] and d["usandoGuardado"] == []
+
+
+def test_montar_publica_o_bruto_para_a_proxima_rodada_mesclar():
+    d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(_FUNDOS), av_fn=lambda t: [])
+    assert cx.ler_overlay.__name__  # o overlay é o dicionário inteiro
+    assert set(d["porEmpresa"]) == {"MSFT"}
+
+
+# ── grupo esperado: empresa faltando não pode virar "completo" ───────────────
+
+def test_esperado_explicito_impede_completo_com_empresa_faltando():
+    por = {"MSFT": [_linha("2026-06-30", 35e9)], "AMZN": [_linha("2026-06-30", 25e9)]}
+    assert cx.agregar(por, hoje="2026-09-30", esperado=5)[0]["completo"] is False
+    assert cx.agregar(por, hoje="2026-09-30", esperado=2)[0]["completo"] is True
+
+
+def test_montar_usa_o_tamanho_do_grupo_pedido_como_esperado():
+    d = cx.montar(["MSFT", "AMZN", "ORCL"], pausa_s=0,
+                  yf_fn=lambda t: [] if t == "ORCL" else _serie(_FUNDOS),
+                  av_fn=lambda t: [])
+    # ORCL sem dado: nenhum trimestre pode se dizer completo com 2 de 3.
+    assert all(t["completo"] is False for t in d["trimestres"])
+    assert d["resumo"]["disponivel"] is False
