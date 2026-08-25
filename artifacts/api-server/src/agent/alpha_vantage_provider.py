@@ -92,6 +92,50 @@ def _api_key() -> str:
     return os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
 
 
+# Quando a AV recusa por LIMITE DIÁRIO, a recusa é da CHAVE, não do ticker:
+# insistir nos próximos tickers só gasta débito do nosso orçamento e tempo de
+# pausa para receber a mesma resposta. Visto em 25/08/2026 -- cinco chamadas
+# de capex, cinco recusas idênticas, com 13s de espera entre elas.
+#
+# O disjuntor é POR PROCESSO de propósito. Cada script é um processo, então
+# ele cobre a rodada inteira; e como não persiste, uma rodada amanhã tenta de
+# novo sem precisar de ninguém para rearmar.
+#
+# Mora no AMBIENTE, e não numa global de módulo, por uma razão específica
+# deste repo: os scripts são importados dos DOIS jeitos -- `alpha_vantage_
+# provider` (spawn por caminho) e `agent.alpha_vantage_provider` (membro do
+# pacote). São dois objetos de módulo distintos, com globais distintas, então
+# uma flag de módulo seria armada num e lida no outro. O ambiente é único no
+# processo e imune a isso.
+_CHAVE_LIMITE = "AGENT_AV_LIMITE_DIARIO_BATIDO"
+
+_MARCAS_DE_LIMITE_DIARIO = (
+    "rate limit", "api rate limit", "requests per day", "higher api call",
+    "premium plan",
+)
+
+
+def aviso_e_limite_diario(texto) -> bool:
+    """O aviso da AV fala de cota do DIA (e não de chave inválida ou endpoint
+    premium por ticker)? Compara em minúsculas contra marcas conhecidas."""
+    t = str(texto or "").lower()
+    return any(m in t for m in _MARCAS_DE_LIMITE_DIARIO)
+
+
+def marcar_limite_diario() -> None:
+    os.environ[_CHAVE_LIMITE] = "1"
+
+
+def limite_diario_batido() -> bool:
+    return os.environ.get(_CHAVE_LIMITE) == "1"
+
+
+def _resetar_limite_diario() -> None:
+    """Só para a suíte: o disjuntor vale para o processo e vazaria entre
+    testes."""
+    os.environ.pop(_CHAVE_LIMITE, None)
+
+
 def censurar_chave(texto) -> str:
     """Tira a chave de qualquer mensagem antes dela virar log.
 

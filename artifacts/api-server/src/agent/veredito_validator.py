@@ -483,7 +483,22 @@ REASON_CODES_CONHECIDOS = {
     # isso, checável. Só vale quando o capex agregado do snapshot está
     # mesmo na direção citada (ver BLOCO_CAPEX_CONTRADITO abaixo).
     "CAPEX_ACELERANDO", "CAPEX_DESACELERANDO",
+    # 25/08/2026: fôlego de caixa vira razão declarável pelo mesmo motivo do
+    # capex -- é fato datado no snapshot, então é checável. CAIXA_CURTO exige
+    # que o ticker esteja mesmo queimando com fôlego abaixo do limite, e
+    # CAIXA_CONFORTAVEL exige o contrário (ver BLOCO_CAIXA_CONTRADITO).
+    "CAIXA_CURTO", "CAIXA_CONFORTAVEL",
+    # A série que atravessa reestruturação não permite comparação a/a -- o
+    # rótulo existe para o modelo poder DIZER que sabe disso em vez de
+    # comparar assim mesmo (caso WOLF).
+    "BALANCO_REESTRUTURADO",
 }
+
+# Abaixo de quantos trimestres de fôlego o caixa é "curto". Quatro trimestres
+# = um ano: abaixo disso a empresa precisa de captação, venda de ativo ou
+# reviravolta operacional DENTRO do horizonte em que se opera o papel, e isso
+# é risco de tese, não ruído de balanço.
+FOLEGO_CURTO_TRIMESTRES = 4.0
 RSI_SOBRECOMPRADO_MIN = 65.0
 RSI_SOBREVENDIDO_MAX = 35.0
 # Janela do veto de catalisador (mesma convenção do ConfluenceEngine):
@@ -599,6 +614,36 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
             rep.add("ERROR", "BLOCO_CAPEX_SEM_DADO",
                     "cita a direção do capex, mas o snapshot do dia não tem "
                     "o dado agregado -- razão sem fato por trás.", ticker=tk)
+
+        # Fôlego de caixa: mesma regra do capex. Um rótulo sobre solidez
+        # financeira que ninguém confere é o rótulo bonito que justifica
+        # qualquer compra -- e "a empresa tem caixa" é dos mais fáceis de
+        # afirmar sem olhar o balanço.
+        folego = (snapshot.get("folego_de_caixa") or {}).get(tk) or {}
+        if folego.get("disponivel"):
+            tri = folego.get("folegoTrimestres")
+            gera = bool(folego.get("geraCaixa"))
+            curto = tri is not None and tri < FOLEGO_CURTO_TRIMESTRES
+            if "CAIXA_CURTO" in codes and not curto:
+                situacao = ("gera caixa" if gera else
+                            f"fôlego de {tri} trimestres" if tri is not None
+                            else "queima abaixo do piso de medição")
+                rep.add("ERROR", "BLOCO_CAIXA_CONTRADITO",
+                        f"CAIXA_CURTO, mas o balanço de "
+                        f"{folego.get('trimestre')} mostra {situacao}.", ticker=tk)
+            if "CAIXA_CONFORTAVEL" in codes and curto:
+                rep.add("ERROR", "BLOCO_CAIXA_CONTRADITO",
+                        f"CAIXA_CONFORTAVEL, mas o balanço de "
+                        f"{folego.get('trimestre')} dá fôlego de {tri} "
+                        f"trimestres (< {FOLEGO_CURTO_TRIMESTRES:.0f}).", ticker=tk)
+            if "BALANCO_REESTRUTURADO" in codes and not folego.get("quebraDeSerie"):
+                rep.add("ERROR", "BLOCO_CAIXA_CONTRADITO",
+                        "BALANCO_REESTRUTURADO, mas a série do snapshot não "
+                        "tem quebra marcada.", ticker=tk)
+        elif {"CAIXA_CURTO", "CAIXA_CONFORTAVEL"} & set(codes):
+            rep.add("ERROR", "BLOCO_CAIXA_SEM_DADO",
+                    "cita o caixa da empresa, mas o snapshot do dia não tem "
+                    "o balanço dela -- razão sem fato por trás.", ticker=tk)
 
         # Veto de catalisador, agora sobre estrutura: comprar às vésperas de
         # earnings sem declarar EARNINGS_PROXIMO é decisão inconsciente.
