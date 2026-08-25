@@ -41,6 +41,7 @@ Rodar (na VPS, dentro do container):
 import json
 import os
 import sys
+import time
 from datetime import date, datetime, timedelta
 
 try:
@@ -81,6 +82,14 @@ TRIMESTRES_GUARDADOS = 12
 # continua servindo o trimestre recente, e a cota só é gasta pela
 # profundidade que ela é a única a ter.
 PROFUNDIDADE_MINIMA = 10
+
+# O plano gratuito da Alpha Vantage limita 5 chamadas POR MINUTO. Cinco
+# hiperescaladores disparados em sequência batem no teto, e a resposta ao
+# estouro é 200 OK com um JSON de AVISO -- que o código lia como "sem
+# dados", deixando GOOGL e META rasos sem dizer por quê (visto na segunda
+# rodada real, 25/08/2026). A pausa espaça as chamadas; o checker é semanal
+# e ninguém espera na tela, então um minuto de coleta não custa nada.
+PAUSA_ENTRE_CHAMADAS_AV_S = float(os.environ.get("CAPEX_PAUSA_AV_S", "13"))
 
 
 # ── conta pura ───────────────────────────────────────────────────────────────
@@ -249,6 +258,16 @@ def _do_alpha_vantage(ticker: str) -> list:
                     timeout=20)
     r.raise_for_status()
     dados = r.json()
+    # O aviso de cota/limite/premium vem como JSON com 200 OK -- mesmo
+    # remédio de atualizar_earnings.py. Sem esta checagem o throttle vira
+    # "sem dados" e o histórico fica raso em silêncio.
+    aviso = (dados.get("Note") or dados.get("Information")
+             or dados.get("Error Message"))
+    if aviso:
+        raise RuntimeError(f"Alpha Vantage respondeu aviso em vez de dados: {str(aviso)[:180]}")
+    if "quarterlyReports" not in dados:
+        raise RuntimeError(f"Alpha Vantage sem quarterlyReports para {ticker}: "
+                           f"{str(dados)[:180]}")
     saida = []
     for rel in (dados.get("quarterlyReports") or []):
         bruto = rel.get("capitalExpenditures")
@@ -277,7 +296,8 @@ def combinar(principal: list, complemento: list) -> list:
 
 
 def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
-            profundidade_minima: int = PROFUNDIDADE_MINIMA) -> dict:
+            profundidade_minima: int = PROFUNDIDADE_MINIMA,
+            pausa_s: float = PAUSA_ENTRE_CHAMADAS_AV_S) -> dict:
     """{ticker: [linhas]} + relatório de falhas. Funções injetáveis para a
     suíte exercitar a cascata sem rede.
 
@@ -285,6 +305,7 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
     PROFUNDIDADE_MINIMA para o incidente que motivou o "raso"."""
     alvo = tickers or [t for t, _ in HYPERSCALERS]
     por_empresa, falhas, rasos = {}, [], []
+    usou_av = False
     for t in alvo:
         linhas = []
         try:
@@ -296,6 +317,11 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
                       else f"só {len(linhas)} trimestres no yfinance "
                            f"(mínimo {profundidade_minima} para variação a/a e regime)")
             print(f"[capex] {t}: {motivo}, complementando com Alpha Vantage", file=sys.stderr)
+            if usou_av and pausa_s > 0:
+                # 5 chamadas/minuto no plano grátis: sem espaçar, as últimas
+                # da fila voltam com aviso de limite em vez de dados.
+                time.sleep(pausa_s)
+            usou_av = True
             try:
                 linhas = combinar(linhas, av_fn(t))
             except Exception as e:
