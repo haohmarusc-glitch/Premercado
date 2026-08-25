@@ -178,6 +178,14 @@ def main(argv=None) -> int:
              else "desacelerando" if t["variacaoQoQPct"] < -3 else "estável")
         contagem[r] = contagem.get(r, 0) + 1
     print(f"Trimestres completos com variação: {len(completos)} -> {contagem}")
+    # Com a janela ampliada, a contagem sozinha esconde o que importa: se o
+    # lado de contraste é um bloco contíguo de um ciclo antigo, a comparação
+    # mede aquele período, não o regime. Os trimestres de cada lado, à vista.
+    for r in sorted(contagem):
+        quais = [t["trimestre"] for t in completos
+                 if ("acelerando" if t["variacaoQoQPct"] > 3
+                     else "desacelerando" if t["variacaoQoQPct"] < -3 else "estável") == r]
+        print(f"  {r}: {', '.join(quais)}")
     if capex.get("falhas"):
         print(f"AVISO: sem capex para {', '.join(capex['falhas'])} -- o agregado está incompleto",
               file=sys.stderr)

@@ -133,7 +133,9 @@ def test_yfinance_raso_e_complementado_pela_alpha_vantage(capsys):
     col = cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: raso, av_fn=lambda t: profundo)
     linhas = col["porEmpresa"]["MSFT"]
     assert len(linhas) > len(raso), "a série tem que ficar mais funda"
-    assert "só 2 trimestres no yfinance" in capsys.readouterr().err
+    # A frase soma yfinance e overlay porque é a profundidade MESCLADA que
+    # decide se vale gastar cota -- aqui não há overlay, então são os 2.
+    assert "só 2 trimestres somando yfinance e overlay" in capsys.readouterr().err
 
 
 def test_no_empate_de_trimestre_o_yfinance_vence():
@@ -358,3 +360,81 @@ def test_montar_usa_o_tamanho_do_grupo_pedido_como_esperado():
     # ORCL sem dado: nenhum trimestre pode se dizer completo com 2 de 3.
     assert all(t["completo"] is False for t in d["trimestres"])
     assert d["resumo"]["disponivel"] is False
+
+
+# ── cota só é gasta pelo que o disco não tem ─────────────────────────────────
+#
+# A decisão de chamar a Alpha Vantage olhava a profundidade da COLETA. Como o
+# yfinance devolve sempre os mesmos ~5 trimestres, isso significava cinco
+# chamadas por semana para rebuscar história já guardada -- gasto de um
+# orçamento de 15/dia sem nada de novo em troca.
+
+def _av_espiao():
+    chamadas = []
+
+    def _av(t):
+        chamadas.append(t)
+        return _serie(_FUNDOS, fonte="alpha_vantage")
+    return chamadas, _av
+
+
+def test_historico_guardado_dispensa_a_alpha_vantage(capsys):
+    chamadas, av = _av_espiao()
+    col = cx.coletar(["MSFT"], pausa_s=0, guardado={"MSFT": _serie(_FUNDOS)},
+                     yf_fn=lambda t: _serie(["2026-09-30"]), av_fn=av)
+    assert chamadas == [], "profundidade já está no disco: não há o que comprar"
+    assert col["rasos"] == []
+    assert "sem gastar Alpha Vantage" in capsys.readouterr().err
+
+
+def test_yfinance_vazio_ainda_chama_a_alpha_vantage_mesmo_com_disco_fundo():
+    """Histórico guardado dá alcance, não trimestre recente. Sem coleta nova,
+    a série congela -- e congelar em silêncio é o defeito que a mesclagem
+    poderia ter introduzido."""
+    chamadas, av = _av_espiao()
+    cx.coletar(["MSFT"], pausa_s=0, guardado={"MSFT": _serie(_FUNDOS)},
+               yf_fn=lambda t: [], av_fn=av)
+    assert chamadas == ["MSFT"]
+
+
+def test_disco_raso_e_coleta_rasa_ainda_gastam_cota():
+    chamadas, av = _av_espiao()
+    cx.coletar(["MSFT"], pausa_s=0, guardado={"MSFT": _serie(["2026-03-31"])},
+               yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=av)
+    assert chamadas == ["MSFT"]
+
+
+def test_sem_guardado_a_cascata_segue_como_antes():
+    chamadas, av = _av_espiao()
+    cx.coletar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=av)
+    assert chamadas == ["MSFT"]
+
+
+def test_a_profundidade_conta_trimestres_distintos_nao_linhas():
+    """Somar len() das duas listas contaria o trimestre repetido duas vezes e
+    daria a cota por economizada sem que a série tivesse alcance."""
+    repetidos = _serie(["2026-06-30"]) * 12
+    assert cx._profundidade_apos_mesclar(repetidos, repetidos) == 1
+
+
+def test_montar_repassa_o_guardado_para_a_decisao_de_cota():
+    fundo = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(_FUNDOS), av_fn=lambda t: [])
+    chamadas, av = _av_espiao()
+    cx.montar(["MSFT"], pausa_s=0, bruto_anterior=fundo["porEmpresa"],
+              yf_fn=lambda t: _serie(["2026-09-30"]), av_fn=av)
+    assert chamadas == []
+
+
+# ── janela publicada ─────────────────────────────────────────────────────────
+
+def test_o_agregado_publica_a_historia_que_o_bruto_guarda():
+    """Publicar 12 trimestres deixava o experimento de regime com 11
+    'acelerando' e 1 'estável' -- sem lado de contraste, a hipótese fica
+    intestável em vez de reprovada. O dado para além disso já está no disco."""
+    assert cx.TRIMESTRES_GUARDADOS >= cx.TRIMESTRES_BRUTOS_GUARDADOS
+    fins = [f"{ano}-{mes}" for ano in range(2015, 2026) for mes in
+            ("03-31", "06-30", "09-30", "12-31")]
+    assert len(fins) > cx.TRIMESTRES_BRUTOS_GUARDADOS, "a fixture tem que estourar o teto"
+    d = cx.montar(["MSFT"], pausa_s=0, yf_fn=lambda t: _serie(fins), av_fn=lambda t: [])
+    assert len(d["trimestres"]) == cx.TRIMESTRES_BRUTOS_GUARDADOS
+    assert d["trimestres"][0]["trimestre"] < "2020Q1", "a janela alcança o ciclo anterior"
