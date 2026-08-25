@@ -83,6 +83,12 @@ TRIMESTRES_GUARDADOS = 12
 # profundidade que ela é a única a ter.
 PROFUNDIDADE_MINIMA = 10
 
+# Quantos trimestres BRUTOS por empresa o overlay guarda. O agregado publica
+# 12; o bruto guarda mais porque é dele que a profundidade é reconstruída
+# quando uma coleta vem curta. 40 trimestres = 10 anos, folga confortável
+# sobre o mínimo e ainda um arquivo pequeno.
+TRIMESTRES_BRUTOS_GUARDADOS = 40
+
 # O plano gratuito da Alpha Vantage limita 5 chamadas POR MINUTO. Cinco
 # hiperescaladores disparados em sequência batem no teto, e a resposta ao
 # estouro é 200 OK com um JSON de AVISO -- que o código lia como "sem
@@ -121,14 +127,20 @@ def _pct(atual: float, anterior: float) -> float | None:
     return round((atual - anterior) / abs(anterior) * 100, 1)
 
 
-def agregar(por_empresa: dict, hoje: str | None = None) -> list:
+def agregar(por_empresa: dict, hoje: str | None = None,
+             esperado: int | None = None) -> list:
     """[{trimestre, totalUsd, empresas, completo, variacaoQoQPct,
     variacaoYoYPct, disponivelEm}], do mais antigo para o mais novo.
 
     `completo` é falso quando nem todas as empresas do grupo reportaram
     aquele trimestre -- somar parcial produziria uma "queda" que é só
-    calendário, e essa é a leitura errada mais fácil de fazer aqui."""
-    esperado = len(por_empresa)
+    calendário, e essa é a leitura errada mais fácil de fazer aqui.
+
+    `esperado` é o tamanho do GRUPO, não o número de empresas que voltaram
+    com dado: se a ORCL falhar nas duas fontes, contar 4 de 4 marcaria a
+    série inteira como completa e o total cairia de patamar sem que nada
+    avisasse. Quem chama de produção passa len(HYPERSCALERS)."""
+    esperado = esperado if esperado is not None else len(por_empresa)
     trimestres: dict = {}
     for ticker, linhas in por_empresa.items():
         for l in linhas:
@@ -226,8 +238,9 @@ def _do_yfinance(ticker: str) -> list:
 
 
 def _do_alpha_vantage(ticker: str) -> list:
-    """Fallback. Gasta cota (15/dia, compartilhada com earnings e notícias),
-    por isso só roda quando o yfinance não devolveu nada para o ticker."""
+    """Complemento de PROFUNDIDADE. Gasta cota (15/dia, compartilhada com
+    earnings e notícias), por isso só roda quando o yfinance veio vazio ou
+    raso demais para variação a/a -- ver PROFUNDIDADE_MINIMA."""
     try:
         from alpha_vantage_provider import _api_key  # type: ignore
     except ImportError:
@@ -335,22 +348,75 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             falhas.append(t)
             print(f"[capex] {t}: SEM DADO nas duas fontes", file=sys.stderr)
     if rasos:
-        print(f"[capex] histórico ainda raso em {', '.join(rasos)} -- variação a/a e "
-              f"experimento de regime ficam limitados", file=sys.stderr)
+        # "nesta coleta", e não "no histórico": o overlay guardado pode cobrir
+        # a profundidade que faltou aqui. Quem decide se ficou raso de verdade
+        # é `montar`, DEPOIS da mesclagem.
+        print(f"[capex] coleta rasa em {', '.join(rasos)} -- se o overlay guardado "
+              f"não cobrir, variação a/a e experimento de regime ficam limitados",
+              file=sys.stderr)
     return {"porEmpresa": por_empresa, "falhas": falhas, "rasos": rasos}
 
 
-def montar(tickers=None, **kw) -> dict:
-    col = coletar(tickers, **kw)
-    agregado = agregar(col["porEmpresa"])
-    fontes = sorted({l["fonte"] for linhas in col["porEmpresa"].values() for l in linhas})
+def mesclar_bruto(anterior: dict, novo: dict) -> dict:
+    """Une o histórico bruto guardado com o recém-coletado, por empresa.
+
+    Existe por causa de um defeito real da primeira semana: a coleta grava o
+    overlay INTEIRO a cada rodada, então uma rodada em que a cota da Alpha
+    Vantage já estava gasta sobrescrevia um histórico de 20 trimestres por um
+    de 5. A profundidade regredia sozinha, e o experimento de regime perdia o
+    lado de contraste que a rodada anterior tinha conquistado.
+
+    Regra do empate: o NOVO vence. Reapresentação de balanço corrige número
+    antigo, e a fonte fresca é a que reflete a correção. O que o guardado
+    fornece é alcance, não versão."""
+    saida: dict = {}
+    for ticker in set(anterior) | set(novo):
+        por_trimestre = {l["trimestre"]: l
+                         for l in (anterior.get(ticker) or []) if l.get("trimestre")}
+        por_trimestre.update({l["trimestre"]: l
+                              for l in (novo.get(ticker) or []) if l.get("trimestre")})
+        linhas = sorted(por_trimestre.values(), key=lambda l: l["trimestre"])
+        if linhas:
+            saida[ticker] = linhas[-TRIMESTRES_BRUTOS_GUARDADOS:]
+    return saida
+
+
+def montar(tickers=None, *, bruto_anterior=None, **kw) -> dict:
+    """Coleta, MESCLA com o histórico já guardado, agrega.
+
+    `bruto_anterior` é o `porEmpresa` do overlay anterior -- ver
+    `mesclar_bruto` para o motivo de a mesclagem não ser opcional na
+    prática."""
+    alvo = list(tickers) if tickers else [t for t, _ in HYPERSCALERS]
+    col = coletar(alvo, **kw)
+    por_empresa = mesclar_bruto(bruto_anterior or {}, col["porEmpresa"])
+
+    profundidade = kw.get("profundidade_minima", PROFUNDIDADE_MINIMA)
+    # Recalculado DEPOIS da mesclagem: quem veio raso nesta rodada mas tem
+    # histórico guardado não está raso, e quem falhou nas duas fontes mas tem
+    # histórico guardado não é falha -- é uso do guardado, que é diferente e
+    # precisa aparecer separado para ninguém confundir dado velho com dado
+    # coletado hoje.
+    rasos = sorted(t for t in alvo
+                   if len(por_empresa.get(t) or []) < profundidade)
+    falhas = sorted(t for t in alvo if not por_empresa.get(t))
+    usou_guardado = sorted(t for t in col["falhas"] if por_empresa.get(t))
+    if usou_guardado:
+        print(f"[capex] sem coleta nova para {', '.join(usou_guardado)} — "
+              f"seguindo com o histórico guardado no overlay", file=sys.stderr)
+
+    agregado = agregar(por_empresa, esperado=len(alvo))
+    fontes = sorted({l["fonte"] for linhas in por_empresa.values()
+                     for l in linhas if l.get("fonte")})
     return {
         "coletadoEm": today_brt().isoformat(),
-        "empresasPedidas": len(tickers or HYPERSCALERS),
-        "empresasComDado": len(col["porEmpresa"]),
-        "falhas": col["falhas"],
-        "historicoRaso": col.get("rasos", []),
+        "empresasPedidas": len(alvo),
+        "empresasComDado": len(por_empresa),
+        "falhas": falhas,
+        "historicoRaso": rasos,
+        "usandoGuardado": usou_guardado,
         "fontes": fontes,
+        "porEmpresa": por_empresa,
         "trimestres": agregado,
         "resumo": resumo(agregado),
     }
@@ -385,8 +451,12 @@ if __name__ == "__main__":
     # atualizar_earnings.py). Sem a flag, imprime o resumo legível.
     modo_json = "--json" in sys.argv
     caminho = os.environ.get("CAPEX_OVERLAY_PATH", OVERLAY_PATH_DEFAULT)
+    # O overlay anterior entra como PISO de profundidade: uma rodada com a
+    # cota da AV esgotada não pode devolver a série ao tamanho raso do
+    # yfinance (ver `mesclar_bruto`).
+    guardado = (ler_overlay(caminho) or {}).get("porEmpresa") or {}
     try:
-        dados = montar()
+        dados = montar(bruto_anterior=guardado)
     except Exception as e:
         if modo_json:
             print(json_seguro.dumps({"ok": False, "erro": f"{type(e).__name__}: {e}"}))
@@ -403,6 +473,8 @@ if __name__ == "__main__":
             "variacaoQoQPct": r.get("variacaoQoQPct"),
             "empresasComDado": dados["empresasComDado"],
             "falhas": dados["falhas"],
+            "historicoRaso": dados["historicoRaso"],
+            "usandoGuardado": dados["usandoGuardado"],
             "fontes": dados["fontes"],
             "overlay": caminho if gravou else None,
         }))
@@ -417,5 +489,10 @@ if __name__ == "__main__":
         print(f"sem trimestre completo: {r.get('nota')}")
     if dados["falhas"]:
         print(f"sem dado: {', '.join(dados['falhas'])}")
+    if dados["historicoRaso"]:
+        print(f"histórico raso (< {PROFUNDIDADE_MINIMA} trimestres): "
+              f"{', '.join(dados['historicoRaso'])}")
+    print("trimestres brutos guardados por empresa: "
+          + ", ".join(f"{t}={len(l)}" for t, l in sorted(dados["porEmpresa"].items())))
     if gravar_overlay(dados, caminho):
         print(f"overlay gravado em {caminho}")

@@ -131,3 +131,61 @@ def test_criterio_esta_declarado_como_constante_no_topo():
     for const in ("MIN_TRIMESTRES_POR_REGIME", "MIN_PREGOES_POR_REGIME",
                   "ALFA", "MIN_DIFERENCA_DIARIA_PP"):
         assert f"{const} = " in cabeca, f"{const} tem que ser declarado antes das funções"
+
+
+# ── o experimento não pode degradar o dado que ele mede ──────────────────────
+#
+# Na primeira semana este script chamava `montar()` direto: cinco chamadas de
+# Alpha Vantage por rodada, num orçamento de 15/dia dividido com earnings e
+# notícias. Rodar o experimento esgotava a cota e fazia a COLETA seguinte vir
+# rasa -- justamente a profundidade de que o experimento depende.
+
+def test_por_padrao_le_o_overlay_e_nao_coleta():
+    chamou = {"montar": 0, "overlay": 0}
+
+    def _montar():
+        chamou["montar"] += 1
+        return {"trimestres": [_trimestre("2026-02-10", 10.0)]}
+
+    def _overlay(caminho=None):
+        chamou["overlay"] += 1
+        return {"trimestres": [_trimestre("2026-02-10", 10.0)], "coletadoEm": "2026-08-25"}
+
+    dados = crt.carregar_capex(False, overlay=_overlay, montar=_montar)
+    assert chamou == {"montar": 0, "overlay": 1}
+    assert dados["coletadoEm"] == "2026-08-25"
+
+
+def test_com_flag_explicita_coleta():
+    chamou = {"montar": 0}
+
+    def _montar():
+        chamou["montar"] += 1
+        return {"trimestres": []}
+
+    crt.carregar_capex(True, overlay=lambda *a: None, montar=_montar)
+    assert chamou["montar"] == 1
+
+
+def test_sem_overlay_devolve_none_em_vez_de_cair_na_rede():
+    def _montar():
+        raise AssertionError("não pode coletar sem pedido explícito")
+
+    assert crt.carregar_capex(False, overlay=lambda *a: None, montar=_montar) is None
+    assert crt.carregar_capex(False, overlay=lambda *a: {"trimestres": []},
+                              montar=_montar) is None
+
+
+def test_main_sem_overlay_sai_com_erro_e_ensina_o_comando(monkeypatch, capsys):
+    monkeypatch.setattr(crt.cap, "ler_overlay", lambda *a, **k: None)
+    assert crt.main([]) == 2
+    err = capsys.readouterr().err
+    assert "sem overlay de capex" in err and "agent.capex_hyperscalers" in err
+
+
+def test_o_script_nao_importa_montar_no_topo():
+    """Amarra por leitura de fonte: reintroduzir `from capex_hyperscalers
+    import montar` é exatamente como a cota foi parar em zero."""
+    fonte = (_SCRIPTS / "capex_regime_teste.py").read_text(encoding="utf-8")
+    codigo = [l for l in fonte.splitlines() if l.startswith(("import ", "from "))]
+    assert not any("import montar" in l for l in codigo), codigo
