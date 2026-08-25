@@ -20,6 +20,7 @@ import VereditoPage from "@/pages/veredito";
 import AdminUsersPage from "@/pages/admin-users";
 import AlertsPage from "@/pages/alerts";
 import ScreenerPage from "@/pages/screener";
+import AnalisesPage from "@/pages/analises";
 import ChatPage from "@/pages/chat";
 import PortfolioPage from "@/pages/portfolio";
 import SectorCoal from "@/pages/sector-coal";
@@ -84,6 +85,7 @@ function Router() {
         <Route path="/users" component={AdminUsersPage} />
         <Route path="/alerts" component={AlertsPage} />
         <Route path="/screener" component={ScreenerPage} />
+        <Route path="/analises" component={AnalisesPage} />
         <Route path="/chat" component={ChatPage} />
         <Route path="/portfolio" component={PortfolioPage} />
         <Route path="/setor/carvao" component={SectorCoal} />
