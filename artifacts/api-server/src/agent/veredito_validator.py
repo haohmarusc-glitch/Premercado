@@ -121,6 +121,35 @@ class ValidationReport:
         lines = [str(i) for i in self.issues] + [str(s) for s in self.signals]
         return "\n".join(lines) if lines else "OK: nenhum problema encontrado."
 
+    def bloco_para_a_tela(self) -> str:
+        """Os achados como MARKDOWN, para viajarem junto do veredito.
+
+        Ate 26/08/2026 os achados do Veredito iam para o stderr e para o
+        retry, e paravam ai. Um AVISO (que nao dispara retry) nunca chegava a
+        lugar nenhum, e um ERRO que sobrevivesse ao retry era publicado sem
+        marca. A tela de Analise Rapida ja' mostrava os apontamentos dela; o
+        Veredito nao mostrava nenhum -- e foi por isso que toda geracao que o
+        operador leu neste dia apareceu com "a caixa vazia" enquanto tinha
+        erro dentro.
+
+        O relatorio E' o artefato aqui: e' ele que vai pro histórico, pro
+        e-mail e pro .md exportado. Entao o apontamento vai no texto, e nao
+        num campo a parte -- assim ele viaja com o que descreve.
+        """
+        if not self.issues:
+            return ""
+        erros = [i for i in self.issues if i.severity == "ERROR"]
+        avisos = [i for i in self.issues if i.severity != "ERROR"]
+        linhas = ["", "---", "",
+                  f"> ⚠️ **O validador apontou {len(self.issues)} problema(s) "
+                  f"neste veredito** — o texto acima fica assim mesmo, leia "
+                  f"com estes pontos em mente.", ">"]
+        for i in erros + avisos:
+            alvo = f"({i.ticker}) " if i.ticker else ""
+            rotulo = "ERRO" if i.severity == "ERROR" else "AVISO"
+            linhas.append(f"> - **[{rotulo}]** `{i.code}` {alvo}{i.message}")
+        return "\n".join(linhas)
+
     def prompt_block(self) -> str:
         """Bloco para injetar no prompt do veredito com fatos verificados,
         evitando que o LLM recalcule (e erre) percentuais."""
@@ -922,6 +951,11 @@ RSI_SOBREVENDIDO_MAX = 35.0
 # COMPRAR com earnings a <= 2 pregões exige EARNINGS_PROXIMO nos
 # reason_codes -- a compra pode até ser defensável, mas nunca inconsciente.
 EARNINGS_PROXIMO_DIAS = 2
+# A partir de quantos dias EARNINGS_PROXIMO deixa de ser defensavel. Bem
+# acima da janela do veto (2 pregoes) de proposito: "proximo" e' julgamento, e
+# apontar aos 12 dias so' geraria alarme falso. Aos 70 -- o caso real -- nao
+# ha' o que discutir.
+EARNINGS_LONGE_DIAS = 30
 
 # Acima/abaixo disto a tendência declarada tem que bater com onde o preço
 # está em relação à média de 50. A faixa morta no meio existe porque perto da
@@ -1104,6 +1138,32 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
             rep.add("ERROR", "BLOCO_CAIXA_SEM_DADO",
                     "cita o caixa da empresa, mas o snapshot do dia não tem "
                     "o balanço dela -- razão sem fato por trás.", ticker=tk)
+
+        # O inverso do veto: EARNINGS_PROXIMO declarado com o balanco LONGE.
+        #
+        # Visto em producao (26/08/2026): um veredito de ARM declarou
+        # EARNINGS_PROXIMO enquanto a PROPRIA PROSA dizia "Earnings em 70 dias
+        # (04/11/2026) -- fora da zona imediata" e o painel dizia "em 70d".
+        #
+        # `EARNINGS_PROXIMO_DIAS` so' EXIGIA o codigo numa compra as vesperas;
+        # nada impedia declara-lo a dois meses de distancia. E a razao inflada
+        # e' pior que a ausente: ela empresta urgencia a uma decisao que nao
+        # tem nenhuma, e o leitor reorganiza o dia por causa dela.
+        #
+        # A folga e' generosa de proposito -- "proximo" e' julgamento, e
+        # discutir se 12 dias contam nao vale um alarme falso. So' aponta
+        # quando a distancia e' indefensavel.
+        if "EARNINGS_PROXIMO" in codes and tk in earnings:
+            try:
+                dias_ate = (_parse_date(earnings[tk]) - as_of).days
+            except Exception:
+                dias_ate = None
+            if dias_ate is not None and dias_ate > EARNINGS_LONGE_DIAS:
+                rep.add("ERROR", "BLOCO_EARNINGS_NAO_ESTA_PROXIMO",
+                        f"declara EARNINGS_PROXIMO, mas o balanço é em "
+                        f"{dias_ate} dia(s) ({earnings[tk]}) — razão sem fato "
+                        f"por trás empresta urgência a uma decisão que não "
+                        f"tem.", ticker=tk)
 
         # Veto de catalisador, agora sobre estrutura: comprar às vésperas de
         # earnings sem declarar EARNINGS_PROXIMO é decisão inconsciente.
