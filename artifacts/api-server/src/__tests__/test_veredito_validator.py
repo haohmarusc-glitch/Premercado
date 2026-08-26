@@ -8,9 +8,12 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_veredito
 (conftest.py no mesmo diretório já cuida do sys.path)
 """
 
+from datetime import date, timedelta
+
 import pytest
 
-from agent.veredito_validator import (lint_veredito, validar_bloco_estruturado,
+from agent.veredito_validator import (ValidationReport, lint_veredito,
+                                      validar_bloco_estruturado,
                                       validate_snapshot)
 
 SNAPSHOT = {
@@ -917,3 +920,113 @@ def test_a_negacao_de_um_ticker_nao_acusa_o_outro():
         "BABA: RSI 48,9, dentro da faixa. WOLF: dados técnicos limitados.",
         snap).issues if i.code == "DADO_DO_TICKER_NEGADO"]
     assert achados == ["WOLF"]
+
+
+# ── os achados do Veredito chegam à TELA ───────────────────────────────────
+#
+# Descoberto lendo um veredito real de ARM (26/08/2026 15:29), publicado com
+# a caixa vazia e dois problemas dentro. `run_veredito` devolvia só o texto:
+# os achados iam para o stderr e para o retry, e paravam aí.
+#
+#   um AVISO nunca disparava retry, então nunca chegava a lugar nenhum
+#   um ERRO que sobrevivesse ao retry era publicado sem marca
+#
+# A tela de Análise Rápida já mostrava os apontamentos dela. O Veredito não
+# mostrava nenhum -- e foi por isso que TODA geração lida naquele dia apareceu
+# "limpa" enquanto tinha erro dentro. As checagens existiam e ninguém as via.
+
+def test_achados_viram_markdown_para_a_tela():
+    rep = ValidationReport()
+    rep.add("ERROR", "BLOCO_EARNINGS_NAO_ESTA_PROXIMO",
+            "declara EARNINGS_PROXIMO, mas o balanço é em 70 dia(s).", ticker="ARM")
+    rep.add("WARN", "BLOCO_REASON_DESCONHECIDO",
+            'reason_code "RSI_NEUTRO" fora do vocabulário.', ticker="ARM")
+    bloco = rep.bloco_para_a_tela()
+    assert "2 problema(s)" in bloco
+    assert "BLOCO_EARNINGS_NAO_ESTA_PROXIMO" in bloco
+    assert "RSI_NEUTRO" in bloco, "o AVISO também aparece -- era ele que sumia"
+    assert "**[ERRO]**" in bloco and "**[AVISO]**" in bloco
+    assert bloco.lstrip().startswith("---"), "separado do veredito por uma régua"
+
+
+def test_erro_vem_antes_de_aviso():
+    """Quem lê para de ler; o que exige ação vai primeiro."""
+    rep = ValidationReport()
+    rep.add("WARN", "A", "aviso")
+    rep.add("ERROR", "B", "erro")
+    bloco = rep.bloco_para_a_tela()
+    assert bloco.index("`B`") < bloco.index("`A`")
+
+
+def test_veredito_limpo_nao_ganha_bloco_nenhum():
+    """Uma régua e um cabeçalho dizendo "0 problemas" seriam ruído em toda
+    geração boa."""
+    assert ValidationReport().bloco_para_a_tela() == ""
+
+
+def test_sinais_nao_sao_apontamentos():
+    """`signals` alimenta o PROMPT (fatos para o modelo não recalcular), não a
+    tela. Misturar os dois transformaria dado auxiliar em acusação."""
+    rep = ValidationReport()
+    rep.add("WARN", "FADE", "o papel abriu em alta e devolveu", signal=True)
+    assert rep.bloco_para_a_tela() == ""
+
+
+# ── EARNINGS_PROXIMO declarado com o balanço longe ─────────────────────────
+#
+# Mesmo veredito de ARM. O bloco declarou EARNINGS_PROXIMO enquanto a PRÓPRIA
+# PROSA dizia "Earnings em 70 dias (04/11/2026) -- fora da zona imediata" e o
+# painel dizia "em 70d".
+#
+# `EARNINGS_PROXIMO_DIAS` só EXIGIA o código numa compra às vésperas; nada
+# impedia declará-lo a dois meses. E a razão inflada é pior que a ausente:
+# empresta urgência a uma decisão que não tem nenhuma.
+
+def _snap_earnings(dias):
+    d = (date(2026, 8, 26) + timedelta(days=dias)).isoformat()
+    return {"as_of": "2026-08-26", "quotes": {"ARM": {}}, "technicals": {},
+            "earnings": {"ARM": d}}
+
+
+def _cods_earn(dias, codes, acao="AGUARDAR"):
+    item = {"ticker": "ARM", "action": acao, "confidence": 0.55,
+            "reason_codes": codes}
+    return [i.code for i in validar_bloco_estruturado(
+        {"tickers": [item]}, _snap_earnings(dias)).issues]
+
+
+def test_o_incidente_do_arm():
+    assert "BLOCO_EARNINGS_NAO_ESTA_PROXIMO" in _cods_earn(
+        70, ["TENDENCIA_BAIXA", "VOLUME_FRACO", "EARNINGS_PROXIMO"])
+
+
+@pytest.mark.parametrize("dias,cai", [
+    (0, False), (1, False), (7, False), (14, False),
+    (30, False),   # a folga é generosa: "próximo" é julgamento
+    (31, True), (70, True), (200, True),
+])
+def test_a_folga_do_proximo(dias, cai):
+    assert ("BLOCO_EARNINGS_NAO_ESTA_PROXIMO" in
+            _cods_earn(dias, ["EARNINGS_PROXIMO"])) is cai
+
+
+def test_nao_declarar_a_70_dias_e_o_certo():
+    assert "BLOCO_EARNINGS_NAO_ESTA_PROXIMO" not in _cods_earn(
+        70, ["TENDENCIA_BAIXA"])
+
+
+def test_sem_data_de_earnings_nao_ha_o_que_conferir():
+    snap = {"as_of": "2026-08-26", "quotes": {"ARM": {}}, "technicals": {},
+            "earnings": {}}
+    item = {"ticker": "ARM", "action": "AGUARDAR", "confidence": 0.5,
+            "reason_codes": ["EARNINGS_PROXIMO"]}
+    achados = [i.code for i in validar_bloco_estruturado(
+        {"tickers": [item]}, snap).issues]
+    assert "BLOCO_EARNINGS_NAO_ESTA_PROXIMO" not in achados
+
+
+def test_o_veto_de_compra_continua_valendo():
+    """A checagem nova não pode ter afrouxado a antiga: comprar às vésperas
+    SEM declarar continua sendo erro."""
+    assert "BLOCO_COMPRA_SEM_VETO_DECLARADO" in _cods_earn(
+        1, ["TENDENCIA_ALTA"], acao="COMPRAR")

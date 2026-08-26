@@ -26,6 +26,7 @@ from .report_validator import (
     lint_report,
     new_snapshot,
 )
+from .validador_nucleo import linha_de_log
 from .veredito_validator import (
     extrair_bloco_estruturado,
     validar_veredito_completo,
@@ -1816,6 +1817,26 @@ def run_veredito(progress_callback=None) -> str:
             "estruturado de decisão por ticker (o modelo não o produziu nem "
             "no retry). As checagens determinísticas rodaram só sobre a "
             "prosa." )
+
+    # O que SOBROU depois do retry vai para a tela.
+    #
+    # Ate 26/08/2026 os achados iam so' para o stderr e para o retry. Um AVISO
+    # nunca disparava retry e portanto nunca chegava a lugar nenhum; um ERRO
+    # que sobrevivesse ao retry era publicado sem marca. A tela de Analise
+    # Rapida ja' mostrava os apontamentos dela, e o Veredito nao mostrava
+    # nenhum -- foi por isso que toda geracao lida neste dia apareceu com "a
+    # caixa vazia" enquanto tinha erro dentro.
+    #
+    # RE-LINTA, nao reusa o `lrep` de cima: senao a tela mostraria erros que o
+    # retry ja' corrigiu, que e' um falso positivo com o custo de sempre.
+    final_rep = validar_veredito_completo(final_text, snapshot)
+    print(linha_de_log("veredito", [
+        {"nivel": "ERRO" if i.severity == "ERROR" else "AVISO", "codigo": i.code,
+         "mensagem": i.message} for i in final_rep.issues]),
+        file=sys.stderr, flush=True)
+    aviso = final_rep.bloco_para_a_tela()
+    if aviso:
+        final_text += "\n" + aviso
 
     return final_text
 
