@@ -869,9 +869,27 @@ def test_sem_resumo_de_earnings_a_checagem_se_cala():
 
 def test_o_texto_correto_do_intc_nao_produz_apontamento():
     """As frases do INTC que estavam certas continuam passando — a rodada não
-    pode virar uma tela cheia de amarelo."""
+    pode virar uma tela cheia de amarelo.
+
+    Os dois percentuais das médias FORAM CORRIGIDOS em 26/08/2026. A versão
+    original deste teste trazia "22,14% abaixo da MM50" e "17,7% acima da
+    MM200", e as duas saíram de dividir pelo PREÇO:
+
+        MM50  : 87,48/106,85-1 = -18,13%   (106,85/87,48-1 = +22,14%)
+        MM200 : 87,48/72,00-1  = +21,50%   (72,00/87,48-1  = -17,70%)
+
+    Ninguém tinha conferido a base das médias, então a frase entrou aqui como
+    "correta" — e o teste passou a AFIRMAR que o erro era aceitável. Foi
+    `ANALISE_DISTANCIA_DA_MEDIA` que trouxe isso à tona.
+
+    A VWAP da mesma frase (-1,12%) estava certa, e é o detalhe que explica o
+    resto: 88,47 está a 1% do preço, então as duas bases dão praticamente o
+    mesmo número e o modelo acerta por acidente. Quanto mais longe o nível,
+    maior a divergência -- MM50 e MM200 estão a 22% e 21%. É a mesma
+    assinatura em INTC, ARM e NVDA: VWAP certa, médias invertidas.
+    """
     achados = _codigos(validar_analise(_texto_completo(
-        "O papel está em US$ 87,48, 22,14% abaixo da MM50 e 17,7% acima da "
+        "O papel está em US$ 87,48, 18,13% abaixo da MM50 e 21,50% acima da "
         "MM200 (US$ 72,00). O preço está abaixo da VWAP de US$ 88,47 (-1,12%). "
         "O preço atual está posicionado entre a VWAP e a banda de reação S1 "
         "(US$ 79,30)."),
@@ -1375,3 +1393,168 @@ def test_blocos_espelham_os_coletores():
     from agent.analise_rapida_ia import COLETORES
     from agent.analise_rapida_validator import _BLOCOS_FUNDAMENTAIS
     assert {c for c, _ in _BLOCOS_FUNDAMENTAIS} == set(COLETORES)
+
+
+# ═══ auditorias de ARM e NVDA (26/08/2026) ══════════════════════════════════
+
+_TECNICA_ARM = {
+    "precoAtual": {"valor": 251.06},
+    "technicals": {"sma20": 260.55, "sma50": 294.28,
+                   "sma200": 198.40, "vwap": 245.54},
+}
+
+
+# ── distância à média com a base trocada ────────────────────────────────────
+#
+# Incidente real (ARM), publicado sem apontamento:
+#
+#     "O preço atual de US$ 251,06 está 3,78% abaixo da MM20 (US$ 260,55)
+#      [...] e 17,22% abaixo da MM50 (US$ 294,28)"
+#
+# O certo é -3,64% e -14,69%. Os dois vieram de dividir pelo PREÇO. E o painel
+# Técnica, na mesma tela, imprime "-14,69% de distância" para a MM50 --
+# a prosa não escolheu outra convenção, contradisse o painel ao lado.
+
+def test_distancia_da_media_sobre_o_preco_e_erro():
+    texto = _texto_completo(
+        "O preço atual de US$ 251,06 está 3,78% abaixo da MM20 "
+        "(US$ 260,55) e 17,22% abaixo da MM50 (US$ 294,28).")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" in _codigos(achados)
+
+
+def test_as_duas_medias_da_mesma_frase_sao_reportadas():
+    """A forma típica é citar MM20 e MM50 juntas com a mesma base trocada.
+    Reportar só uma deixaria a outra parecendo conferida."""
+    texto = _texto_completo(
+        "O preço atual de US$ 251,06 está 3,78% abaixo da MM20 "
+        "(US$ 260,55) e 17,22% abaixo da MM50 (US$ 294,28).")
+    msgs = [a["mensagem"] for a in validar_analise(texto, _TECNICA_ARM)
+            if a["codigo"] == "ANALISE_DISTANCIA_DA_MEDIA"]
+    assert len(msgs) == 2
+    assert any("MM20" in m for m in msgs) and any("MM50" in m for m in msgs)
+
+
+def test_a_mensagem_traz_o_numero_certo():
+    texto = _texto_completo(
+        "O preço de US$ 251,06 está 17,22% abaixo da MM50 (US$ 294,28).")
+    msg = next(a["mensagem"] for a in validar_analise(texto, _TECNICA_ARM)
+               if a["codigo"] == "ANALISE_DISTANCIA_DA_MEDIA")
+    assert "-14.69%" in msg
+
+
+def test_distancia_da_media_correta_passa():
+    texto = _texto_completo(
+        "O preço está 3,64% abaixo da MM20 e 14,69% abaixo da MM50.")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+def test_vwap_com_a_base_certa_passa():
+    """Na mesma análise de ARM esta frase estava correta: 251,06/245,54-1 =
+    +2,25%. Apontar contra ela seria o falso positivo mais caro possível --
+    o trecho certo dentro do parágrafo errado."""
+    texto = _texto_completo(
+        "o preço se encontra 2,25% acima da VWAP de US$ 245,54")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+def test_media_como_sujeito_nao_e_apontada():
+    """"A MM20 está X% abaixo da MM50" mede outra coisa: quem é o sujeito
+    muda qual conta é a certa."""
+    texto = _texto_completo("A MM20 está 11,46% abaixo da MM50.")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+def test_sujeito_indeterminado_fica_em_silencio():
+    texto = _texto_completo("Ficou 17,22% abaixo da MM50 nesta semana.")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+def test_numero_que_nao_bate_com_nenhuma_das_duas_contas_passa():
+    """Mesmo critério da checagem 9b: só aponta quando o citado bate com a
+    conta ERRADA. Número de outra origem é outra conversa."""
+    texto = _texto_completo("O preço está 40,00% abaixo da MM50.")
+    achados = validar_analise(texto, _TECNICA_ARM)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+def test_contas_indistinguiveis_ficam_em_silencio():
+    """Quando as duas bases caem dentro da folga uma da outra, não dá para
+    atribuir o número a nenhuma. Apontar afirmaria saber de onde veio um
+    número compatível com as duas origens."""
+    dados = {"precoAtual": {"valor": 100.0}, "technicals": {"sma50": 100.03}}
+    texto = _texto_completo("O preço está 0,03% abaixo da MM50.")
+    achados = validar_analise(texto, dados)
+    assert "ANALISE_DISTANCIA_DA_MEDIA" not in _codigos(achados)
+
+
+# ── run-up de AGORA descrito como run-up de CHEGADA ─────────────────────────
+#
+# Terceira e quarta ocorrência do mesmo erro, em telas diferentes no mesmo dia:
+#
+#   ARM : "havia se valorizado 11,64% nos 21 pregões que o antecederam"
+#         (chegou ao balanço de 29/07 caindo -26,78% -- sinal trocado)
+#   NVDA: "Antes deste evento, o papel apresentava um run-up de 8,14% nos 21
+#          pregões anteriores" (a tabela diz +8,42% para o evento de 26/08)
+#
+# `_CHEGADA_AO_EVENTO` cobria só "chegou ao balanço", "veio ao evento" e
+# "antes do balanço com". Duas construções novas no mesmo dia dizem que a
+# lista precisa cobrir a IDEIA, não as frases já vistas.
+
+_EARNINGS_COM_RUNUP = {
+    "reaction": {"summary": {
+        # `janela_contem_earnings` é o portão do bloco inteiro: só faz
+        # sentido confundir run-up de agora com run-up de chegada quando o
+        # balanço caiu DENTRO da janela de 21 pregões. É o aviso que a tela
+        # mostra ("balanço há N pregão(ões), dentro da janela").
+        "runup": {"janela_contem_earnings": True,
+                  "runup_atual_ex_evento_pct": 11.64,
+                  "pregoes_desde_earnings": 20},
+    }},
+}
+
+
+def _com_runup(frase: str):
+    return _codigos(validar_analise(_texto_completo(frase),
+                                    _EARNINGS_COM_RUNUP))
+
+
+@pytest.mark.parametrize("frase", [
+    # a de ARM, verbatim
+    "Para o último evento de balanço, o papel havia se valorizado 11,64% "
+    "nos 21 pregões que o antecederam, sendo considerado esticado.",
+    # a de NVDA, com o número deste payload
+    "Antes deste evento, o papel apresentava um run-up de 11,64% nos 21 "
+    "pregões anteriores.",
+    # as três que já eram cobertas, para não regredir
+    "A ação chegou ao evento com um run-up de 11,64%.",
+    "O papel veio ao balanço com 11,64% de alta.",
+    "Antes do balanço com 11,64% acumulados, a tese já estava esticada.",
+])
+def test_runup_de_agora_como_chegada_e_erro(frase):
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" in _com_runup(frase)
+
+
+@pytest.mark.parametrize("frase", [
+    # "nos 21 pregões anteriores" SEM âncora no evento descreve o run-up
+    # atual, que é medido exatamente assim -- anteriores a HOJE. Apontar aqui
+    # seria acusar a redação correta.
+    "O run-up atual é de 11,64% nos 21 pregões anteriores.",
+    "Nos 21 pregões anteriores o papel acumula 11,64%.",
+    # circunstância, não atribuição
+    "O próximo balanço sai em novembro.",
+    "A reação ao balanço foi de -8,11% no dia do anúncio.",
+])
+def test_redacao_correta_do_runup_continua_passando(frase):
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" not in _com_runup(frase)
+
+
+def test_sem_citar_o_numero_do_campo_a_checagem_se_cala():
+    """A guarda é o percentual: a frase tem que citar EXATAMENTE o valor de
+    `runup_atual_ex_evento_pct`. Sem isso, ela fala de outra coisa."""
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" not in _com_runup(
+        "A ação chegou ao evento com um run-up de 3,20%.")
