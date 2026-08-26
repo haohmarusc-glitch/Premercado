@@ -24,10 +24,12 @@ except ImportError:
 
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
+    from agent.news_sources import fala_do_papel
     from agent.http_retry import SESSION
     from agent import market_data_provider
 except ImportError:
     from security import sanitize_ticker, friendly_error
+    from news_sources import fala_do_papel
     from http_retry import SESSION
     import market_data_provider
 
@@ -95,6 +97,12 @@ NEGATIVE = [
     "drop", "drops", "downgrade", "downgraded", "underperform", "sell rating",
     "cuts", "cut", "weak", "lawsuit", "probe", "investigation", "recall",
     "bearish", "warning", "warns", "layoffs", "slump", "tumbles", "fraud",
+    # "ARM's 93X Earnings Multiple OVERSHADOWS Its Growth Potential" (26/08/2026)
+    # saiu como POSITIVA: "growth" pontuava e o verbo que inverte a frase nao
+    # estava em lista nenhuma. E' o unico termo que esta auditoria acrescenta
+    # -- lista de palavra-chave cresce sem fim, e cada entrada nova e' uma
+    # chance de virar o rotulo do lado errado.
+    "overshadow", "overshadows",
 ]
 
 # Casamento por PALAVRA INTEIRA, não por substring.
@@ -114,6 +122,22 @@ NEGATIVE = [
 # "surge"/"surges") contavam DOIS pontos para a mesma palavra no texto. Com
 # \b cada ocorrência casa só a entrada exata, e o `set` mantém a contagem por
 # termo distinto, como era a intenção original.
+# ── Manchete com RESSALVA não é endosso ─────────────────────────────────────
+#
+# "Arm Holdings (ARM) Delivers Strong Growth, BUT Has the Valuation Run Too
+# Far?" (26/08/2026) saiu como POSITIVA: "strong" e "growth" pontuaram, e a
+# metade que importa -- a que vem depois do "but", e o proprio ponto de
+# interrogacao -- nao pesava nada.
+#
+# A saida NAO e' contar como negativa: a manchete nao afirma queda, ela
+# PERGUNTA. Vira uma terceira categoria, "misto", que fica de fora do score e
+# aparece na contagem. Deixar de fora sem aparecer seria repetir o defeito que
+# o comentario do casamento por palavra inteira ja' descreve: apagar noticia
+# em silencio e' pior que classifica-la mal.
+_RESSALVA = re.compile(
+    r"\b(?:but|however|yet|though|although|despite|amid|concerns?|"
+    r"questions?|doubts?)\b|\?\s*$", re.IGNORECASE)
+
 _POSITIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in POSITIVE) + r")\b")
 _NEGATIVE_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in NEGATIVE) + r")\b")
 
@@ -143,13 +167,19 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
         news = yf.Ticker(ticker).news or []
     except Exception:
         news = []
-    pos = neg = 0
+    pos = neg = ambiguas = descartadas = 0
     scored = []
     for item in news[:max_items]:
         content = item.get("content", {}) if isinstance(item.get("content"), dict) else {}
         raw_title = str(content.get("title", item.get("title", "")) or "")
         title = raw_title.lower()
         if not title:
+            continue
+        # Manchete de OUTRA empresa nao e' sentimento desta. Ver
+        # `fala_do_papel` em news_sources.py: o feed do Yahoo para ARM trouxe
+        # duas materias da AMD, e elas mudaram o sinal da tela para AGUARDAR.
+        if not fala_do_papel(raw_title, ticker):
+            descartadas += 1
             continue
         # Timestamp de publicação (ms) — usado pelos marcadores no gráfico de velas
         ts = None
@@ -163,12 +193,23 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
             ts = None
         p = len(set(_POSITIVE_RE.findall(title)))
         n = len(set(_NEGATIVE_RE.findall(title)))
-        if p > n:
+        if _RESSALVA.search(raw_title):
+            ambiguas += 1
+            scored.append({"title": raw_title[:120], "tone": "misto", "ts": ts})
+        elif p > n:
             pos += 1
             scored.append({"title": raw_title[:120], "tone": "positivo", "ts": ts})
         elif n > p:
             neg += 1
             scored.append({"title": raw_title[:120], "tone": "negativo", "ts": ts})
+        else:
+            # Empate entre positivas e negativas. Ate' aqui esta manchete
+            # sumia sem deixar rastro -- o comentario do casamento por palavra
+            # inteira, logo acima, ja' dizia que apagar noticia em silencio e'
+            # pior que classifica-la mal, e o `continue` implicito fazia
+            # exatamente isso. Agora ela conta e aparece.
+            ambiguas += 1
+            scored.append({"title": raw_title[:120], "tone": "misto", "ts": ts})
     total = pos + neg
     if total == 0:
         label, score = "neutro", 0.0
@@ -182,6 +223,10 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
         for d, tr in zip(destaques, translated):
             d["title"] = tr
     return {"label": label, "score": score, "positivas": pos, "negativas": neg,
+            # `ambiguas` e `descartadas` sao contagem VISIVEL de proposito: um
+            # filtro que roda calado devolve "0 negativas" sem dizer que jogou
+            # metade do feed fora.
+            "ambiguas": ambiguas, "descartadas": descartadas,
             "analisadas": len(news[:max_items]), "destaques": destaques}
 
 # ── Estrutura de preço: topos/fundos via pivôs simples ───────────────────────

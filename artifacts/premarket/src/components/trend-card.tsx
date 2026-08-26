@@ -21,6 +21,11 @@ interface TrendNews {
   score: number;
   positivas: number;
   negativas: number;
+  // Contagem VISÍVEL de propósito. Um filtro que roda calado devolve
+  // "0 negativas" sem dizer que jogou metade do feed fora -- e foi assim que
+  // duas manchetes da AMD viraram sentimento da ARM sem ninguém notar.
+  ambiguas?: number;
+  descartadas?: number;
   analisadas: number;
   destaques: { title: string; tone: string; ts?: number | null }[];
 }
@@ -197,7 +202,9 @@ export function TrendCard({ symbol }: { symbol: string }) {
           />
           {news && (
             <ComponentPill
-              label={`Notícias (${news.positivas}+/${news.negativas}-)`}
+              label={`Notícias (${news.positivas}+/${news.negativas}-${
+                news.ambiguas ? `/${news.ambiguas}~` : ""
+              })`}
               value={news.label}
               good={news.label === "neutro" || news.label === "misto" ? null : news.label === "positivo"}
             />
@@ -209,12 +216,29 @@ export function TrendCard({ symbol }: { symbol: string }) {
           <div className="space-y-1 pt-1 border-t border-border">
             {news.destaques.slice(0, 3).map((d, i) => (
               <div key={i} className="flex items-start gap-1.5 text-[11px] font-mono text-muted-foreground">
-                <span className={d.tone === "positivo" ? "text-green-500" : "text-red-500"}>
-                  {d.tone === "positivo" ? "▲" : "▼"}
+                {/* "misto" é um terceiro estado real: manchete com ressalva
+                    ("cresceu, MAS o múltiplo...") não é alta nem queda. Sem
+                    ele, toda ressalva saía com a seta vermelha de queda. */}
+                <span className={
+                  d.tone === "positivo" ? "text-green-500"
+                  : d.tone === "misto" ? "text-amber-500"
+                  : "text-red-500"
+                }>
+                  {d.tone === "positivo" ? "▲" : d.tone === "misto" ? "◆" : "▼"}
                 </span>
                 <span className="line-clamp-1">{d.title}</span>
               </div>
             ))}
+            {/* Dizer o que ficou de FORA. Sem esta linha o leitor vê "0
+                negativas" e não tem como saber que o feed trouxe matéria de
+                outra empresa e ela foi descartada. */}
+            {!!news.descartadas && (
+              <div className="text-[10px] text-muted-foreground/70 pt-0.5">
+                {news.descartadas === 1
+                  ? "1 manchete era de outro papel e ficou fora da conta"
+                  : `${news.descartadas} manchetes eram de outros papéis e ficaram fora da conta`}
+              </div>
+            )}
           </div>
         )}
       </div>

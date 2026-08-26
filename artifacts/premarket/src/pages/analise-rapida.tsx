@@ -32,6 +32,11 @@ interface TrendItem {
   news?: {
     label?: string;
     score?: number;
+    // Ver a nota em trend-card.tsx: manchete de outro papel descartada, e
+    // manchete com ressalva, precisam APARECER. Foi contando notícia da AMD
+    // como sentimento da ARM que esta tela recomendou "aguardar".
+    ambiguas?: number;
+    descartadas?: number;
     destaques?: { title: string; tone: string }[];
   };
   confluence?: string;
@@ -570,11 +575,18 @@ export default function AnaliseRapidaPage() {
                   <ul className="space-y-1">
                     {trend.news.destaques.map((d, i) => (
                       <li key={i} className="font-mono text-xs text-muted-foreground flex gap-2">
-                        <span className={d.tone === "positivo" ? "text-green-400" : d.tone === "negativo" ? "text-red-400" : "text-muted-foreground"}>●</span>
+                        <span className={d.tone === "positivo" ? "text-green-400" : d.tone === "negativo" ? "text-red-400" : "text-amber-400"}>●</span>
                         <span>{d.title}</span>
                       </li>
                     ))}
                   </ul>
+                  {!!trend.news.descartadas && (
+                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-1.5">
+                      {trend.news.descartadas === 1
+                        ? "1 manchete era de outro papel e ficou fora da conta"
+                        : `${trend.news.descartadas} manchetes eram de outros papéis e ficaram fora da conta`}
+                    </p>
+                  )}
                 </div>
               )}
             </>
