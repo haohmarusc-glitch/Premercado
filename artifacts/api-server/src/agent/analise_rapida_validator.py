@@ -180,6 +180,27 @@ _SEQUENCIA = (r"seguid[ao]s?\b", r"em\s+seguida", r"na\s+sequ[êe]ncia",
 # 5%" pareceria uma sequência crescente quando são lados opostos.
 _DISTANCIA_ASSINADA = r"([+-]\d+(?:[.,]\d+)?)\s*%"
 
+# Onde o papel está DENTRO da faixa de 52 semanas, dito por extenso. O modelo
+# tende a derivar isso das duas distâncias que ele mesmo escreveu, e derivar é
+# justamente onde ele erra.
+_METADE_DE_CIMA = (r"metade\s+superior", r"parte\s+(?:de\s+cima|superior)",
+                   r"topo\s+d[ao]\s+(?:faixa|intervalo|range)",
+                   r"pr[óo]xim\w+\s+d[ao]\s+m[áa]xima",
+                   r"perto\s+d[ao]\s+m[áa]xima")
+_METADE_DE_BAIXO = (r"metade\s+inferior", r"parte\s+(?:de\s+baixo|inferior)",
+                    r"fundo\s+d[ao]\s+(?:faixa|intervalo|range)",
+                    r"pr[óo]xim\w+\s+d[ao]\s+m[íi]nima",
+                    r"perto\s+d[ao]\s+m[íi]nima")
+# A frase tem que estar falando da FAIXA, não de outra coisa qualquer.
+_FALA_DA_FAIXA = r"faixa|52\s*semanas|intervalo\s+anual|amplitude\s+anual|range"
+
+# "chegou ao evento com um run-up de X%" -- `runup_atual_ex_evento_pct` é o
+# run-up de HOJE, não o que o papel tinha ao CHEGAR num balanço que já passou.
+_CHEGADA_AO_EVENTO = (r"cheg\w+\s+(?:ao|no|até\s+o)\s+"
+                      r"(?:evento|balan[çc]o|resultado)|"
+                      r"veio\s+(?:ao|para\s+o)\s+(?:evento|balan[çc]o)|"
+                      r"antes\s+d[oe]\s+(?:evento|balan[çc]o|resultado)\s+com")
+
 # Verbos que ATRIBUEM um movimento ao balanço. É o que separa "reagiu com X%"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
 _ATRIBUI_REACAO = r"(?:reag\w+|rea[cç][ãa]o\s+(?:foi|de|veio|saiu|ficou))"
@@ -377,6 +398,31 @@ def validar_analise(texto, dados=None) -> list:
                 f"há {pregoes} pregão(ões) — o run-up bruto inclui o próprio "
                 f"salto do evento.")
 
+        # O run-up de HOJE atribuído à CHEGADA num balanço que já passou.
+        #
+        # Incidente real (SMCI, 26/08/2026): "a ação chegou ao evento com um
+        # run-up de 32,46%, considerada esticada". Os 32,46% são
+        # `runup_atual_ex_evento_pct` -- o run-up de AGORA, 11 pregões DEPOIS
+        # do balanço. O run-up com que ela chegou em 2026-08-11 foi +11,13%.
+        #
+        # A checagem 7 acima excusa o passado ("chegou esticado") porque
+        # descrever histórico é a redação certa. Aqui o tempo verbal está
+        # certo e o NÚMERO é que é de outro momento.
+        atual = num_finito(runup.get("runup_atual_ex_evento_pct"))
+        if atual is not None:
+            for frase in frases(prosa_sa):
+                if not re.search(_CHEGADA_AO_EVENTO, frase):
+                    continue
+                if not _cita_percentual(frase, abs(atual)):
+                    continue
+                add("ERRO", "ANALISE_RUNUP_ATUAL_COMO_CHEGADA",
+                    f"diz que o papel CHEGOU ao balanço com {atual}%, mas esse "
+                    f"é o run-up de AGORA — medido {pregoes} pregão(ões) "
+                    f"DEPOIS do evento. O run-up de chegada está na tabela de "
+                    f"eventos, não neste campo. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+                break
+
         # O esticamento atribuído ao PRÓXIMO balanço. Foi assim que o erro
         # real escapou em WOLF: "o preço atual está esticado em relação ao
         # PRÓXIMO balanço, pois nos 4 pregões desde o último evento...".
@@ -425,7 +471,37 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 9. níveis descritos fora de ordem ───────────────────────────────────
+    # ── 9. posição na faixa de 52 semanas ───────────────────────────────────
+    #
+    # Incidente real (SMCI, 26/08/2026): "o ativo negocia na METADE SUPERIOR da
+    # sua faixa anual", com preço US$ 37,88 numa faixa de 19,48 a 58,78 -- ou
+    # seja, a 46,8% dela, na metade de BAIXO.
+    #
+    # O texto tinha os dois números certos na frase anterior ("55,17% da máxima
+    # e 48,57% acima da mínima") e derivou deles a conclusão oposta. É o padrão
+    # do dia inteiro: o número está certo e a leitura, invertida.
+    faixa_lo = num_finito(caminho(dados, "snapshot").get("yearLow"))
+    faixa_hi = num_finito(caminho(dados, "snapshot").get("yearHigh"))
+    if preco_atual and faixa_lo and faixa_hi and faixa_hi > faixa_lo:
+        posicao = (preco_atual - faixa_lo) / (faixa_hi - faixa_lo)
+        for frase in frases(prosa_sa):
+            if not re.search(_FALA_DA_FAIXA, frase):
+                continue
+            diz_cima = any(re.search(x, frase) for x in _METADE_DE_CIMA)
+            diz_baixo = any(re.search(x, frase) for x in _METADE_DE_BAIXO)
+            if diz_cima == diz_baixo:
+                continue  # nada dito, ou os dois (comparação, não afirmação)
+            if diz_cima and posicao < 0.5 or diz_baixo and posicao >= 0.5:
+                add("ERRO", "ANALISE_POSICAO_NA_FAIXA",
+                    f"diz que o papel está na metade "
+                    f"{'superior' if diz_cima else 'inferior'} da faixa, mas "
+                    f"US$ {preco_atual:.2f} está a {posicao * 100:.1f}% do "
+                    f"intervalo US$ {faixa_lo:.2f}–{faixa_hi:.2f} — metade "
+                    f"{'inferior' if posicao < 0.5 else 'superior'}. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+                break
+
+    # ── 10. níveis descritos fora de ordem ──────────────────────────────────
     #
     # Incidente real (INTC, 26/08/2026): "encontra seu primeiro nível técnico
     # significativo na MM20 a US$ 95,78 (+10,33%), SEGUIDA de perto pela banda
@@ -446,7 +522,7 @@ def validar_analise(texto, dados=None) -> list:
                 f"Trecho: “{frase.strip()[:120]}”.")
             break
 
-    # ── 10. estatística de earnings com o rótulo de outra ───────────────────
+    # ── 11. estatística de earnings com o rótulo de outra ───────────────────
     #
     # Incidente real (INTC, 26/08/2026), publicado sem apontamento: "um
     # descolamento (gap) médio de 8,25% na abertura". Os oito gaps da tabela
@@ -473,7 +549,7 @@ def validar_analise(texto, dados=None) -> list:
                     + f". Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 11. run-up apresentado como reação ──────────────────────────────────
+    # ── 12. run-up apresentado como reação ──────────────────────────────────
     #
     # O pior erro da rodada de WOLF, e o que nenhum validador pegava: "o papel
     # reagiu com 14,92% de alta", quando 14,92% é o run-up EX-EVENTO e a
