@@ -187,7 +187,7 @@ export default function AnaliseRapidaPage() {
   const [tech, setTech] = useState<TechItem | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
-  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean } | null>(null);
+  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean; avisos?: string[] } | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
 
@@ -277,7 +277,7 @@ export default function AnaliseRapidaPage() {
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
-      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean };
+      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean; avisos?: string[] };
     },
     onSuccess: setAnaliseIA,
   });
@@ -472,6 +472,22 @@ export default function AnaliseRapidaPage() {
             <p className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
               ⚠ O texto bateu o limite de tamanho e terminou no meio — rode de novo para uma versão completa.
             </p>
+          )}
+          {/* Apontamentos do agent/analise_rapida_validator.py. Ficam ACIMA do
+              texto e nunca no lugar dele: análise suprimida deixaria a página
+              vazia sem dizer por quê. */}
+          {analiseIA.avisos && analiseIA.avisos.length > 0 && (
+            <div className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400 space-y-1 mb-3">
+              <p className="font-semibold">
+                ⚠ O validador apontou {analiseIA.avisos.length} problema(s) nesta análise:
+              </p>
+              {analiseIA.avisos.map((a, i) => (
+                <p key={i}>{a}</p>
+              ))}
+              <p className="opacity-80">
+                A análise fica abaixo assim mesmo — leia com estes pontos em mente.
+              </p>
+            </div>
           )}
           <MarkdownContent content={analiseIA.markdown} />
         </Painel>
