@@ -1602,6 +1602,36 @@ def _build_veredito_snapshot(tickers: list[str]) -> dict:
     return {"as_of": as_of, "quotes": quotes, "technicals": technicals, "earnings": earnings}
 
 
+def _sentimento_do_snapshot() -> dict | None:
+    """Fear & Greed FIXADO no snapshot, com a hora da leitura.
+
+    Por que isto existe. O índice era buscado DUAS VEZES por caminhos
+    independentes: `tools.get_fear_greed_index()` quando o agente chamava a
+    ferramenta, e `get_macro.py::fear_greed()` quando a tela pedia
+    `/api/macro`. Dois relógios sobre um índice que anda intradia -- em
+    26/08/2026 o texto saiu com 57,6 e o painel mostrou 57,3, e não havia como
+    saber qual era "o" número.
+
+    Fixando aqui, o valor entra no prompt como fato verificado (o mesmo
+    caminho de `prompt_block()`, que já diz "use estes fatos, não recalcule"),
+    o texto passa a citar ESTE número e o validador passa a poder conferi-lo.
+    A hora da leitura vai junto porque um índice intradia sem carimbo não é
+    reproduzível."""
+    try:
+        fg = t.get_fear_greed_index()
+    except Exception as e:
+        print(f"[veredito] sentimento indisponível: {e}", file=sys.stderr, flush=True)
+        return None
+    if not isinstance(fg, dict) or fg.get("error") or fg.get("score") is None:
+        return None
+    return {
+        "score": fg["score"],
+        "rating_pt": fg.get("rating_pt"),
+        "rating_en": fg.get("rating_en"),
+        "lido_em": _now_brt().isoformat(timespec="seconds"),
+    }
+
+
 def _capex_do_snapshot() -> dict | None:
     """Resumo do capex dos hiperescaladores para o snapshot do Veredito.
 
@@ -1664,6 +1694,10 @@ def run_veredito(progress_callback=None) -> str:
     folego = _folego_do_snapshot(tickers)
     if folego:
         snapshot["folego_de_caixa"] = folego
+    # Sentimento fixado: uma leitura só, usada pelo prompt E pelo validador.
+    sentimento = _sentimento_do_snapshot()
+    if sentimento:
+        snapshot["sentimento"] = sentimento
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)
