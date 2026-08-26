@@ -422,7 +422,11 @@ def _internal_headers() -> dict:
 def _falha_de_leitura(o_que: str, e: Exception) -> dict:
     return {
         "leitura_falhou": True,
-        "error": f"{type(e).__name__}: {e}",
+        # `mask_sensitive_data` porque `e` pode ser um HTTPError do requests,
+        # que traz a URL inteira -- com a credencial no query string. Este
+        # dicionario vai pro payload do modelo, e o que entra no payload pode
+        # sair no texto. Ver a nota em _motivo_curto (analise_rapida_ia.py).
+        "error": mask_sensitive_data(f"{type(e).__name__}: {e}"),
         "aviso": (
             f"NÃO FOI POSSÍVEL LER {o_que}. Isto NÃO significa que está "
             f"vazio, nem que o usuário não configurou nada — significa que a "

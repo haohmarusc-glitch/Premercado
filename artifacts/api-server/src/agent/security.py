@@ -136,6 +136,32 @@ def friendly_error(exc):
     return "Dados indisponíveis no momento"
 
 
+# Nome de variavel de ambiente que costuma guardar credencial.
+_NOME_DE_SEGREDO = re.compile(
+    r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA|CREDENTIAL", re.IGNORECASE)
+
+# Abaixo disto o "segredo" nao e' segredo, e' um flag -- ver a nota em
+# mask_sensitive_data.
+TAMANHO_MINIMO_DO_SEGREDO = 16
+
+
+def _segredos_do_ambiente():
+    """Valores do ambiente que parecem credencial, do MAIOR para o menor.
+
+    A ordem nao e' capricho: se um segredo for prefixo de outro (uma chave e
+    a mesma chave com sufixo), mascarar o menor primeiro deixaria a cauda do
+    maior exposta -- exatamente o pedaco que identifica a chave.
+    """
+    achados = set()
+    for nome, valor in os.environ.items():
+        if not _NOME_DE_SEGREDO.search(nome):
+            continue
+        valor = (valor or "").strip()
+        if len(valor) >= TAMANHO_MINIMO_DO_SEGREDO:
+            achados.add(valor)
+    return sorted(achados, key=len, reverse=True)
+
+
 def mask_sensitive_data(text):
     if not text:
         return text
@@ -156,4 +182,19 @@ def mask_sensitive_data(text):
         r"\1***MASKED***",
         text,
     )
+    # Segunda rede: o VALOR das variaveis de ambiente que parecem credencial.
+    #
+    # As regras acima reconhecem FORMATOS -- prefixo sk-, "Bearer", parametro
+    # de query. Todas falham no dia em que a chave sai por um formato que
+    # ninguem previu (`f"falhou com {api_key}"` num log, a chave no corpo de
+    # um POST ecoado). Este repo ja' viu o mesmo vazamento duas vezes em 24
+    # dias, as duas por URL; a terceira nao vai avisar que mudou de roupa.
+    #
+    # Casar pelo valor pega qualquer formato, inclusive nenhum. O piso de
+    # tamanho e' o que separa segredo de flag: sem ele um `DEBUG_TOKEN=1`
+    # faria todo "1" do texto virar mascara, e a mensagem ficaria ilegivel
+    # sem proteger nada.
+    for segredo in _segredos_do_ambiente():
+        if segredo in text:
+            text = text.replace(segredo, "***MASKED***")
     return text
