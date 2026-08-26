@@ -1030,3 +1030,64 @@ def test_o_veto_de_compra_continua_valendo():
     SEM declarar continua sendo erro."""
     assert "BLOCO_COMPRA_SEM_VETO_DECLARADO" in _cods_earn(
         1, ["TENDENCIA_ALTA"], acao="COMPRAR")
+
+
+# ── o validador não pode emudecer quando a fonte cai ───────────────────────
+#
+# A primeira versão de `_plano_de_saida_do_snapshot` pulava o item de erro e
+# seguia com a lista vazia, devolvendo None -- o mesmo que "este usuário não
+# tem plano". `BLOCO_CONTRA_PLANO` simplesmente não rodava, e ninguém ficava
+# sabendo.
+#
+# Um validador que emudece quando a leitura falha é pior que um que não
+# existe: dá a impressão de ter conferido. É a caixa vazia de novo, com outra
+# roupa -- e a caixa vazia deste dia já custou uma tarde de diagnóstico.
+
+def _bloco_arm(codes=("TENDENCIA_BAIXA",), acao="MANTER"):
+    return {"tickers": [{"ticker": "ARM", "action": acao, "confidence": 0.5,
+                         "reason_codes": list(codes)}]}
+
+
+def _snap_plano(plano):
+    return {"as_of": "2026-08-26", "quotes": {"ARM": {}}, "technicals": {},
+            "earnings": {}, "plano_de_saida": plano}
+
+
+def test_leitura_do_plano_falhou_e_dito_em_voz_alta():
+    achados = [i.code for i in validar_bloco_estruturado(
+        _bloco_arm(), _snap_plano({"_leitura_falhou": True})).issues]
+    assert "PLANO_NAO_CONFERIDO" in achados
+
+
+def test_plano_vazio_de_verdade_nao_gera_ruido():
+    """Vazio é uma resposta legítima e silenciosa. Só a FALHA fala."""
+    achados = [i.code for i in validar_bloco_estruturado(
+        _bloco_arm(), _snap_plano({})).issues]
+    assert "PLANO_NAO_CONFERIDO" not in achados
+    assert "BLOCO_CONTRA_PLANO" not in achados
+
+
+def test_com_plano_lido_a_checagem_roda_normalmente():
+    plano = {"ARM": [{"acao": "Vender imediatamente — stop-loss acionado",
+                      "data_alvo": "2026-08-20"}]}
+    achados = [i.code for i in validar_bloco_estruturado(
+        _bloco_arm(), _snap_plano(plano)).issues]
+    assert "BLOCO_CONTRA_PLANO" in achados
+    assert "PLANO_NAO_CONFERIDO" not in achados
+
+
+def test_a_falha_nao_vira_acusacao():
+    """Com a leitura falha, o bloco não pode ser acusado de contrariar um
+    plano que ninguém leu -- seria inventar a ordem de venda."""
+    achados = [i.code for i in validar_bloco_estruturado(
+        _bloco_arm(), _snap_plano({"_leitura_falhou": True})).issues]
+    assert "BLOCO_CONTRA_PLANO" not in achados
+    assert "BLOCO_PLANO_SEM_ITEM" not in achados
+
+
+def test_o_aviso_chega_na_tela():
+    """Fecha a corrente: sem isto o PLANO_NAO_CONFERIDO iria pro stderr como
+    todos os outros iam antes de hoje."""
+    rep = validar_bloco_estruturado(
+        _bloco_arm(), _snap_plano({"_leitura_falhou": True}))
+    assert "PLANO_NAO_CONFERIDO" in rep.bloco_para_a_tela()

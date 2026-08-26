@@ -1196,6 +1196,14 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
     # mesma isencao que RISCO_CORRELACAO da' a' compra do par correlacionado.
     plano = snapshot.get("plano_de_saida")
     plano = plano if isinstance(plano, dict) else {}
+    # A leitura do plano falhou: a checagem abaixo NAO pode rodar, e o leitor
+    # tem que saber disso. Um validador que emudece quando a fonte cai e' pior
+    # que um que nao existe -- da' a impressao de ter conferido.
+    if plano.pop("_leitura_falhou", False):
+        rep.add("WARN", "PLANO_NAO_CONFERIDO",
+                "não foi possível ler o Plano de Saída nesta geração, então "
+                "as decisões do bloco NÃO foram conferidas contra ele.")
+        plano = {}
     for item in bloco.get("tickers", []):
         if not isinstance(item, dict):
             continue
