@@ -18,8 +18,6 @@ import { cn } from "@/lib/utils";
 import { Sparkles, RefreshCw, Target, Activity, Flag, Calendar, Globe, AlertTriangle } from "lucide-react";
 import { useTacticalContext, tacticalSignal } from "@/hooks/use-tactical-context";
 import { ExportarRelatorio, cabecalho, itens, tabela } from "@/components/exportar-relatorio";
-import { VereditoDecisoes } from "@/components/veredito-decisoes";
-import { extrairBlocoDoVeredito } from "@/lib/veredito-bloco";
 
 // ─── Veredito do Dia ─────────────────────────────────────────────────────────
 // Duas partes independentes: (1) um painel estruturado que agrega dados já
@@ -161,14 +159,6 @@ export default function VereditoPage() {
     { query: { queryKey: getGetLatestReportQueryKey({ mode: "veredito" }), retry: false } },
   );
 
-  // O bloco estruturado sai da prosa e vira tabela. Quando não há bloco legível
-  // (ou o modelo não o produziu), `decisoes` é null e a prosa segue INTACTA --
-  // inclusive com o fence cru, se houver um ilegível. Ver `veredito-bloco.ts`.
-  const { prosa: prosaDoVeredito, decisoes } = useMemo(
-    () => extrairBlocoDoVeredito(veredito?.content ?? ""),
-    [veredito?.content],
-  );
-
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="border-b border-border pb-4 flex flex-wrap items-end justify-between gap-3">
@@ -205,9 +195,10 @@ export default function VereditoPage() {
               <span className="text-xs text-muted-foreground font-mono">{formatDateTime(veredito.createdAt)}</span>
             </div>
           </CardHeader>
-          <CardContent className="pt-6 space-y-5">
-            {decisoes && <VereditoDecisoes decisoes={decisoes} />}
-            <MarkdownContent content={prosaDoVeredito} />
+          <CardContent className="pt-6">
+            {/* A tabela de decisão sai do próprio MarkdownContent -- ver a
+                nota lá sobre por que ela não mora na tela. */}
+            <MarkdownContent content={veredito.content} />
           </CardContent>
         </Card>
       ) : (
