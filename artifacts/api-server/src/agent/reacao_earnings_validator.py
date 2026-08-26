@@ -62,12 +62,46 @@ _VERBO_DE_MERCADO = (r"\b(?:sob\w+|cai\w*|caiu|desab\w+|dispar\w+|revert\w+|"
 
 # Afirmações que promovem correlação a padrão. É a família exata do incidente:
 # "é um padrão estatisticamente relevante", "indicando um padrão de reversão".
-_PROMOVE_A_PADRAO = (
+# Afirmacoes INFERENCIAIS: dizem que o numero vale como regra, previsao ou
+# achado com suporte. Sao o incidente original -- "indicando um padrao de
+# reversao. E' um padrao estatisticamente relevante" com p corrigido 0,462.
+_AFIRMA_SIGNIFICANCIA = (
     r"estatisticamente\s+relevante", r"estatisticamente\s+significativ\w*",
     r"padr[ãa]o\s+de\s+revers[ãa]o", r"padr[ãa]o\s+consistente",
     r"sinal\s+confi[áa]vel", r"rela[cç][ãa]o\s+robusta",
-    r"correla[cç][ãa]o\s+forte", r"forte\s+correla[cç][ãa]o",
 )
+
+# Afirmacao DESCRITIVA: "forte" qualifica a MAGNITUDE de r, nao a confianca
+# nele. |r| > 0,7 e' "forte" em qualquer livro de estatistica -- dizer isso e'
+# ler o numero, nao promove-lo.
+#
+# Duas geracoes da mesma tela, em 26/08/2026, com a MESMA afirmacao:
+#
+#   "correlacao positiva forte (0,92)"  -> passava
+#   "forte correlacao positiva (0.92)"  -> ERRO
+#
+# So' a ordem do adjetivo mudava. Uma checagem cujo veredito depende de onde
+# o adjetivo caiu na frase nao esta medindo sentido nenhum. As duas ordens
+# agora casam igual -- e as duas so' caem quando a frase deixa o numero SOLTO.
+#
+# Porque a saida nao foi simplesmente apagar a familia: "NVDA tem forte
+# correlacao entre run-up e reacao", sem dizer sobre quantos eventos, engana
+# de verdade. O que desarma o engano e' o n. Com ele declarado, quem le tem o
+# que precisa para calibrar sozinho -- e e' o que o proprio SYSTEM pede.
+_MAGNITUDE_DA_CORRELACAO = (
+    r"correla[cç][ãa]o\s+(?:\w+\s+)?forte", r"forte\s+(?:\w+\s+)?correla[cç][ãa]o",
+)
+
+# A frase ancora o numero na amostra (ou ja' se defende sozinha).
+_DECLARA_AMOSTRA = (
+    r"\b(?:apenas\s+)?\d+\s+(?:eventos?|balan[çc]os?|casos?|resultados?|"
+    r"observa[çc][õo]es|amostras?|trimestres?)\b"
+    r"|\bn\s*=\s*\d+"
+    r"|\bamostra\s+(?:pequena|reduzida|limitada|curta)"
+    r"|\bpoucos\s+eventos\b|\bind[íi]cio\b|\bn[ãa]o\s+[ée]\s+prova\b"
+)
+
+_PROMOVE_A_PADRAO = _AFIRMA_SIGNIFICANCIA + _MAGNITUDE_DA_CORRELACAO
 
 # Limite acima do qual dois papéis são "na prática o mesmo trade" -- o mesmo
 # número que o SYSTEM ensina ao modelo. Abaixo dele a frase é forte demais.
@@ -248,6 +282,11 @@ def validar_leitura(texto, resultados, correlacoes=None) -> list:
                     continue
                 # NEGAR a promoção é obediência ao SYSTEM, não erro.
                 if afirmacao_negada(frase, alvo):
+                    continue
+                # Descrever a magnitude DIZENDO sobre quantos eventos não é
+                # promover -- é o mesmo que o card faz na própria tela.
+                if (alvo in _MAGNITUDE_DA_CORRELACAO
+                        and re.search(_DECLARA_AMOSTRA, frase)):
                     continue
                 pc = ru.get("corr_p_corrigido")
                 add("ERRO", "LEITURA_CORRELACAO_SEM_SUPORTE",

@@ -546,3 +546,63 @@ def test_atribuidor_nao_atravessa_virgula():
     achados = validar_leitura("NVDA está neutro, longe de esticado.",
                               [_ticker("NVDA", estado="neutro")])
     assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+# ═══ auditoria de 26/08/2026 — "forte" descreve r, não promove r ════════════
+#
+# Duas gerações da MESMA tela, no mesmo dia, com a mesma afirmação sobre o
+# mesmo número. Só a ordem do adjetivo mudou, e o veredito virou.
+
+_CORR_FRACA = dict(corr=0.92, sobrevive=False, p_corrigido=0.31)
+
+
+@pytest.mark.parametrize("frase", [
+    # a que caiu como ERRO na tela
+    "NVDA mostra uma forte correlação positiva (0.92) nos 6 eventos com run-up medido.",
+    # a mesma coisa, com o adjetivo depois -- passava por acidente de regex
+    "Para NVDA houve uma correlação positiva forte (0,92) nos 6 eventos analisados.",
+    "NVDA tem correlação mais forte (0.92) entre run-up e reação, em 6 eventos.",
+    "NVDA: forte correlação (0.92), amostra pequena.",
+    "NVDA mostra forte correlação (0.92) — indício, não prova.",
+])
+def test_magnitude_com_amostra_declarada_nao_e_promocao(frase):
+    """Descrever |r| E dizer sobre quantos eventos é ler o número, não
+    promovê-lo. É exatamente o que o card faz na mesma tela."""
+    achados = validar_leitura(frase, [_ticker("NVDA", **_CORR_FRACA)])
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" not in _codigos(achados), frase
+
+
+@pytest.mark.parametrize("frase", [
+    "NVDA mostra uma forte correlação positiva entre run-up e reação.",
+    "Há correlação forte entre o run-up de NVDA e a reação seguinte.",
+    "NVDA tem correlação positiva forte entre run-up e reação.",
+])
+def test_magnitude_sem_amostra_continua_caindo(frase):
+    """"forte correlação" com o número solto engana: quem lê não tem como
+    saber que são 6 eventos e que ela não sobrevive ao Holm."""
+    achados = validar_leitura(frase, [_ticker("NVDA", **_CORR_FRACA)])
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(achados), frase
+
+
+@pytest.mark.parametrize("frase", [
+    "NVDA mostra um padrão estatisticamente relevante em 6 eventos.",
+    "A correlação de NVDA é um sinal confiável, medido em 6 eventos.",
+    "NVDA indica um padrão de reversão nos 6 eventos analisados.",
+    "NVDA tem uma relação robusta entre run-up e reação, em 6 eventos.",
+])
+def test_afirmar_significancia_cai_mesmo_declarando_a_amostra(frase):
+    """Declarar o n não compra licença para afirmar significância: o dado diz
+    que ela NÃO sobrevive à correção de múltiplos tickers. A isenção da
+    amostra vale só para o adjetivo de magnitude."""
+    achados = validar_leitura(frase, [_ticker("NVDA", **_CORR_FRACA)])
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(achados), frase
+
+
+def test_as_duas_ordens_do_adjetivo_recebem_o_mesmo_veredito():
+    """O bug em uma linha: o mesmo sentido não pode depender de onde o
+    adjetivo caiu."""
+    dados = [_ticker("NVDA", **_CORR_FRACA)]
+    antes = "NVDA tem correlação positiva forte entre run-up e reação."
+    depois = "NVDA tem forte correlação positiva entre run-up e reação."
+    assert (("LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(validar_leitura(antes, dados)))
+            == ("LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(validar_leitura(depois, dados))))
