@@ -127,4 +127,32 @@ describe("carteiraParaOAgente", () => {
     // O bug de origem era justamente a lista do código vencer a realidade.
     expect(carteiraParaOAgente(["HCC"], "NVDA,SMCI,GOOGL,ARM,AVGO,MRVL,SKHY,TSLA")).toBe("HCC");
   });
+
+  // ── o vazamento de 26/08/2026 ──────────────────────────────────────────
+  //
+  // Uma conta SEM posições abriu o Veredito do Dia e recebeu um veredito
+  // sobre NVDA, SMCI, GOOGL, ARM, AVGO, MRVL, SKHY e TSLA -- a carteira do
+  // operador, que mora em AGENT_PORTFOLIO_TICKERS. O texto trazia o plano de
+  // saída dele, os cenários dele e os valores em reais dele, enquanto os
+  // painéis estruturados da MESMA tela diziam "Sem posições na carteira".
+  //
+  // `getPortfolioTickers` já devolvia [] de propósito, com um comentário
+  // dizendo por quê. Esta função desfazia isso uma camada acima.
+
+  it("carteira vazia de um USUÁRIO não cai na env var", () => {
+    const doOperador = "NVDA,SMCI,GOOGL,ARM,AVGO,MRVL,SKHY,TSLA";
+    expect(carteiraParaOAgente([], doOperador, true)).toBe("");
+  });
+
+  it("o escape hatch continua valendo para as runs não escopadas", () => {
+    // Uma run agendada não tem "usuário da requisição", e a env var segue
+    // sendo o jeito de rodar contra uma carteira hipotética.
+    expect(carteiraParaOAgente([], "GOOGL,TSLA", false)).toBe("GOOGL,TSLA");
+    expect(carteiraParaOAgente([], "GOOGL,TSLA")).toBe("GOOGL,TSLA");
+  });
+
+  it("com posições o escopo não muda nada", () => {
+    expect(carteiraParaOAgente(["HCC"], "NVDA,TSLA", true)).toBe("HCC");
+    expect(carteiraParaOAgente(["HCC"], "NVDA,TSLA", false)).toBe("HCC");
+  });
 });

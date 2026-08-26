@@ -90,11 +90,26 @@ export function isPositionActiveFromLots<T extends LotSaleInfo>(
  * A env var fica como escape hatch (rodar contra uma carteira hipotética sem
  * mexer no banco), nunca mais como fonte principal: ela não sabe quando você
  * compra ou vende.
+ *
+ * `escopadaAUmUsuario`: quando a lista do banco foi buscada PARA UM USUÁRIO
+ * específico, vazio é RESPOSTA, não lacuna a preencher.
+ *
+ * Vazamento real (26/08/2026): uma conta sem posições abriu o Veredito do Dia
+ * e recebeu um veredito sobre NVDA, SMCI, GOOGL, ARM, AVGO, MRVL, SKHY e TSLA
+ * -- a carteira do operador, que mora em `AGENT_PORTFOLIO_TICKERS`. Os painéis
+ * estruturados da mesma tela diziam, corretamente, "Sem posições na carteira".
+ *
+ * `getPortfolioTickers` já sabia disso e devolve `[]` de propósito, com um
+ * comentário dizendo por quê: "Vazio, NUNCA um fallback fixo -- um fallback
+ * compartilhado aqui devolveria a carteira de outra pessoa pra quem não tem
+ * posições". Esta função desfazia isso uma camada acima.
  */
 export function carteiraParaOAgente(
   doBanco: readonly string[],
   doEnv: string | undefined,
+  escopadaAUmUsuario = false,
 ): string {
   if (doBanco.length) return doBanco.join(",");
+  if (escopadaAUmUsuario) return "";
   return doEnv ?? "";
 }

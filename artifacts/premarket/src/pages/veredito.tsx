@@ -38,7 +38,16 @@ interface EarningsItem {
 }
 
 interface MacroData {
-  fearGreed?: { score?: number | null; ratingPt?: string; ratingEn?: string; error?: string };
+  fearGreed?: {
+    score?: number | null; ratingPt?: string; ratingEn?: string; error?: string;
+    /**
+     * Distância até a borda de faixa mais próxima, de `agent/sentimento.py`.
+     * O Veredito de 26/08/2026 saiu com "54,9 (neutro)" na prosa e "55.2 ·
+     * ganância" no painel: os dois rótulos certos, e 0,3 ponto de deriva
+     * intradia atravessando a fronteira dos 55 e trocando a palavra.
+     */
+    faixa?: { rotulo?: string; distanciaDaFronteira?: number | null; naFronteira?: boolean };
+  };
   sectors?: { name: string; ticker: string; changePct?: number | null }[];
 }
 
@@ -317,9 +326,29 @@ export default function VereditoPage() {
           ) : (
             <div className="space-y-2">
               {macroData.fearGreed?.score != null ? (
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-muted-foreground">Fear &amp; Greed</span>
-                  <span className="font-bold">{macroData.fearGreed.score} · {macroData.fearGreed.ratingPt ?? macroData.fearGreed.ratingEn}</span>
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-muted-foreground">Fear &amp; Greed</span>
+                    <span className="font-bold">{macroData.fearGreed.score} · {macroData.fearGreed.ratingPt ?? macroData.fearGreed.ratingEn}</span>
+                  </div>
+                  {/* Este número é LIVE; o do texto acima é a leitura fixada na
+                      hora da geração. Os dois respondem perguntas diferentes, e
+                      até 26/08/2026 nenhum dos dois dizia qual. */}
+                  <p className="text-[10px] font-mono text-muted-foreground/70 text-right">
+                    leitura de agora
+                    {macroData.fearGreed.faixa?.naFronteira &&
+                      macroData.fearGreed.faixa.distanciaDaFronteira != null && (
+                      <>
+                        {" · "}
+                        <span
+                          className="text-yellow-400/80"
+                          title="Uma variação intradia menor que isso troca o rótulo. O texto do veredito cita a leitura da hora em que foi gerado, que pode cair do outro lado da faixa."
+                        >
+                          a {macroData.fearGreed.faixa.distanciaDaFronteira.toFixed(1)} da borda da faixa
+                        </span>
+                      </>
+                    )}
+                  </p>
                 </div>
               ) : (
                 <EmptyNote>Fear &amp; Greed indisponível.</EmptyNote>

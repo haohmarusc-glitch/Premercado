@@ -214,6 +214,13 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
 
   void (async () => {
   try {
+  // Modos que rodam sobre a carteira de QUEM disparou. Com `userId` presente,
+  // a carteira vazia desse usuário é RESPOSTA -- ver o vazamento descrito em
+  // carteiraParaOAgente e a guarda logo abaixo.
+  const escopadaAUmUsuario =
+    (trigger === "portfolio" || trigger === "veredito" || trigger === "consensus")
+    && userId != null;
+
   const tickers = trigger === "portfolio" || trigger === "veredito" || trigger === "consensus"
     // Sem userId (run agendada) a carteira agora vem global em vez de vazia --
     // antes, um veredito agendado caía na lista fixa do config.py.
@@ -233,6 +240,24 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
   const carteira = trigger === "portfolio" || trigger === "coal" || trigger === "ai" || trigger === "veredito" || trigger === "consensus"
     ? tickers
     : await getPortfolioTickers(userId);
+
+  // Carteira própria vazia: RECUSA, não analisa a de outra pessoa.
+  //
+  // Sem isto, a conta sem posições que clicava "Gerar veredito com IA"
+  // recebia um texto inteiro sobre a carteira do operador -- com o plano de
+  // saída dele, os cenários dele e os valores em reais dele -- enquanto os
+  // painéis estruturados da mesma tela diziam "Sem posições na carteira".
+  //
+  // Recusar é mais útil que gerar um veredito sobre nada: o texto vazio seria
+  // publicado como análise e custaria uma chamada de LLM para dizer que não
+  // há o que analisar.
+  if (escopadaAUmUsuario && carteira.length === 0) {
+    logger.warn({ trigger, userId }, "Run sobre carteira própria vazia -- recusada");
+    state.running = false;
+    state.currentStep = "Sua carteira está vazia -- cadastre posições antes de gerar.";
+    state.stepLog = [state.currentStep];
+    return;
+  }
 
   // Insert run record (awaited so runId is set deterministically before the process can close)
   try {
@@ -282,7 +307,11 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       INTERNAL_API_URL: apiUrl,
       PYTHONPATH: agentDir,
       AGENT_TICKERS: tickers.join(","),
-      AGENT_PORTFOLIO_TICKERS: carteiraParaOAgente(carteira, process.env.AGENT_PORTFOLIO_TICKERS),
+      // `escopadaAUmUsuario`: sem isto, a conta SEM posições que dispara um
+      // veredito recebia a carteira do operador (AGENT_PORTFOLIO_TICKERS).
+      // Ver a nota de vazamento em carteiraParaOAgente.
+      AGENT_PORTFOLIO_TICKERS: carteiraParaOAgente(
+        carteira, process.env.AGENT_PORTFOLIO_TICKERS, escopadaAUmUsuario),
       AGENT_MODE: mode,
       AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),
