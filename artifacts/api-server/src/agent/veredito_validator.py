@@ -203,6 +203,22 @@ def validate_snapshot(snapshot: dict[str, Any]) -> ValidationReport:
                         f"(high={high}, close={price}){extra}.",
                         ticker=tk, signal=True)
 
+    # 5) sentimento FIXADO vira fato no prompt.
+    #
+    # `signal=True` de proposito: prompt_block() renderiza os sinais sob
+    # "use estes fatos, nao recalcule", que e' exatamente o contrato aqui --
+    # o modelo cita ESTE numero em vez de chamar a ferramenta por conta e
+    # trazer outra leitura do mesmo indice.
+    sentimento = snapshot.get("sentimento") or {}
+    score = sentimento.get("score")
+    if isinstance(score, (int, float)):
+        rotulo = sentimento.get("rating_pt") or sentimento.get("rating_en") or ""
+        lido = sentimento.get("lido_em") or "?"
+        rep.add("INFO", "SENTIMENTO_FIXADO",
+                f"Fear & Greed: {score} ({rotulo}), lido em {lido}. "
+                f"Cite ESTE valor -- o indice anda intradia e uma segunda "
+                f"leitura daria outro numero.", signal=True)
+
     # 4) tecnico da mesma data do quote
     for tk, t in technicals.items():
         rsi_date = t.get("rsi_date")
@@ -250,12 +266,19 @@ _PRAZO_ANTES = re.compile(
 # escritos por ele mesmo. Nao precisa consultar o plano: a contradicao esta
 # dentro da propria frase.
 _NIVEL_COM_VALOR = re.compile(
-    r"(suporte|resist[êe]ncia|stop)[^.\n]{0,25}?\$\s*(\d+(?:[.,]\d+)?)",
+    r"(suporte|resist[êe]ncia|stop|support|resistance)"
+    r"(?:[^.\n]|\.(?=\d)){0,25}?\$\s*(\d+(?:[.,]\d+)?)",
     re.IGNORECASE)
+# "ABOVE" e "BELOW" entram porque o modelo escreve em ingles no meio da
+# prosa em portugues -- em 26/08/2026 o MESMO erro do BABA voltou como
+# "Preco $121.08, ABOVE stop-loss de $126", e a checagem que so conhecia
+# "acima/abaixo" nao alcancou. O "d[oa]" fica opcional pelo mesmo motivo:
+# ingles nao tem o artigo contraido.
 _LADO_AFIRMADO = re.compile(
-    r"\$\s*(\d+(?:[.,]\d+)?)[^.\n]{0,20}?\b(acima|abaixo)\s+d[oa]\s+"
-    r"(suporte|resist[êe]ncia|stop)",
+    r"\$\s*(\d+(?:[.,]\d+)?)[^.\n]{0,20}?\b(acima|abaixo|above|below)\s+"
+    r"(?:d[oa]\s+|the\s+)?(suporte|resist[êe]ncia|stop|support|resistance)",
     re.IGNORECASE)
+_LADO_DE_CIMA = ("acima", "above")
 
 # "-20,91% abaixo SMA50" / "3,45% vs SMA50" / "-19,11% abaixo da média
 # móvel de 50 dias" -- a distância do preço à média de 50, como o texto a
@@ -273,6 +296,44 @@ _DIAS_ATE_EARNINGS = re.compile(
     r"earnings?[^.\n]{0,20}?(\d{1,3})\s*dias|(\d{1,3})\s*dias[^.\n]{0,20}?earnings?",
     re.IGNORECASE)
 
+# "Fear & Greed em 57,6" / "Sentimento do mercado em 57,6" -- o score citado
+# na prosa, que agora tem um valor FIXADO no snapshot para confrontar.
+_SENTIMENTO_CITADO = re.compile(
+    r"(?:fear\s*&?\s*greed|sentimento(?:\s+d[eo]\s+mercado)?)"
+    r"[^.\n]{0,25}?(\d{1,3}(?:[.,]\d)?)",
+    re.IGNORECASE)
+
+# O texto citando o indice em OUTRO momento ("uma semana atras estava em 45")
+# nao esta contradizendo o valor de hoje.
+_SENTIMENTO_HISTORICO = re.compile(
+    r"semana|m[êe]s|ano|anterior|passad|atr[áa]s|hist[óo]ric|fechamento\s+de\s+ontem",
+    re.IGNORECASE)
+
+# "RSI 38.92" / "RSI de 47,81" -- o valor citado. O `(?![<>≤≥])` e o
+# lookbehind barram LIMIAR ("RSI <40", "RSI abaixo de 40"), que e' regra e
+# nao afirmacao sobre o numero de hoje.
+_RSI_CITADO = re.compile(
+    r"\brsi\b\s*(?:de\s+|em\s+)?(?![<>≤≥])(?:aproximadamente\s+)?"
+    r"(\d{1,3}(?:[.,]\d+)?)",
+    re.IGNORECASE)
+_RSI_LIMIAR = re.compile(r"rsi[^\d]{0,12}?(?:<|>|≤|≥|abaixo\s+de|acima\s+de|"
+                         r"menor|maior)", re.IGNORECASE)
+
+# "preço atual $240.77" / "em $65.48" -- o preco citado para o papel.
+_PRECO_CITADO = re.compile(
+    r"(?:pre[çc]o[^\d$]{0,15}|\bem\s+|\ba\s+|\best[áa]\s+em\s+)"
+    r"(?:US)?\$\s*(\d{1,6}(?:[.,]\d{1,2})?)",
+    re.IGNORECASE)
+
+# Cifrao que NAO e' o preco do papel. Sem isto, "Stop-loss em $275, preco
+# atual $240.77" acusava o proprio stop de estar errado -- o `em $` casa nos
+# dois. Um nivel nomeado antes do valor o desqualifica como cotacao.
+_VALOR_DE_NIVEL = re.compile(
+    r"(?:stop|suporte|support|resist|alvo|target|take[-\s]?profit|bollinger|"
+    r"m[áa]xima|m[íi]nima|\bsma\b|\bmm\s?\d|\bema\b|vwap|upper|lower|"
+    r"breakeven|custo|entrada|quebrar)[^$\n]{0,25}$",
+    re.IGNORECASE)
+
 _TICKER_FLAT = re.compile(
     r"\b([A-Z]{2,5})\b[^.\n]{0,40}?\b((?i:flat|estavel|estável|lateral|sem variacao|sem variação))\b"
 )
@@ -287,6 +348,37 @@ _VERBOS_COMPRA = r"(comprar|compra|aumentar|adicionar|reforcar|iniciar entrada|e
 _NEGACAO = re.compile(
     r"(nao|não|evitar|evite|sem|nem|adiar|esperar( pra| para)?|aguardar( pra| para)?)"
     r"[\s\w]{0,20}$")
+
+
+def _segmentos_por_ticker(texto: str, tickers) -> dict:
+    """{ticker: [trechos]} -- cada ticker fica com o trecho que vai da sua
+    mencao ate a mencao do PROXIMO ticker, ou ate o fim da linha.
+
+    Substitui a janela de N caracteres (`{tk}[^.\n]{{0,120}}`) usada antes,
+    que tinha dois furos:
+
+      1. parava no primeiro PONTO -- e "$121.08" tem ponto, entao em texto
+         com decimal americano a janela morria no meio do preco. Em
+         26/08/2026 o veredito veio todo com decimal americano e as checagens
+         por ticker viraram letra morta.
+      2. tamanho fixo nao alcanca o que o modelo escreve tres frases adiante
+         sobre o mesmo papel -- o bullet do ARM cita a data de earnings bem
+         depois do preco, e a janela nunca chegava la.
+
+    A fronteira de LINHA continua valendo: cada posicao e' um bullet, e o
+    dado de um papel nao pode ser confrontado com o texto de outro."""
+    saida: dict = {}
+    alvos = [str(tk).upper() for tk in (tickers or []) if tk]
+    if not alvos:
+        return saida
+    padrao = re.compile(r"\b(" + "|".join(re.escape(a.lower()) for a in alvos)
+                        + r")\b")
+    for linha in _norm(texto).split("\n"):
+        marcas = [(m.start(), m.group(1).upper()) for m in padrao.finditer(linha)]
+        for i, (pos, tk) in enumerate(marcas):
+            fim = marcas[i + 1][0] if i + 1 < len(marcas) else len(linha)
+            saida.setdefault(tk, []).append(linha[pos:fim])
+    return saida
 
 
 def _tickers_com_intencao_de_compra(texto: str, universo: list[str]) -> list[str]:
@@ -337,6 +429,10 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     earnings: dict = snapshot.get("earnings", {})
     technicals: dict = snapshot.get("technicals", {})
     norm_text = _norm(texto)
+    # Um trecho por mencao de ticker, com fronteira de linha -- ver
+    # _segmentos_por_ticker para o que isto substitui e por que.
+    segmentos = _segmentos_por_ticker(
+        texto, set(quotes) | set(technicals) | set(earnings))
 
     # 1) dia da semana citado bate com o calendario?
     for m in _DATE_WEEKDAY.finditer(_norm(texto)):
@@ -359,9 +455,8 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     # 2) datas de earnings citadas batem com o painel?
     for tk, edate in earnings.items():
         ed = _parse_date(edate)
-        # procura mencoes tipo "earnings ... 11/ago" perto do ticker
-        for m in re.finditer(rf"{tk.lower()}[^.\n]{{0,120}}", norm_text):
-            seg = m.group(0)
+        # procura mencoes tipo "earnings ... 11/ago" no trecho do ticker
+        for seg in segmentos.get(tk, []):
             if "earnings" not in seg and "resultado" not in seg:
                 continue
             dm = _DATE_PT.search(seg)
@@ -430,14 +525,16 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
         for m in _LADO_AFIRMADO.finditer(paragrafo):
             preco = float(m.group(1).replace(",", "."))
             lado, especie = m.group(2).lower(), m.group(3).lower()
-            antes = [n for n in niveis
-                     if n[0] < m.start() and n[1].startswith(especie[:5])]
-            if not antes:
+            # O nivel pode vir ANTES ("suporte $126. Preco $121, abaixo do
+            # suporte") ou DEPOIS ("Preco $121.08, ABOVE stop-loss de $126").
+            # Vale o mais proximo da afirmacao, dentro da mesma linha.
+            mesmos = [n for n in niveis if n[1].startswith(especie[:5])]
+            if not mesmos:
                 continue
-            _, _, valor = antes[-1]
+            _, _, valor = min(mesmos, key=lambda n: abs(n[0] - m.start()))
             if preco == valor:
                 continue
-            if (preco > valor) != (lado == "acima"):
+            if (preco > valor) != (lado in _LADO_DE_CIMA):
                 rep.add("ERROR", "NIVEL_LADO_INVERTIDO",
                         f"Texto diz que ${preco:.2f} esta {lado} do {especie} "
                         f"de ${valor:.2f} -- esta "
@@ -457,8 +554,8 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
         real = tec.get("pct_above_sma50")
         if not isinstance(real, (int, float)):
             continue
-        for m in re.finditer(rf"{tk.lower()}[^.\n]{{0,200}}", norm_text):
-            for pm in _PCT_VS_SMA50.finditer(m.group(0)):
+        for seg in segmentos.get(tk, []):
+            for pm in _PCT_VS_SMA50.finditer(seg):
                 citado = float(pm.group(1).replace(",", "."))
                 # "20,91% ABAIXO" e' o mesmo que -20,91%: a palavra carrega o
                 # sinal quando o numero vem sem ele.
@@ -482,14 +579,81 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
         real_dias = (ed - as_of).days
         if real_dias < 0:
             continue
-        for m in re.finditer(rf"{tk.lower()}[^.\n]{{0,200}}", norm_text):
-            for dm in _DIAS_ATE_EARNINGS.finditer(m.group(0)):
+        for seg in segmentos.get(tk, []):
+            for dm in _DIAS_ATE_EARNINGS.finditer(seg):
                 citado = int(dm.group(1) or dm.group(2))
                 if abs(citado - real_dias) > DIAS_EARNINGS_TOLERANCIA:
                     rep.add("ERROR", "DIAS_ATE_EARNINGS_ERRADO",
                             f"Texto diz {citado} dias ate o earnings de "
                             f"{ed.isoformat()}, mas de {as_of} sao "
                             f"{real_dias}.", ticker=tk)
+
+    # 3f) o sentimento citado bate com o valor FIXADO?
+    #
+    # So faz sentido depois de fixar: antes, o texto lia o indice pela
+    # ferramenta e a tela lia de novo pela /api/macro, entao qualquer
+    # diferenca era deriva intradia e nao erro. Com um valor unico no
+    # snapshot, citar outro numero passa a ser afirmacao sem lastro.
+    fixado = (snapshot.get("sentimento") or {}).get("score")
+    if isinstance(fixado, (int, float)):
+        for m in _SENTIMENTO_CITADO.finditer(texto):
+            trecho = texto[max(0, m.start() - 60):m.end() + 60]
+            if _SENTIMENTO_HISTORICO.search(trecho):
+                continue  # fala de outro momento, nao do de hoje
+            citado = float(m.group(1).replace(",", "."))
+            if abs(citado - float(fixado)) > SENTIMENTO_TOLERANCIA:
+                rep.add("ERROR", "SENTIMENTO_ERRADO",
+                        f"Texto cita Fear & Greed {citado}, mas o snapshot "
+                        f"fixou {fixado}. O indice anda intradia -- use o "
+                        f"valor do snapshot, nao uma releitura.")
+
+    # 3g) o RSI citado bate com o do snapshot?
+    #
+    # Visto em producao (26/08/2026): o veredito deu RSI 31,78 para BABA
+    # (painel: 49) e 51,52 para WOLF (painel: 44) -- seis dos oito tickers
+    # com o numero certo e dois com numero de lugar nenhum. RSI_STALE so
+    # olhava a DATA do indicador, nunca o valor CITADO.
+    for tk, tec in technicals.items():
+        real = tec.get("rsi")
+        if not isinstance(real, (int, float)):
+            continue
+        for seg in segmentos.get(tk, []):
+            for rm in _RSI_CITADO.finditer(seg):
+                antes = seg[max(0, rm.start() - 20):rm.end()]
+                if _RSI_LIMIAR.search(antes):
+                    continue  # "RSI < 40" e' regra, nao afirmacao
+                citado = float(rm.group(1).replace(",", "."))
+                if abs(citado - float(real)) > RSI_CITADO_TOLERANCIA:
+                    rep.add("ERROR", "RSI_CITADO_ERRADO",
+                            f"Texto cita RSI {citado}, snapshot traz "
+                            f"{real:.2f}.", ticker=tk)
+
+    # 3h) o preco citado bate com o do snapshot?
+    #
+    # Visto em producao (26/08/2026): "WOLF em $65.48" num dia em que o papel
+    # negociava a $26,57 -- 2,5x. Um preco errado envenena tudo que vem
+    # depois dele (distancia a media, stop, tese inteira), e nenhuma checagem
+    # olhava o preco CITADO.
+    for tk, q in quotes.items():
+        real = q.get("price")
+        if not isinstance(real, (int, float)) or not real:
+            continue
+        for seg in segmentos.get(tk, []):
+            for pm in _PRECO_CITADO.finditer(seg):
+                # Ate o INICIO do casamento: incluir o proprio "$240.77"
+                # colocaria um cifrao no prefixo, e o `[^$\n]` do padrao de
+                # nivel nunca conseguiria atravessa-lo.
+                if _VALOR_DE_NIVEL.search(seg[:pm.start()]):
+                    continue  # e' stop/suporte/alvo, nao a cotacao
+                citado = float(pm.group(1).replace(",", "."))
+                if not citado:
+                    continue
+                desvio = abs(citado - float(real)) / float(real) * 100.0
+                if desvio > PRECO_CITADO_TOLERANCIA_PCT:
+                    rep.add("ERROR", "PRECO_CITADO_ERRADO",
+                            f"Texto cita ${citado:.2f}, snapshot traz "
+                            f"${real:.2f} ({desvio:.0f}% de diferenca).",
+                            ticker=tk)
 
     # 4) percentuais citados por ticker batem com o snapshot do dia?
     for m in _TICKER_PCT.finditer(texto):
@@ -653,6 +817,20 @@ TENDENCIA_PCT_SMA50 = 5.0
 # Folga entre a distância citada e a do snapshot. Um ponto percentual cobre
 # arredondamento de SMA50 escrita como "$106" no texto.
 SMA50_TOLERANCIA_PP = 1.0
+
+# Folga no score de sentimento. O valor esta FIXADO no snapshot, entao a
+# folga so cobre arredondamento de uma casa decimal -- nao a deriva do
+# indice, que e' justamente o que fixar veio eliminar.
+SENTIMENTO_TOLERANCIA = 0.1
+
+# O painel arredonda o RSI para inteiro e o texto costuma dar duas casas --
+# 1,5 ponto cobre isso sem deixar passar um numero de outro papel.
+RSI_CITADO_TOLERANCIA = 1.5
+
+# Preco citado x snapshot, em %. Generoso porque o snapshot fecha no candle
+# de `as_of` e a geracao pode acontecer com o pregao andando; ainda assim
+# pega o WOLF a $65,48 quando o dado dizia $26,57.
+PRECO_CITADO_TOLERANCIA_PCT = 10.0
 
 # Folga na contagem de dias até earnings: o texto pode contar em pregões e o
 # snapshot em dias corridos, e um fim de semana no meio explica alguns dias.

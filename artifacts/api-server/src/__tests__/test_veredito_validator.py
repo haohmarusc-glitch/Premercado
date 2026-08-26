@@ -450,3 +450,209 @@ def test_tendencia_baixa_com_preco_muito_acima_da_sma50():
 ])
 def test_tendencia_coerente_ou_na_faixa_morta_passa(tk, codes, pct):
     assert "BLOCO_REASON_CONTRADITO" not in _bloco(tk, codes, pct)
+
+
+# ═══ Fear & Greed fixado no snapshot ══════════════════════════════════════
+#
+# O índice era buscado DUAS VEZES por caminhos independentes:
+# `tools.get_fear_greed_index()` quando o agente chamava a ferramenta, e
+# `get_macro.py::fear_greed()` quando a tela pedia /api/macro. Dois relógios
+# sobre um índice que anda intradia -- em 26/08/2026 o texto saiu com 57,6 e
+# o painel mostrou 57,3, e não havia como saber qual era "o" número.
+#
+# Fixando no snapshot, o valor entra no prompt como fato verificado, o texto
+# passa a citar ESTE número, e só então faz sentido conferi-lo.
+
+_SNAP_FG = {
+    "as_of": "2026-08-26", "quotes": {}, "earnings": {}, "technicals": {},
+    "sentimento": {"score": 57.3, "rating_pt": "ganância",
+                   "lido_em": "2026-08-26T10:15:00-03:00"},
+}
+
+
+def test_o_valor_fixado_chega_ao_prompt_como_fato():
+    """`prompt_block()` renderiza os sinais sob "use estes fatos, nao
+    recalcule" -- exatamente o contrato aqui: o modelo cita ESTE número em
+    vez de chamar a ferramenta e trazer outra leitura."""
+    bloco = validate_snapshot(dict(_SNAP_FG)).prompt_block()
+    assert "57.3" in bloco
+    assert "ganância" in bloco
+    assert "10:15" in bloco, "sem carimbo de hora não é reproduzível"
+
+
+def test_sem_sentimento_no_snapshot_nao_ha_fato_inventado():
+    sem = {k: v for k, v in _SNAP_FG.items() if k != "sentimento"}
+    assert "Fear" not in validate_snapshot(dict(sem)).prompt_block()
+
+
+def _cods_fg(texto, snap=None):
+    return sorted({i.code
+                   for i in lint_veredito(texto, dict(snap or _SNAP_FG)).issues})
+
+
+@pytest.mark.parametrize("texto", [
+    "Sentimento do mercado em 57,6 (ganância moderada).",
+    "Fear & Greed em 62 (ganância) sinaliza risco de reversão.",
+])
+def test_score_diferente_do_fixado_e_erro(texto):
+    assert "SENTIMENTO_ERRADO" in _cods_fg(texto)
+
+
+@pytest.mark.parametrize("texto", [
+    "Sentimento do mercado em 57,3 (ganância moderada).",
+    "Fear & Greed em 57,3, sem extremos que sinalizem reversão.",
+    # Outro momento não contradiz o de hoje.
+    "Fear & Greed uma semana atrás estava em 45.",
+    "O Fear & Greed do mês passado marcava 38.",
+    # Nenhuma menção ao índice.
+    "Curva 10y-2y em +0,47%, CPI em 332.8.",
+])
+def test_score_certo_ou_historico_passa(texto):
+    assert "SENTIMENTO_ERRADO" not in _cods_fg(texto)
+
+
+def test_sem_valor_fixado_a_checagem_se_cala():
+    """Antes de fixar, qualquer diferença era deriva intradia e não erro --
+    a checagem não pode existir sem o valor único."""
+    sem = {k: v for k, v in _SNAP_FG.items() if k != "sentimento"}
+    assert "SENTIMENTO_ERRADO" not in _cods_fg(
+        "Sentimento do mercado em 57,6.", sem)
+
+
+def test_o_snapshot_do_veredito_fixa_o_sentimento():
+    """Amarra por leitura de fonte: valor que existe no validador mas ninguém
+    põe no snapshot é o mesmo que não existir."""
+    import pathlib
+    from agent import agent as gerador
+    fonte = pathlib.Path(gerador.__file__).read_text(encoding="utf-8")
+    codigo = "\n".join(l for l in fonte.splitlines()
+                       if not l.strip().startswith("#"))
+    assert "_sentimento_do_snapshot" in codigo
+    assert 'snapshot["sentimento"]' in codigo
+
+
+# ═══ Veredito de 26/08/2026 11:54 — o dado citado x o dado do snapshot ════
+#
+# Segunda geração do dia. O erro de prazo relativo SUMIU (a correção pegou),
+# o Fear & Greed bateu exato (57,6/57,3 de manhã contra 56,3/56,3 agora --
+# confirmando que a diferença anterior era deriva entre duas leituras), e
+# apareceram três famílias novas.
+
+_SNAP_1154 = {
+    "as_of": "2026-08-26",
+    "quotes": {"ARM": {"price": 240.77}, "INTC": {"price": 86.61},
+               "BABA": {"price": 121.08}, "WOLF": {"price": 26.57},
+               "SKHY": {"price": 159.68}},
+    "technicals": {
+        "ARM": {"rsi": 38.92, "rsi_date": "2026-08-26", "pct_above_sma50": -18.1},
+        "BABA": {"rsi": 48.9, "rsi_date": "2026-08-26", "pct_above_sma50": 5.5},
+        "WOLF": {"rsi": 44.2, "rsi_date": "2026-08-26", "pct_above_sma50": -21.4},
+    },
+    "earnings": {"ARM": "2026-11-04"},
+}
+
+
+def _cods_1154(texto):
+    return sorted({i.code
+                   for i in lint_veredito(texto, dict(_SNAP_1154)).issues})
+
+
+# ── a janela por ticker: dois furos que a segmentação fecha ───────────────
+
+def test_o_ponto_decimal_nao_corta_mais_o_trecho_do_ticker():
+    """A janela era `{tk}[^.\\n]{{0,120}}` -- e "$121.08" tem PONTO. Num
+    veredito com decimal americano (o de 11:54 veio todo assim) a janela
+    morria no meio do preço e as checagens por ticker viravam letra morta."""
+    from agent.veredito_validator import _segmentos_por_ticker
+    seg = _segmentos_por_ticker(
+        "BABA: preço $121.08, ABOVE stop-loss de $126, RSI 31.78 bearish.",
+        ["BABA"])["BABA"][0]
+    assert "31.78" in seg, "o trecho tem que chegar ao fim da frase"
+
+
+def test_o_trecho_alcanca_o_que_vem_tres_frases_depois():
+    """Tamanho fixo não alcançava: o bullet do ARM cita a data de earnings
+    bem depois do preço, e a janela nunca chegava lá -- por isso o
+    EARNINGS_DATE_MISMATCH não disparou em produção."""
+    assert "EARNINGS_DATE_MISMATCH" in _cods_1154(
+        "ARM: Stop-loss em $275, preço atual $240.77 (BREACHED). RSI 38.92, "
+        "MACD bearish. Earnings vem apenas 11/nov — sem catalisador.")
+
+
+def test_a_fronteira_de_linha_separa_os_papeis():
+    """Numa linha com quatro tickers, cada um fica com o trecho da sua
+    menção até a do próximo."""
+    from agent.veredito_validator import _segmentos_por_ticker
+    segs = _segmentos_por_ticker(
+        "MRVL mantém rally, SKHY em $159.68 com EMA bullish. ADI beat "
+        "ontem, RSI 46.69. WOLF em $65.48, RSI 51.52 neutro.",
+        ["MRVL", "SKHY", "ADI", "WOLF"])
+    assert "159.68" in segs["SKHY"][0] and "159.68" not in segs["ADI"][0]
+    assert "65.48" in segs["WOLF"][0] and "65.48" not in segs["ADI"][0]
+
+
+# ── RSI citado x snapshot ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("texto,tk", [
+    ("BABA: RSI 31.78, MACD bearish.", "BABA"),
+    ("WOLF em $26.57, RSI 51.52 neutro.", "WOLF"),
+])
+def test_rsi_citado_fora_do_snapshot_e_erro(texto, tk):
+    """Seis dos oito tickers vieram com o RSI certo e dois com número de
+    lugar nenhum. RSI_STALE só olhava a DATA do indicador."""
+    assert any(i.code == "RSI_CITADO_ERRADO" and i.ticker == tk
+               for i in lint_veredito(texto, dict(_SNAP_1154)).issues)
+
+
+@pytest.mark.parametrize("texto", [
+    "ARM: RSI 38.92, MACD bearish.",
+    "BABA: RSI 48.9 neutro.",
+    # Limiar é regra, não afirmação sobre o número de hoje.
+    "ARM está em capitulação (RSI <40, preço abaixo da SMA50).",
+    "WOLF: RSI abaixo de 50 sugere fraqueza.",
+])
+def test_rsi_certo_ou_limiar_passa(texto):
+    assert "RSI_CITADO_ERRADO" not in _cods_1154(texto)
+
+
+# ── preço citado x snapshot ───────────────────────────────────────────────
+
+def test_preco_citado_muito_fora_e_erro():
+    """"WOLF em $65.48" num dia em que o papel negociava a $26,57. Um preço
+    errado envenena tudo que vem depois: distância à média, stop, tese."""
+    achados = [i for i in lint_veredito("WOLF em $65.48, RSI 44.2.",
+                                        dict(_SNAP_1154)).issues
+               if i.code == "PRECO_CITADO_ERRADO"]
+    assert achados and "146%" in achados[0].message
+
+
+@pytest.mark.parametrize("texto", [
+    # O stop e o alvo não são a cotação — e o "em $" casa nos dois.
+    "ARM: Stop-loss em $275, preço atual $240.77 (BREACHED).",
+    "ARM: alvo de $300, take-profit em $290, preço atual $240.77.",
+    "WOLF: máxima de 52 semanas em $80.82; preço $26.57.",
+    "SKHY em $159.68 com EMA bullish.",
+])
+def test_valor_de_nivel_nao_e_confundido_com_cotacao(texto):
+    assert "PRECO_CITADO_ERRADO" not in _cods_1154(texto)
+
+
+# ── o lado do nível, agora também em inglês ───────────────────────────────
+
+@pytest.mark.parametrize("texto", [
+    "BABA: Preço $121.08, ABOVE stop-loss de $126 mas -5.0% em 1D.",
+    "O papel a $380, below the stop de $370.",
+    "Preço $121.08, above the support de $126.",
+])
+def test_lado_invertido_em_ingles_tambem_cai(texto):
+    """O MESMO erro do BABA voltou na segunda geração do dia, agora escrito
+    em inglês no meio da prosa em português."""
+    assert "NIVEL_LADO_INVERTIDO" in _cods_1154(texto)
+
+
+@pytest.mark.parametrize("texto", [
+    "BABA: Preço $131.08, ABOVE stop-loss de $126.",
+    "BABA: Preço $121.08, below stop-loss de $126.",
+])
+def test_lado_coerente_em_ingles_passa(texto):
+    assert "NIVEL_LADO_INVERTIDO" not in _cods_1154(texto)
