@@ -169,6 +169,17 @@ _CAMPOS_DE_RESUMO = ("gap_pct_mean", "gap_pct_abs_mean", "close_pct_mean",
                      "close_pct_abs_mean", "close_pct_std",
                      "intraday_range_pct_mean")
 
+# Marcas que ORDENAM dois níveis, uma depois da outra. "e" não entra: ligar
+# dois níveis numa lista não afirma qual vem primeiro.
+_SEQUENCIA = (r"seguid[ao]s?\b", r"em\s+seguida", r"na\s+sequ[êe]ncia",
+              r"logo\s+(?:acima|abaixo|depois|em\s+seguida)", r"mais\s+adiante",
+              r"a\s+seguir", r"depois\s+(?:vem|dela|dele|disso)", r"e\s+ent[ãa]o")
+
+# Distância assinada de um nível ao preço, como o modelo escreve: "(+10,33%)".
+# O sinal EXPLÍCITO é exigido de propósito -- sem ele "subiu 2%, depois caiu
+# 5%" pareceria uma sequência crescente quando são lados opostos.
+_DISTANCIA_ASSINADA = r"([+-]\d+(?:[.,]\d+)?)\s*%"
+
 # Verbos que ATRIBUEM um movimento ao balanço. É o que separa "reagiu com X%"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
 _ATRIBUI_REACAO = r"(?:reag\w+|rea[cç][ãa]o\s+(?:foi|de|veio|saiu|ficou))"
@@ -414,7 +425,28 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 9. estatística de earnings com o rótulo de outra ────────────────────
+    # ── 9. níveis descritos fora de ordem ───────────────────────────────────
+    #
+    # Incidente real (INTC, 26/08/2026): "encontra seu primeiro nível técnico
+    # significativo na MM20 a US$ 95,78 (+10,33%), SEGUIDA de perto pela banda
+    # R1 a US$ 94,97 (+9,4%)". Subindo de US$ 86,81 você encontra a R1 antes
+    # da MM20 -- a ordem está invertida.
+    #
+    # O prompt entrega a lista de níveis JÁ ORDENADA justamente para o modelo
+    # não ter de ordenar ("ele descreve uma lista já ordenada, não ordena"), e
+    # foi essa etapa que a leitura refez errado.
+    for frase in frases(prosa_sa):
+        fora = _ordem_invertida(frase)
+        if fora:
+            antes, depois = fora
+            add("ERRO", "ANALISE_ORDEM_DOS_NIVEIS",
+                f"descreve {antes:+.2f}% como vindo ANTES de {depois:+.2f}%, "
+                f"mas {depois:+.2f}% está mais perto do preço — a lista de "
+                f"níveis do JSON já vem ordenada. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
+
+    # ── 10. estatística de earnings com o rótulo de outra ───────────────────
     #
     # Incidente real (INTC, 26/08/2026), publicado sem apontamento: "um
     # descolamento (gap) médio de 8,25% na abertura". Os oito gaps da tabela
@@ -438,7 +470,7 @@ def validar_analise(texto, dados=None) -> list:
                     + f". Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 10. run-up apresentado como reação ──────────────────────────────────
+    # ── 11. run-up apresentado como reação ──────────────────────────────────
     #
     # O pior erro da rodada de WOLF, e o que nenhum validador pegava: "o papel
     # reagiu com 14,92% de alta", quando 14,92% é o run-up EX-EVENTO e a
@@ -504,6 +536,30 @@ def _direcao_contradita(frase: str, preco: float, dados) -> tuple | None:
             dito_acima = m.group(2) == "acima"
             if dito_acima != (real > 0):
                 return rotulo, citado, m.group(2), nivel, real
+    return None
+
+
+def _ordem_invertida(frase: str) -> tuple | None:
+    """(distância citada antes, distância citada depois) quando a segunda está
+    MAIS PERTO do preço que a primeira — ou seja, a ordem está trocada.
+
+    Compara só o par que a marca de sequência separa, e só quando os dois têm
+    o MESMO sinal: "a MM20 (+10,33%), seguida abaixo pelo S1 (-9,31%)" fala de
+    lados opostos e não é uma sequência de distâncias."""
+    for marca in _SEQUENCIA:
+        for m in re.finditer(marca, frase):
+            antes = [x for x in re.finditer(_DISTANCIA_ASSINADA, frase[:m.start()])]
+            depois = re.search(_DISTANCIA_ASSINADA, frase[m.end():])
+            if not antes or not depois:
+                continue
+            a = num_finito(antes[-1].group(1))
+            d = num_finito(depois.group(1))
+            if a is None or d is None or a == 0 or d == 0:
+                continue
+            if (a > 0) != (d > 0):
+                continue  # lados opostos: não é sequência de distâncias
+            if abs(d) < abs(a):
+                return a, d
     return None
 
 
