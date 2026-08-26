@@ -5,10 +5,16 @@ Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, sou
 """
 import sys, json, re
 import yfinance as yf
-from security import sanitize_ticker, friendly_error
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
+# Import duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
+# (imports planos) e como membro do pacote agent. `security` era o unico que
+# ainda vinha so' na forma plana, e por isso o modulo nao podia ser importado
+# por um teste -- a convencao da suite proibe (com razao) por o diretorio
+# agent/ no sys.path, porque existe um agent.py DENTRO dele.
+try:
+    from security import sanitize_ticker, friendly_error
+except ImportError:
+    from agent.security import sanitize_ticker, friendly_error
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
 try:
     import json_seguro
 except ImportError:
@@ -192,6 +198,63 @@ def for_ticker(ticker: str, max_items: int, all_tickers: list[str], names: dict[
         print(f"[get_news_feed] {ticker}: {e}", file=sys.stderr)
         return {"ticker": ticker, "error": friendly_error(e)}
 
+def aplicar_traducao(items: list, traduzir_fn=None) -> dict:
+    """Traduz title/summary de todas as manchetes IN-PLACE e devolve o resumo
+    por camada.
+
+    Extraído do `__main__` para ter teste: a lógica que importa aqui -- marcar
+    o item, contar por camada, não emitir resumo quando não há texto -- não
+    pode depender de rede para ser verificada.
+
+    Desde 25/08/2026 a tradução vem de `agent/traducao.py`: cache em disco ->
+    Google gratuito -> LLM da cadeia, com o MOTIVO de cada falha no stderr.
+    Antes era uma chamada só ao Google dentro de um `except: pass` -- quando o
+    endpoint passou a responder 429, a manchete voltava em inglês sem uma
+    linha de log dizendo por quê, e a bolinha de notícia do gráfico ficou em
+    inglês em produção.
+    """
+    if traduzir_fn is None:
+        try:
+            from traducao import traduzir as traduzir_fn  # type: ignore[no-redef]
+        except ImportError:
+            from agent.traducao import traduzir as traduzir_fn  # type: ignore[no-redef]
+
+    refs = []  # (item_dict, field)
+    texts = []
+    for it in items:
+        for n in it.get("news", []):
+            for field in ("title", "summary"):
+                if n.get(field):
+                    refs.append((n, field))
+                    texts.append(n[field])
+    if not texts:
+        # Sem texto não há tradução, e um resumo com total=0 apareceria na
+        # tela como se algo tivesse sido tentado.
+        return {}
+
+    translated, origens = traduzir_fn(texts)
+    for (n, field), tr, origem in zip(refs, translated, origens):
+        n[field] = tr
+        # `traduzido` fica FALSE quando o texto voltou em inglês: a tela
+        # mostra o selo em vez de o leitor descobrir sozinho. Basta um campo
+        # não traduzido para o item inteiro ser marcado -- meia notícia
+        # traduzida não é notícia traduzida.
+        if origem == "original":
+            n["traduzido"] = False
+        elif "traduzido" not in n:
+            n["traduzido"] = True
+
+    # Resumo por CAMADA, para a tela poder dizer o que aconteceu em vez de só
+    # marcar item por item. As três camadas degradam em ordem, então a
+    # contagem já é o diagnóstico: só `cache`/`google` é o dia normal; muito
+    # `llm` significa que o gratuito caiu e isso está custando dinheiro;
+    # qualquer `original` é texto que chegou em inglês na tela.
+    resumo = {"total": len(texts)}
+    for o in origens:
+        resumo[o] = resumo.get(o, 0) + 1
+    return resumo
+
+
 if __name__ == "__main__":
     args = json.loads(sys.stdin.read())
     max_items = int(args.get("maxItems", 5))
@@ -200,37 +263,7 @@ if __name__ == "__main__":
     names = _company_names(tickers)
     items = [for_ticker(t, max_items, tickers, names) for t in tickers]
 
-    if do_translate:
-        # Junta todos os textos (title + summary) numa lista, traduz em lote e
-        # devolve. Desde 25/08/2026 via agent/traducao.py: cache em disco ->
-        # Google gratuito -> LLM da cadeia, com o MOTIVO de cada falha no
-        # stderr. Antes era uma chamada só ao Google dentro de um
-        # `except: pass` -- quando o endpoint passou a responder 429, a
-        # manchete voltava em inglês sem uma linha de log dizendo por quê, e
-        # a bolinha de notícia do gráfico ficou em inglês em produção.
-        try:
-            from traducao import traduzir
-        except ImportError:
-            from agent.traducao import traduzir
-        refs = []  # (item_dict, field)
-        texts = []
-        for it in items:
-            for n in it.get("news", []):
-                for field in ("title", "summary"):
-                    if n.get(field):
-                        refs.append((n, field))
-                        texts.append(n[field])
-        if texts:
-            translated, origens = traduzir(texts)
-            for (n, field), tr, origem in zip(refs, translated, origens):
-                n[field] = tr
-                # `traduzido` fica FALSE quando o texto voltou em inglês: a
-                # tela mostra o selo em vez de o leitor descobrir sozinho.
-                # Basta um campo não traduzido para o item inteiro ser
-                # marcado -- meia notícia traduzida não é notícia traduzida.
-                if origem == "original":
-                    n["traduzido"] = False
-                elif "traduzido" not in n:
-                    n["traduzido"] = True
+    traducao = aplicar_traducao(items) if do_translate else {}
 
-    print(json_seguro.dumps({"items": items}))
+    print(json_seguro.dumps({"items": items,
+                             **({"traducao": traducao} if traducao else {})}))
