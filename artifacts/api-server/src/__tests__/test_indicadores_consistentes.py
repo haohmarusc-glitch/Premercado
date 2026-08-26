@@ -170,12 +170,24 @@ def test_todas_as_copias_de_macd_usam_os_mesmos_spans():
 
 def test_vwap_de_sessao_e_identico_nas_duas_copias():
     """tools.py e get_technicals.py calculam o VWAP da SESSÃO (barras de 5min
-    de hoje, reseta todo dia). A conta tem que ser literalmente a mesma."""
+    de hoje, reseta todo dia). A conta tem que ser literalmente a mesma.
+
+    O frame mudou de `intraday` para `sessao` em 26/08/2026: as barras passam
+    por `barras_da_sessao` antes, porque o frame cru pode trazer pré e
+    pós-mercado. Uma VWAP ponderada pelo pós-mercado de um dia de balanço não
+    é a VWAP do pregão -- foi a mesma contaminação que produziu o rvol 8,89
+    da NVDA, e ela vinha deste mesmo frame.
+    """
     conta = "(typical_price * intraday_volume).sum() / vol_sum"
     for nome in ("tools.py", "get_technicals.py"):
         texto = (_AGENT_DIR / nome).read_text(encoding="utf-8")
         assert conta in texto, f"{nome}: VWAP de sessão mudou de fórmula"
-        assert '(intraday["High"] + intraday["Low"] + intraday["Close"]) / 3' in texto
+        assert '(sessao["High"] + sessao["Low"] + sessao["Close"]) / 3' in texto
+        # A propriedade nova: o preço típico sai das barras FILTRADAS. Sem
+        # isto, alguém pode voltar a usar o frame cru sem o teste reclamar,
+        # já que as duas cópias continuariam idênticas -- e idênticas erradas.
+        assert 'barras_da_sessao(intraday)' in texto, (
+            f"{nome}: VWAP voltou a sair do frame cru, com pré/pós-mercado")
 
 
 def test_vwap_rolling_do_confluence_e_outro_indicador_e_esta_nomeado_assim():

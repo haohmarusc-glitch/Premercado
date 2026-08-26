@@ -24,6 +24,7 @@ from .cache import cached
 from .http_retry import SESSION
 from .portfolio_snapshot import get_portfolio_snapshot
 from .security import mask_sensitive_data, sanitize_for_llm, sanitize_ticker, sanitize_url
+from .volume_intradiario import barras_da_sessao, rvol_da_sessao
 
 _PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
 
@@ -1074,22 +1075,28 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         try:
             intraday = t.history(period="1d", interval="5m")
             if not intraday.empty:
-                intraday_volume = intraday["Volume"]
-                vol_today_so_far = float(intraday_volume.sum())
-                # Pregão nominal de 6.5h (9h30-16h ET) em barras de 5min = 78.
-                fraction_elapsed = min(1.0, len(intraday) / 78)
-                if vol_base20 > 0 and fraction_elapsed > 0:
-                    expected_vol_so_far = vol_base20 * fraction_elapsed
-                    rvol = round(vol_today_so_far / expected_vol_so_far, 2) if expected_vol_so_far > 0 else None
-                    if rvol is not None:
-                        rvol_signal = _rvol_signal(rvol, fraction_elapsed)
+                # RVOL e VWAP passam a sair SO' das barras do pregao regular,
+                # e a fracao decorrida vem do RELOGIO. Ver volume_intradiario.py:
+                # a conta antiga derivava o tempo da CONTAGEM de barras, e no
+                # dia de balanco AMC da NVDA o pos-mercado entrou no numerador
+                # enquanto o denominador o tratava como tempo de pregao --
+                # rvol 8,89 num dia de volume comum.
+                #
+                # A VWAP vinha do mesmo frame, entao herdava a contaminacao:
+                # uma VWAP ponderada por pos-mercado nao e' a VWAP do pregao.
+                sessao = barras_da_sessao(intraday)
+                rvol, fraction_elapsed = rvol_da_sessao(intraday, vol_base20)
+                if rvol is not None:
+                    rvol_signal = _rvol_signal(rvol, fraction_elapsed)
 
-                typical_price = (intraday["High"] + intraday["Low"] + intraday["Close"]) / 3
-                vol_sum = float(intraday_volume.sum())
-                if vol_sum > 0:
-                    vwap = round(float((typical_price * intraday_volume).sum() / vol_sum), 2)
-                    price_vs_vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
-                    vwap_signal = "acima" if price > vwap else "abaixo" if price < vwap else "no vwap"
+                if sessao is not None and len(sessao) > 0:
+                    intraday_volume = sessao["Volume"]
+                    typical_price = (sessao["High"] + sessao["Low"] + sessao["Close"]) / 3
+                    vol_sum = float(intraday_volume.sum())
+                    if vol_sum > 0:
+                        vwap = round(float((typical_price * intraday_volume).sum() / vol_sum), 2)
+                        price_vs_vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
+                        vwap_signal = "acima" if price > vwap else "abaixo" if price < vwap else "no vwap"
         except Exception:
             pass  # mercado fechado / sem dado intradiário -- rvol/vwap ficam None
 
