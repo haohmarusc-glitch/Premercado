@@ -139,3 +139,60 @@ def test_so_a_relevancia_nao_bastaria():
                  if "overshadow" not in w])
         antigas.append("positivo" if p > n else "outro")
     assert antigas == ["positivo", "positivo"]
+
+
+# ═══ NVDA, 26/08/2026 — o rótulo de UMA manchete ═══════════════════════════
+#
+# O painel dizia "Notícias (positivo)" e a tela concluía "alta forte
+# CONFIRMADA por fluxo de notícias positivo" — em cima de UMA manchete. O
+# texto era honesto ("tom positivo em 1 de 8 manchetes analisadas") e mesmo
+# assim o rótulo saiu com confiança máxima, porque o score divide por
+# (positivas + negativas), não pelas ANALISADAS.
+#
+# E a correção de relevância desta mesma PR AUMENTA a chance disso: descartada
+# e ambígua saem do denominador. Uma defesa que abre o próximo buraco precisa
+# fechar os dois.
+
+from agent.get_trend import MINIMO_PARA_ROTULAR  # noqa: E402
+
+
+def _rotulo(pos: int, neg: int) -> str:
+    """O mesmo caminho de news_sentiment, sem a rede do yfinance."""
+    total = pos + neg
+    score = round((pos - neg) / total, 2) if total else 0.0
+    if total < MINIMO_PARA_ROTULAR:
+        return "neutro"
+    return "positivo" if score > 0.25 else "negativo" if score < -0.25 else "misto"
+
+
+def test_uma_manchete_nao_rotula_o_fluxo():
+    """O caso NVDA: 1 positiva, 0 negativas, score 1,00 — e ainda assim não
+    dá para dizer que o fluxo é positivo."""
+    assert _rotulo(1, 0) == "neutro"
+
+
+def test_duas_concordando_ainda_nao_bastam():
+    """Com duas o score já dá 1,00 e uma virar do outro lado zera tudo."""
+    assert _rotulo(2, 0) == "neutro"
+
+
+def test_no_piso_o_rotulo_volta_a_afirmar():
+    assert _rotulo(3, 0) == "positivo"
+    assert _rotulo(0, 3) == "negativo"
+
+
+def test_o_piso_nao_engole_amostra_grande():
+    """O falso negativo aqui seria caro: uma tela que nunca afirma nada é tão
+    inútil quanto uma que afirma qualquer coisa."""
+    assert _rotulo(6, 1) == "positivo"
+    assert _rotulo(1, 6) == "negativo"
+    assert _rotulo(4, 3) == "misto"
+
+
+def test_sem_manchete_classificada_e_neutro():
+    assert _rotulo(0, 0) == "neutro"
+
+
+def test_o_piso_esta_nomeado_e_nao_enterrado():
+    """É julgamento, não teorema — tem que dar para achar e discutir."""
+    assert isinstance(MINIMO_PARA_ROTULAR, int) and MINIMO_PARA_ROTULAR >= 2

@@ -1558,3 +1558,102 @@ def test_sem_citar_o_numero_do_campo_a_checagem_se_cala():
     `runup_atual_ex_evento_pct`. Sem isso, ela fala de outra coisa."""
     assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" not in _com_runup(
         "A ação chegou ao evento com um run-up de 3,20%.")
+
+
+# ── beta lido como razão de volatilidade ────────────────────────────────────
+#
+# Duas telas, o mesmo erro conceitual (26/08/2026). Beta é inclinação de
+# regressão -- cov(ticker, bench)/var(bench), em get_scenario_params.py. Em
+# termos de volatilidade, beta = rho * (sigma_a/sigma_m): só quando a
+# correlação é 1 ele iguala a razão de volatilidades. A NVDA é o próprio
+# contraexemplo -- 37% de vol anual com beta 0,64.
+
+@pytest.mark.parametrize("frase", [
+    # ARM, verbatim
+    "O beta da ARM em relação ao benchmark SMH é de 1,2861, indicando que o "
+    "papel tem uma volatilidade 28,61% maior que a do setor.",
+    # NVDA, verbatim
+    "O beta setorial de 0,6407 indica que NVDA tende a ser menos volátil que "
+    "o benchmark SMH.",
+    "Beta 1,29, ou seja, volatilidade 29% acima da do setor.",
+    "O beta de 1,29 significa que o papel oscila mais que o benchmark em "
+    "volatilidade.",
+])
+def test_derivar_volatilidade_do_beta_e_erro(frase):
+    assert "ANALISE_BETA_COMO_VOLATILIDADE" in _codigos(
+        validar_analise(_texto_completo(frase), {}))
+
+
+@pytest.mark.parametrize("frase", [
+    # os dois números lado a lado, sem concluir um do outro: é a redação certa
+    "O beta é 0,64 e a volatilidade anual é de 37%.",
+    # explicar o conceito não é cometê-lo
+    "Beta mede sensibilidade ao benchmark, não volatilidade.",
+    # a leitura CORRETA do beta
+    "O beta de 0,64 indica menor sensibilidade aos movimentos do SMH.",
+    "A volatilidade anual é de 37% ao ano.",
+])
+def test_mencionar_beta_e_volatilidade_sem_derivar_passa(frase):
+    assert "ANALISE_BETA_COMO_VOLATILIDADE" not in _codigos(
+        validar_analise(_texto_completo(frase), {}))
+
+
+# ── significância afirmada sem o campo que a banca ──────────────────────────
+#
+# NVDA: "Nota-se uma correlação forte e ESTATISTICAMENTE SIGNIFICATIVA de
+# 0,92". O payload desta tela traz `corr_runup_reacao` e mais nada --
+# `aplicar_holm` não roda aqui, porque a correção de múltiplos só existe ENTRE
+# tickers e a Análise Rápida olha um papel só.
+#
+# `LEITURA_CORRELACAO_SEM_SUPORTE` já existia para isto, e só no
+# `reacao_earnings_validator`. Quarta vez no mesmo dia que uma defesa mora num
+# validador só.
+
+_CORR_SEM_SIGNIFICANCIA = {
+    "reaction": {"summary": {"runup": {"corr_runup_reacao": 0.92,
+                                       "corr_n": 6}}},
+}
+
+
+def test_afirmar_significancia_sem_o_campo_e_erro():
+    achados = validar_analise(_texto_completo(
+        "Nota-se uma correlação forte e estatisticamente significativa de "
+        "0,92 entre o run-up pré-balanço e a reação subsequente do preço."),
+        _CORR_SEM_SIGNIFICANCIA)
+    assert "ANALISE_SIGNIFICANCIA_SEM_CAMPO" in _codigos(achados)
+
+
+def test_a_mensagem_diz_o_n():
+    msg = next(a["mensagem"] for a in validar_analise(_texto_completo(
+        "A correlação é estatisticamente significativa em 0,92."),
+        _CORR_SEM_SIGNIFICANCIA)
+        if a["codigo"] == "ANALISE_SIGNIFICANCIA_SEM_CAMPO")
+    assert "n = 6" in msg
+
+
+@pytest.mark.parametrize("frase", [
+    # descrever o coeficiente é o que o SYSTEM pede
+    "Nota-se uma correlação de 0,92 entre o run-up e a reação — amostra "
+    "pequena, indício, não prova.",
+    # negar a significância é obediência, não erro
+    "A correlação de 0,92 não é estatisticamente significativa com n=6.",
+])
+def test_descrever_a_correlacao_sem_afirmar_significancia_passa(frase):
+    assert "ANALISE_SIGNIFICANCIA_SEM_CAMPO" not in _codigos(
+        validar_analise(_texto_completo(frase), _CORR_SEM_SIGNIFICANCIA))
+
+
+def test_com_corr_sobrevive_a_afirmacao_e_legitima():
+    """Se o payload BANCA a significância, dizer isso é correto."""
+    dados = {"reaction": {"summary": {"runup": {
+        "corr_runup_reacao": 0.92, "corr_n": 6,
+        "corr_sobrevive": True, "corr_p_corrigido": 0.01}}}}
+    assert "ANALISE_SIGNIFICANCIA_SEM_CAMPO" not in _codigos(
+        validar_analise(_texto_completo(
+            "A correlação de 0,92 é estatisticamente significativa."), dados))
+
+
+def test_sem_correlacao_no_payload_a_checagem_se_cala():
+    assert "ANALISE_SIGNIFICANCIA_SEM_CAMPO" not in _codigos(
+        validar_analise(_texto_completo(
+            "A correlação é estatisticamente significativa."), {}))

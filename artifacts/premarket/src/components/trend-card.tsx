@@ -26,6 +26,11 @@ interface TrendNews {
   // duas manchetes da AMD viraram sentimento da ARM sem ninguém notar.
   ambiguas?: number;
   descartadas?: number;
+  // Denominador do score. Sem ele na tela, "1 de 8 analisadas" e "8 de 8"
+  // ficam indistinguíveis no rótulo -- foi assim que UMA manchete assinou
+  // "alta forte CONFIRMADA por fluxo de notícias positivo" em NVDA.
+  classificadas?: number;
+  minimoParaRotular?: number;
   analisadas: number;
   destaques: { title: string; tone: string; ts?: number | null }[];
 }
@@ -205,7 +210,12 @@ export function TrendCard({ symbol }: { symbol: string }) {
               label={`Notícias (${news.positivas}+/${news.negativas}-${
                 news.ambiguas ? `/${news.ambiguas}~` : ""
               })`}
-              value={news.label}
+              value={
+                news.classificadas != null && news.minimoParaRotular != null
+                && news.classificadas < news.minimoParaRotular
+                  ? `${news.label} · amostra ${news.classificadas}`
+                  : news.label
+              }
               good={news.label === "neutro" || news.label === "misto" ? null : news.label === "positivo"}
             />
           )}

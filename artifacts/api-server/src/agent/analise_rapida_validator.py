@@ -28,7 +28,8 @@ cada checagem daqui passou a exigir o predicado, não a co-ocorrência.
 """
 import re
 
-from .validador_nucleo import (afirmacao_negada, caminho, cita_numero, dic,
+from .validador_nucleo import (afirmacao_negada, afirmado_sem_negacao,
+                               booleano, caminho, cita_numero, dic,
                                frase_com_moeda_errada, frases, grafias,
                                minusculas, num_finito, sem_acento,
                                sem_blocos_de_codigo, texto_utilizavel)
@@ -314,6 +315,63 @@ def _primeiro_valor(*valores):
         if num_finito(v) is not None:
             return num_finito(v)
     return None
+
+
+# ── Beta lido como razão de volatilidade ────────────────────────────────────
+#
+# Duas telas, o mesmo erro conceitual (26/08/2026):
+#
+#   ARM : "o beta [...] e' de 1,2861, indicando que o papel tem uma
+#          volatilidade 28,61% MAIOR que a do setor"
+#   NVDA: "O beta setorial de 0,6407 indica que NVDA tende a ser MENOS
+#          volatil que o benchmark SMH"
+#
+# Beta e' inclinacao de regressao -- `cov(ticker, bench) / var(bench)`, em
+# get_scenario_params.py. Em termos de volatilidade, beta = rho * (sigma_a /
+# sigma_m): so' quando a correlacao e' 1 ele iguala a razao de volatilidades.
+# Um papel pode ter beta abaixo de 1 e volatilidade propria alta, que e'
+# exatamente o caso da NVDA -- 37% ao ano com beta 0,64.
+#
+# E o dado certo esta' no MESMO payload, ao lado: `volAnnual`. Dizer "menos
+# volatil" a partir do beta e' trocar um numero disponivel por uma inferencia
+# errada.
+_BETA = r"\bbeta\b"
+
+# O que separa a conclusao errada da mencao legitima e' o CONECTIVO. "o beta
+# e' 0,64 e a volatilidade anual e' 37%" poe os dois lado a lado sem concluir
+# nada -- e e' a redacao correta. So' cai quando o texto DERIVA volatilidade
+# do beta.
+_DERIVA_VOLATILIDADE = (
+    r"(?:indica\w*|significa\w*|sugere\w*|implica\w*|quer\s+dizer|"
+    r"ou\s+seja|portanto|logo|isto\s+[ée]|traduz\w*|reflete|"
+    r"mostra\s+que|revela\w*)[^.;]{0,60}?(?:volat|vol[áa]til)"
+)
+
+# "beta 0,64 -> menos volatil", sem conectivo nenhum no meio.
+_BETA_VOLATIL_DIRETO = r"\bbeta\b[^.;]{0,80}?(?:mais|menos)\s+vol[áa]til"
+
+
+# ── Significância afirmada sem o campo que a banca ──────────────────────────
+#
+# Incidente real (NVDA, 26/08/2026): "Nota-se uma correlacao forte e
+# ESTATISTICAMENTE SIGNIFICATIVA de 0,92 entre o run-up pre-balanco e a reacao
+# subsequente".
+#
+# O payload desta tela traz `corr_runup_reacao` e mais nada: `aplicar_holm`
+# nao roda aqui, porque a correcao de multiplos so' existe ENTRE tickers e a
+# Analise Rapida olha um papel so'. Ou seja, nao ha' campo de significancia no
+# dado -- o modelo afirmou uma propriedade que ninguem calculou.
+#
+# `LEITURA_CORRELACAO_SEM_SUPORTE` ja' existia para isto, no
+# `reacao_earnings_validator`. E so' la'. E' a quarta vez neste dia que uma
+# defesa mora num validador so' e a tela vizinha nasce sem ela -- as outras
+# tres foram MOEDA_ERRADA (#405), mask_sensitive_data (#409) e a checagem de
+# distancia da media (#411).
+_AFIRMA_SIGNIFICANCIA = (
+    r"estatisticamente\s+(?:significativ\w*|relevante)|"
+    r"significância\s+estat[íi]stica|signific[âa]ncia\s+estat[íi]stica|"
+    r"p\s*<\s*0[.,]0\d|com\s+signific[âa]ncia"
+)
 
 
 def validar_analise(texto, dados=None) -> list:
@@ -763,6 +821,41 @@ def validar_analise(texto, dados=None) -> list:
                     f"ANTES, e citá-lo como reação pode inverter o sinal do que "
                     f"aconteceu. Trecho: “{frase.strip()[:120]}”.")
                 break
+
+    # ── 12. beta lido como razão de volatilidade ────────────────────────────
+    for frase in frases(prosa_sa):
+        if not re.search(_BETA, frase):
+            continue
+        alvo = next((a for a in (_DERIVA_VOLATILIDADE, _BETA_VOLATIL_DIRETO)
+                     if re.search(a, frase)), None)
+        if not alvo or afirmacao_negada(frase, alvo):
+            continue
+        add("ERRO", "ANALISE_BETA_COMO_VOLATILIDADE",
+            "deriva volatilidade do beta, mas beta é inclinação de regressão "
+            "contra o benchmark (cov/var), não razão de volatilidades — só "
+            "quando a correlação é 1 os dois coincidem. A volatilidade está "
+            "no próprio payload, em `volAnnual`. "
+            f"Trecho: “{frase.strip()[:120]}”.")
+        break
+
+    # ── 13. significância afirmada sem o campo que a banca ──────────────────
+    runup_corr = caminho(dados, "reaction", "summary", "runup")
+    if num_finito(runup_corr.get("corr_runup_reacao")) is not None \
+            and not booleano(runup_corr.get("corr_sobrevive")):
+        for frase in frases(prosa_sa):
+            if not re.search(r"correla[cç][ãa]o", frase):
+                continue
+            if not afirmado_sem_negacao(frase, _AFIRMA_SIGNIFICANCIA):
+                continue
+            n = runup_corr.get("corr_n")
+            add("ERRO", "ANALISE_SIGNIFICANCIA_SEM_CAMPO",
+                "chama a correlação de estatisticamente significativa, mas o "
+                "payload traz só o coeficiente"
+                + (f" (n = {n})" if n else "")
+                + " — não há p-valor nem `corr_sobrevive` nesta tela, então a "
+                "afirmação não vem do dado. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
 
     return achados
 

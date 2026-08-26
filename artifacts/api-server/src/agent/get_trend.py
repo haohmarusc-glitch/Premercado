@@ -162,6 +162,29 @@ def _translate_join(texts: list[str]) -> list[str]:
     traduzidos, _origens = traduzir(list(texts))
     return traduzidos
 
+# Quantas manchetes precisam ter sido CLASSIFICADAS para o rotulo poder
+# afirmar direcao.
+#
+# Incidente real (NVDA, 26/08/2026). O painel dizia "Noticias (positivo)" e a
+# tela concluia "alta forte CONFIRMADA por fluxo de noticias positivo" -- em
+# cima de UMA manchete. O texto era honesto sobre isso ("tom positivo em 1 de
+# 8 manchetes analisadas") e mesmo assim o rotulo saiu com confianca maxima,
+# porque o score divide por (positivas + negativas), nao pelas ANALISADAS:
+#
+#     score = (1 - 0) / (1 + 0) = 1,00  ->  "positivo"
+#
+# Uma manchete em oito pesava igual a oito em oito. E a correcao de
+# relevancia (fala_do_papel) AUMENTA a chance disso: descartada e ambigua
+# saem do denominador, entao amostras de uma ou duas ficam mais comuns. Uma
+# defesa que cria o proximo buraco precisa fechar os dois.
+#
+# Tres e' o menor numero em que "maioria" quer dizer alguma coisa: com duas
+# manchetes concordando o score ja' da' 1,00, e uma delas virar do outro lado
+# zera tudo. E' julgamento, nao teorema -- por isso esta' nomeado aqui e nao
+# enterrado numa comparacao.
+MINIMO_PARA_ROTULAR = 3
+
+
 def news_sentiment(ticker: str, max_items: int = 8) -> dict:
     try:
         news = yf.Ticker(ticker).news or []
@@ -211,10 +234,13 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
             ambiguas += 1
             scored.append({"title": raw_title[:120], "tone": "misto", "ts": ts})
     total = pos + neg
-    if total == 0:
-        label, score = "neutro", 0.0
+    score = round((pos - neg) / total, 2) if total else 0.0
+    if total < MINIMO_PARA_ROTULAR:
+        # Amostra pequena demais para afirmar direcao. "neutro" faz
+        # `news_dir` virar 0 la' embaixo, e o texto de confluencia passa a
+        # dizer "sem confirmacao nem divergencia" -- que e' a verdade.
+        label = "neutro"
     else:
-        score = round((pos - neg) / total, 2)
         label = "positivo" if score > 0.25 else "negativo" if score < -0.25 else "misto"
     # Traduz só as headlines exibidas ao usuário (destaques), pt-BR
     destaques = scored[:4]
@@ -227,6 +253,9 @@ def news_sentiment(ticker: str, max_items: int = 8) -> dict:
             # filtro que roda calado devolve "0 negativas" sem dizer que jogou
             # metade do feed fora.
             "ambiguas": ambiguas, "descartadas": descartadas,
+            # `classificadas` e' o denominador do score. Sem ele na tela, "1 de
+            # 8 analisadas" e "8 de 8" ficam indistinguiveis no rotulo.
+            "classificadas": total, "minimoParaRotular": MINIMO_PARA_ROTULAR,
             "analisadas": len(news[:max_items]), "destaques": destaques}
 
 # ── Estrutura de preço: topos/fundos via pivôs simples ───────────────────────
