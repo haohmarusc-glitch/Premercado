@@ -89,6 +89,44 @@ def _runup_pct(hist: pd.DataFrame, pos: int) -> float | None:
     return round((prev_close / base - 1) * 100, 2)
 
 
+def _janela_da_reacao(earnings_ts) -> tuple:
+    """(janela, inferido) -- em qual sessão a notícia é precificada.
+
+    "anuncio" para quem divulga ANTES da abertura (BMO): o próprio pregão do
+    dia já reage. "seguinte" para quem divulga DEPOIS do fechamento (AMC): a
+    reação é o pregão seguinte, e o fechamento do dia do anúncio é ANTERIOR à
+    notícia.
+
+    Por que isto existe: a versão anterior escolhia, entre as duas sessões, a
+    que se moveu MAIS em módulo. Isso é seleção pelo resultado -- no momento em
+    que o número seria útil (antes do balanço) ninguém sabe qual sessão vai
+    andar mais, e a estatística passa a descrever algo que não se podia usar.
+    Pior: em 25/08/2026 isso pegou, no NVDA de 2024-11-20, o dia do ANÚNCIO de
+    uma empresa que reporta after-close -- ou seja, mediu como "reação" a
+    sessão anterior à notícia.
+
+    O horário de divulgação é fato publicado e vem no índice da fonte. Quando
+    ele não vem (timestamp à meia-noite, ou horário no meio do pregão), o
+    padrão declarado é AMC -- convenção dominante entre as empresas que
+    acompanhamos -- e o evento é CONTADO como inferido, para o relatório poder
+    dizer quantos dependeram da suposição."""
+    hora = getattr(earnings_ts, "hour", None)
+    minuto = getattr(earnings_ts, "minute", 0) or 0
+    if hora is None:
+        return "seguinte", True
+    # Meia-noite em ponto é AUSÊNCIA de horário, não divulgação de madrugada.
+    # Sem esta linha, `hora < 9` transformava "não sei" em "reporta antes da
+    # abertura" -- afirmação confiante sobre um dado que não existe, e com o
+    # agravante de trocar a sessão medida. Pego pela própria suíte.
+    if hora == 0 and minuto == 0:
+        return "seguinte", True
+    if hora >= 16:                               # depois do fechamento
+        return "seguinte", False
+    if hora < 9 or (hora == 9 and minuto < 30):  # antes da abertura
+        return "anuncio", False
+    return "seguinte", True                      # meio do pregão: não dá pra afirmar
+
+
 def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | None:
     """Métricas de um único pregão (índice `pos` em `hist`) relativas ao
     fechamento anterior `prev_close`. None se `pos` estiver fora do range."""
@@ -245,7 +283,19 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
         return {"ticker": ticker, "error": "sem histórico de earnings dates disponível (ticker muito novo?)"}
 
     now = pd.Timestamp.now(tz=earnings.index.tz)
-    past_earnings = earnings[earnings.index < now].head(lookback_events)
+    passados = earnings[earnings.index < now]
+    # Deduplicar por DATA DE CALENDÁRIO antes de cortar o lookback. A fonte
+    # devolve o mesmo balanço duas vezes de vez em quando (visto em 25/08/2026:
+    # SMCI com 2025-02-25 repetido), e sem isto o evento entra DUAS VEZES em
+    # todas as estatísticas -- média, desvio, threshold e as bandas. No caso
+    # real a duplicata era uma reação de +12,23% e puxava a média de +6,05%
+    # para +6,82%, sustentando a frase "SMCI tem viés positivo".
+    #
+    # `keep="first"`: a primeira ocorrência é a que carrega o horário de
+    # divulgação usado por `_janela_da_reacao`.
+    dups = int(passados.index.normalize().duplicated().sum())
+    passados = passados[~passados.index.normalize().duplicated(keep="first")]
+    past_earnings = passados.head(lookback_events)
     if past_earnings.empty:
         return {"ticker": ticker, "error": "sem earnings passados na janela pedida"}
 
@@ -287,9 +337,15 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
 
         announcement_day = _session_move(hist, pos, prev_close)
         next_day = _session_move(hist, pos + 1, hist["Close"].iloc[pos] if pos < len(hist.index) else None)
+        janela, janela_inferida = _janela_da_reacao(earnings_ts)
 
         events.append({
             "earnings_date": str(earnings_date.date()),
+            # Qual sessão precifica a notícia -- decidido pelo HORÁRIO de
+            # divulgação, nunca pela magnitude do movimento (ver
+            # `_janela_da_reacao`).
+            "janela_reacao": janela,
+            "janela_inferida": janela_inferida,
             # Quanto o papel subiu/caiu no ~mês (RUNUP_PREGOES pregões) ANTES
             # do balanço -- proxy de expectativa embutida no preço. Motivado
             # pelo padrão "bom não é bom o suficiente" visto em produção
@@ -309,17 +365,21 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
     if not events:
         return {"ticker": ticker, "error": "não foi possível casar earnings dates com pregões do histórico"}
 
-    # Pra estatística, usa o maior |close_pct| entre as duas janelas de cada
-    # evento -- é o proxy mais simples pra "qual das duas foi a reação real"
-    # sem assumir BMO/AMC.
+    # A sessão da reação vem do HORÁRIO de divulgação, não do tamanho do
+    # movimento -- ver `_janela_da_reacao` para o vício que isto corrige.
     reaction_moves = []
+    inferidos = 0
     for e in events:
-        candidates = [m for m in (e["announcement_day"], e["next_day"]) if m is not None]
-        if not candidates:
+        pedida = e["announcement_day"] if e["janela_reacao"] == "anuncio" else e["next_day"]
+        # Sem a sessão pedida (earnings recente demais, sem pregão seguinte
+        # ainda), o evento fica FORA da estatística. Cair na outra sessão
+        # seria trocar o dia em silêncio, que é o defeito de origem.
+        if pedida is None:
             continue
-        escolhido = dict(max(candidates, key=lambda m: abs(m["close_pct"])))
+        escolhido = dict(pedida)
         escolhido["runup_pct"] = e["runup_pct"]
         reaction_moves.append(escolhido)
+        inferidos += 1 if e["janela_inferida"] else 0
 
     if not reaction_moves:
         return {"ticker": ticker, "error": "sem janelas válidas de reação nos eventos encontrados"}
@@ -328,6 +388,11 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
     volume_ratio = df["volume"] / avg_volume if avg_volume else None
     summary = {
         "n_events": len(df),
+        # Quantos eventos a fonte devolveu repetidos (e foram descartados) e
+        # quantos dependeram da suposição AMC por não trazerem horário: os dois
+        # números existem para o leitor saber onde a série é mais frouxa.
+        "eventos_duplicados_descartados": dups,
+        "eventos_com_janela_inferida": inferidos,
         "gap_pct_mean": round(float(df["gap_pct"].mean()), 2),
         "gap_pct_abs_mean": round(float(df["gap_pct"].abs().mean()), 2),
         "close_pct_mean": round(float(df["close_pct"].mean()), 2),
@@ -385,6 +450,67 @@ def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
     return max(posicoes) if posicoes else None
 
 
+# Amostra mínima para a correlação valer alguma coisa. Com 4 pontos, r salta
+# de -0,9 a +0,9 trocando um evento -- publicar isso como número convida a
+# leitura que ele não sustenta.
+CORR_MIN_EVENTOS = 5
+CORR_BOOTSTRAP_AMOSTRAS = 2000
+CORR_SEMENTE = 20260825
+
+
+def _correlacao_com_incerteza(x, y) -> dict:
+    """r de Pearson com IC 95% por bootstrap e p-valor por PERMUTAÇÃO.
+
+    Por que os três juntos: em 25/08/2026 o relatório publicava só o r, e a
+    leitura com IA promoveu o AVGO (r=-0,60, n=7) a "padrão estatisticamente
+    relevante" e o transformou na recomendação principal -- quando p=0,15, ou
+    seja, nem sem correção de múltiplos ele passa. O r sozinho não distingue
+    padrão de ruído; o par (IC, p) distingue.
+
+    Permutação em vez de teste-t pelo mesmo motivo de padroes_estatisticos.py:
+    n de um dígito e cauda gorda quebram a aproximação normal justamente nos
+    casos extremos, que são os que chamam atenção."""
+    import numpy as np
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    ok = ~(np.isnan(x) | np.isnan(y))
+    x, y = x[ok], y[ok]
+    n = len(x)
+    if n < CORR_MIN_EVENTOS or x.std() == 0 or y.std() == 0:
+        return {"corr_runup_reacao": None, "corr_n": int(n),
+                "corr_ic95": None, "corr_p_valor": None,
+                "corr_nota": f"amostra de {n} evento(s) -- mínimo {CORR_MIN_EVENTOS}"}
+
+    r = float(np.corrcoef(x, y)[0, 1])
+    rng = np.random.default_rng(CORR_SEMENTE)
+
+    # IC por bootstrap sobre os PARES (reamostra eventos inteiros, preservando
+    # o casamento run-up/reação).
+    idx = rng.integers(0, n, size=(CORR_BOOTSTRAP_AMOSTRAS, n))
+    rs = []
+    for linha in idx:
+        xb, yb = x[linha], y[linha]
+        if xb.std() == 0 or yb.std() == 0:
+            continue
+        rs.append(np.corrcoef(xb, yb)[0, 1])
+    ic = ([round(float(v), 2) for v in np.percentile(rs, [2.5, 97.5])]
+          if len(rs) >= CORR_BOOTSTRAP_AMOSTRAS // 2 else None)
+
+    # p por permutação: embaralha y contra x e conta quantas vezes o acaso
+    # produz |r| igual ou maior. O +1 no numerador e no denominador impede
+    # p=0, que seria afirmar impossibilidade a partir de 2000 sorteios.
+    extremos = 0
+    for _ in range(CORR_BOOTSTRAP_AMOSTRAS):
+        yp = rng.permutation(y)
+        if abs(np.corrcoef(x, yp)[0, 1]) >= abs(r):
+            extremos += 1
+    p = (extremos + 1) / (CORR_BOOTSTRAP_AMOSTRAS + 1)
+
+    return {"corr_runup_reacao": round(r, 2), "corr_n": int(n),
+            "corr_ic95": ic, "corr_p_valor": round(float(p), 4),
+            "corr_nota": None}
+
+
 def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: int | None = None) -> dict:
     """Estatística do padrão "bom não é bom o suficiente": o run-up do mês
     pré-earnings previu a direção da reação nos balanços passados deste
@@ -404,11 +530,20 @@ def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: in
     }
 
     if len(com_runup) >= 3:
+        # Corte SIMÉTRICO. Era `<= 0`, o que rotulava de "descontado" qualquer
+        # papel que não tivesse subido -- inclusive um que andou -0,7%, que é
+        # de fato plano. Isso não é rótulo mal escolhido, é o que sustentava a
+        # conclusão: em 25/08/2026 o AVGO aparecia "descontado em -6,91%" e com
+        # "2 de 2 subiram" no histórico; pela regra simétrica ele está NEUTRO
+        # hoje, e o histórico de descontados cai para um único evento.
         esticados = com_runup[com_runup["runup_pct"] >= RUNUP_ESTICADO_PCT]
-        descontados = com_runup[com_runup["runup_pct"] <= 0]
+        descontados = com_runup[com_runup["runup_pct"] <= -RUNUP_ESTICADO_PCT]
         out.update({
-            "corr_runup_reacao": round(float(com_runup["runup_pct"].corr(com_runup["close_pct"])), 2)
-            if len(com_runup) >= 4 else None,
+            # O piso de amostra mora dentro do helper (CORR_MIN_EVENTOS), que
+            # devolve r=None com a nota do porquê -- em vez do `>= 4` solto de
+            # antes, que sumia com o campo e não dizia nada ao leitor.
+            **_correlacao_com_incerteza(com_runup["runup_pct"].to_numpy(float),
+                                        com_runup["close_pct"].to_numpy(float)),
             "esticado_n": int(len(esticados)),
             "esticado_caiu_n": int((esticados["close_pct"] < 0).sum()),
             "esticado_reacao_media": round(float(esticados["close_pct"].mean()), 2) if len(esticados) else None,
@@ -460,14 +595,52 @@ def _runup_summary(df: pd.DataFrame, hist: pd.DataFrame, ultimo_earnings_pos: in
             # históricos, que por construção medem só o pré-balanço.
             out["estado_atual"] = (
                 "esticado" if base_estado >= RUNUP_ESTICADO_PCT
-                else "descontado" if base_estado <= 0
+                else "descontado" if base_estado <= -RUNUP_ESTICADO_PCT
                 else "neutro"
             )
 
     return out
 
 
+def aplicar_holm(results: list[dict], alfa: float = 0.05) -> list[dict]:
+    """Marca `corr_sobrevive` em cada ticker pela correção de Holm-Bonferroni.
+
+    A correção só existe ENTRE tickers: uma cesta de cinco papéis são cinco
+    testes da mesma hipótese ("run-up prevê reação"), e a leitura sempre
+    destaca o mais extremo. Sem corrigir, varrer cinco a 5% produz um "achado"
+    por acaso a cada quatro rodadas -- e o achado vem com história pronta.
+
+    Foi exatamente o que aconteceu em 25/08/2026: entre cinco correlações, a
+    leitura elegeu o AVGO (r=-0,60) como "padrão estatisticamente relevante" e
+    o virou recomendação principal. Sozinho ele já não passava (p=0,15); com
+    Holm fica em 0,62. Mesma mecânica de padroes_estatisticos.holm, reescrita
+    aqui para não arrastar aquele módulo (e o numpy dele) para este script."""
+    testados = [r for r in results
+                if (r.get("summary", {}).get("runup") or {}).get("corr_p_valor") is not None]
+    for r in results:
+        ru = (r.get("summary", {}) or {}).get("runup")
+        if ru is not None:
+            ru["corr_sobrevive"] = False
+            ru["corr_p_corrigido"] = None
+    m = len(testados)
+    if m == 0:
+        return results
+    ordenados = sorted(testados, key=lambda r: r["summary"]["runup"]["corr_p_valor"])
+    maior_ate_agora = 0.0
+    for i, r in enumerate(ordenados):
+        ru = r["summary"]["runup"]
+        # Holm: o i-ésimo menor p é comparado com alfa/(m-i). O p corrigido
+        # equivalente é p*(m-i), e o acumulado monotônico impede o absurdo de
+        # um p corrigido menor que o do teste mais forte que ele.
+        corrigido = min(1.0, max(maior_ate_agora, ru["corr_p_valor"] * (m - i)))
+        maior_ate_agora = corrigido
+        ru["corr_p_corrigido"] = round(corrigido, 4)
+        ru["corr_sobrevive"] = corrigido <= alfa
+    return results
+
+
 def _print_report(results: list[dict]) -> None:
+    aplicar_holm(results)
     for r in results:
         print(f"\n=== {r['ticker']} ===")
         if "error" in r:
@@ -477,6 +650,11 @@ def _print_report(results: list[dict]) -> None:
         std = f"{s['close_pct_std']:.2f}" if s["close_pct_std"] is not None else "N/A"
         vol = f"{s['volume_ratio_mean']:.2f}x" if s["volume_ratio_mean"] is not None else "N/A"
         print(f"  Eventos analisados: {s['n_events']}")
+        if s.get("eventos_duplicados_descartados"):
+            print(f"    ({s['eventos_duplicados_descartados']} evento(s) repetido(s) na fonte, descartado(s))")
+        if s.get("eventos_com_janela_inferida"):
+            print(f"    ⚠ {s['eventos_com_janela_inferida']} evento(s) sem horário de divulgação — "
+                  f"assumido after-close")
         print(f"  Gap de abertura médio: {s['gap_pct_mean']:+.2f}%  (|média| {s['gap_pct_abs_mean']:.2f}%)")
         print(f"  Variação de fechamento média: {s['close_pct_mean']:+.2f}%  (|média| {s['close_pct_abs_mean']:.2f}%, desvio {std})")
         print(f"  Range intradiário médio: {s['intraday_range_pct_mean']:.2f}%")
@@ -499,7 +677,33 @@ def _print_report(results: list[dict]) -> None:
                 + (f" (média {ru['descontado_reacao_media']:+.2f}%)" if ru.get("descontado_reacao_media") is not None else "")
             )
             if ru.get("corr_runup_reacao") is not None:
-                print(f"    correlação run-up × reação: {ru['corr_runup_reacao']:+.2f} (amostra pequena, indício)")
+                ic = ru.get("corr_ic95")
+                faixa = f"IC95 [{ic[0]:+.2f}, {ic[1]:+.2f}]" if ic else "IC95 indisponível"
+                pc = ru.get("corr_p_corrigido")
+                veredito = ("SOBREVIVE a Holm" if ru.get("corr_sobrevive")
+                            else "NÃO sobrevive a Holm")
+                print(f"    correlação run-up × reação: {ru['corr_runup_reacao']:+.2f} "
+                      f"(n={ru.get('corr_n')}, {faixa})")
+                print(f"      p={ru['corr_p_valor']:.3f}"
+                      + (f" · corrigido p/ múltiplos tickers={pc:.3f}" if pc is not None else "")
+                      + f" — {veredito}")
+                # O IC que cruza zero é a leitura mais importante da linha: ele
+                # diz que os dados são compatíveis com correlação NENHUMA.
+                ic_exclui_zero = bool(ic) and not (ic[0] < 0 < ic[1])
+                if ic and not ic_exclui_zero:
+                    print("      ⚠ o IC cruza zero — compatível com ausência de relação")
+                # IC e p discordando é o aviso mais útil da linha, e o mais
+                # fácil de abusar: quem quer a conclusão cita o que a sustenta
+                # e ignora o outro. Com amostra de um dígito os dois métodos
+                # divergem com frequência -- o bootstrap de correlação fica
+                # otimista demais, e a permutação é a mais confiável dos dois.
+                # Nos dados reais de 25/08 os DOIS tickers com r alto caíram
+                # aqui, em direções opostas.
+                if ic is not None and ic_exclui_zero != (ru["corr_p_valor"] <= 0.05):
+                    print("      ⚠ IC e p-valor DISCORDAM — com amostra deste tamanho "
+                          "isso é comum; nenhum dos dois decide sozinho")
+            elif ru.get("corr_nota"):
+                print(f"    correlação run-up × reação: não publicada ({ru['corr_nota']})")
         if ru.get("runup_atual_pct") is not None:
             print(f"  Estado atual: {ru['estado_atual']} (run-up de {ru['runup_atual_pct']:+.2f}% no último mês)")
             if ru.get("janela_contem_earnings"):
