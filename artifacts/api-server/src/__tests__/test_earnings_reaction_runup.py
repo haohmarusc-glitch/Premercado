@@ -61,9 +61,12 @@ def test_runup_summary_conta_esticados_que_cairam_e_descontados_que_subiram():
         (15.0, -8.0),   # esticado -> caiu
         (22.0, -3.0),   # esticado -> caiu
         (12.0, 4.0),    # esticado -> subiu (contra o padrão)
-        (-5.0, 9.0),    # descontado -> subiu
-        (-2.0, -1.0),   # descontado -> caiu (contra o padrão)
+        (-15.0, 9.0),   # descontado -> subiu
+        (-12.0, -1.0),  # descontado -> caiu (contra o padrão)
         (5.0, 2.0),     # neutro (não entra em nenhum bucket)
+        (-4.0, 3.0),    # NEUTRO: caiu pouco. Antes do corte simétrico isto
+                        # contava como "descontado", e era o que inflava o
+                        # bucket com papéis apenas planos (25/08/2026).
     ])
     out = _runup_summary(df, HIST_NEUTRO)
     assert out["esticado_n"] == 3
@@ -71,7 +74,7 @@ def test_runup_summary_conta_esticados_que_cairam_e_descontados_que_subiram():
     assert out["descontado_n"] == 2
     assert out["descontado_subiu_n"] == 1
     assert out["esticado_reacao_media"] == pytest.approx((-8.0 - 3.0 + 4.0) / 3, abs=0.01)
-    # 6 pares válidos >= 4 -> correlação sai (e o padrão acima é negativo)
+    # 7 pares -> correlação sai (e o padrão acima é negativo)
     assert out["corr_runup_reacao"] is not None
     assert out["corr_runup_reacao"] < 0
 
@@ -92,9 +95,32 @@ def test_runup_summary_estado_atual_esticado():
 
 
 def test_runup_summary_estado_atual_descontado():
-    closes = [100.0] * 10 + [100.0] + [92.0] * RUNUP_PREGOES
+    # Cai de 100 pra 88 -> -12%, além do corte de dois dígitos.
+    closes = [100.0] * 10 + [100.0] + [88.0] * RUNUP_PREGOES
     out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes))
     assert out["estado_atual"] == "descontado"
+
+
+def test_queda_de_um_digito_e_neutro_e_nao_descontado():
+    """O corte é SIMÉTRICO: -8% é plano, não descontado.
+
+    Era `<= 0`, e por isso qualquer papel que não tivesse subido virava
+    "descontado". Não é preciosismo de rótulo -- é o que sustentava a
+    conclusão: em 25/08/2026 o AVGO saiu como "descontado em -6,91%" e essa
+    linha virou a recomendação principal de quem leu o relatório."""
+    closes = [100.0] * 10 + [100.0] + [92.0] * RUNUP_PREGOES
+    out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes))
+    assert out["runup_atual_pct"] == pytest.approx(-8.0)
+    assert out["estado_atual"] == "neutro"
+
+
+def test_papel_parado_nao_e_descontado():
+    """O caso extremo da regra antiga: run-up de exatamente 0% era rotulado
+    'descontado' por `<= 0`."""
+    closes = [100.0] * (10 + 1 + RUNUP_PREGOES)
+    out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes))
+    assert out["runup_atual_pct"] == pytest.approx(0.0)
+    assert out["estado_atual"] == "neutro"
 
 
 def test_runup_summary_sem_eventos_com_runup_so_devolve_estado_atual():
@@ -140,7 +166,10 @@ def test_estado_atual_sai_do_runup_limpo_nao_do_bruto():
 
     assert out["runup_atual_pct"] == pytest.approx(34.14, abs=0.01)
     assert out["runup_atual_ex_evento_pct"] == pytest.approx(0.0, abs=0.01)
-    assert out["estado_atual"] == "descontado"  # e não "esticado"
+    # Ex-evento o papel está PARADO. A intenção sempre foi "não é esticado";
+    # com o corte simétrico o rótulo certo é neutro (antes saía "descontado",
+    # porque a regra tratava qualquer não-subida como desconto).
+    assert out["estado_atual"] == "neutro"
 
 
 def test_earnings_fora_da_janela_mantem_o_comportamento_antigo():
