@@ -268,7 +268,9 @@ def test_chamadas_a_av_sao_espacadas(monkeypatch):
     exatamente o que aconteceu com GOOGL e META."""
     dormidas = []
     monkeypatch.setattr(cx.time, "sleep", lambda s: dormidas.append(s))
-    cx.coletar(["MSFT", "GOOGL", "AMZN"], yf_fn=lambda t: [],
+    # max_aprofundamentos alto de propósito: aqui o assunto é o ESPAÇAMENTO,
+    # e o teto por rodada tem teste próprio.
+    cx.coletar(["MSFT", "GOOGL", "AMZN"], yf_fn=lambda t: [], max_aprofundamentos=9,
                av_fn=lambda t: [_linha("2026-06-30", 30e9)], pausa_s=13)
     # três tickers -> duas pausas (a primeira chamada não espera)
     assert dormidas == [13, 13]
@@ -505,13 +507,14 @@ def test_a_fila_da_alpha_vantage_comeca_pelo_mais_raso():
     pedidos = []
     guardado = {"MSFT": _serie(_FUNDOS), "META": _serie(["2026-06-30"]), "ORCL": []}
     cx.coletar(["MSFT", "META", "ORCL"], pausa_s=0, guardado=guardado,
+               max_aprofundamentos=9,  # aqui o assunto é a ORDEM, não o teto
                yf_fn=lambda t: [], av_fn=lambda t: pedidos.append(t) or [])
     assert pedidos == ["ORCL", "META", "MSFT"]
 
 
 def test_empate_de_profundidade_e_resolvido_pelo_nome():
     pedidos = []
-    cx.coletar(["ORCL", "META", "AMZN"], pausa_s=0,
+    cx.coletar(["ORCL", "META", "AMZN"], pausa_s=0, max_aprofundamentos=9,
                yf_fn=lambda t: [], av_fn=lambda t: pedidos.append(t) or [])
     assert pedidos == ["AMZN", "META", "ORCL"], "ordem tem que ser reproduzível"
 
@@ -539,7 +542,7 @@ def test_limite_diario_na_primeira_para_a_fila():
         avp.marcar_limite_diario()
         raise RuntimeError("limite diário")
 
-    col = cx.coletar(["MSFT", "GOOGL", "AMZN"], pausa_s=0,
+    col = cx.coletar(["MSFT", "GOOGL", "AMZN"], pausa_s=0, max_aprofundamentos=9,
                      yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=_av)
     assert chamadas == ["AMZN"], "só o primeiro da fila (ordem por carência)"
     assert sorted(col["rasos"]) == ["AMZN", "GOOGL", "MSFT"]
@@ -566,3 +569,66 @@ def test_o_yfinance_do_ticker_pulado_nao_e_jogado_fora():
                      av_fn=lambda t: [])
     assert col["porEmpresa"]["MSFT"], "o trimestre recente do yfinance fica"
     assert col["falhas"] == []
+
+
+# ── aprofundar aos poucos em vez de tudo de uma vez ─────────────────────────
+#
+# Tentar as cinco numa rodada exige um dia com cinco chamadas sobrando num teto
+# real de 25 dividido com earnings e notícias -- e em 25/08/2026 isso falhou
+# TRÊS vezes seguidas. Pior: o nosso contador de orçamento não protege disso,
+# porque só conta o que NÓS debitamos e não sabe o que a AV já contou (naquele
+# dia a nossa conta marcava 1 enquanto a AV recusava por ter chegado a 25).
+
+def test_o_teto_por_rodada_limita_as_chamadas():
+    pedidos = []
+    cx.coletar(["MSFT", "GOOGL", "AMZN", "META", "ORCL"], pausa_s=0,
+               max_aprofundamentos=2, yf_fn=lambda t: _serie(["2026-06-30"]),
+               av_fn=lambda t: pedidos.append(t) or [])
+    assert len(pedidos) == 2
+
+
+def test_quem_ficou_de_fora_e_declarado_e_nao_some(capsys):
+    col = cx.coletar(["MSFT", "GOOGL", "AMZN"], pausa_s=0, max_aprofundamentos=1,
+                     yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=lambda t: [])
+    assert sorted(col["rasos"]) == ["AMZN", "GOOGL", "MSFT"]
+    assert "fica para a próxima" in capsys.readouterr().err
+
+
+def test_o_yfinance_de_quem_ficou_de_fora_nao_e_jogado_fora():
+    """Adiar o aprofundamento não pode custar o trimestre recente."""
+    col = cx.coletar(["MSFT", "GOOGL"], pausa_s=0, max_aprofundamentos=0,
+                     yf_fn=lambda t: _serie(["2026-06-30"]), av_fn=lambda t: [])
+    assert sorted(col["porEmpresa"]) == ["GOOGL", "MSFT"]
+    assert col["falhas"] == []
+
+
+def test_a_profundidade_converge_ao_longo_das_rodadas():
+    """O ponto todo: sem depender de UM dia com cota sobrando, três rodadas
+    semanais levam o grupo inteiro ao fundo. A ordem por carência garante que
+    cada rodada atende quem ficou para trás na anterior."""
+    grupo = ["MSFT", "GOOGL", "AMZN", "META", "ORCL"]
+    guardado: dict = {}
+    for _ in range(3):
+        col = cx.coletar(grupo, pausa_s=0, max_aprofundamentos=2, guardado=guardado,
+                         yf_fn=lambda t: _serie(["2026-06-30"]),
+                         av_fn=lambda t: _serie(_FUNDOS, fonte="alpha_vantage"))
+        guardado = cx.mesclar_bruto(guardado, col["porEmpresa"])
+    fundos = [t for t in grupo if len(guardado.get(t) or []) >= cx.PROFUNDIDADE_MINIMA]
+    assert sorted(fundos) == sorted(grupo), "três rodadas têm que fechar o grupo"
+
+
+def test_uma_rodada_sozinha_nao_fecha_o_grupo():
+    """O contraste do teste acima: é a REPETIÇÃO que resolve, e o teto é o
+    preço consciente disso."""
+    col = cx.coletar(["MSFT", "GOOGL", "AMZN", "META", "ORCL"], pausa_s=0,
+                     max_aprofundamentos=2, yf_fn=lambda t: _serie(["2026-06-30"]),
+                     av_fn=lambda t: _serie(_FUNDOS, fonte="alpha_vantage"))
+    fundos = [t for t, l in col["porEmpresa"].items() if len(l) >= cx.PROFUNDIDADE_MINIMA]
+    assert len(fundos) == 2
+
+
+def test_o_teto_e_configuravel_por_ambiente():
+    """O operador pode abrir a torneira num dia sabidamente livre."""
+    import pathlib
+    fonte = pathlib.Path(cx.__file__).read_text(encoding="utf-8")
+    assert "CAPEX_MAX_APROFUNDAMENTOS" in fonte
