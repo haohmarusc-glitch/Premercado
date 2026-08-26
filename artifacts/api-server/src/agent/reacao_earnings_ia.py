@@ -62,6 +62,8 @@ _aplicar_ordem_na_env()
 
 from agent.provider import get_client, get_run_usage, texto_da_resposta  # noqa: E402
 from agent.teto_tokens import teto_de_tokens  # noqa: E402
+from agent.reacao_earnings_validator import (  # noqa: E402
+    bloco_de_correcao, erros as erros_de_leitura, resumo_legivel, validar_leitura)
 
 # Abaixo disto não é interpretação, é toco. O texto pedido tem 4 seções.
 MIN_TEXTO_CHARS = 200
@@ -274,6 +276,8 @@ def interpretar(dados: dict) -> dict:
     # MESMO provedor: toco não condena ninguém, então a cadeia nunca andava
     # sozinha e o botão simplesmente não funcionava.
     texto = ""
+    achados: list = []
+    _ja_tentou_corrigir = False
     while True:
         _antes_llm = time.monotonic()
         resp = client.create(
@@ -295,6 +299,34 @@ def interpretar(dados: dict) -> dict:
         print(f"[reacao_earnings_ia] {client.provider_name}/{client.models['full']} "
               f"{_tempo} ({len(texto)} chars)", file=sys.stderr, flush=True)
         if len(texto) >= MIN_TEXTO_CHARS:
+            # ── validação da PROSA ──────────────────────────────────────
+            #
+            # Os números já saem corrigidos do earnings_reaction_analysis; o
+            # que faltava era conferir o que o texto AFIRMA sobre eles. Em
+            # 25/08/2026 foi por aí que o erro chegou ao leitor: a correlação
+            # do AVGO saía com p corrigido de 0,462 e a leitura a chamou de
+            # "padrão estatisticamente relevante", virando a recomendação
+            # principal de quem leu.
+            #
+            # A validação mora DENTRO do laço porque a correção é outra
+            # rodada de LLM -- e uma só: se o modelo errou duas vezes com os
+            # apontamentos na mão, insistir gasta orçamento sem convergir.
+            achados = validar_leitura(texto, resultados, (corr or {}).get("pares"))
+            duros = erros_de_leitura(achados)
+            gasto = time.monotonic() - _INICIO
+            if duros and not _ja_tentou_corrigir and gasto + _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S:
+                for linha in resumo_legivel(duros):
+                    print(f"[reacao_earnings_ia] validador: {linha}",
+                          file=sys.stderr, flush=True)
+                print("[reacao_earnings_ia] pedindo reescrita com os apontamentos",
+                      file=sys.stderr, flush=True)
+                conteudo += bloco_de_correcao(achados)
+                _ja_tentou_corrigir = True
+                continue
+            if duros:
+                print("[reacao_earnings_ia] validador apontou erro(s) e não há "
+                      "retentativa disponível — publicando COM os avisos",
+                      file=sys.stderr, flush=True)
             break
 
         provedor, modelo = client.provider_name, client.models["full"]
@@ -323,7 +355,18 @@ def interpretar(dados: dict) -> dict:
                 f"Último: {provedor}/{modelo} {diagnostico} com {len(texto)} chars."
             )}
 
+    for linha in resumo_legivel(achados):
+        print(f"[reacao_earnings_ia] validador: {linha}", file=sys.stderr, flush=True)
+
     saida = {"markdown": texto, "usage": get_run_usage(), "tickers": tickers}
+    if achados:
+        # Vão para a TELA junto do texto. Validador que só escreve no log
+        # protege quem lê o log, e quem lê o log não é quem opera.
+        saida["avisos"] = resumo_legivel(achados)
+    if achados:
+        # A tela mostra estes avisos junto do texto. Validador que só escreve
+        # no log protege quem lê o log, e quem lê o log não é quem opera.
+        saida["avisos"] = resumo_legivel(achados)
     # Texto cortado por teto de tokens tem que ser DITO: um texto que para no
     # meio da frase, sem aviso, parece conclusão do modelo.
     if str(getattr(resp, "raw_stop_reason", "")).lower() in ("max_tokens", "length"):

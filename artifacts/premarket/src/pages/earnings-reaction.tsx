@@ -484,7 +484,15 @@ export default function EarningsReactionPage() {
   const benchmarkEfetivo = (benchmarkManual ? benchmark : benchmarkSugerido(primeiroTicker)) || "SPY";
   const [results, setResults] = useState<ReactionResult[] | null>(null);
   const [leituraIA, setLeituraIA] = useState<
-    { markdown: string; usage?: { total_cost_usd?: number }; truncado?: boolean } | null
+    {
+      markdown: string;
+      usage?: { total_cost_usd?: number };
+      truncado?: boolean;
+      // Apontamentos do validador da prosa (agent/reacao_earnings_validator.py).
+      // Aparecem JUNTO do texto, nunca no lugar dele: esconder a leitura
+      // deixaria a tela vazia sem dizer por quê.
+      avisos?: string[];
+    } | null
   >(null);
 
   const run = useMutation({
@@ -524,7 +532,12 @@ export default function EarningsReactionPage() {
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na interpretação com IA");
-      return data as { markdown: string; usage?: { total_cost_usd?: number }; truncado?: boolean };
+      return data as {
+        markdown: string;
+        usage?: { total_cost_usd?: number };
+        truncado?: boolean;
+        avisos?: string[];
+      };
     },
     onSuccess: setLeituraIA,
   });
@@ -638,6 +651,19 @@ export default function EarningsReactionPage() {
               <p className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
                 ⚠ O texto bateu o limite de tamanho e terminou no meio — rode de novo para uma versão completa.
               </p>
+            )}
+            {leituraIA.avisos && leituraIA.avisos.length > 0 && (
+              <div className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400 space-y-1">
+                <p className="font-semibold">
+                  ⚠ O validador apontou {leituraIA.avisos.length} problema(s) neste texto:
+                </p>
+                {leituraIA.avisos.map((a, i) => (
+                  <p key={i}>{a}</p>
+                ))}
+                <p className="opacity-80">
+                  A leitura fica abaixo assim mesmo — leia com estes pontos em mente.
+                </p>
+              </div>
             )}
             <MarkdownContent content={leituraIA.markdown} />
           </div>
