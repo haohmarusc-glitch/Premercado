@@ -467,6 +467,49 @@ _LADO_AFIRMADO = re.compile(
     re.IGNORECASE)
 _LADO_DE_CIMA = ("acima", "above")
 
+# O lado afirmado SEM preco na clausula -- "-- ainda acima, mas em risco".
+#
+# Visto em producao (26/08/2026, terceira aparicao do MESMO defeito): BABA a
+# 119,83 contra suporte $126 saiu como "ainda acima, mas em risco". A regra
+# de cima exige o preco COLADO a afirmacao ("Preco $121, ACIMA do suporte");
+# aqui a frase e' eliptica -- o preco esta no MESMO paragrafo ("preco
+# 119.83"), so' nao ao lado. Ancoras afirmativas de proposito: "ainda/segue/
+# permanece/continua acima" nao casa com "nao esta acima".
+_LADO_ELIPTICO = re.compile(
+    r"\b(?:ainda|segue|permanece|continua)\s+(acima|abaixo|above|below)\b",
+    re.IGNORECASE)
+
+# Se a afirmacao NOMEIA outro referente ("continua acima da MM50"), o nivel
+# do plano nao e' o assunto e a checagem se cala.
+_REFERENTE_ALHEIO = re.compile(
+    r"^\s*(?:d[oa]s?\s+|the\s+)?(?:mm|sma|ema|vwap|m[ée]dia|banda|bollinger)",
+    re.IGNORECASE)
+
+_PRECO_NO_PARAGRAFO = re.compile(
+    r"pre[çc]o\s+(?:atual\s+)?(?:de\s+)?(?:us?\$\s*)?(\d+(?:[.,]\d+)?)",
+    re.IGNORECASE)
+
+# "earnings estao longe", "balanco distante", "fora do horizonte".
+_EARNINGS_LONGE = re.compile(
+    r"(?:earnings?|balan[cç]o|resultado)[^.\n]{0,60}?"
+    r"\b(?:long[eo]s?|distantes?|fora\s+do\s+horizonte)"
+    r"|\b(?:earnings?|balan[cç]o)\s+(?:esta[or]?\s+)?longe",
+    re.IGNORECASE)
+
+# "reacao media de -1,59%" -- o numero que o texto chama de reacao.
+_REACAO_MEDIA_CITADA = re.compile(
+    r"rea[cç][ãa]o\s+m[ée]dia\s+(?:de\s+)?([+-]?\d+(?:[.,]\d+)?)\s*%",
+    re.IGNORECASE)
+
+# Numero com cara de preco: 2 casas decimais ou cifrao. O contexto de nivel
+# (VWAP, media, banda, alvo) e' excluido no uso -- VWAP a 2% do preco NAO e'
+# um segundo preco.
+_PRECO_LIKE = re.compile(r"(?:us?\$\s*)?(\d{2,5}[.,]\d{2})\b")
+_CONTEXTO_DE_NIVEL = re.compile(
+    r"(?:vwap|sma|mm|ema|m[ée]dia|banda|bollinger|alvo|suporte|resist\w*|"
+    r"stop|s[12]|r[12]|m[áa]xima|m[íi]nima|target)\s*(?:\w+\s+){0,3}$",
+    re.IGNORECASE)
+
 # "-20,91% abaixo SMA50" / "3,45% vs SMA50" / "-19,11% abaixo da média
 # móvel de 50 dias" -- a distância do preço à média de 50, como o texto a
 # escreve. O snapshot traz `pct_above_sma50`, então isto é conferível.
@@ -785,6 +828,35 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                         f"{'acima' if preco > valor else 'abaixo'}. O lado "
                         f"errado inverte a acao que o plano pede.")
 
+        # 3c-bis) o lado ELIPTICO -- "-- ainda acima, mas em risco".
+        #
+        # Sem preco na clausula a regra de cima nao alcanca; o preco esta no
+        # paragrafo ("preco 119,83"), a comparacao e' a mesma. So' roda quando
+        # a afirmacao completa nao casou (senao reportaria o mesmo erro duas
+        # vezes) e quando ha' UM preco e o referente nao e' outra coisa.
+        if not _LADO_AFIRMADO.search(paragrafo):
+            precos_par = _PRECO_NO_PARAGRAFO.findall(paragrafo)
+            if len(set(precos_par)) == 1:
+                preco_par = float(precos_par[0].replace(",", "."))
+                for m in _LADO_ELIPTICO.finditer(paragrafo):
+                    depois = paragrafo[m.end():m.end() + 30]
+                    if _REFERENTE_ALHEIO.match(depois):
+                        continue  # "continua acima da MM50" fala de outra coisa
+                    lado = m.group(1).lower()
+                    _, especie, valor = min(
+                        niveis, key=lambda n: abs(n[0] - m.start()))
+                    if preco_par == valor:
+                        continue
+                    if (preco_par > valor) != (lado in _LADO_DE_CIMA):
+                        rep.add("ERROR", "NIVEL_LADO_INVERTIDO",
+                                f"Texto diz '{m.group(0)}' com o {especie} de "
+                                f"${valor:.2f} e o preço do parágrafo em "
+                                f"${preco_par:.2f} -- está "
+                                f"{'acima' if preco_par > valor else 'abaixo'}. "
+                                f"O lado errado esconde que o gatilho do "
+                                f"plano já disparou.")
+                        break
+
     # 3d) distância à SMA50 citada bate com `pct_above_sma50`?
     #
     # Visto em producao (26/08/2026): o paragrafo do INTC deu DOIS numeros
@@ -871,6 +943,99 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                     rep.add("ERROR", "RSI_CITADO_ERRADO",
                             f"Texto cita RSI {citado}, snapshot traz "
                             f"{real:.2f}.", ticker=tk)
+
+    # 3h) "earnings estão longe" com o balanço na porta.
+    #
+    # Visto em producao (26/08/2026): o veredito escreveu, para NVDA,
+    # "Earnings estão longe (próximo em nov/dez)" com o balanço saindo
+    # NAQUELE dia, depois do fechamento. `BLOCO_EARNINGS_NAO_ESTA_PROXIMO`
+    # cobre so' o inverso (declarar proximo estando longe), e "nov/dez" sem
+    # dia numerico escapa do casador de datas. Negar o evento e' pior que
+    # inflar um: quem le "longe" atravessa o print sem saber.
+    for tk, data in earnings.items():
+        try:
+            dias = (_parse_date(data) - as_of).days
+        except Exception:
+            continue
+        if not (0 <= dias <= 7):
+            continue
+        for seg in segmentos.get(tk, []):
+            m = _EARNINGS_LONGE.search(_norm(seg))
+            if m:
+                rep.add("ERROR", "EARNINGS_NEGADO_IMINENTE",
+                        f"Texto diz que os earnings estão longe, mas o "
+                        f"snapshot marca {data} -- {dias} dia(s). "
+                        f"Trecho: “{m.group(0)[:80]}”.", ticker=tk)
+                break
+
+    # 3i) a variação DO DIA vestida de estatística histórica.
+    #
+    # Visto em producao (26/08/2026): "NVDA experimenta reação média de
+    # -1,59% nos 21 pregões pós-earnings" -- -1,59% é a variação DAQUELE
+    # pregão; a média real do D+21 é -3,25%. O erro típico não é inventar
+    # número, é pegar o número CERTO com o rótulo errado (mesma família da
+    # ESTATISTICA_TROCADA da análise rápida). Gated no snapshot: sem
+    # `reacao_earnings` para o ticker não há fato para conferir, e a
+    # coincidência honesta não vira acusação.
+    for tk, r in (snapshot.get("reacao_earnings") or {}).items():
+        if not isinstance(r, dict):
+            continue
+        dia = (quotes.get(tk) or {}).get("change_percent")
+        if dia is None:
+            continue
+        reais = [v for v in (r.get("reacao_media_pct"),
+                             r.get("reacao_abs_media_pct")) if v is not None]
+        for seg in segmentos.get(tk, []):
+            for m in _REACAO_MEDIA_CITADA.finditer(_norm(seg)):
+                citado = float(m.group(1).replace(",", "."))
+                if any(abs(citado - v) <= 0.11 for v in reais):
+                    continue  # bate com a estatística de verdade
+                if abs(citado - float(dia)) <= 0.02:
+                    rep.add("ERROR", "REACAO_E_VARIACAO_DO_DIA",
+                            f"chama {citado:+.2f}% de 'reação média', mas esse "
+                            f"é o percentual DESTE pregão "
+                            f"(change {float(dia):+.2f}%). A reação histórica "
+                            f"do snapshot é |média| "
+                            f"{r.get('reacao_abs_media_pct')}%"
+                            + (f", assinada {r.get('reacao_media_pct'):+.2f}%"
+                               if r.get('reacao_media_pct') is not None
+                               else "") + ".", ticker=tk)
+                    break
+            else:
+                continue
+            break
+
+    # 3j) dois preços para o mesmo papel no mesmo parágrafo.
+    #
+    # Visto em producao (26/08/2026): o parágrafo de ARM usou 250,71 e 251,06
+    # como preço na MESMA frase. Um deles é o do snapshot; o outro não vem de
+    # lugar nenhum, e o leitor não sabe qual dos dois baliza os níveis.
+    #
+    # Janela de ±1% do preço do snapshot, estreita de propósito: VWAP e MM20
+    # costumam ficar a 2-5%, e nível citado perto do preço não é um segundo
+    # preço. O contexto de nível é excluído explicitamente por cima.
+    for tk, q in quotes.items():
+        preco_snap = q.get("price")
+        if not preco_snap:
+            continue
+        for seg in segmentos.get(tk, []):
+            vistos: set = set()
+            for m in _PRECO_LIKE.finditer(seg):
+                antes = seg[max(0, m.start() - 28):m.start()]
+                if _CONTEXTO_DE_NIVEL.search(antes):
+                    continue
+                v = float(m.group(1).replace(",", "."))
+                if abs(v - preco_snap) / preco_snap <= 0.01:
+                    vistos.add(v)
+            if len(vistos) >= 2:
+                lista = ", ".join(f"{v:.2f}" for v in sorted(vistos))
+                rep.add("WARN", "PRECO_INCONSISTENTE",
+                        f"o parágrafo usa {len(vistos)} preços diferentes "
+                        f"para o papel ({lista}); o snapshot marca "
+                        f"{preco_snap:.2f}. Um número só -- o do snapshot.",
+                        ticker=tk)
+                break
+
 
     # 3h) o preco citado bate com o do snapshot?
     #
@@ -1065,6 +1230,11 @@ RSI_SOBREVENDIDO_MAX = 35.0
 # COMPRAR com earnings a <= 2 pregões exige EARNINGS_PROXIMO nos
 # reason_codes -- a compra pode até ser defensável, mas nunca inconsciente.
 EARNINGS_PROXIMO_DIAS = 2
+# Teto de confiança para quem atravessa o balanço exposto. 0,75 porque o
+# proprio bloco usa 0,95 para "plano manda vender" e 0,45-0,65 para leituras
+# tecnicas -- acima de 0,75 na vespera e' certeza sobre um numero que ainda
+# nao saiu.
+CONFIANCA_MAXIMA_NA_VESPERA = 0.75
 # A partir de quantos dias EARNINGS_PROXIMO deixa de ser defensavel. Bem
 # acima da janela do veto (2 pregoes) de proposito: "proximo" e' julgamento, e
 # apontar aos 12 dias so' geraria alarme falso. Aos 70 -- o caso real -- nao
@@ -1291,6 +1461,39 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
                 rep.add("ERROR", "BLOCO_COMPRA_SEM_VETO_DECLARADO",
                         f"{acao} com earnings em {dias} pregão(ões) sem "
                         f"EARNINGS_PROXIMO nos reason_codes.", ticker=tk)
+            # O GATE endurece o veto (26/08/2026): declarar EARNINGS_PROXIMO
+            # tornava a compra consciente, mas consciente não é sustentada --
+            # na véspera a técnica que justificaria COMPRAR ainda não sabe o
+            # número que sai em horas. A Análise Rápida ganhou este gate na
+            # #413; o bloco do veredito era a última porta aberta. VENDER e
+            # REDUZIR ficam fora do gate: tirar risco não espera balanço.
+            if dias is not None and 0 <= dias <= EARNINGS_PROXIMO_DIAS:
+                rep.add("ERROR", "BLOCO_DIRECIONAL_NA_VESPERA",
+                        f"{acao} com o balanço em {dias} pregão(ões) e a "
+                        f"sessão de reação ainda por vir -- a técnica sozinha "
+                        f"não sustenta entrada antes do número. O gate pede "
+                        f"MANTER com EARNINGS_PROXIMO declarado.", ticker=tk)
+
+        # Confiança alta com evento binário na janela. MANTER a 95% na
+        # véspera afirma uma certeza que o balanço de amanhã pode desmontar
+        # em um gap -- o MRVL do dia saiu honesto (45%), mas nada impedia o
+        # contrário. Só ações que ATRAVESSAM o evento expostas; VENDER 95%
+        # por stop acionado é o plano falando, não excesso de fé.
+        if acao not in ACOES_DE_SAIDA and tk in earnings:
+            try:
+                dias_conf = (_parse_date(earnings[tk]) - as_of).days
+            except Exception:
+                dias_conf = None
+            conf = item.get("confidence")
+            if dias_conf is not None and 0 <= dias_conf <= EARNINGS_PROXIMO_DIAS \
+                    and isinstance(conf, (int, float)) \
+                    and conf > CONFIANCA_MAXIMA_NA_VESPERA:
+                rep.add("WARN", "BLOCO_CONFIANCA_NA_VESPERA",
+                        f"{acao} com confiança {conf:.0%} e balanço em "
+                        f"{dias_conf} pregão(ões) -- o evento ainda não "
+                        f"aconteceu, e confiança acima de "
+                        f"{CONFIANCA_MAXIMA_NA_VESPERA:.0%} na véspera afirma "
+                        f"o que ninguém sabe.", ticker=tk)
 
     # ── o bloco contra o Plano de Saída ─────────────────────────────────────
     #
