@@ -69,16 +69,36 @@ def _frases(texto: str) -> list:
     return re.split(r"(?<=[.!?])\s+|\n+", texto)
 
 
-def _num_br(valor: float) -> list:
-    """As grafias em que um preço pode legitimamente aparecer no texto.
+def _grafias(valor: float, inteiro_ok: bool) -> list:
+    """As grafias em que um número pode legitimamente aparecer no texto.
 
-    O modelo escreve em pt-BR ("US$ 225,01"), mas o JSON traz 225.01 -- checar
-    só uma das formas produziria apontamento contra texto correto."""
-    inteiro = f"{valor:.2f}"
-    return [inteiro, inteiro.replace(".", ","),
-            f"{valor:,.2f}".replace(",", "@").replace(".", ",").replace("@", "."),
-            f"{valor:.1f}", f"{valor:.1f}".replace(".", ","),
-            f"{int(round(valor))}"]
+    O modelo escreve em pt-BR ("US$ 225,01") e o JSON traz 225.01 -- checar só
+    uma das formas apontaria contra texto correto.
+
+    `inteiro_ok` separa dois usos que NÃO podem compartilhar a mesma régua.
+    Para PREÇO, "US$ 180" é escrita legítima de 180.00 e o inteiro precisa
+    entrar. Para PERCENTUAL pequeno, não: o arredondamento de 1,38% para "1"
+    transformava a checagem em coringa. Foi o que aconteceu na segunda rodada
+    real (ADI, 26/08/2026) -- run-up de 1,38%, grafia "1", e qualquer frase com
+    verbo de reação e um algarismo 1 virava apontamento."""
+    grafias = [f"{valor:.2f}", f"{valor:.2f}".replace(".", ","),
+               f"{valor:,.2f}".replace(",", "@").replace(".", ",").replace("@", "."),
+               f"{valor:.1f}", f"{valor:.1f}".replace(".", ",")]
+    if inteiro_ok:
+        grafias.append(f"{int(round(valor))}")
+    return grafias
+
+
+def _cita_numero(texto: str, valor: float, *, inteiro_ok: bool = False) -> bool:
+    """O texto cita este número, com FRONTEIRA.
+
+    Substring era o defeito: "1" casava dentro de "1,38", de "21" e até de
+    "2026". A fronteira exige que não haja dígito, ponto ou vírgula colados --
+    "1,38" não casa dentro de "11,38" nem de "1,385"."""
+    for g in _grafias(valor, inteiro_ok):
+        if re.search(rf"(?<![\d.,]){re.escape(g)}(?![\d])", texto):
+            return True
+    return False
 
 
 def validar_analise(texto: str, dados: dict | None = None) -> list:
@@ -122,12 +142,17 @@ def validar_analise(texto: str, dados: dict | None = None) -> list:
     momentum = ((dados.get("technicals") or {}).get("momentumAnnualPct")
                 or (dados.get("snapshot") or {}).get("momentumAnnualPct"))
     if isinstance(momentum, (int, float)):
-        for grafia in _num_br(abs(float(momentum))):
+        # inteiro_ok aqui, ao contrário da checagem de reação: o modelo escreve
+        # "106%", não "106,00%". O risco de coringa é baixo porque o número
+        # tem que vir COLADO ao % e seguido de "em N dias" -- construção bem
+        # mais específica que "aparece numa frase com verbo de reação".
+        for grafia in _grafias(abs(float(momentum)), inteiro_ok=True):
             # Radicais, não palavras inteiras: "pregão"/"pregões" chegam aqui
             # já sem acento ("pregao"/"pregoes") e a forma plural não casaria
             # com a singular. As variantes acentuadas seriam letra morta --
             # `prosa_sa` já passou por _sem_acento.
-            if re.search(rf"{re.escape(grafia)}\s*%\s*(?:em|nos?|durante)\s+\d+\s*"
+            if re.search(rf"(?<![\d.,]){re.escape(grafia)}\s*%\s*"
+                         rf"(?:em|nos?|durante)\s+\d+\s*"
                          rf"(?:dia|preg|seman|mes)\w*", prosa_sa):
                 add("ERRO", "ANALISE_MOMENTUM_COMO_PERIODO",
                     f"apresenta o momentum de {momentum}% como variação de um "
@@ -142,7 +167,7 @@ def validar_analise(texto: str, dados: dict | None = None) -> list:
         valores = sorted(float(v) for v in por_painel.values())
         extremos = (valores[0], valores[-1])
         ausentes = [v for v in extremos
-                    if not any(g in prosa for g in _num_br(v))]
+                    if not _cita_numero(prosa, v, inteiro_ok=True)]
         if ausentes:
             add("ERRO", "ANALISE_DIVERGENCIA_OMITIDA",
                 f"os painéis divergem {preco['divergenciaPct']}% e o texto não "
@@ -216,7 +241,7 @@ def validar_analise(texto: str, dados: dict | None = None) -> list:
         for frase in _frases(prosa_sa):
             if not re.search(r"reag\w+|rea[cç][aã]o", frase):
                 continue
-            if any(g in frase for g in _num_br(abs(float(ex_evento)))):
+            if _cita_numero(frase, abs(float(ex_evento)), inteiro_ok=False):
                 add("ERRO", "ANALISE_RUNUP_COMO_REACAO",
                     f"apresenta o run-up de {ex_evento}% como se fosse a REAÇÃO "
                     f"ao balanço — são coisas opostas: o run-up é o que veio "
