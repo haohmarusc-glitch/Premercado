@@ -228,9 +228,23 @@ def test_bloco_de_codigo_nao_e_lintado():
     assert "ANALISE_MOEDA_ERRADA" not in _codigos(achados)
 
 
-def test_texto_vazio_nao_estoura():
-    assert validar_analise("", {}) == []
-    assert validar_analise(None, None) == []
+@pytest.mark.parametrize("resposta", [None, "", "   ", "```\n{'a': 1}\n```", 42])
+def test_resposta_nao_utilizavel_e_ERRO_e_nao_aprovacao(resposta):
+    """O buraco mais perigoso que a auditoria de 26/08/2026 encontrou: lista
+    vazia de achados é lida por quem chama como "nada destoa". Resposta vazia,
+    timeout convertido em string e resposta só-com-bloco-de-código eram
+    APROVADAS — falha de geração publicada como análise conferida."""
+    achados = validar_analise(resposta, {})
+    assert "ANALISE_TEXTO_VAZIO" in _codigos(achados)
+    assert erros(achados), "tem que impedir publicação, não só avisar"
+
+
+def test_entrada_degenerada_nao_estoura():
+    """Devolve lista, nunca exceção — mas com o ERRO dentro, não vazia."""
+    for texto, dados in (("", {}), (None, None), ("", None)):
+        achados = validar_analise(texto, dados)
+        assert isinstance(achados, list)
+        assert "ANALISE_TEXTO_VAZIO" in _codigos(achados)
 
 
 def test_bloco_de_correcao_so_leva_os_erros():
@@ -455,3 +469,192 @@ def test_acento_separa_a_copula_da_conjuncao():
     assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
         validar_analise(_texto_completo(
             "R1 e a resistência de julho ficam acima do preço.")))
+
+
+# ═══ auditorias de 26/08/2026 — os casos que se reproduziram ════════════════
+#
+# Quatro auditorias independentes leram o validador. Cada alegação foi RODADA
+# contra o código antes de qualquer correção; o que segue é o que se
+# reproduziu, sempre no par que importa: o texto CORRETO que era apontado e o
+# erro DE VERDADE que não pode sumir junto com o alarme falso.
+
+# ── recomendação: a regra que o prompt trata como dura cobria seis formas ───
+
+@pytest.mark.parametrize("frase", [
+    "Compre WOLF agora.",
+    "Venda antes do balanço.",
+    "Minha recomendação de compra é clara.",
+    "Eu compraria neste nível.",
+    "Melhor vender antes do balanço.",
+    "Rating: BUY.",
+    "O investidor deveria montar posição.",
+    "É uma boa oportunidade de compra.",
+])
+def test_recomendacao_disfarcada_continua_sendo_recomendacao(frase):
+    assert "ANALISE_RECOMENDACAO" in _codigos(validar_analise(_texto_completo(frase)))
+
+
+@pytest.mark.parametrize("frase", [
+    "Dada a análise atual e todos os indicadores, não é hora de comprar AVGO.",
+    "Não vou recomendar comprar nem vender.",
+    "Isto não é recomendação de compra.",
+    "A decisão é do leitor.",
+])
+def test_recusar_ou_negar_a_recomendacao_e_obediencia(frase):
+    """A janela de negação é a FRASE inteira: a versão anterior olhava 40
+    caracteres antes do match e perdia o "não" em frases longas."""
+    assert "ANALISE_RECOMENDACAO" not in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+# ── seções: substring aceitava título errado e recusava título certo ────────
+
+@pytest.mark.parametrize("titulo", ["## Síntese", "**Síntese**", "### Síntese",
+                                    "## 3. Síntese", "##Síntese", "## SÍNTESE",
+                                    "## Síntese:"])
+def test_cabecalho_da_secao_em_qualquer_forma_conta(titulo):
+    from agent.analise_rapida_validator import _secao_presente
+    assert _secao_presente(titulo, "Síntese") is True
+
+
+def test_titulo_que_continua_nao_e_a_secao():
+    """"## Síntese preliminar descartada" passava como se fosse a Síntese."""
+    from agent.analise_rapida_validator import _secao_presente
+    assert _secao_presente("## Síntese preliminar descartada", "Síntese") is False
+
+
+# ── moeda: ecoar a regra não é desobedecê-la ───────────────────────────────
+
+@pytest.mark.parametrize("frase", [
+    "Não converter para R$.",
+    "Nunca use R$ nesta tela.",
+    "O câmbio está em R$ 5,40 por dólar.",
+])
+def test_citar_a_regra_ou_o_cambio_nao_e_erro_de_moeda(frase):
+    assert "ANALISE_MOEDA_ERRADA" not in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+def test_preco_do_ativo_em_real_continua_erro():
+    assert "ANALISE_MOEDA_ERRADA" in _codigos(
+        validar_analise(_texto_completo("O papel vale R$ 1.200,00.")))
+
+
+# ── próximo balanço: o braço solto virava coringa ──────────────────────────
+
+_RUNUP_OCORRIDO = {"reaction": {"summary": {"runup": {
+    "janela_contem_earnings": True, "pregoes_desde_earnings": 4}}}}
+
+
+def test_mencionar_o_proximo_balanco_sem_pendurar_esticamento_passa():
+    """"O próximo balanço está previsto para novembro" é frase correta e
+    informativa — e virava ERRO porque o regex tinha uma alternativa solta."""
+    assert "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO" not in _codigos(
+        validar_analise(_texto_completo(
+            "O próximo balanço está previsto para novembro."), _RUNUP_OCORRIDO))
+
+
+def test_pendurar_o_esticamento_no_proximo_balanco_continua_erro():
+    assert "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO" in _codigos(
+        validar_analise(_texto_completo(
+            "O preço está esticado em relação ao próximo balanço."),
+            _RUNUP_OCORRIDO))
+
+
+@pytest.mark.parametrize("frase,cai", [
+    ("O papel chegará esticado ao balanço.", True),
+    ("O papel chega esticado ao balanço.", True),
+    ("O papel chegou esticado ao balanço.", False),
+    ("O papel chegava esticado ao balanço.", False),
+    ("O papel chegara esticado ao balanço.", False),
+])
+def test_o_tempo_do_verbo_decide(frase, cai):
+    """"chegará" (futuro, erro) e "chegara" (mais-que-perfeito, correto) viram
+    a MESMA palavra sem acento — por isso esta checagem roda sobre o texto
+    acentuado."""
+    achados = _codigos(validar_analise(_texto_completo(frase), _RUNUP_OCORRIDO))
+    assert ("ANALISE_BALANCO_NO_FUTURO" in achados) is cai
+
+
+# ── run-up x reação: o número precisa ser o PREDICADO ──────────────────────
+
+_RUNUP_WOLF = {"reaction": {"summary": {"runup": {
+    "janela_contem_earnings": True, "pregoes_desde_earnings": 4,
+    "runup_atual_ex_evento_pct": 14.92}}}}
+
+
+@pytest.mark.parametrize("frase", [
+    "Reação foi -7,53% após run-up de 14,92%.",
+    "O run-up de 14,92% precedeu a reação.",
+    "A reação foi medida 14,92 horas depois.",
+    "A reação ocorreu em 2026-08-19.",
+])
+def test_distinguir_run_up_de_reacao_e_a_redacao_pedida(frase):
+    """A frase que NOMEIA o run-up está fazendo a distinção que o SYSTEM pede;
+    apontá-la é punir obediência. E sem o `%` colado, "14,92 horas" casava."""
+    assert "ANALISE_RUNUP_COMO_REACAO" not in _codigos(
+        validar_analise(_texto_completo(frase), _RUNUP_WOLF))
+
+
+def test_apresentar_o_run_up_como_reacao_continua_erro():
+    """O pior erro da rodada de WOLF: 14,92% é o run-up e a reação foi -7,53%,
+    então citá-lo como reação INVERTE o sinal do que aconteceu."""
+    assert "ANALISE_RUNUP_COMO_REACAO" in _codigos(
+        validar_analise(_texto_completo("O papel reagiu com 14,92% de alta."),
+                        _RUNUP_WOLF))
+
+
+# ── momentum: zero é valor, não ausência ───────────────────────────────────
+
+def test_momentum_zero_nao_cai_para_o_outro_painel():
+    """`technicals or snapshot` tratava 0.0 como ausente e checava o texto
+    contra um número que não era o do painel técnico."""
+    achados = _codigos(validar_analise(
+        _texto_completo("O papel subiu 80% em 3 dias."),
+        {"technicals": {"momentumAnnualPct": 0.0},
+         "snapshot": {"momentumAnnualPct": 80.0}}))
+    assert "ANALISE_MOMENTUM_COMO_PERIODO" not in achados
+
+
+def test_declarar_a_taxa_como_anualizada_passa():
+    assert "ANALISE_MOMENTUM_COMO_PERIODO" not in _codigos(validar_analise(
+        _texto_completo("O momentum anualizado é de 106% em 90 pregões."),
+        {"technicals": {"momentumAnnualPct": 106.0}}))
+
+
+# ── payload torto vira achado, não exceção ─────────────────────────────────
+
+@pytest.mark.parametrize("dados", [
+    {"reaction": {"summary": "n/d"}},
+    {"precoAtual": {"divergenciaPct": 3.0, "porPainel": {"a": "N/A", "b": 190.0}}},
+    {"precoAtual": "sem preço"},
+    {"technicals": ["lista"]},
+    ["lista no lugar do dict"],
+    "string no lugar do dict",
+    None,
+])
+def test_payload_malformado_nao_derruba_a_validacao(dados):
+    """Validador que morre com payload torto não protege publicação nenhuma."""
+    assert isinstance(validar_analise(_texto_completo("Texto qualquer."), dados),
+                      list)
+
+
+def test_preco_nao_numerico_e_ignorado_sem_calar_a_divergencia():
+    """Um "N/A" no meio não pode nem explodir nem apagar a checagem: os dois
+    preços legíveis continuam sendo cobrados."""
+    achados = _codigos(validar_analise(
+        _texto_completo("O papel está caro."),
+        {"precoAtual": {"divergenciaPct": 5.0,
+                        "porPainel": {"a": "N/A", "b": 180.0, "c": 190.0}}}))
+    assert "ANALISE_DIVERGENCIA_OMITIDA" in achados
+
+
+# ── banda: a negação vale na FRASE, não só no trecho casado ────────────────
+
+def test_negar_o_nivel_com_a_banda_no_meio_passa():
+    """"Não é o suporte R1" casava como "suporte r1", sem o "não" dentro do
+    trecho — a antinegação da versão anterior olhava só `m.group(0)`."""
+    for frase in ("Não é o suporte R1, é banda de volatilidade.",
+                  "S1 e S2 não são suporte; a resistência é a máxima."):
+        assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+            validar_analise(_texto_completo(frase)))

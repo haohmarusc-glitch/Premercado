@@ -158,6 +158,7 @@ from agent.teto_tokens import MAX_TOKENS, teto_de_tokens  # noqa: E402,F401
 from agent.analise_rapida_validator import (  # noqa: E402
     bloco_de_correcao as bloco_de_correcao_analise,
     erros as erros_de_analise,
+    linha_de_log as linha_de_log_analise,
     resumo_legivel as resumo_da_analise,
     validar_analise)
 
@@ -631,6 +632,11 @@ def analisar(dados: dict) -> dict:
             # converge -- insistir só gasta o orçamento que a tela espera.
             achados = validar_analise(texto, dados)
             duros = erros_de_analise(achados)
+            # UMA linha sempre, inclusive com zero achados: sem ela "o
+            # validador aprovou" e "o validador nem rodou" ficam idênticos no
+            # log, e essa ambiguidade já custou duas rodadas de diagnóstico.
+            print(f"[analise_rapida_ia] {linha_de_log_analise('analise', achados)}",
+                  file=sys.stderr, flush=True)
             gasto = time.monotonic() - _INICIO
             if duros and not _ja_tentou_corrigir and gasto + _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S:
                 for linha in resumo_da_analise(duros):
