@@ -92,6 +92,49 @@ N_EVENTOS_DECLARAR = 5
 
 _ESTADOS = ("esticado", "descontado")
 
+# O rotulo so' CONTRADIZ o dado quando a frase o ATRIBUI ao papel. Duas frases
+# reais de 26/08/2026 caíram como ERRO sem afirmar estado nenhum:
+#
+#   "...embora com apenas 1 evento em cada bucket de esticado/descontado."
+#   "...com 3 dos 3 casos esticados reagindo negativamente em media -9,67%."
+#
+# Nas duas o rotulo nomeia um BALDE HISTORICO -- quantos balanços passados
+# chegaram naquele estado --, não o estado de hoje. Pior: no mesmo texto o
+# modelo dizia, corretamente, que NVDA e AVGO estão "neutro". Dois ERROs
+# vermelhos num texto certo custam mais que o acerto que a checagem entrega:
+# ensinam o leitor a ignorar a caixa amarela inteira.
+#
+# Por isso a checagem exige um ATRIBUIDOR colado ao rotulo -- copula, verbo de
+# permanencia ou marca de classificação. "chegou/chega esticado" ficou DE FORA
+# de proposito: e' a forma com que o proprio card descreve o balde histórico
+# ("Padrão 'chegou esticado': em 0 de 1 balanços..."), e o modelo repete essa
+# frase. Perder "ARM chega esticado ao balanço" e' um falso negativo barato.
+_ATRIBUI_ESTADO = (
+    r"est[áa]|est[ãa]o|estava|estavam|"
+    r"continua|continuam|permanece|permanecem|segue|seguem|"
+    r"encontra-se|encontram-se|fica|ficam|aparece|aparecem|"
+    r"classificad[oa]s?\s+como|categorizad[oa]s?\s+como|"
+    r"considerad[oa]s?\s+como|marcad[oa]s?\s+como|"
+    r"na\s+categoria(?:\s+de)?|no\s+estado(?:\s+de)?|estado(?:\s+atual)?\s+de|"
+    r"[\u2192>]"
+)
+
+# O vao entre o atribuidor e o rotulo NAO atravessa pontuacao de clausula --
+# mesma regra de `afirmacao_negada`, pelo mesmo motivo. Em "AVGO esta neutro,
+# longe de esticado ou descontado" a virgula corta a cadeia e "esticado" nao e'
+# lido como atribuido. Aspas cabem no vao: 'na categoria "esticado"'.
+#
+# Dois-pontos ficam DE FORA da lista de cortes: em "Estado atual de NVDA:
+# esticado" o ':' nao separa duas afirmacoes, ele introduz o valor atribuido --
+# e' a forma canonica de rotular, nao uma fronteira.
+_VAO_ATE_O_ROTULO = r"[^,;.!?\n]{0,24}?"
+
+
+def _estado_atribuido(frase: str, rotulo: str) -> bool:
+    """A frase ATRIBUI `rotulo` ao papel, em vez de so' mencionar a palavra."""
+    return bool(re.search(rf"(?:{_ATRIBUI_ESTADO}){_VAO_ATE_O_ROTULO}{rotulo}",
+                          frase, re.IGNORECASE))
+
 
 def _trechos_do_ticker(texto: str, ticker: str) -> list:
     """As frases que citam o ticker. A checagem é por FRASE, não pelo texto
@@ -230,6 +273,8 @@ def validar_leitura(texto, resultados, correlacoes=None) -> list:
                     continue
                 if afirmacao_negada(frase, rotulo):
                     continue  # o texto está NEGANDO o rótulo -- é obediência
+                if not _estado_atribuido(frase, rotulo):
+                    continue  # a palavra nomeia um balde histórico, não o papel
                 add("ERRO", "LEITURA_ESTADO_CONTRADITO",
                     f"diz que {tk} está '{rotulo}', mas o dado do dia "
                     f"marca '{estado}'.", ticker=tk)
