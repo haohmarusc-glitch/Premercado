@@ -10,7 +10,8 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_veredito
 
 import pytest
 
-from agent.veredito_validator import lint_veredito, validate_snapshot
+from agent.veredito_validator import (lint_veredito, validar_bloco_estruturado,
+                                      validate_snapshot)
 
 SNAPSHOT = {
     "as_of": "2026-07-31",
@@ -343,3 +344,109 @@ def test_o_nivel_vem_do_paragrafo_e_nao_atravessa_linhas():
     texto = ("BABA: vender se quebrar suporte $126.\n"
              "ADI: preço $372, acima do suporte.")
     assert "NIVEL_LADO_INVERTIDO" not in _codigos(texto)
+
+
+# ═══ Veredito de 26/08/2026, segunda leva ═════════════════════════════════
+#
+# Três divergências que sobraram da primeira leitura, todas conferíveis
+# contra o snapshot -- e é por isso que valem checagem: o número CERTO passa
+# e só o inventado cai.
+
+_SNAP_2608 = {
+    "as_of": "2026-08-26",
+    "quotes": {"INTC": {}, "SKHY": {}, "ARM": {}},
+    "earnings": {"INTC": "2026-10-22", "ARM": "2026-11-04"},
+    "technicals": {
+        "INTC": {"rsi": 36.0, "rsi_date": "2026-08-26", "pct_above_sma50": -19.11},
+        "SKHY": {"rsi": 51.0, "rsi_date": "2026-08-26", "pct_above_sma50": -21.18},
+        "ARM": {"rsi": 38.2, "rsi_date": "2026-08-26", "pct_above_sma50": -18.81},
+    },
+}
+
+
+def _cods_2608(texto):
+    return sorted({i.code
+                   for i in lint_veredito(texto, dict(_SNAP_2608)).issues})
+
+
+# ── distância à SMA50: o parágrafo do INTC deu DOIS números ───────────────
+
+def test_o_numero_inventado_cai_e_o_certo_passa():
+    """"$85,74 (-20,91% abaixo SMA50 em $106)" e "-19,11% abaixo média móvel
+    de 50 dias" no MESMO parágrafo. Com $106 o certo é -19,11%. Conferir
+    contra o dado (e não só contra si mesmo) é o que separa os dois."""
+    assert "SMA50_DISTANCIA_ERRADA" in _cods_2608(
+        "INTC: $85,74 (-20,91% abaixo SMA50 em $106), RSI 36,0.")
+    assert "SMA50_DISTANCIA_ERRADA" not in _cods_2608(
+        "INTC: EMA21 em 95,26, -19,11% abaixo média móvel de 50 dias.")
+
+
+@pytest.mark.parametrize("texto", [
+    "ARM: $238,91 (-18,81% abaixo SMA50 em $294).",
+    "SKHY: -21,18% abaixo SMA50 — correção em progresso.",
+])
+def test_distancia_correta_a_sma50_passa(texto):
+    assert "SMA50_DISTANCIA_ERRADA" not in _cods_2608(texto)
+
+
+def test_a_palavra_carrega_o_sinal_quando_o_numero_nao_traz():
+    """"21,18% ABAIXO" é o mesmo que -21,18%. Sem ler a palavra, o validador
+    compararia +21,18 contra -21,18 e apontaria texto correto."""
+    assert "SMA50_DISTANCIA_ERRADA" not in _cods_2608(
+        "SKHY: 21,18% abaixo da SMA50.")
+    assert "SMA50_DISTANCIA_ERRADA" in _cods_2608(
+        "SKHY: 21,18% acima da SMA50.")
+
+
+# ── a CONTAGEM de dias, com a data certa ──────────────────────────────────
+
+def test_data_certa_com_conta_errada():
+    """"INTC: Earnings 63 dias (22/out)" — a data confere e a conta não.
+    De 26/08 a 22/10 são 57 dias. EARNINGS_DATE_MISMATCH só olha a data,
+    então este erro passava inteiro."""
+    assert "DIAS_ATE_EARNINGS_ERRADO" in _cods_2608(
+        "INTC: Earnings 63 dias (22/out), sem catalisador próximo.")
+
+
+@pytest.mark.parametrize("texto", [
+    "INTC: Earnings 57 dias (22/out), sem catalisador próximo.",
+    "ARM: Earnings 70 dias (4/nov), sem catalisador próximo.",
+    # O texto pode contar em pregões e o snapshot em dias corridos.
+    "INTC: Earnings 59 dias, sem catalisador próximo.",
+])
+def test_contagem_certa_ou_dentro_da_folga_passa(texto):
+    assert "DIAS_ATE_EARNINGS_ERRADO" not in _cods_2608(texto)
+
+
+# ── reason_code de tendência contra a SMA50 ───────────────────────────────
+
+def _bloco(tk, codes, pct=None):
+    snap = dict(_SNAP_2608)
+    if pct is not None:
+        snap = {**snap, "technicals": {**snap["technicals"],
+                tk: {"rsi": 50, "rsi_date": "2026-08-26", "pct_above_sma50": pct}}}
+    b = {"tickers": [{"ticker": tk, "action": "MANTER", "confidence": 0.5,
+                      "reason_codes": codes}]}
+    return [i.code for i in validar_bloco_estruturado(b, snap).issues]
+
+
+def test_tendencia_alta_com_preco_muito_abaixo_da_sma50():
+    """SKHY saiu com TENDENCIA_ALTA no bloco enquanto a prosa do mesmo
+    veredito dizia "-21,18% abaixo SMA50 — correção em progresso". O rótulo
+    é o que a máquina lê."""
+    assert "BLOCO_REASON_CONTRADITO" in _bloco("SKHY", ["TENDENCIA_ALTA"])
+
+
+def test_tendencia_baixa_com_preco_muito_acima_da_sma50():
+    assert "BLOCO_REASON_CONTRADITO" in _bloco("ARM", ["TENDENCIA_BAIXA"], pct=12.0)
+
+
+@pytest.mark.parametrize("tk,codes,pct", [
+    ("SKHY", ["TENDENCIA_BAIXA"], None),
+    ("ARM", ["TENDENCIA_ALTA"], 12.0),
+    # Perto da média não há tendência a declarar, e exigir uma seria inventar.
+    ("ARM", ["TENDENCIA_ALTA"], -2.0),
+    ("ARM", ["TENDENCIA_BAIXA"], 2.0),
+])
+def test_tendencia_coerente_ou_na_faixa_morta_passa(tk, codes, pct):
+    assert "BLOCO_REASON_CONTRADITO" not in _bloco(tk, codes, pct)

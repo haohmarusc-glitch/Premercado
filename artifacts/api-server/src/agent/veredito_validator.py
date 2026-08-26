@@ -257,6 +257,22 @@ _LADO_AFIRMADO = re.compile(
     r"(suporte|resist[êe]ncia|stop)",
     re.IGNORECASE)
 
+# "-20,91% abaixo SMA50" / "3,45% vs SMA50" / "-19,11% abaixo da média
+# móvel de 50 dias" -- a distância do preço à média de 50, como o texto a
+# escreve. O snapshot traz `pct_above_sma50`, então isto é conferível.
+_PCT_VS_SMA50 = re.compile(
+    r"([+-]?\d{1,3}[.,]\d{1,2})\s*%\s*"
+    r"(?:(abaixo|acima)\s+(?:d[ao]\s+)?)?"
+    r"(?:vs\.?\s+)?"
+    r"(?:sma\s?50|m[ée]dia\s+m[óo]vel\s+de\s+50|m[ée]dia\s+de\s+50)",
+    re.IGNORECASE)
+
+# "Earnings 63 dias (22/out)" / "earnings em 70 dias" -- a CONTAGEM, que o
+# texto deriva e às vezes erra mesmo acertando a data.
+_DIAS_ATE_EARNINGS = re.compile(
+    r"earnings?[^.\n]{0,20}?(\d{1,3})\s*dias|(\d{1,3})\s*dias[^.\n]{0,20}?earnings?",
+    re.IGNORECASE)
+
 _TICKER_FLAT = re.compile(
     r"\b([A-Z]{2,5})\b[^.\n]{0,40}?\b((?i:flat|estavel|estável|lateral|sem variacao|sem variação))\b"
 )
@@ -319,6 +335,7 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     year = year or as_of.year
     quotes: dict = snapshot.get("quotes", {})
     earnings: dict = snapshot.get("earnings", {})
+    technicals: dict = snapshot.get("technicals", {})
     norm_text = _norm(texto)
 
     # 1) dia da semana citado bate com o calendario?
@@ -427,6 +444,53 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                         f"{'acima' if preco > valor else 'abaixo'}. O lado "
                         f"errado inverte a acao que o plano pede.")
 
+    # 3d) distância à SMA50 citada bate com `pct_above_sma50`?
+    #
+    # Visto em producao (26/08/2026): o paragrafo do INTC deu DOIS numeros
+    # para a mesma relacao -- "-20,91% abaixo SMA50 em $106" e "-19,11%
+    # abaixo media movel de 50 dias". Com $106 e preco $85,74 o certo e
+    # -19,11%; o outro nao vem de lugar nenhum.
+    #
+    # Confere contra o DADO, nao so contra si mesmo: assim o numero certo
+    # passa e so o inventado cai.
+    for tk, tec in technicals.items():
+        real = tec.get("pct_above_sma50")
+        if not isinstance(real, (int, float)):
+            continue
+        for m in re.finditer(rf"{tk.lower()}[^.\n]{{0,200}}", norm_text):
+            for pm in _PCT_VS_SMA50.finditer(m.group(0)):
+                citado = float(pm.group(1).replace(",", "."))
+                # "20,91% ABAIXO" e' o mesmo que -20,91%: a palavra carrega o
+                # sinal quando o numero vem sem ele.
+                if pm.group(2) and pm.group(2).lower() == "abaixo":
+                    citado = -abs(citado)
+                elif pm.group(2) and pm.group(2).lower() == "acima":
+                    citado = abs(citado)
+                if abs(citado - real) > SMA50_TOLERANCIA_PP:
+                    rep.add("ERROR", "SMA50_DISTANCIA_ERRADA",
+                            f"Texto cita {citado:+.2f}% em relacao a SMA50, "
+                            f"snapshot traz {real:+.2f}%.", ticker=tk)
+
+    # 3e) a CONTAGEM de dias ate earnings bate com a data?
+    #
+    # Visto em producao (26/08/2026): "INTC: Earnings 63 dias (22/out)". A
+    # data esta certa e a conta nao -- de 26/08 a 22/10 sao 57 dias, que e'
+    # o que o painel mostrava. EARNINGS_DATE_MISMATCH so olha a data, entao
+    # este erro passava inteiro.
+    for tk, edate in earnings.items():
+        ed = _parse_date(edate)
+        real_dias = (ed - as_of).days
+        if real_dias < 0:
+            continue
+        for m in re.finditer(rf"{tk.lower()}[^.\n]{{0,200}}", norm_text):
+            for dm in _DIAS_ATE_EARNINGS.finditer(m.group(0)):
+                citado = int(dm.group(1) or dm.group(2))
+                if abs(citado - real_dias) > DIAS_EARNINGS_TOLERANCIA:
+                    rep.add("ERROR", "DIAS_ATE_EARNINGS_ERRADO",
+                            f"Texto diz {citado} dias ate o earnings de "
+                            f"{ed.isoformat()}, mas de {as_of} sao "
+                            f"{real_dias}.", ticker=tk)
+
     # 4) percentuais citados por ticker batem com o snapshot do dia?
     for m in _TICKER_PCT.finditer(texto):
         tk, pct_s = m.group(1), m.group(2).replace(",", ".")
@@ -485,7 +549,6 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     # RSI perto de sobrevenda com preço bem abaixo da SMA50 é o oposto:
     # capitulação/teste de suporte. O prompt já dizia isso em prosa e não
     # segurou -- ver comentário em DISTRIB_RSI_MAX.
-    technicals: dict = snapshot.get("technicals", {})
     if "distribuic" in norm_text:  # cobre distribuição/distribuicao/distributiva
         for tk, tec in technicals.items():
             rsi = tec.get("rsi")
@@ -582,6 +645,19 @@ RSI_SOBREVENDIDO_MAX = 35.0
 # reason_codes -- a compra pode até ser defensável, mas nunca inconsciente.
 EARNINGS_PROXIMO_DIAS = 2
 
+# Acima/abaixo disto a tendência declarada tem que bater com onde o preço
+# está em relação à média de 50. A faixa morta no meio existe porque perto da
+# média não há tendência nenhuma a declarar, e exigir uma seria inventar.
+TENDENCIA_PCT_SMA50 = 5.0
+
+# Folga entre a distância citada e a do snapshot. Um ponto percentual cobre
+# arredondamento de SMA50 escrita como "$106" no texto.
+SMA50_TOLERANCIA_PP = 1.0
+
+# Folga na contagem de dias até earnings: o texto pode contar em pregões e o
+# snapshot em dias corridos, e um fim de semana no meio explica alguns dias.
+DIAS_EARNINGS_TOLERANCIA = 4
+
 _BLOCO_JSON_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
@@ -668,6 +744,22 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
                 rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
                         f"RSI_SOBREVENDIDO com RSI {rsi:.1f} "
                         f"(> {RSI_SOBREVENDIDO_MAX:.0f}).", ticker=tk)
+
+        # Tendencia declarada contra onde o preco esta em relacao a SMA50.
+        #
+        # Visto em producao (26/08/2026): SKHY saiu com TENDENCIA_ALTA no
+        # bloco enquanto a prosa do mesmo veredito dizia "-21,18% abaixo
+        # SMA50 -- correcao em progresso". O rotulo e' o que a maquina le.
+        pct_sma50 = (technicals.get(tk) or {}).get("pct_above_sma50")
+        if isinstance(pct_sma50, (int, float)):
+            if "TENDENCIA_ALTA" in codes and pct_sma50 < -TENDENCIA_PCT_SMA50:
+                rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
+                        f"TENDENCIA_ALTA com o preco {pct_sma50:+.1f}% em "
+                        f"relacao a SMA50.", ticker=tk)
+            if "TENDENCIA_BAIXA" in codes and pct_sma50 > TENDENCIA_PCT_SMA50:
+                rep.add("ERROR", "BLOCO_REASON_CONTRADITO",
+                        f"TENDENCIA_BAIXA com o preco {pct_sma50:+.1f}% em "
+                        f"relacao a SMA50.", ticker=tk)
 
         # A tese de data center só pode ser citada na direção que o dado
         # mostra. Sem isto, CAPEX_ACELERANDO viraria o rótulo bonito que
