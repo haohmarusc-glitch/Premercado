@@ -1279,3 +1279,99 @@ def test_sem_faixa_no_payload_nao_inventa_achado():
     sem = {"precoAtual": {"valor": 1485.30}, "snapshot": {"price": 1485.30}}
     assert "ANALISE_DISTANCIA_DA_FAIXA" not in _codigos(validar_analise(
         _texto_completo("Está 58,51% abaixo da máxima de 52 semanas."), sem))
+
+
+# ── o texto NEGA dado que recebeu ──────────────────────────────────────────
+#
+# Incidente real (AMD, 26/08/2026), publicado com a caixa vazia. A linha de
+# fontes da tela dizia que as TRÊS camadas chegaram:
+#
+#   "camada fundamental: alvos de analistas (yfinance), valuation/DCF (FMP),
+#    notícias do feed"
+#
+# e a seção Fundamento e valuation dizia:
+#
+#   "Informações fundamentais e de valuation, como alvos de analistas e
+#    métricas de avaliação, não estavam disponíveis para AMD nesta análise."
+#
+# É o inverso exato do caso SNDK do mesmo dia: lá o dado faltava e a tela não
+# dizia por quê; aqui o dado veio e o texto o nega. Os dois saem da mesma
+# lacuna — ninguém conferia as afirmações do texto sobre a DISPONIBILIDADE do
+# dado, só sobre o valor dele.
+#
+# E negar dado presente é pior que omitir: quem lê "não estava disponível"
+# para de procurar. A informação estava a uma seção de distância.
+
+_COM_FUNDAMENTO = {
+    "precoAtual": {"valor": 482.76},
+    "snapshot": {"price": 482.76},
+    "_fundamento": {"alvosAnalistas": {"alvoMedio": 600.0, "consenso": "Buy"},
+                    "valuation": {"pe": 90.1, "dcf": 300.0}},
+}
+_SEM_FUNDAMENTO = {"precoAtual": {"valor": 482.76}, "snapshot": {"price": 482.76},
+                   "_fundamento": {}}
+
+_FRASE_AMD = ("Informações fundamentais e de valuation, como alvos de analistas "
+              "e métricas de avaliação, não estavam disponíveis para AMD nesta "
+              "análise.")
+
+
+def test_o_incidente_do_amd():
+    achados = validar_analise(_texto_completo(_FRASE_AMD), _COM_FUNDAMENTO)
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(achados)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_NEGA_DADO_PRESENTE")
+    assert "alvos de analistas" in msg and "valuation/DCF" in msg, \
+        "a mensagem tem que dizer O QUE estava na mão"
+
+
+def test_a_mesma_frase_passa_quando_e_verdade():
+    """O prompt MANDA dizer isso quando a camada não vem ("sem valuation nem
+    alvos, diga em uma linha que a fundamental não estava disponível e siga").
+    A frase é legítima — esta checagem é o que separa os dois casos."""
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(_FRASE_AMD), _SEM_FUNDAMENTO))
+
+
+@pytest.mark.parametrize("frase", [
+    "Não foi possível obter os alvos de analistas para este papel.",
+    "Métricas de valuation indisponíveis nesta rodada.",
+    "Não vieram dados de valuation da fonte.",
+    "Sem dados de fundamentos, a leitura fica só técnica.",
+])
+def test_outras_formas_de_negar_a_camada_caem(frase):
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _COM_FUNDAMENTO))
+
+
+@pytest.mark.parametrize("frase", [
+    # Negação sobre OUTRO dado: o sujeito não é a camada fundamental.
+    "O RSI não estava disponível no painel técnico.",
+    "Não há dados de volume intradiário para esta sessão.",
+    # Afirmação com a palavra "disponíveis" dentro: sem negação não é o caso.
+    "Os dados de valuation disponíveis mostram P/L de 90,1.",
+    "O consenso de analistas está disponível e aponta alvo de US$ 600,00.",
+    # Fala do valuation sem afirmar nada sobre disponibilidade.
+    "O valuation está esticado frente à média do setor.",
+])
+def test_frase_que_nao_nega_a_camada_passa(frase):
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _COM_FUNDAMENTO))
+
+
+def test_uma_camada_presente_ja_basta():
+    """"Não estavam disponíveis" é falso se QUALQUER bloco veio -- o leitor
+    para de procurar os dois."""
+    so_alvos = {**_COM_FUNDAMENTO,
+                "_fundamento": {"alvosAnalistas": {"alvoMedio": 600.0}}}
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(_FRASE_AMD), so_alvos))
+
+
+def test_blocos_espelham_os_coletores():
+    """As chaves aqui e em `analise_rapida_ia.COLETORES` descrevem os MESMOS
+    três blocos. Divergir faria a checagem ignorar em silêncio um bloco que a
+    coleta passou a trazer."""
+    from agent.analise_rapida_ia import COLETORES
+    from agent.analise_rapida_validator import _BLOCOS_FUNDAMENTAIS
+    assert {c for c, _ in _BLOCOS_FUNDAMENTAIS} == set(COLETORES)

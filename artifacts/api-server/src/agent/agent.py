@@ -1672,6 +1672,45 @@ def _folego_do_snapshot(tickers: list[str]) -> dict | None:
         return None
 
 
+def _plano_de_saida_do_snapshot(tickers: list[str]) -> dict | None:
+    """Itens PENDENTES do Plano de Saída, por ticker, para o snapshot.
+
+    Motivado por um veredito real (26/08/2026): o bloco estruturado saiu com
+    ARM e INTC em MANTER enquanto o painel Plano de Saída dizia, para os dois,
+    "Vender imediatamente -- stop-loss acionado", vencido havia 6 dias. E
+    nenhum dos dois declarou PLANO_DE_SAIDA nos reason_codes.
+
+    O plano é uma decisão que o usuário (ou uma reavaliação anterior) já
+    tomou. O veredito pode contrariá-la -- o mercado muda --, mas contrariar
+    em silêncio é outra coisa: quem lê a tabela vê MANTER e não fica sabendo
+    que existe uma ordem de venda vencida logo abaixo, na mesma tela.
+
+    Só itens `pending`: item já vendido ou pulado não é ordem em aberto.
+    Ausência vira ausência, como capex e fôlego -- sem plano, sem checagem.
+    """
+    try:
+        itens = t.get_exit_plan_items()
+        if not isinstance(itens, list):
+            return None
+        alvo = {tk.upper() for tk in tickers}
+        saida: dict = {}
+        for it in itens:
+            if not isinstance(it, dict) or it.get("error"):
+                continue
+            tk = str(it.get("ticker") or "").upper()
+            if tk not in alvo or str(it.get("status") or "pending") != "pending":
+                continue
+            saida.setdefault(tk, []).append({
+                "acao": str(it.get("action") or ""),
+                "data_alvo": it.get("targetDate"),
+                "fase": it.get("phaseLabel"),
+            })
+        return saida or None
+    except Exception as e:
+        print(f"[veredito] plano de saída indisponível: {e}", file=sys.stderr, flush=True)
+        return None
+
+
 def run_veredito(progress_callback=None) -> str:
     client = _get_client()
     tickers = config.PORTFOLIO_TICKERS
@@ -1698,6 +1737,12 @@ def run_veredito(progress_callback=None) -> str:
     sentimento = _sentimento_do_snapshot()
     if sentimento:
         snapshot["sentimento"] = sentimento
+    # Plano de Saída: a decisão que já estava tomada. Entra no snapshot para
+    # o bloco estruturado poder ser conferido CONTRA ela -- ver
+    # `_plano_de_saida_do_snapshot` e o check BLOCO_CONTRA_PLANO.
+    plano = _plano_de_saida_do_snapshot(tickers)
+    if plano:
+        snapshot["plano_de_saida"] = plano
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)

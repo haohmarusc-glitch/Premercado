@@ -28,9 +28,10 @@ cada checagem daqui passou a exigir o predicado, não a co-ocorrência.
 """
 import re
 
-from .validador_nucleo import (afirmacao_negada, caminho, cita_numero, frases,
-                               grafias, minusculas, num_finito, sem_acento,
-                               sem_blocos_de_codigo, texto_utilizavel)
+from .validador_nucleo import (afirmacao_negada, caminho, cita_numero, dic,
+                               frases, grafias, minusculas, num_finito,
+                               sem_acento, sem_blocos_de_codigo,
+                               texto_utilizavel)
 from .validador_nucleo import (avisos, bloco_de_correcao as _bloco,  # noqa: F401
                                erros, linha_de_log, resumo_legivel)
 
@@ -222,6 +223,32 @@ _METADE_DE_BAIXO = (r"metade\s+inferior", r"parte\s+(?:de\s+baixo|inferior)",
                     r"pr[óo]xim\w+\s+d[ao]\s+m[íi]nima",
                     r"perto\s+d[ao]\s+m[íi]nima")
 # A frase tem que estar falando da FAIXA, não de outra coisa qualquer.
+# Os blocos da camada fundamental, com o nome que o texto usa para cada um.
+# As chaves espelham `analise_rapida_ia.COLETORES` -- `test_blocos_espelham_os_coletores`
+# confere que as duas listas não divergem.
+_BLOCOS_FUNDAMENTAIS = (
+    ("alvosAnalistas", "alvos de analistas"),
+    ("valuation", "valuation/DCF"),
+    ("manchetes", "manchetes"),
+)
+
+# "nao estavam disponiveis", "nao foi possivel obter", "nao ha dados de".
+# Precisa da NEGACAO junto: "os dados disponiveis mostram" e' afirmacao.
+_NEGA_DISPONIBILIDADE = (
+    r"n[aã]o\s+(?:est\w+|foi|foram|h[aá]|existe\w*|disp\w+|constam?)"
+    # `obt\w+` e nao `obtid\w+`: "nao foi possivel OBTER" e' a forma mais
+    # comum, e o particpio sozinho deixava o infinitivo de fora.
+    r"[^.]{0,40}?(?:dispon[íi]ve\w+|acess[íi]ve\w+|obt\w+|encontrad\w+)"
+    r"|indispon[íi]ve\w+"
+    r"|n[aã]o\s+(?:vie\w+|veio|chegou|chegaram|retorn\w+)"
+    r"|sem\s+(?:dados|informa[cç][õo]es)\s+(?:de\s+)?(?:fundament\w+|valuation)")
+
+# O SUJEITO da negacao tem que ser a camada fundamental. Sem isto, "o RSI nao
+# estava disponivel" -- frase sobre outro dado -- viraria apontamento.
+_FALA_DO_FUNDAMENTO = (
+    r"fundament\w+|valuation|avalia[cç][aã]o|alvos?\s+d\w+\s+analist\w+"
+    r"|pre[cç]o[- ]alvo|consenso|m[uú]ltiplos?|\bdcf\b|p/l\b|p/vp\b")
+
 _FALA_DA_FAIXA = r"faixa|52\s*semanas|intervalo\s+anual|amplitude\s+anual|range"
 
 # "chegou ao evento com um run-up de X%" -- `runup_atual_ex_evento_pct` é o
@@ -290,6 +317,49 @@ def validar_analise(texto, dados=None) -> list:
     prosa = sem_blocos_de_codigo(texto)
     prosa_sa = sem_acento(prosa)
     prosa_min = minusculas(prosa)
+
+    # ── 0b. o texto NEGA dado que recebeu ───────────────────────────────────
+    #
+    # Incidente real (AMD, 26/08/2026), publicado sem nenhum apontamento. A
+    # linha de fontes da tela dizia
+    #
+    #     "camada fundamental: alvos de analistas (yfinance),
+    #      valuation/DCF (FMP), notícias do feed"
+    #
+    # -- as TRÊS chegaram -- e a seção Fundamento e valuation dizia
+    #
+    #     "Informações fundamentais e de valuation, como alvos de analistas e
+    #      métricas de avaliação, não estavam disponíveis para AMD nesta
+    #      análise."
+    #
+    # É o inverso exato do caso SNDK do mesmo dia: lá o dado faltava e a tela
+    # não dizia por quê; aqui o dado veio e o texto o nega. Os dois saem da
+    # mesma lacuna -- ninguém conferia as afirmações do texto sobre a
+    # DISPONIBILIDADE do dado, só sobre o valor dele.
+    #
+    # E negar dado presente é pior que omitir: o leitor que vê "não estava
+    # disponível" para de procurar. A informação estava a uma seção de
+    # distância, e o texto o convenceu de que não existia.
+    #
+    # O prompt manda dizer em uma linha quando a camada não vem ("Use só a
+    # camada que veio: sem valuation nem alvos, diga em uma linha que a
+    # fundamental não estava disponível e siga"). A frase é legítima --
+    # quando é verdade. Esta checagem é o que separa os dois casos.
+    fundamento = dic(caminho(dados, "_fundamento"))
+    presentes = [rotulo for chave, rotulo in _BLOCOS_FUNDAMENTAIS
+                 if fundamento.get(chave)]
+    if presentes:
+        for frase in frases(prosa_sa):
+            if not re.search(_NEGA_DISPONIBILIDADE, frase):
+                continue
+            if not re.search(_FALA_DO_FUNDAMENTO, frase):
+                continue
+            add("ERRO", "ANALISE_NEGA_DADO_PRESENTE",
+                f"diz que a camada fundamental não veio, mas o payload traz "
+                f"{', '.join(presentes)} — quem lê isso para de procurar um "
+                f"dado que está na mão. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
 
     # ── 1. as seis seções ───────────────────────────────────────────────────
     faltando = [s for s in SECOES_OBRIGATORIAS if not _secao_presente(prosa, s)]
