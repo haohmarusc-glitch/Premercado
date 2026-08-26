@@ -646,8 +646,15 @@ if __name__ == "__main__":
 
     # Valores em BILHÕES DA MOEDA DO BALANÇO -- a coluna existe porque somar
     # won com dólar seria erro, e esconder a moeda convidaria a somar.
-    print(f"{'TICKER':<7}{'TRI':<8}{'MOEDA':<7}{'CAIXA(bi)':>12}"
-          f"{'DÍV.LÍQ(bi)':>13}{'FCF(bi)':>11}{'FÔLEGO':>13}   AVISOS")
+    #
+    # A tabela cabe em 80 COLUNAS de propósito: na primeira rodada real os
+    # avisos por extenso levavam a linha a 113 e cada papel quebrava em duas
+    # no terminal da VPS, o que embaralha a leitura justamente de quem tem
+    # aviso -- que são os que mais importam. Os avisos viram marcas curtas com
+    # legenda embaixo.
+    print(f"{'TICKER':<7}{'TRI':<8}{'MOEDA':<6}{'CAIXA':>11}"
+          f"{'DÍV.LÍQ':>11}{'FCF':>10}{'FÔLEGO':>12}  {'AVISOS':<12}")
+    algum_aviso = False
     for tk in sorted(dados["resumo"]):
         r = dados["resumo"][tk]
         if not r.get("disponivel"):
@@ -656,14 +663,20 @@ if __name__ == "__main__":
         folego = ("gera caixa" if r["geraCaixa"]
                   else f"{r['folegoTrimestres']} tri" if r["folegoTrimestres"] is not None
                   else "—")
-        avisos = []
+        marcas = []
         if r["quebraDeSerie"]:
-            avisos.append("série quebrada (reestruturação?)")
+            marcas.append("quebra")
         if r["piorando"]:
-            avisos.append("último trimestre queimou")
-        print(f"{tk:<7}{r['trimestre']:<8}{(r.get('moeda') or '?'):<7}"
-              f"{_bi(r['caixa']):>12}{_bi(r['dividaLiquida']):>13}"
-              f"{_bi(r['fcfTrimestral']):>11}{folego:>13}   {', '.join(avisos)}")
+            marcas.append("piora")
+        algum_aviso = algum_aviso or bool(marcas)
+        print(f"{tk:<7}{r['trimestre']:<8}{(r.get('moeda') or '?'):<6}"
+              f"{_bi(r['caixa']):>11}{_bi(r['dividaLiquida']):>11}"
+              f"{_bi(r['fcfTrimestral']):>10}{folego:>12}  {','.join(marcas):<12}")
+    print(f"\n(valores em bilhões da moeda de cada balanço -- não some entre moedas)")
+    if algum_aviso:
+        print("quebra = salto grande de dívida ou de ações num trimestre; a "
+              "comparação a/a não vale")
+        print("piora  = a janela fecha positiva mas o último trimestre queimou")
     if dados["falhas"]:
         print(f"\nsem balanço: {', '.join(dados['falhas'])}")
     if dados["serieRasa"]:
