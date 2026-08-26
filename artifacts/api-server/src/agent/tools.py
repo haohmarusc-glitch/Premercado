@@ -400,6 +400,38 @@ def _internal_headers() -> dict:
     return headers
 
 
+# ── Falha de leitura NAO e' ausencia de dado ─────────────────────────────────
+#
+# Incidente real (26/08/2026): o chat respondeu "Seu Plano de Saida esta vazio.
+# Voce nao tem metas ou janelas de venda cadastradas". `get_exit_plan_items`
+# devolvia `[{"error": "..."}]` quando a leitura falhava -- uma LISTA NAO
+# VAZIA cujo unico item nao tem ticker. Duas leituras possiveis para o modelo:
+# reportar a falha, ou concluir "nenhum item real, logo vazio".
+#
+# A segunda e' a que custa dinheiro. Dizer a alguem que o stop-loss dele nao
+# existe, quando existe, e' pior que nao responder -- ele deixa de agir numa
+# posicao que tinha gatilho definido.
+#
+# O mesmo vale para `get_scenario_status`, que tem DUAS respostas sem dado e
+# so' uma delas e' verdade: `configured: False` (o usuario nao configurou) e
+# `error` (nao deu pra ler). Confundir as duas produz exatamente a frase que
+# apareceu no veredito de ARM: "Cenario nao foi configurado pelo usuario".
+#
+# O aviso vai DENTRO do payload porque o modelo e' quem le -- nao ha' validador
+# entre a ferramenta e a resposta do chat.
+def _falha_de_leitura(o_que: str, e: Exception) -> dict:
+    return {
+        "leitura_falhou": True,
+        "error": f"{type(e).__name__}: {e}",
+        "aviso": (
+            f"NÃO FOI POSSÍVEL LER {o_que}. Isto NÃO significa que está "
+            f"vazio, nem que o usuário não configurou nada — significa que a "
+            f"consulta falhou. Diga que não conseguiu consultar, NUNCA que "
+            f"não há itens."
+        ),
+    }
+
+
 def _api_url() -> str:
     return os.environ.get("INTERNAL_API_URL", "http://localhost:5000")
 
@@ -469,7 +501,7 @@ def list_alerts(symbol: str | None = None) -> list[dict]:
             for a in alerts
         ]
     except Exception as e:
-        return [{"error": str(e)}]
+        return [_falha_de_leitura("os alertas", e)]
 
 
 def create_alert(
@@ -544,7 +576,7 @@ def get_exit_plan_items() -> list[dict]:
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        return [{"error": str(e)}]
+        return [_falha_de_leitura("o Plano de Saída", e)]
 
 
 def update_exit_plan_item(
@@ -690,7 +722,7 @@ def get_scenario_status() -> dict:
             "cicloBateu": resolucao_atual["bateu"] if resolucao_atual else None,
         }
     except Exception as e:
-        return {"error": str(e)}
+        return _falha_de_leitura("o Painel de Cenários", e)
 
 
 # ── Backtest ──────────────────────────────────────────────────────────────────

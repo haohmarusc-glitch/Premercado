@@ -1693,6 +1693,18 @@ def _plano_de_saida_do_snapshot(tickers: list[str]) -> dict | None:
         itens = t.get_exit_plan_items()
         if not isinstance(itens, list):
             return None
+        # Falha de leitura NAO e' plano vazio.
+        #
+        # A versao anterior desta funcao pulava o item de erro e seguia com
+        # `saida` vazia, devolvendo None -- o mesmo que "este usuario nao tem
+        # plano". A checagem BLOCO_CONTRA_PLANO simplesmente nao rodava, e
+        # ninguem ficava sabendo. Um validador que emudece quando a leitura
+        # falha e' pior que um que nao existe: da' a impressao de ter conferido.
+        if any(isinstance(it, dict) and it.get("leitura_falhou") for it in itens):
+            print("[veredito] plano de saída NÃO PÔDE SER LIDO -- a checagem "
+                  "contra o plano não vai rodar nesta geração",
+                  file=sys.stderr, flush=True)
+            return {"_leitura_falhou": True}
         alvo = {tk.upper() for tk in tickers}
         saida: dict = {}
         for it in itens:
