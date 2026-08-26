@@ -342,10 +342,11 @@ def test_limite_diario_interrompe_o_resto_da_rodada():
         raise RuntimeError("limite diário")
 
     vazio = {"balanco": [], "fluxo": []}
-    col = fc.coletar(["WOLF", "MU", "NVDA"], pausa_s=0,
+    col = fc.coletar(["WOLF", "MU", "NVDA"], pausa_s=0, max_aprofundamentos=9,
                      yf_fn=lambda t: vazio, av_fn=_av)
-    assert chamadas == ["WOLF"], "os outros dois nem podiam ser tentados"
-    assert col["falhas"] == ["WOLF", "MU", "NVDA"]
+    # A fila é por carência e, no empate (todos sem histórico), pelo nome.
+    assert chamadas == ["MU"], "os outros dois nem podiam ser tentados"
+    assert sorted(col["falhas"]) == ["MU", "NVDA", "WOLF"]
 
 
 def test_com_o_disjuntor_armado_nem_a_pausa_e_paga(monkeypatch):
@@ -471,3 +472,32 @@ def test_folego_e_liquidez_nao_dependem_da_moeda():
 def test_moeda_ausente_vira_none_e_nao_dolar_por_omissao():
     r = fc.avaliar(_serie())
     assert r["moeda"] is None
+
+
+# ── teto de aprofundamentos por rodada ──────────────────────────────────────
+#
+# Aqui o teto padrão é 1, metade do capex, porque cada ticker custa DUAS
+# chamadas (balanço + fluxo) e a lista é a carteira inteira.
+
+def test_o_teto_por_rodada_limita_os_tickers():
+    pedidos = []
+    vazio = {"balanco": [], "fluxo": []}
+    fc.coletar(["WOLF", "MU", "NVDA", "SMCI"], pausa_s=0, max_aprofundamentos=1,
+               yf_fn=lambda t: vazio, av_fn=lambda t: pedidos.append(t) or vazio)
+    assert pedidos == ["MU"], "um por rodada, o mais raso primeiro"
+
+
+def test_quem_ficou_de_fora_mantem_o_que_o_yfinance_trouxe():
+    col = fc.coletar(["WOLF", "MU"], pausa_s=0, max_aprofundamentos=0,
+                     yf_fn=lambda t: _bruto(["2026-06-30"]),
+                     av_fn=lambda t: {"balanco": [], "fluxo": []})
+    assert sorted(col["porTicker"]) == ["MU", "WOLF"] and col["falhas"] == []
+
+
+def test_a_fila_comeca_por_quem_tem_menos_historico():
+    pedidos = []
+    vazio = {"balanco": [], "fluxo": []}
+    fc.coletar(["WOLF", "MU"], pausa_s=0, max_aprofundamentos=1,
+               guardado={"MU": _bruto(_FINS)},
+               yf_fn=lambda t: vazio, av_fn=lambda t: pedidos.append(t) or vazio)
+    assert pedidos == ["WOLF"], "a MU já tem histórico; a cota vai para o buraco"

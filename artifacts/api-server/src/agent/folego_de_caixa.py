@@ -104,6 +104,14 @@ QUEIMA_MINIMA = 1_000_000.0
 
 PAUSA_ENTRE_CHAMADAS_AV_S = float(os.environ.get("FOLEGO_PAUSA_AV_S", "13"))
 
+# Quantos tickers podem ir à Alpha Vantage por rodada. Aqui o teto é 1, metade
+# do capex, porque cada ticker custa DUAS chamadas (balanço + fluxo) e a lista
+# é a carteira inteira, não cinco nomes. Mesma lógica do capex: com a
+# mesclagem guardando o que já foi conquistado, aprofundar aos poucos converge
+# sozinho e nenhuma rodada depende de sobrar cota num dia específico.
+MAX_APROFUNDAMENTOS_POR_RODADA = int(
+    os.environ.get("FOLEGO_MAX_APROFUNDAMENTOS", "1"))
+
 
 # ── conta pura ───────────────────────────────────────────────────────────────
 
@@ -486,7 +494,8 @@ def _limite_batido() -> bool:
 def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             profundidade_minima: int = PROFUNDIDADE_MINIMA,
             pausa_s: float = PAUSA_ENTRE_CHAMADAS_AV_S,
-            guardado: dict | None = None) -> dict:
+            guardado: dict | None = None,
+            max_aprofundamentos: int = MAX_APROFUNDAMENTOS_POR_RODADA) -> dict:
     """{ticker: {balanco, fluxo}} + relatório. Funções injetáveis para a suíte
     exercitar a cascata sem rede.
 
@@ -496,6 +505,10 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
     guardado = guardado or {}
     por_ticker, falhas, rasos = {}, [], []
     usou_av = False
+    aprofundados = 0
+    # Quem está mais raso primeiro: a cota pode acabar no meio da fila, e
+    # gastá-la em quem já tem histórico deixaria o buraco maior sem cobertura.
+    alvo = sorted(alvo, key=lambda t: (_profundidade(guardado.get(t) or {}), t))
     for tk in alvo:
         bruto = {"balanco": [], "fluxo": []}
         try:
@@ -505,11 +518,16 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
                   file=sys.stderr)
         no_disco = guardado.get(tk) or {"balanco": [], "fluxo": []}
         if _profundidade(combinar(bruto, no_disco)) < profundidade_minima:
+            pular = None
             if _limite_batido():
                 # A pausa mora aqui, antes da chamada: sem esta saída o
                 # disjuntor pouparia a chamada mas não os 13s de espera.
-                print(f"[folego] {tk}: Alpha Vantage já recusou por limite "
-                      f"diário nesta rodada — nem tento", file=sys.stderr)
+                pular = "Alpha Vantage já recusou por limite diário nesta rodada"
+            elif aprofundados >= max_aprofundamentos:
+                pular = (f"teto de {max_aprofundamentos} aprofundamento(s) por "
+                         f"rodada atingido — fica para a próxima")
+            if pular:
+                print(f"[folego] {tk}: {pular}", file=sys.stderr)
                 if bruto.get("balanco") or bruto.get("fluxo"):
                     por_ticker[tk] = bruto
                 else:
@@ -523,6 +541,7 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
                 # DUAS (balanço + fluxo) -- espaçar não é opcional.
                 time.sleep(pausa_s)
             usou_av = True
+            aprofundados += 1
             try:
                 bruto = combinar(bruto, av_fn(tk))
             except Exception as e:

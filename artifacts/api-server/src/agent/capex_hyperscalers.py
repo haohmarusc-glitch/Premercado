@@ -113,6 +113,22 @@ TRIMESTRES_BRUTOS_GUARDADOS = 40
 # e ninguém espera na tela, então um minuto de coleta não custa nada.
 PAUSA_ENTRE_CHAMADAS_AV_S = float(os.environ.get("CAPEX_PAUSA_AV_S", "13"))
 
+# Quantas empresas podem ser APROFUNDADAS pela Alpha Vantage por rodada.
+#
+# Tentar as cinco de uma vez exige um dia com cinco chamadas sobrando num teto
+# real de 25 dividido com earnings e notícias -- e em 25/08/2026 isso falhou
+# TRÊS vezes seguidas: a cota acabava no meio e a série ficava rasa de novo.
+# Pior, o nosso contador de orçamento não protege disso, porque só conta o que
+# nós debitamos e não sabe o que a AV já contou (naquele dia a nossa conta
+# marcava 1 enquanto a AV recusava por ter chegado a 25).
+#
+# Com a mesclagem guardando o que já foi conquistado, aprofundar não precisa
+# ser atômico: duas empresas por rodada levam o grupo inteiro ao fundo em três
+# rodadas semanais, e nenhuma rodada depende de encontrar um dia limpo. É a
+# diferença entre "preciso de sorte" e "converge sozinho".
+MAX_APROFUNDAMENTOS_POR_RODADA = int(
+    os.environ.get("CAPEX_MAX_APROFUNDAMENTOS", "2"))
+
 
 # ── conta pura ───────────────────────────────────────────────────────────────
 
@@ -362,7 +378,8 @@ def _limite_batido() -> bool:
 def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             profundidade_minima: int = PROFUNDIDADE_MINIMA,
             pausa_s: float = PAUSA_ENTRE_CHAMADAS_AV_S,
-            guardado: dict | None = None) -> dict:
+            guardado: dict | None = None,
+            max_aprofundamentos: int = MAX_APROFUNDAMENTOS_POR_RODADA) -> dict:
     """{ticker: [linhas]} + relatório de falhas. Funções injetáveis para a
     suíte exercitar a cascata sem rede.
 
@@ -376,11 +393,14 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
 
     A AV é chamada quando o yfinance vem VAZIO (aí não há trimestre recente,
     e histórico guardado não substitui dado fresco) ou quando nem a mesclagem
-    alcançaria PROFUNDIDADE_MINIMA."""
+    alcançaria PROFUNDIDADE_MINIMA -- e, em qualquer caso, no máximo
+    `max_aprofundamentos` empresas por rodada (ver a constante para o motivo
+    de aprofundar aos poucos em vez de tudo de uma vez)."""
     alvo = tickers or [t for t, _ in HYPERSCALERS]
     guardado = guardado or {}
     por_empresa, falhas, rasos = {}, [], []
     usou_av = False
+    aprofundados = 0
     # Quem está mais raso é atendido primeiro. A cota pode acabar no meio da
     # fila -- aconteceu em 25/08/2026, e quem ficou de fora foram META e ORCL
     # simplesmente por serem os últimos da lista fixa. Com a ordem por
@@ -406,11 +426,18 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
             motivo = ("sem capex no yfinance" if not linhas
                       else f"só {profundidade} trimestres somando yfinance e overlay "
                            f"(mínimo {profundidade_minima} para variação a/a e regime)")
+            pular = None
             if _limite_batido():
                 # Sem isto o disjuntor pouparia a chamada mas não a ESPERA: a
                 # pausa acontece aqui, antes de a AV ter chance de recusar.
-                print(f"[capex] {t}: Alpha Vantage já recusou por limite diário "
-                      f"nesta rodada — nem tento", file=sys.stderr)
+                pular = "Alpha Vantage já recusou por limite diário nesta rodada"
+            elif aprofundados >= max_aprofundamentos:
+                # Fica para a próxima rodada. A ordem é por carência, então
+                # quem sobrou hoje é o primeiro da fila na semana que vem.
+                pular = (f"teto de {max_aprofundamentos} aprofundamento(s) por "
+                         f"rodada atingido — fica para a próxima")
+            if pular:
+                print(f"[capex] {t}: {pular}", file=sys.stderr)
                 rasos.append(t)
                 if linhas:
                     por_empresa[t] = linhas
@@ -423,6 +450,7 @@ def coletar(tickers=None, *, yf_fn=_do_yfinance, av_fn=_do_alpha_vantage,
                 # da fila voltam com aviso de limite em vez de dados.
                 time.sleep(pausa_s)
             usou_av = True
+            aprofundados += 1
             try:
                 linhas = combinar(linhas, av_fn(t))
             except Exception as e:
