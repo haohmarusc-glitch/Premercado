@@ -13,7 +13,7 @@ O que este módulo NÃO faz: reescrever ou esconder o texto. Ele DECLARA o que
 não fecha; quem chama decide (hoje: uma retentativa com os apontamentos e, se
 persistir, publicação COM os avisos ao lado).
 
-Sete checagens, escolhidas por RISCO DE ALARME FALSO, não por importância.
+Oito checagens, escolhidas por RISCO DE ALARME FALSO, não por importância.
 Duas regras do prompt ficaram deliberadamente de fora -- "volatilidade chega
 como fração" e "todo número vem do JSON" -- porque só dariam para checar por
 heurística, e validador que grita à toa ensina o leitor a ignorar o bloco
@@ -180,12 +180,49 @@ def validar_analise(texto: str, dados: dict | None = None) -> list:
     # balanço que já tinha acontecido.
     runup = (((dados.get("reaction") or {}).get("summary") or {}).get("runup")) or {}
     if runup.get("janela_contem_earnings"):
-        if re.search(r"cheg\w+\s+esticad|vai\s+cheg\w+\s+esticad|"
-                     r"chega\w*\s+ao\s+balan[cç]o", prosa_sa):
+        pregoes = runup.get("pregoes_desde_earnings", "?")
+
+        # PRESENTE ou FUTURO sobre um balanço que já passou. O lookahead
+        # exclui as formas de PASSADO: "chegou esticado" descrevendo eventos
+        # HISTÓRICOS é a redação correta, e a primeira versão apontava contra
+        # ela -- falso positivo visto na primeira rodada real do validador
+        # (WOLF, 26/08/2026), no mesmo texto em que o erro de verdade passou.
+        if re.search(r"\bcheg(?!ou\b|aram\b|ado\b|ada\b|ados\b|adas\b)\w*"
+                     r"\s+esticad|\bchega\w*\s+ao\s+balan[cç]o", prosa_sa):
             add("ERRO", "ANALISE_BALANCO_NO_FUTURO",
-                "escreve no futuro sobre um balanço que JÁ ocorreu há "
-                f"{runup.get('pregoes_desde_earnings', '?')} pregão(ões) — o "
-                f"run-up bruto inclui o próprio salto do evento.")
+                f"escreve no presente ou futuro sobre um balanço que JÁ ocorreu "
+                f"há {pregoes} pregão(ões) — o run-up bruto inclui o próprio "
+                f"salto do evento.")
+
+        # O esticamento atribuído ao PRÓXIMO balanço. Foi assim que o erro
+        # real escapou em WOLF: "o preço atual está esticado em relação ao
+        # PRÓXIMO balanço, pois nos 4 pregões desde o último evento...". A
+        # frase reconhece que o evento passou e mesmo assim pendura o
+        # esticamento no que vem -- que é a confusão inteira.
+        if re.search(r"esticad\w*\s+em\s+rela[cç][aã]o\s+ao\s+pr[oó]ximo|"
+                     r"pr[oó]ximo\s+balan[cç]o", prosa_sa):
+            add("ERRO", "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO",
+                f"pendura o esticamento no PRÓXIMO balanço, mas ele vem do que "
+                f"ocorreu há {pregoes} pregão(ões) — use "
+                f"`runup_atual_ex_evento_pct` e escreva no passado.")
+
+    # ── 8. run-up apresentado como reação ───────────────────────────────────
+    #
+    # O pior erro da rodada de WOLF, e o que nenhum validador pegava: "o papel
+    # reagiu com 14,92% de alta", quando 14,92% é o run-up EX-EVENTO e a
+    # reação do dia foi -7,53%. Sinal invertido, com cara de fato apurado.
+    ex_evento = runup.get("runup_atual_ex_evento_pct")
+    if isinstance(ex_evento, (int, float)):
+        for frase in _frases(prosa_sa):
+            if not re.search(r"reag\w+|rea[cç][aã]o", frase):
+                continue
+            if any(g in frase for g in _num_br(abs(float(ex_evento)))):
+                add("ERRO", "ANALISE_RUNUP_COMO_REACAO",
+                    f"apresenta o run-up de {ex_evento}% como se fosse a REAÇÃO "
+                    f"ao balanço — são coisas opostas: o run-up é o que veio "
+                    f"ANTES, e citá-lo como reação pode inverter o sinal do que "
+                    f"aconteceu.")
+                break
 
     return achados
 
