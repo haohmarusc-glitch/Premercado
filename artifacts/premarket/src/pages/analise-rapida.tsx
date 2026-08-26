@@ -71,6 +71,13 @@ interface Snapshot {
   yearHigh?: number | null;
   sma50?: number | null;
   sma200?: number | null;
+  /**
+   * De onde vieram as médias. "serie" é o normal -- mesmo `rolling(50)` do
+   * painel Técnica, então os dois painéis batem. "yahoo" é o fallback quando
+   * a série não veio: o campo pronto do Yahoo é caixa-preta e diverge ~0,8%,
+   * e foi o que fez este painel discordar do Técnica três vezes.
+   */
+  smaOrigem?: "serie" | "yahoo" | "indisponivel";
   volAnnual?: number | null;
   betaSector?: number | null;
   daysUsed?: number | null;
@@ -615,7 +622,11 @@ export default function AnaliseRapidaPage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Metric label="Preço" value={fmtUsd(snapshot.price)} />
                   <Metric label="52 semanas" value={`${fmtUsd(snapshot.yearLow)} – ${fmtUsd(snapshot.yearHigh)}`} />
-                  <Metric label="MM50 / MM200" value={`${fmtUsd(snapshot.sma50)} / ${fmtUsd(snapshot.sma200)}`} />
+                  <Metric
+                    label="MM50 / MM200"
+                    value={`${fmtUsd(snapshot.sma50)} / ${fmtUsd(snapshot.sma200)}`}
+                    sub={snapshot.smaOrigem === "yahoo" ? "média do Yahoo (a série não veio)" : undefined}
+                  />
                   <Metric
                     label={`Vol / Beta (${snapshot.benchmark})`}
                     value={snapshot.volAnnual != null ? `${(snapshot.volAnnual * 100).toFixed(1)}%` : "—"}
