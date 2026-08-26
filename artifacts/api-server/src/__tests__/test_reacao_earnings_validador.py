@@ -216,9 +216,19 @@ def test_texto_limpo_nao_produz_apontamento():
     assert achados == []
 
 
-def test_texto_vazio_nao_estoura():
-    assert validar_leitura("", [_ticker("NVDA")]) == []
-    assert validar_leitura(None, None) == []
+@pytest.mark.parametrize("resposta", [None, "", "   ", "```\n{'a': 1}\n```", 42])
+def test_resposta_nao_utilizavel_e_ERRO_e_nao_aprovacao(resposta):
+    """O buraco mais perigoso que a auditoria de 26/08/2026 encontrou: lista
+    vazia de achados é lida por quem chama como "nada destoa". Resposta vazia,
+    timeout convertido em string e resposta só-com-bloco-de-código eram
+    APROVADAS -- falha de geração publicada como texto conferido."""
+    achados = validar_leitura(resposta, [_ticker("NVDA")])
+    assert "LEITURA_TEXTO_VAZIO" in _codigos(achados)
+    assert erros(achados), "tem que impedir publicação, não só avisar"
+
+
+def test_resposta_invalida_nao_estoura_mesmo_sem_resultados():
+    assert "LEITURA_TEXTO_VAZIO" in _codigos(validar_leitura(None, None))
 
 
 def test_bloco_de_correcao_so_leva_os_erros():
@@ -255,3 +265,214 @@ def test_o_gerador_chama_o_validador():
     assert "validar_leitura(" in codigo
     assert "bloco_de_correcao(" in codigo, "o erro tem que voltar ao modelo"
     assert '"avisos"' in codigo, "e o apontamento tem que chegar à tela"
+
+
+# ── negar o rótulo é obediência, não erro ───────────────────────────────────
+#
+# Mesmo defeito que produziu três falsos positivos no validador da Análise
+# Rápida: casar a PALAVRA em vez da AFIRMAÇÃO. Com `estado_atual = neutro`, a
+# redação que o dado pede é justamente "não está descontado" -- e a primeira
+# versão apontava contra ela.
+
+@pytest.mark.parametrize("frase", [
+    "AVGO não está descontado — o run-up de -6,91% é neutro.",
+    "AVGO deixou de estar descontado nesta janela.",
+    "AVGO está neutro, longe de esticado ou descontado.",
+])
+def test_negar_o_rotulo_nao_e_apontamento(frase):
+    achados = validar_leitura(frase, [_ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    "AVGO está atualmente descontado.",
+    "AVGO não está neutro, está descontado.",
+    "AVGO está esticado, não descontado.",
+])
+def test_afirmar_o_rotulo_contradito_continua_erro(frase):
+    """A negação só vale COLADA ao rótulo (até duas palavras). 'não está
+    neutro, está descontado' nega o outro termo e afirma este -- se a janela
+    fosse larga, a reescrita teria virado mordaça."""
+    achados = validar_leitura(frase, [_ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" in _codigos(achados)
+
+
+def test_o_rotulo_que_bate_com_o_dado_nao_cai_pela_negacao_do_outro():
+    """'AVGO está esticado, não descontado' com dado 'esticado': o primeiro
+    rótulo confere e o segundo está negado — nada a apontar."""
+    achados = validar_leitura("AVGO está esticado, não descontado.",
+                              [_ticker("AVGO", estado="esticado")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+# ═══ auditorias de 26/08/2026 — os casos que se reproduziram ════════════════
+#
+# Sete checagens desta tela apontavam contra o modelo OBEDECENDO o SYSTEM. Cada
+# caso vem no par: o texto correto que era recusado e o erro real que não pode
+# sumir junto.
+
+# ── correlação: negar a promoção é obediência ──────────────────────────────
+
+def test_negar_que_a_correlacao_e_padrao_nao_e_apontamento():
+    """O SYSTEM manda declarar que a correlação não sobrevive. Recusar quem
+    declara é recusar quem acertou — e na retentativa o modelo obediente seria
+    recusado outra vez."""
+    achados = validar_leitura(
+        "A correlação de AVGO não é um padrão estatisticamente relevante.",
+        [_ticker("AVGO", corr=-0.60, sobrevive=False, p_corrigido=0.462)])
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" not in _codigos(achados)
+
+
+# ── lei absoluta: negação, conjunção e um erro por texto ───────────────────
+
+@pytest.mark.parametrize("frase", [
+    "AVGO nem sempre sobe.",
+    "O dado não garante reversão de AVGO.",
+    "Nada garante que AVGO suba.",
+])
+def test_negar_a_lei_e_o_oposto_de_afirma_la(frase):
+    assert "LEITURA_LEI_ABSOLUTA" not in _codigos(
+        validar_leitura(frase, [_ticker("AVGO")]))
+
+
+def test_sempre_que_e_conjuncao_nao_lei():
+    """"Sempre que possível, declare o n" é orientação de método, não
+    afirmação de invariância sobre o ativo."""
+    assert "LEITURA_LEI_ABSOLUTA" not in _codigos(validar_leitura(
+        "Sempre que possível, declare o n da amostra.", [_ticker("AVGO")]))
+
+
+def test_um_erro_de_lei_por_texto_e_nao_um_por_palavra():
+    """Três "sempre" numa retentativa devolviam três apontamentos idênticos e
+    enchiam o bloco de correção com repetição."""
+    achados = validar_leitura(
+        "AVGO sempre cai. SMCI garantidamente sobe. NVDA certamente reverte.",
+        [_ticker("AVGO"), _ticker("SMCI"), _ticker("NVDA")])
+    assert len([a for a in achados if a["codigo"] == "LEITURA_LEI_ABSOLUTA"]) == 1
+
+
+def test_lei_que_predica_o_papel_continua_erro():
+    assert "LEITURA_LEI_ABSOLUTA" in _codigos(
+        validar_leitura("AVGO sempre cai depois do balanço.", [_ticker("AVGO")]))
+
+
+# ── co-movimento: dois papéis, correlação legível, sem negação ─────────────
+
+def test_negar_o_mesmo_trade_nao_e_apontamento():
+    assert "LEITURA_COMOVIMENTO_FORTE_DEMAIS" not in _codigos(validar_leitura(
+        "SMCI e AVGO não são praticamente o mesmo trade.",
+        [_ticker("SMCI"), _ticker("AVGO")], {"SMCI|AVGO": 0.51}))
+
+
+def test_comparar_com_a_media_do_setor_nao_e_afirmar_co_movimento():
+    """"praticamente o mesmo desempenho da MÉDIA" não fala de dois papéis da
+    cesta — a checagem exige dois tickers na frase (ou anáfora plural)."""
+    assert "LEITURA_COMOVIMENTO_FORTE_DEMAIS" not in _codigos(validar_leitura(
+        "AVGO teve praticamente o mesmo desempenho da média do setor.",
+        [_ticker("AVGO")], {"AVGO|SMCI": 0.41}))
+
+
+def test_correlacao_aninhada_e_lida_e_nao_tratada_como_ausente():
+    """{"AVGO": {"SMCI": 0.91}} fazia values() devolver dicionários, nenhum
+    passava por número, e a checagem inventava "nenhuma correlação medida"."""
+    achados = validar_leitura("AVGO e SMCI são o mesmo trade.",
+                              [_ticker("AVGO"), _ticker("SMCI")],
+                              {"AVGO": {"SMCI": 0.91}})
+    assert "LEITURA_COMOVIMENTO_SEM_DADO" not in _codigos(achados)
+    assert "LEITURA_COMOVIMENTO_FORTE_DEMAIS" not in _codigos(achados)
+
+
+def test_nan_na_correlacao_nao_aprova_o_mesmo_trade_em_silencio():
+    """`max([nan]) < 0.70` é False — a checagem simplesmente não apontava."""
+    assert "LEITURA_COMOVIMENTO_SEM_DADO" in _codigos(validar_leitura(
+        "AVGO e SMCI são o mesmo trade.", [_ticker("AVGO"), _ticker("SMCI")],
+        {"AVGO|SMCI": float("nan")}))
+
+
+# ── estado: o dado cru também precisa ser normalizado ──────────────────────
+
+def test_estado_com_capitalizacao_diferente_nao_inventa_contradicao():
+    """A prosa passava por _sem_acento e o dado não — "Esticado" no JSON
+    contradizia "esticado" no texto."""
+    for cru in ("Esticado", "ESTICADO", " esticado "):
+        assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(validar_leitura(
+            "AVGO está esticado.", [_ticker("AVGO", estado=cru)]))
+
+
+# ── ticker sem estatística: o percentual tem que ser DELE ──────────────────
+
+def test_percentual_de_outro_ticker_na_mesma_frase_nao_acusa():
+    """"ARM não foi analisada, enquanto AVGO caiu 5%" — os 5% são do AVGO."""
+    assert "LEITURA_TICKER_SEM_DADO" not in _codigos(validar_leitura(
+        "ARM não foi analisada, enquanto AVGO caiu 5%.",
+        [_ticker("ARM", erro="sem histórico"), _ticker("AVGO")]))
+
+
+def test_a_ressalva_de_nao_analisado_e_o_que_o_system_pede():
+    assert "LEITURA_TICKER_SEM_DADO" not in _codigos(validar_leitura(
+        "SKHY não produziu estatística nesta rodada, com 0% de cobertura.",
+        [_ticker("SKHY", erro="sem histórico")]))
+
+
+def test_atribuir_percentual_ao_ticker_sem_dado_continua_erro():
+    assert "LEITURA_TICKER_SEM_DADO" in _codigos(validar_leitura(
+        "SKHY caiu 8,98% na reação.", [_ticker("SKHY", erro="sem histórico")]))
+
+
+# ── amostra curta: a regra é declarar o N, não dizer uma palavra ───────────
+
+def test_falar_em_evento_sem_dar_o_numero_nao_cumpre_a_ressalva():
+    """"AVGO teve comportamento diferente no evento anterior" continha
+    "evento" e passava, sem informar que a amostra era de três."""
+    assert "LEITURA_AMOSTRA_CURTA_OMITIDA" in _codigos(validar_leitura(
+        "AVGO teve comportamento diferente no evento anterior.",
+        [_ticker("AVGO", n_events=3)]))
+
+
+@pytest.mark.parametrize("frase", [
+    "AVGO, com amostra de 3 eventos, mostrou alta.",
+    "AVGO, baseado em 3 balanços, mostrou alta.",
+    "AVGO, em 3 ocasiões, mostrou alta.",
+])
+def test_declarar_o_numero_da_amostra_cumpre_a_ressalva(frase):
+    assert "LEITURA_AMOSTRA_CURTA_OMITIDA" not in _codigos(
+        validar_leitura(frase, [_ticker("AVGO", n_events=3)]))
+
+
+def test_amostra_de_um_aceita_a_forma_por_extenso():
+    assert "LEITURA_AMOSTRA_CURTA_OMITIDA" not in _codigos(validar_leitura(
+        "SKHY, com apenas um evento analisado, teve forte queda.",
+        [_ticker("SKHY", n_events=1)]))
+
+
+# ── payload torto vira achado, não exceção ────────────────────────────────
+
+@pytest.mark.parametrize("resultados", [
+    [{"ticker": "A", "summary": "n/d"}],
+    [{"ticker": "A", "summary": {"runup": "n/d"}}],
+    ["string no lugar do dict"],
+    [None], None, "string",
+])
+def test_resultados_malformados_nao_derrubam_a_validacao(resultados):
+    assert isinstance(validar_leitura("AVGO está esticado.", resultados), list)
+
+
+def test_p_corrigido_como_string_nao_quebra_a_mensagem():
+    """`f"{pc:.3f}"` com pc = "0.462" levantava ValueError DENTRO do validador,
+    no meio de reportar o achado."""
+    achados = validar_leitura(
+        "AVGO mostra um padrão estatisticamente relevante.",
+        [{"ticker": "AVGO", "summary": {"n_events": 8, "runup": {
+            "corr_runup_reacao": -0.6, "corr_sobrevive": False,
+            "corr_p_corrigido": "0.462"}}}])
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(achados)
+    assert "0.462" in achados[0]["mensagem"]
+
+
+def test_corr_sobrevive_como_string_false_nao_vira_sobrevivente():
+    """`bool("false")` é True — e era assim que a afirmação estatística que a
+    checagem existe para barrar passava direto."""
+    assert "LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(validar_leitura(
+        "AVGO mostra um padrão estatisticamente relevante.",
+        [{"ticker": "AVGO", "summary": {"n_events": 8, "runup": {
+            "corr_runup_reacao": -0.6, "corr_sobrevive": "false"}}}]))

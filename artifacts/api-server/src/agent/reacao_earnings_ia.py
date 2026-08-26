@@ -63,7 +63,8 @@ _aplicar_ordem_na_env()
 from agent.provider import get_client, get_run_usage, texto_da_resposta  # noqa: E402
 from agent.teto_tokens import teto_de_tokens  # noqa: E402
 from agent.reacao_earnings_validator import (  # noqa: E402
-    bloco_de_correcao, erros as erros_de_leitura, resumo_legivel, validar_leitura)
+    bloco_de_correcao, erros as erros_de_leitura, linha_de_log, resumo_legivel,
+    validar_leitura)
 
 # Abaixo disto não é interpretação, é toco. O texto pedido tem 4 seções.
 MIN_TEXTO_CHARS = 200
@@ -329,6 +330,9 @@ def interpretar(dados: dict) -> dict:
             # apontamentos na mão, insistir gasta orçamento sem convergir.
             achados = validar_leitura(texto, resultados, (corr or {}).get("pares"))
             duros = erros_de_leitura(achados)
+            # UMA linha sempre — ver a mesma nota em analise_rapida_ia.
+            print(f"[reacao_earnings_ia] {linha_de_log('leitura', achados)}",
+                  file=sys.stderr, flush=True)
             gasto = time.monotonic() - _INICIO
             if duros and not _ja_tentou_corrigir and gasto + _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S:
                 for linha in resumo_legivel(duros):
