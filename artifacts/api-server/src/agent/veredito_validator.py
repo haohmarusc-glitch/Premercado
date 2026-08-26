@@ -47,6 +47,8 @@ from datetime import date, datetime, timedelta
 from itertools import combinations
 from typing import Any
 
+from .validador_nucleo import frase_com_moeda_errada
+
 # radar_ia_2026 é stdlib-only (dados embutidos + funções puras), então não
 # quebra o contrato "sem dependências externas" deste módulo. Import dos
 # DOIS jeitos porque este arquivo também roda standalone (__main__ no fim).
@@ -526,6 +528,26 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     # _segmentos_por_ticker para o que isto substitui e por que.
     segmentos = _segmentos_por_ticker(
         texto, set(quotes) | set(technicals) | set(earnings))
+
+    # 0) moeda
+    #
+    # Visto em producao (26/08/2026): "ARM encerra 26/08 em R$ 249,57" -- ARM
+    # e' NASDAQ. Nao e' erro de digitacao: e' um numero cinco vezes menor que
+    # o real, num texto cuja conclusao era "recomenda-se saida ordenada".
+    #
+    # A checagem existia desde 25/08 -- no `analise_rapida_validator`, e so'
+    # la'. Uma copia por validador e' uma chance de a proxima tela ficar sem;
+    # agora mora no nucleo e os dois chamam a mesma.
+    #
+    # Sobre `texto` e nao `norm_text`: a versao normalizada e' MINUSCULA, "R$"
+    # vira "r$", e o padrao nunca casaria. Terceira vez que esta armadilha
+    # aparece neste repo.
+    frase_moeda = frase_com_moeda_errada(texto)
+    if frase_moeda:
+        rep.add("ERROR", "MOEDA_ERRADA",
+                f"usa R$ para o preço do ativo — os papéis são listados nos "
+                f"EUA e o prompt manda não converter; escreva US$. "
+                f"Trecho: “{frase_moeda.strip()[:120]}”.")
 
     # 1) dia da semana citado bate com o calendario?
     for m in _DATE_WEEKDAY.finditer(_norm(texto)):

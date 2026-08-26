@@ -308,6 +308,41 @@ def resumo_legivel(achados: list) -> list:
     return saida
 
 
+# ── Moeda ────────────────────────────────────────────────────────────────────
+#
+# Os papeis sao listados nos EUA e o prompt manda NAO converter. "R$ 249,57"
+# para uma acao da NASDAQ nao e' erro de digitacao: e' um numero cinco vezes
+# menor que o real, num texto que o leitor usa para decidir venda.
+#
+# Nasceu no `analise_rapida_validator` (25/08/2026). Em 26/08 um veredito de
+# ARM saiu com "ARM encerra 26/08 em R$ 249,57" e passou -- a checagem existia
+# num validador so'. Mora aqui desde entao, para os tres usarem a mesma.
+_R_CIFRAO = r"R\$"
+
+# Ecoar a regra ("nao converter para R$") e citar cambio sao legitimos.
+_MOEDA_LEGITIMA = (r"n[ãa]o\s+(?:converter|converta|use|usar)\b",
+                   r"nunca\s+(?:converter|converta|use|usar)\b",
+                   r"c[âa]mbio", r"d[óo]lar\s+(?:est[áa]|a|em|cotado)",
+                   r"USD/BRL", r"em\s+vez\s+de\s+R\$", r"jamais\s+em\s+R\$")
+
+
+def frase_com_moeda_errada(texto: str) -> str | None:
+    """A primeira frase que usa R$ para preco de ativo, ou None.
+
+    Recebe o texto COM acento e COM maiuscula: a versao normalizada dos
+    validadores e' minuscula, "R$" vira "r$", e o padrao nunca casaria -- a
+    checagem ficaria morta sem ninguem notar. Ja' aconteceu tres vezes neste
+    repo com padroes que dependem de maiuscula.
+    """
+    for frase in frases(texto):
+        if not re.search(_R_CIFRAO, frase):
+            continue
+        if any(re.search(p, frase, re.IGNORECASE) for p in _MOEDA_LEGITIMA):
+            continue
+        return frase
+    return None
+
+
 def linha_de_log(nome: str, achados: list) -> str:
     """UMA linha, sempre -- inclusive com zero achados.
 

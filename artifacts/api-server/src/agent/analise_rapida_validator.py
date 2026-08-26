@@ -29,9 +29,9 @@ cada checagem daqui passou a exigir o predicado, não a co-ocorrência.
 import re
 
 from .validador_nucleo import (afirmacao_negada, caminho, cita_numero, dic,
-                               frases, grafias, minusculas, num_finito,
-                               sem_acento, sem_blocos_de_codigo,
-                               texto_utilizavel)
+                               frase_com_moeda_errada, frases, grafias,
+                               minusculas, num_finito, sem_acento,
+                               sem_blocos_de_codigo, texto_utilizavel)
 from .validador_nucleo import (avisos, bloco_de_correcao as _bloco,  # noqa: F401
                                erros, linha_de_log, resumo_legivel)
 
@@ -148,11 +148,6 @@ _NIVEL_QUALIFICADO = (rf"{_NIVEL}\s+(?:estat[íi]stic\w+|de\s+rea[cç][ãa]o|"
 # Moeda: os ativos são listados nos EUA e o prompt manda não converter. Mas o
 # modelo ECOANDO a regra ("não converter para R$") ou citando o câmbio não
 # está desobedecendo -- é a mesma armadilha de token-em-vez-de-afirmação.
-_R_CIFRAO = r"R\$"
-_MOEDA_LEGITIMA = (r"n[ãa]o\s+(?:converter|converta|use|usar)\b",
-                   r"nunca\s+(?:converter|converta|use|usar)\b",
-                   r"c[âa]mbio", r"d[óo]lar\s+(?:est[áa]|a|em|cotado)",
-                   r"USD/BRL", r"em\s+vez\s+de\s+R\$", r"jamais\s+em\s+R\$")
 
 # Níveis de referência que o texto compara com o PREÇO, e como o modelo os
 # escreve. O valor vem do mesmo campo que alimenta a lista de níveis do prompt.
@@ -371,20 +366,15 @@ def validar_analise(texto, dados=None) -> list:
 
     # ── 2. moeda ────────────────────────────────────────────────────────────
     #
-    # Por FRASE e com antinegação: o modelo escrevendo "não converter para R$"
-    # está ecoando a regra, e citar o câmbio para contextualizar é legítimo.
-    # Sobre `prosa`, não `prosa_sa`: a versão sem acento é MINÚSCULA e "R$"
-    # vira "r$", que o padrão nunca casaria — a checagem ficaria morta.
-    for frase in frases(prosa):
-        if not re.search(_R_CIFRAO, frase):
-            continue
-        if any(re.search(p, frase, re.IGNORECASE) for p in _MOEDA_LEGITIMA):
-            continue
+    # A regra mora em `validador_nucleo` desde 26/08/2026: um veredito de ARM
+    # saiu com "R$ 249,57" e passou, porque a checagem existia só AQUI. Uma
+    # cópia por validador é uma chance de a próxima tela ficar sem.
+    frase_moeda = frase_com_moeda_errada(prosa)
+    if frase_moeda:
         add("ERRO", "ANALISE_MOEDA_ERRADA",
             "usa R$ para o preço do ativo — os papéis são listados nos EUA e o "
             f"prompt manda não converter; escreva US$. "
-            f"Trecho: “{frase.strip()[:120]}”.")
-        break
+            f"Trecho: “{frase_moeda.strip()[:120]}”.")
 
     # ── 3. momentum anualizado descrito como período ────────────────────────
     #
