@@ -336,3 +336,57 @@ def test_sem_balanco_na_janela_nada_disso_e_cobrado():
                               {"reaction": {"summary": {"runup": {}}}})
     assert "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO" not in _codigos(achados)
     assert "ANALISE_BALANCO_NO_FUTURO" not in _codigos(achados)
+
+
+# ── a rodada de ADI (26/08/2026): o coringa do arredondamento ───────────────
+#
+# Segundo falso positivo do validador em duas rodadas reais, e desta vez a
+# culpa era do casamento numérico: run-up de 1,38% gerava a grafia "1", e a
+# checagem usava SUBSTRING. Qualquer frase com verbo de reação e um algarismo
+# 1 -- "reagiu com -2,15%", "a reação de 21%", "em 2026-08-19" -- virava
+# apontamento.
+
+_RUNUP_ADI = {"reaction": {"summary": {"runup": {
+    "janela_contem_earnings": True, "pregoes_desde_earnings": 2,
+    "runup_atual_ex_evento_pct": 1.38}}}}
+
+
+@pytest.mark.parametrize("frase", [
+    "O papel reagiu com -2,15% no dia do balanço.",
+    "A reação média foi de 21% nos últimos eventos.",
+    "A reação ocorreu em 2026-08-19.",
+    "A reação foi de 11,38% no evento anterior.",
+])
+def test_arredondamento_nao_vira_coringa(frase):
+    """Nenhuma destas cita 1,38 — mas todas contêm o algarismo 1."""
+    achados = validar_analise(_texto_completo(frase), _RUNUP_ADI)
+    assert "ANALISE_RUNUP_COMO_REACAO" not in _codigos(achados)
+
+
+def test_o_valor_de_verdade_continua_sendo_pego():
+    achados = validar_analise(
+        _texto_completo("O papel reagiu com 1,38% de alta."), _RUNUP_ADI)
+    assert "ANALISE_RUNUP_COMO_REACAO" in _codigos(achados)
+
+
+def test_fronteira_impede_casar_dentro_de_numero_maior():
+    """1,38 não pode casar dentro de 11,38 nem de 1,385."""
+    from agent.analise_rapida_validator import _cita_numero
+    assert _cita_numero("reagiu com 1,38%", 1.38) is True
+    assert _cita_numero("reagiu com 11,38%", 1.38) is False
+    assert _cita_numero("reagiu com 1,385%", 1.38) is False
+
+
+def test_preco_ainda_aceita_a_grafia_inteira():
+    """Para PREÇO o inteiro é escrita legítima: 'US$ 180' é 180,00. As duas
+    checagens não podem compartilhar a mesma régua."""
+    from agent.analise_rapida_validator import _cita_numero
+    assert _cita_numero("US$ 180 nos níveis", 180.0, inteiro_ok=True) is True
+    assert _cita_numero("US$ 180 nos níveis", 180.0, inteiro_ok=False) is False
+
+
+def test_divergencia_continua_funcionando_com_a_fronteira():
+    achados = validar_analise(
+        _texto_completo("O valuation usa US$ 225,01 contra os US$ 180 dos níveis."),
+        _DADOS_DIVERGENCIA)
+    assert "ANALISE_DIVERGENCIA_OMITIDA" not in _codigos(achados)
