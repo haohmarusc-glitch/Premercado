@@ -155,6 +155,11 @@ REC_LABELS = {
 # Reação a Earnings usa o mesmo cálculo, e duas cópias divergiriam na primeira
 # vez que um modelo novo pensasse.
 from agent.teto_tokens import MAX_TOKENS, teto_de_tokens  # noqa: E402,F401
+from agent.analise_rapida_validator import (  # noqa: E402
+    bloco_de_correcao as bloco_de_correcao_analise,
+    erros as erros_de_analise,
+    resumo_legivel as resumo_da_analise,
+    validar_analise)
 
 # Teto do JSON de dados no prompt — a tela manda o que coletou, mas um
 # payload anômalo não pode virar um prompt gigante cobrado por token.
@@ -504,6 +509,21 @@ def _compactar(dados: dict) -> str:
     return texto[:MAX_DADOS_CHARS]
 
 
+def _mensagens(conteudo: str, correcao: str = "") -> list:
+    """As mensagens da chamada. A correção do validador vai em mensagem
+    SEPARADA, nunca concatenada ao payload de dados.
+
+    Concatenar estourava `MAX_DADOS_CHARS` -- o teto existe para o payload
+    caber, e emendar nele o texto da recusa fazia a retentativa passar do
+    limite que a primeira tentativa respeitava. Além disso, feedback sobre a
+    resposta anterior não É dado do ticker: misturar os dois convida o modelo
+    a citar a recusa como se fosse número."""
+    msgs = [{"role": "user", "content": conteudo}]
+    if correcao:
+        msgs.append({"role": "user", "content": correcao})
+    return msgs
+
+
 def analisar(dados: dict) -> dict:
     ticker = str(dados.get("ticker") or "").strip().upper()
     if not ticker:
@@ -561,6 +581,9 @@ def analisar(dados: dict) -> dict:
     # responder mal uma vez não é falha permanente (ver
     # FallbackClient.pular_provedor_atual).
     texto = ""
+    achados: list = []
+    correcao = ""
+    _ja_tentou_corrigir = False
     while True:
         _antes_llm = time.monotonic()
         resp = client.create(
@@ -568,7 +591,7 @@ def analisar(dados: dict) -> dict:
             max_tokens=teto_de_tokens(client.models["full"]),
             system=SYSTEM,
             tools=[],
-            messages=[{"role": "user", "content": conteudo}],
+            messages=_mensagens(conteudo, correcao),
         )
         texto = texto_da_resposta(resp)
         # DOIS relógios, porque são duas perguntas diferentes.
@@ -595,6 +618,33 @@ def analisar(dados: dict) -> dict:
               f"{_tempo} ({len(texto)} chars)",
               file=sys.stderr, flush=True)
         if len(texto) >= MIN_TEXTO_CHARS:
+            # ── validação da SAÍDA ───────────────────────────────────────
+            #
+            # O SYSTEM acima declara 18 regras e `test_analise_rapida_ia.py`
+            # confere que elas continuam ESCRITAS lá -- o que protege contra
+            # alguém apagá-las ao consolidar o prompt, e não contra o modelo
+            # desobedecê-las. Era a forma exata que a leitura da cesta tinha
+            # até 25/08/2026: regra no prompt sem conferência é sugestão.
+            #
+            # Dentro do laço porque a correção é outra rodada de LLM, e uma
+            # só: com os apontamentos na mão, quem erra duas vezes não
+            # converge -- insistir só gasta o orçamento que a tela espera.
+            achados = validar_analise(texto, dados)
+            duros = erros_de_analise(achados)
+            gasto = time.monotonic() - _INICIO
+            if duros and not _ja_tentou_corrigir and gasto + _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S:
+                for linha in resumo_da_analise(duros):
+                    print(f"[analise_rapida_ia] validador: {linha}",
+                          file=sys.stderr, flush=True)
+                print("[analise_rapida_ia] pedindo reescrita com os apontamentos",
+                      file=sys.stderr, flush=True)
+                correcao = bloco_de_correcao_analise(achados)
+                _ja_tentou_corrigir = True
+                continue
+            if duros:
+                print("[analise_rapida_ia] validador apontou erro(s) e não há "
+                      "retentativa disponível — publicando COM os avisos",
+                      file=sys.stderr, flush=True)
             break
 
         provedor, modelo = client.provider_name, client.models["full"]
@@ -640,7 +690,14 @@ def analisar(dados: dict) -> dict:
                 f"Último: {provedor}/{modelo} {diagnostico} com {len(texto)} chars."
             )}
 
+    for linha in resumo_da_analise(achados):
+        print(f"[analise_rapida_ia] validador: {linha}", file=sys.stderr, flush=True)
+
     saida = {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}
+    if achados:
+        # Vão para a TELA junto do texto, nunca no lugar dele: análise
+        # suprimida deixa a página vazia sem dizer por quê.
+        saida["avisos"] = resumo_da_analise(achados)
     # Texto cortado por teto de tokens tem que ser DITO: uma análise que para
     # no meio da frase, sem aviso, parece conclusão do modelo. Anthropic diz
     # "max_tokens"; a camada OpenAI-compat diz "length".

@@ -218,6 +218,21 @@ def _compactar(resultados: list) -> str:
     return json.dumps(enxuto, ensure_ascii=False)[:MAX_DADOS_CHARS]
 
 
+def _mensagens(conteudo: str, correcao: str = "") -> list:
+    """As mensagens da chamada. A correção do validador vai em mensagem
+    SEPARADA, nunca concatenada ao payload de dados.
+
+    Concatenar estourava `MAX_DADOS_CHARS` -- o teto existe para o payload
+    caber, e emendar nele o texto da recusa fazia a retentativa passar do
+    limite que a primeira tentativa respeitava. Além disso, feedback sobre a
+    resposta anterior não É dado do ticker: misturar os dois convida o modelo
+    a citar a recusa como se fosse número."""
+    msgs = [{"role": "user", "content": conteudo}]
+    if correcao:
+        msgs.append({"role": "user", "content": correcao})
+    return msgs
+
+
 def interpretar(dados: dict) -> dict:
     resultados = dados.get("results")
     if not isinstance(resultados, list) or not resultados:
@@ -277,6 +292,7 @@ def interpretar(dados: dict) -> dict:
     # sozinha e o botão simplesmente não funcionava.
     texto = ""
     achados: list = []
+    correcao = ""
     _ja_tentou_corrigir = False
     while True:
         _antes_llm = time.monotonic()
@@ -285,7 +301,7 @@ def interpretar(dados: dict) -> dict:
             max_tokens=teto_de_tokens(client.models["full"]),
             system=SYSTEM,
             tools=[],
-            messages=[{"role": "user", "content": conteudo}],
+            messages=_mensagens(conteudo, correcao),
         )
         texto = texto_da_resposta(resp)
         # DOIS relógios: `_llm_s` mede o create() inteiro, que percorre a cadeia
@@ -320,7 +336,7 @@ def interpretar(dados: dict) -> dict:
                           file=sys.stderr, flush=True)
                 print("[reacao_earnings_ia] pedindo reescrita com os apontamentos",
                       file=sys.stderr, flush=True)
-                conteudo += bloco_de_correcao(achados)
+                correcao = bloco_de_correcao(achados)
                 _ja_tentou_corrigir = True
                 continue
             if duros:
