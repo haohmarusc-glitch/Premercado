@@ -166,6 +166,9 @@ router.post("/chat/message", async (req, res): Promise<void> => {
       CHAT_HISTORY_JSON: JSON.stringify(safeHistory),
       AGENT_PORTFOLIO_TICKERS: portfolioTickers.join(","),
       OPERATOR_API_KEY: process.env.OPERATOR_API_KEY ?? "",
+      // Em nome de QUEM este chat roda. Sem isto, "qual meu plano de saída?"
+      // devolvia o plano da conta dona -- ver _internal_headers em tools.py.
+      AGENT_ACTING_USER_ID: String(req.userId!),
     },
   });
 

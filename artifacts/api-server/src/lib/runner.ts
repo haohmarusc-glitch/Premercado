@@ -312,6 +312,12 @@ export function runAgent(trigger: "manual" | "scheduled" | "premarket" | "portfo
       // Ver a nota de vazamento em carteiraParaOAgente.
       AGENT_PORTFOLIO_TICKERS: carteiraParaOAgente(
         carteira, process.env.AGENT_PORTFOLIO_TICKERS, escopadaAUmUsuario),
+      // Em nome de QUEM esta run acontece. Sem isto, as ferramentas que leem
+      // a API interna (get_exit_plan_items, get_scenario_status) devolviam os
+      // dados da conta DONA para qualquer usuario -- ver _internal_headers em
+      // tools.py. Run agendada nao representa ninguem e segue sem o campo,
+      // caindo na conta dona como sempre.
+      ...(userId != null ? { AGENT_ACTING_USER_ID: String(userId) } : {}),
       AGENT_MODE: mode,
       AGENT_SOFT_DEADLINE_MS: String(softDeadlineMs),
       ...(maxTurns !== undefined ? { AGENT_MAX_TURNS: String(maxTurns) } : {}),

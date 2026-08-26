@@ -372,9 +372,32 @@ def read_filing(url: str, max_chars: int = 4000) -> str:
 
 
 def _internal_headers() -> dict:
-    """Retorna os headers de autenticação para chamadas internas à API."""
+    """Headers de autenticacao das chamadas internas a API.
+
+    `X-Acting-User-Id` diz EM NOME DE QUEM este subprocesso esta rodando.
+
+    Vazamento real (26/08/2026): sem ele, a OPERATOR_API_KEY era resolvida
+    sempre para a conta dona, e `get_exit_plan_items`/`get_scenario_status`
+    devolviam os dados do dono para qualquer conta que disparasse um Veredito
+    ou abrisse o Chat -- e o modo Reavaliar Plano podia ESCREVER no plano do
+    dono a mando de outra conta.
+
+    Ausente (carteira.py, scripts do operador) a API continua caindo na conta
+    dona, que e' o comportamento correto para quem nao representa ninguem.
+    """
     key = os.environ.get("OPERATOR_API_KEY", "")
-    return {"Authorization": f"Bearer {key}"} if key else {}
+    if not key:
+        return {}
+    headers = {"Authorization": f"Bearer {key}"}
+    agindo_como = (os.environ.get("AGENT_ACTING_USER_ID") or "").strip()
+    # `isdigit()` NAO serve: aceita digito de largura plena ("\uff17") e outros
+    # numerais Unicode, e `int()` os converte sem reclamar. O valor
+    # atravessaria como header e seria recusado do outro lado -- a defesa em
+    # profundidade seguraria, mas uma pergunta respondida aqui e' uma a menos
+    # dependendo do outro elo. ASCII explicito.
+    if re.fullmatch(r"[0-9]{1,10}", agindo_como) and int(agindo_como) > 0:
+        headers["X-Acting-User-Id"] = agindo_como
+    return headers
 
 
 def _api_url() -> str:
