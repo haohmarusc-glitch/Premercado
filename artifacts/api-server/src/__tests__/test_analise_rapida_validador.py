@@ -879,3 +879,52 @@ def test_o_texto_correto_do_intc_nao_produz_apontamento():
          "snapshot": {"price": 87.48, "sma50": 106.85, "sma200": 72.00},
          "technicals": {"sma20": 95.54, "vwap": 88.47}}))
     assert achados == set()
+
+
+# ═══ INTC, segunda rodada — níveis descritos fora de ordem ═════════════════
+#
+# Terceira tela seguida sem apontamento e com erro dentro. Desta vez:
+#
+#   "encontra seu primeiro nível técnico significativo na MM20 a US$ 95,78
+#    (+10,33%), SEGUIDA de perto pela banda R1 a US$ 94,97 (+9,4%)"
+#
+# Subindo de US$ 86,81 você encontra a R1 ANTES da MM20. O prompt entrega a
+# lista de níveis já ordenada exatamente para o modelo não ter de ordenar --
+# e foi essa etapa que a leitura refez errado.
+
+@pytest.mark.parametrize("frase", [
+    "INTC encontra seu primeiro nível na MM20 a US$ 95,78 (+10,33%), "
+    "seguida de perto pela banda R1 a US$ 94,97 (+9,4%).",
+    "O suporte na MM200 (-17,06%), seguido pelo S1 (-9,31%).",
+    "A resistência em (+23,08%), em seguida a de (+21,82%).",
+])
+def test_sequencia_com_distancia_decrescente_e_erro(frase):
+    assert "ANALISE_ORDEM_DOS_NIVEIS" in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+@pytest.mark.parametrize("frase", [
+    # Ordem certa.
+    "A R1 a US$ 94,97 (+9,4%), seguida da MM20 a US$ 95,78 (+10,33%).",
+    # Lista sem afirmar ordem — "e" não ordena nada.
+    "O S1 (-9,31%) e a MM200 (-17,06%) são os próximos patamares.",
+    "Acima, a MM50 (+23,08%) e a banda R2 (+21,82%) são obstáculos distantes.",
+    # Lados opostos: não é sequência de distâncias.
+    "A MM20 (+10,33%), seguida abaixo pelo S1 (-9,31%).",
+    # Sem sinal explícito não dá para saber o lado — a checagem se cala de
+    # propósito: "subiu 2% e depois caiu 5%" pareceria crescente.
+    "O papel subiu 2% e depois caiu 5%.",
+    # Sequência sem percentual nenhum.
+    "A MM20 fica em US$ 95,78, seguida da R1 em US$ 94,97.",
+])
+def test_o_que_nao_afirma_ordem_de_distancia_passa(frase):
+    assert "ANALISE_ORDEM_DOS_NIVEIS" not in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+def test_a_mensagem_traz_as_duas_distancias():
+    achados = validar_analise(_texto_completo(
+        "A MM20 a US$ 95,78 (+10,33%), seguida de perto pela R1 (+9,4%)."))
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_ORDEM_DOS_NIVEIS")
+    assert "+10.33%" in msg and "+9.40%" in msg
