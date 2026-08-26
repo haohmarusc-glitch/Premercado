@@ -476,3 +476,73 @@ def test_corr_sobrevive_como_string_false_nao_vira_sobrevivente():
         "AVGO mostra um padrão estatisticamente relevante.",
         [{"ticker": "AVGO", "summary": {"n_events": 8, "runup": {
             "corr_runup_reacao": -0.6, "corr_sobrevive": "false"}}}]))
+
+
+# ═══ auditoria de 26/08/2026 — "esticado" como balde, não como estado ══════
+#
+# A tela de Reação a Earnings saiu com DOIS [ERRO] LEITURA_ESTADO_CONTRADITO
+# num texto que acertava o estado dos dois papéis. O texto dizia, literalmente,
+# 'NVDA (6,42%) e AVGO (-6,65%) estão classificados como "neutro"' -- e mesmo
+# assim caiu, porque em OUTRA frase a palavra "esticado" aparecia nomeando os
+# baldes históricos da amostra.
+
+def test_bucket_historico_nao_e_estado_do_papel():
+    """A frase do NVDA, verbatim. "bucket de esticado/descontado" conta eventos
+    passados; não afirma nada sobre hoje."""
+    frase = ("Para NVDA, nos 6 eventos analisados, houve uma correlação "
+             "positiva forte (0,92) entre o run-up e a reação, embora com "
+             "apenas 1 evento em cada bucket de esticado/descontado.")
+    achados = validar_leitura(frase, [_ticker("NVDA", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+def test_contagem_de_casos_esticados_nao_e_estado_do_papel():
+    """A frase do AVGO, verbatim. "3 dos 3 casos esticados" é a contagem do
+    balde, e o rótulo vem no plural justamente porque fala de eventos."""
+    frase = ("AVGO, por sua vez, demonstrou uma correlação negativa moderada "
+             "(-0,60), com 3 dos 3 casos esticados reagindo negativamente em "
+             "média -9,67%.")
+    achados = validar_leitura(frase, [_ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+def test_o_texto_inteiro_da_auditoria_nao_gera_estado_contradito():
+    """As duas frases + a que declara o estado certo, como saiu na tela."""
+    texto = (
+        "Para NVDA, nos 6 eventos analisados, houve uma correlação positiva "
+        "forte (0,92) entre o run-up e a reação, embora com apenas 1 evento "
+        "em cada bucket de esticado/descontado. AVGO, por sua vez, demonstrou "
+        "uma correlação negativa moderada (-0,60), com 3 dos 3 casos "
+        "esticados reagindo negativamente em média -9,67%. Atualmente, SMCI "
+        "(31,42%) e ARM (11,64%) estão na categoria \"esticado\". NVDA "
+        "(6,42%) e AVGO (-6,65%) estão classificados como \"neutro\"."
+    )
+    achados = validar_leitura(texto, [
+        _ticker("NVDA", estado="neutro"), _ticker("AVGO", estado="neutro"),
+        _ticker("SMCI", estado="esticado"), _ticker("ARM", estado="esticado"),
+    ])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    "NVDA está esticado no mês pré-earnings.",
+    "NVDA continua esticado apesar do recuo.",
+    "NVDA permanece esticado.",
+    "NVDA aparece esticado nesta janela.",
+    "NVDA está na categoria \"esticado\".",
+    "NVDA está classificado como esticado.",
+    "NVDA segue esticado depois do salto.",
+    "Estado atual de NVDA: esticado.",
+])
+def test_atribuir_o_rotulo_ao_papel_continua_erro(frase):
+    """O gate de atribuição não pode virar mordaça: toda cópula real ainda
+    cai quando o dado do dia diz outra coisa."""
+    achados = validar_leitura(frase, [_ticker("NVDA", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" in _codigos(achados), frase
+
+
+def test_atribuidor_nao_atravessa_virgula():
+    """"está neutro, longe de esticado" -- a cópula é do OUTRO rótulo."""
+    achados = validar_leitura("NVDA está neutro, longe de esticado.",
+                              [_ticker("NVDA", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
