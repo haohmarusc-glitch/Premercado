@@ -1103,3 +1103,114 @@ def test_as_duas_checagens_de_run_up_nao_se_confundem():
         "A ação chegou ao evento com um run-up de 32,46%."), _SMCI))
     assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" in achados
     assert "ANALISE_BALANCO_NO_FUTURO" not in achados
+
+
+# ═══ WOLF, 26/08/2026 — três apontamentos, dois deles meus ════════════════
+#
+# A tela publicou três ERROS. Conferindo um a um: 1 verdadeiro, 2 falsos.
+#
+#   FALSO  "um sinal de VENDA"  — o painel imprime "Sinal: venda", e o texto
+#          está REPORTANDO o rótulo do sistema. Em pt-BR "venda" é também
+#          substantivo; minha guarda excluía "venda DE" e aqui o "de" vem
+#          ANTES ("sinal DE venda").
+#   FALSO  "o primeiro suporte ESTATÍSTICO é S1" — o SYSTEM proíbe chamar as
+#          bandas de suporte DO GRÁFICO, e o adjetivo faz essa distinção.
+#   REAL   "chegou ao balanço com ganho de 31,21%" — é o run-up de agora; o
+#          de chegada em 2026-08-19 foi +7,08%.
+#
+# E um QUARTO erro passou batido: a ordem das resistências, escrita em dólar.
+
+_WOLF = {"precoAtual": {"valor": 26.50},
+         "snapshot": {"price": 26.50, "sma50": 34.17, "sma200": 28.48,
+                      "yearLow": 8.05, "yearHigh": 80.82},
+         "technicals": {"price": 26.57, "sma20": 28.16, "vwap": 26.46},
+         "reaction": {"summary": {"runup": {
+             "janela_contem_earnings": True, "pregoes_desde_earnings": 5,
+             "runup_atual_ex_evento_pct": 31.21}}}}
+
+
+# ── "venda" substantivo não é imperativo ──────────────────────────────────
+
+@pytest.mark.parametrize("frase", [
+    "O ticker mostra um score de -65 e um sinal de venda, impulsionado por "
+    "análises técnicas de baixa.",
+    "A pressão de venda aumentou no pregão.",
+    "O sistema emitiu ordem de compra automática.",
+    "O volume de venda superou o de compra.",
+])
+def test_venda_como_substantivo_nao_e_recomendacao(frase):
+    """O painel imprime "Sinal: venda" e o texto que reporta isso está
+    OBEDECENDO. O imperativo tem que abrir a oração."""
+    assert "ANALISE_RECOMENDACAO" not in _codigos(
+        validar_analise(_texto_completo(frase), _WOLF))
+
+
+@pytest.mark.parametrize("frase", [
+    "Compre WOLF agora.",
+    "Venda antes do balanço.",
+    "Dado o quadro, compre o papel.",
+])
+def test_o_imperativo_de_verdade_continua_caindo(frase):
+    assert "ANALISE_RECOMENDACAO" in _codigos(
+        validar_analise(_texto_completo(frase), _WOLF))
+
+
+# ── "suporte estatístico" é a distinção pedida ────────────────────────────
+
+@pytest.mark.parametrize("frase", [
+    "O primeiro suporte estatístico é S1 em US$ 22,90.",
+    "Os suportes estatísticos S1 e S2 podem ser testados.",
+    "A resistência de reação é R1.",
+])
+def test_nivel_qualificado_como_estatistico_passa(frase):
+    """O SYSTEM proíbe chamar as bandas de "suporte e resistência DO
+    GRÁFICO". Qualificar como estatístico é exatamente a distinção pedida."""
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+        validar_analise(_texto_completo(frase), _WOLF))
+
+
+def test_sem_o_qualificador_continua_erro():
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" in _codigos(
+        validar_analise(_texto_completo("O primeiro suporte é S1 em US$ 22,90."),
+                        _WOLF))
+
+
+# ── ordem dos níveis escrita em DÓLAR ─────────────────────────────────────
+
+def test_ordem_invertida_em_dolar_agora_cai():
+    """"US$ 28,48 (MM200) atua como resistência IMEDIATA, seguido pela MM20 em
+    US$ 28,16" — a MM20 está mais perto. A checagem só olhava percentual com
+    sinal e não alcançava valores em dólar."""
+    achados = validar_analise(_texto_completo(
+        "O nível de US$ 28,48, onde está a MM200, atua como uma resistência "
+        "imediata, seguido pela MM20 em US$ 28,16."), _WOLF)
+    assert "ANALISE_ORDEM_DOS_NIVEIS" in _codigos(achados)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_ORDEM_DOS_NIVEIS")
+    assert "US$ 1.98" in msg and "US$ 1.66" in msg, "a unidade tem que aparecer"
+
+
+@pytest.mark.parametrize("frase", [
+    # Ordem certa em dólar.
+    "O nível de US$ 28,16 (MM20) é a resistência imediata, seguido pela "
+    "MM200 em US$ 28,48.",
+    "O primeiro suporte é S1 em US$ 22,90, seguido por S2 em US$ 18,76.",
+    # "e" não ordena.
+    "A resistência em US$ 28,16 e a de US$ 28,48 estão próximas.",
+    # Alvo de analista não se ordena por distância — e a frase não fala de
+    # nível, então os valores em dólar nem entram na conta.
+    "O alvo de US$ 40 foi cortado, seguido pelo de US$ 35.",
+    # Lados opostos.
+    "O suporte da MM200 em US$ 28,48 fica acima do S1 em US$ 22,90.",
+])
+def test_ordem_em_dolar_nao_vira_coringa(frase):
+    assert "ANALISE_ORDEM_DOS_NIVEIS" not in _codigos(
+        validar_analise(_texto_completo(frase), _WOLF))
+
+
+def test_percentual_e_dolar_nao_se_misturam():
+    """Comparar "+10,33%" com "US$ 1,66" seria comparar grafias diferentes —
+    a checagem só confronta duas distâncias da MESMA unidade."""
+    from agent.analise_rapida_validator import _ordem_invertida
+    assert _ordem_invertida(
+        "a mm20 (+10,33%), seguida pela mm200 em us$ 28,48", 26.50) is None

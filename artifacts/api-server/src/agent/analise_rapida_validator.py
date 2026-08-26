@@ -66,7 +66,14 @@ _RECOMENDA = (
     r"(?:o\s+)?investidor\s+deveria\s+(?:comprar|vender|montar|entrar|sair)",
     r"aconselho\s+(?:a\s+)?(?:comprar|vender)",
     # Imperativo: "Compre WOLF agora", "Venda antes do balanço".
-    r"\b(?:compre|venda|vendam|comprem)\b(?!\s+(?:de|em|no|na)\b)",
+    #
+    # O imperativo tem que ABRIR a oração. Em pt-BR "venda" é também
+    # substantivo, e o sistema imprime "Sinal: VENDA" no próprio painel -- o
+    # texto que reporta isso ("um sinal de venda", WOLF 26/08/2026) estava
+    # obedecendo, não recomendando. `frases()` já entrega uma frase por vez,
+    # então `^` é o início dela.
+    r"(?:^|[.;:!?]\s*|,\s+)(?:compre|venda|vendam|comprem)\b"
+    r"(?!\s+(?:de|em|no|na)\b)",
     # Condicional de primeira pessoa: "eu compraria", "eu abriria posição".
     r"\beu\s+(?:compraria|venderia|abriria|montaria|entraria|sairia)\b",
     r"\b(?:compraria|venderia)\b",
@@ -129,6 +136,14 @@ _ROTULA_A_BANDA = (r"banda\s+(?:de\s+rea[cç][ãa]o|estat[íi]stica|"
                    r"de\s+volatilidade)|rea[cç][ãa]o\s+m[ée]dia|"
                    r"desvio\s+t[íi]pico")
 
+# O nível QUALIFICADO como estatístico. O SYSTEM proíbe chamar as bandas de
+# "suporte e resistência DO GRÁFICO"; "o primeiro suporte ESTATÍSTICO é S1"
+# (WOLF, 26/08/2026) faz exatamente a distinção pedida, e apontá-la seria
+# punir quem acertou. Tem que estar COLADO ao nível: um "estatístico" solto
+# em qualquer lugar da frase não qualifica nada.
+_NIVEL_QUALIFICADO = (rf"{_NIVEL}\s+(?:estat[íi]stic\w+|de\s+rea[cç][ãa]o|"
+                      rf"de\s+volatilidade)|estat[íi]stic\w+\s+{_NIVEL}")
+
 # Moeda: os ativos são listados nos EUA e o prompt manda não converter. Mas o
 # modelo ECOANDO a regra ("não converter para R$") ou citando o câmbio não
 # está desobedecendo -- é a mesma armadilha de token-em-vez-de-afirmação.
@@ -179,6 +194,21 @@ _SEQUENCIA = (r"seguid[ao]s?\b", r"em\s+seguida", r"na\s+sequ[êe]ncia",
 # O sinal EXPLÍCITO é exigido de propósito -- sem ele "subiu 2%, depois caiu
 # 5%" pareceria uma sequência crescente quando são lados opostos.
 _DISTANCIA_ASSINADA = r"([+-]\d+(?:[.,]\d+)?)\s*%"
+
+# O nível escrito em DÓLAR, sem percentual ao lado -- foi assim que a rodada
+# de WOLF (26/08/2026) publicou a ordem trocada sem apontamento: "US$ 28,48,
+# onde está a MM200, atua como resistência IMEDIATA, seguido pela MM20 em
+# US$ 28,16". A MM20 está mais perto. Aqui a distância vem do preço.
+# `(?i)` porque esta checagem roda sobre `prosa_sa`, que é MINÚSCULA -- a
+# mesma armadilha que já tinha matado a checagem de moeda com "R$".
+_VALOR_EM_DOLAR = r"(?i)us\$\s*(\d+(?:[.,]\d+)?)"
+
+# A frase tem que estar falando de NÍVEL. Sem isto, "o alvo de US$ 40 foi
+# cortado, seguido pelo de US$ 35" viraria apontamento sobre alvo de analista,
+# que não se ordena por distância.
+_FALA_DE_NIVEL = (r"n[íi]vel|n[íi]veis|suporte|resist[êe]nc|m[ée]dia\s+m[óo]vel|"
+                  r"\bmm\s?\d|banda|\b[rs][12]\b|m[áa]xima|m[íi]nima|vwap|"
+                  r"patamar")
 
 # Onde o papel está DENTRO da faixa de 52 semanas, dito por extenso. O modelo
 # tende a derivar isso das duas distâncias que ele mesmo escreveu, e derivar é
@@ -359,7 +389,9 @@ def validar_analise(texto, dados=None) -> list:
         # A negação é avaliada contra `_NIVEL`, não contra o padrão inteiro:
         # em "S1 e S2 NÃO SÃO suporte" o "não" está no meio da construção, e
         # procurá-lo antes do padrão (que começa na banda) nunca o acharia.
-        if afirmacao_negada(frase, _NIVEL) or re.search(_ROTULA_A_BANDA, frase):
+        if (afirmacao_negada(frase, _NIVEL)
+                or re.search(_ROTULA_A_BANDA, frase)
+                or re.search(_NIVEL_QUALIFICADO, frase)):
             continue
         for padrao in (_BANDA_VIRA_NIVEL, _BANDA_ELIPSE, _NIVEL_VIRA_BANDA,
                        _NIVEL_ARROLA_BANDA, _NIVEL_E_A_BANDA):
@@ -512,13 +544,16 @@ def validar_analise(texto, dados=None) -> list:
     # não ter de ordenar ("ele descreve uma lista já ordenada, não ordena"), e
     # foi essa etapa que a leitura refez errado.
     for frase in frases(prosa_sa):
-        fora = _ordem_invertida(frase)
+        fora = _ordem_invertida(frase, preco_atual)
         if fora:
-            antes, depois = fora
+            antes, depois, unidade = fora
+            escrever = ((lambda v: f"{v:+.2f}%") if unidade == "%"
+                        else (lambda v: f"US$ {abs(v):.2f} "
+                                        f"({'acima' if v > 0 else 'abaixo'})"))
             add("ERRO", "ANALISE_ORDEM_DOS_NIVEIS",
-                f"descreve {antes:+.2f}% como vindo ANTES de {depois:+.2f}%, "
-                f"mas {depois:+.2f}% está mais perto do preço — a lista de "
-                f"níveis do JSON já vem ordenada. "
+                f"descreve o nível a {escrever(antes)} do preço como vindo "
+                f"ANTES do que está a {escrever(depois)}, mas este é o mais "
+                f"próximo — a lista de níveis do JSON já vem ordenada. "
                 f"Trecho: “{frase.strip()[:120]}”.")
             break
 
@@ -618,27 +653,45 @@ def _direcao_contradita(frase: str, preco: float, dados) -> tuple | None:
     return None
 
 
-def _ordem_invertida(frase: str) -> tuple | None:
+def _distancias_citadas(frase: str, preco) -> list:
+    """[(posição, distância assinada, unidade)] de tudo que a frase cita como
+    nível.
+
+    Duas grafias: o percentual COM SINAL, que já é a distância, e o valor em
+    US$, cuja distância sai do preço atual. A unidade viaja junto porque a
+    mensagem do apontamento precisa dela -- "+10,33%" e "+1,98" (dólares) são
+    coisas diferentes para quem lê."""
+    saida = [(m.start(), num_finito(m.group(1)), "%")
+             for m in re.finditer(_DISTANCIA_ASSINADA, frase)]
+    if preco and re.search(_FALA_DE_NIVEL, frase):
+        for m in re.finditer(_VALOR_EM_DOLAR, frase):
+            v = num_finito(m.group(1))
+            if v is not None:
+                saida.append((m.start(), v - preco, "US$"))
+    return sorted((pos, d, u) for pos, d, u in saida if d)
+
+
+def _ordem_invertida(frase: str, preco=None) -> tuple | None:
     """(distância citada antes, distância citada depois) quando a segunda está
     MAIS PERTO do preço que a primeira — ou seja, a ordem está trocada.
 
     Compara só o par que a marca de sequência separa, e só quando os dois têm
     o MESMO sinal: "a MM20 (+10,33%), seguida abaixo pelo S1 (-9,31%)" fala de
     lados opostos e não é uma sequência de distâncias."""
+    citadas = _distancias_citadas(frase, preco)
+    if len(citadas) < 2:
+        return None
     for marca in _SEQUENCIA:
         for m in re.finditer(marca, frase):
-            antes = [x for x in re.finditer(_DISTANCIA_ASSINADA, frase[:m.start()])]
-            depois = re.search(_DISTANCIA_ASSINADA, frase[m.end():])
+            antes = [(d, u) for pos, d, u in citadas if pos < m.start()]
+            depois = [(d, u) for pos, d, u in citadas if pos >= m.end()]
             if not antes or not depois:
                 continue
-            a = num_finito(antes[-1].group(1))
-            d = num_finito(depois.group(1))
-            if a is None or d is None or a == 0 or d == 0:
-                continue
-            if (a > 0) != (d > 0):
-                continue  # lados opostos: não é sequência de distâncias
+            (a, ua), (d, ud) = antes[-1], depois[0]
+            if (a > 0) != (d > 0) or ua != ud:
+                continue  # lados opostos, ou grafias diferentes: não comparam
             if abs(d) < abs(a):
-                return a, d
+                return a, d, ua
     return None
 
 
