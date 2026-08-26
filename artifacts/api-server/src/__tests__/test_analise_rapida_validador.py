@@ -1214,3 +1214,68 @@ def test_percentual_e_dolar_nao_se_misturam():
     from agent.analise_rapida_validator import _ordem_invertida
     assert _ordem_invertida(
         "a mm20 (+10,33%), seguida pela mm200 em us$ 28,48", 26.50) is None
+
+
+# ── a base da distância à máxima/mínima anual ──────────────────────────────
+#
+# Incidente real (SNDK, 26/08/2026). A caixa amarela apontou UMA coisa --
+# seção faltando -- e deixou passar duas contas erradas na mesma frase:
+#
+#   "está 58,51% abaixo da máxima de 52 semanas (US$ 2354,39) e
+#    96,81% acima da mínima (US$ 47,40)"
+#
+# Preço US$ 1485,30. O certo é -36,91% e +3033,54%. Os dois números vieram de
+# dividir pelo PREÇO em vez de pela referência.
+#
+# O que faz isto merecer checagem própria em vez de uma linha em
+# `_REFERENCIAS`: `_bate_a_magnitude` aceita as duas bases DE PROPÓSITO,
+# porque preço e média móvel andam perto e a convenção não muda o número o
+# bastante. Com a mínima anual, US$ 1485,30 é 31 vezes US$ 47,40.
+#
+# E dividir pelo preço produz um número que nunca passa de 100%. "96,81%
+# acima da mínima" se lê como "quase no teto da faixa": plausível,
+# arredondado, e a 3000% da verdade.
+
+_SNDK = {
+    "precoAtual": {"valor": 1485.30},
+    "snapshot": {"price": 1485.30, "yearLow": 47.40, "yearHigh": 2354.39,
+                 "sma50": 1636.42, "sma200": 952.03},
+    "technicals": {"sma20": 1434.71, "vwap": 1475.89},
+}
+
+
+def test_o_incidente_da_distancia_ao_teto_e_ao_fundo():
+    achados = validar_analise(_texto_completo(
+        "O SNDK está 58,51% abaixo da máxima de 52 semanas (US$ 2354,39) e "
+        "96,81% acima da mínima (US$ 47,40)."), _SNDK)
+    msgs = [a["mensagem"] for a in achados
+            if a["codigo"] == "ANALISE_DISTANCIA_DA_FAIXA"]
+    assert len(msgs) == 2, "as DUAS contas estão erradas, não só a primeira"
+    assert any("-36.91%" in m and "máxima" in m for m in msgs)
+    assert any("+3033.54%" in m and "mínima" in m for m in msgs)
+
+
+@pytest.mark.parametrize("frase", [
+    # A conta certa, nas duas direções.
+    "O papel está 36,91% abaixo da máxima de 52 semanas (US$ 2354,39).",
+    "O papel está 3033,54% acima da mínima de 52 semanas (US$ 47,40).",
+    # Máxima do DIA é outro dado -- apontar contra o anual seria acusar o
+    # texto de dizer o que ele não disse.
+    "O preço ficou 58,51% abaixo da máxima do dia.",
+    "A máxima intraday está 96,81% acima da mínima da sessão.",
+    # Número que não bate com NENHUMA das duas bases é outra conversa: o
+    # silêncio aqui é o mesmo da checagem 8.
+    "O papel está 12,00% abaixo da máxima de 52 semanas.",
+    # Frase neutra com base no preço: "de distância" não afirma direção
+    # contra a referência, e é a redação correta para "quanto teria de cair".
+    "A MM200, em US$ 952,03, está a 35,90% de distância.",
+])
+def test_distancia_da_faixa_bem_escrita_passa(frase):
+    assert "ANALISE_DISTANCIA_DA_FAIXA" not in _codigos(
+        validar_analise(_texto_completo(frase), _SNDK))
+
+
+def test_sem_faixa_no_payload_nao_inventa_achado():
+    sem = {"precoAtual": {"valor": 1485.30}, "snapshot": {"price": 1485.30}}
+    assert "ANALISE_DISTANCIA_DA_FAIXA" not in _codigos(validar_analise(
+        _texto_completo("Está 58,51% abaixo da máxima de 52 semanas."), sem))
