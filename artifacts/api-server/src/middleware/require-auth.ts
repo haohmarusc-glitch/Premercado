@@ -25,15 +25,53 @@ async function resolveOwnerUserId(): Promise<number | null> {
   }
 }
 
+// Header de IDENTIDADE do subprocesso. Só é lido no caminho da
+// OPERATOR_API_KEY -- nunca no de cookie, onde seria escalação de privilégio
+// pura: qualquer usuário logado passaria a ler a conta que quisesse.
+export const ACTING_USER_HEADER = "x-acting-user-id";
+
+/**
+ * O id que o subprocesso diz estar representando, ou null.
+ *
+ * Vazamento real (26/08/2026): o agente Python autentica com a
+ * OPERATOR_API_KEY, que era resolvida SEMPRE para a conta dona. Então
+ * `get_exit_plan_items` e `get_scenario_status` devolviam os dados do dono
+ * para qualquer conta que disparasse um Veredito ou abrisse o Chat -- e o
+ * modo Reavaliar Plano de Saída podia ESCREVER no plano do dono a mando de
+ * outra conta.
+ *
+ * Sobre o raio da chave: com este header a OPERATOR_API_KEY deixa de dar
+ * acesso só ao dono e passa a poder selecionar qualquer usuário. É uma
+ * ampliação real, e foi escolhida de olhos abertos -- a alternativa era o
+ * estado anterior, em que TODO subprocesso já agia como o dono para todos os
+ * usuários, que é estritamente pior. A chave é segredo de servidor, no env do
+ * container, mesmo nível de confiança das credenciais do banco; quem a tem já
+ * podia ler e escrever tudo do dono.
+ */
+function actingUserIdDoHeader(req: Request): number | null {
+  const bruto = req.headers[ACTING_USER_HEADER];
+  const texto = Array.isArray(bruto) ? bruto[0] : bruto;
+  if (typeof texto !== "string" || !/^[0-9]{1,10}$/.test(texto)) return null;
+  const id = Number(texto);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 // Aceita DOIS caminhos de autenticação:
 // 1. Cookie de sessão (usuário logado pelo browser).
-// 2. Bearer OPERATOR_API_KEY (agente Python / carteira.py, que já mandam esse
-//    header hoje mas nunca foi validado em lugar nenhum) -- age como a conta
-//    dona (mesma que recebe o backfill dos dados existentes).
+// 2. Bearer OPERATOR_API_KEY (agente Python / carteira.py). Age como o
+//    usuário nomeado em X-Acting-User-Id quando ele vem, e como a conta dona
+//    quando não vem (carteira.py e scripts do operador, que não representam
+//    ninguém).
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   const operatorKey = process.env.OPERATOR_API_KEY;
   if (operatorKey && authHeader === `Bearer ${operatorKey}`) {
+    const agindoComo = actingUserIdDoHeader(req);
+    if (agindoComo != null) {
+      req.userId = agindoComo;
+      next();
+      return;
+    }
     const ownerUserId = await resolveOwnerUserId();
     if (ownerUserId != null) {
       req.userId = ownerUserId;
