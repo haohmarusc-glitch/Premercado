@@ -260,3 +260,79 @@ def test_o_gerador_chama_o_validador():
     assert "validar_analise(" in codigo
     assert "bloco_de_correcao_analise(" in codigo, "o erro tem que voltar ao modelo"
     assert '"avisos"' in codigo, "e o apontamento tem que chegar à tela"
+
+
+# ── a rodada real de WOLF (26/08/2026) ──────────────────────────────────────
+#
+# Primeira vez que o validador rodou em produção. O resultado foi instrutivo
+# nos dois sentidos: ele APONTOU o que estava certo e DEIXOU PASSAR os dois
+# erros de verdade, no mesmo parágrafo.
+
+_RUNUP_WOLF = {"reaction": {"summary": {"runup": {
+    "janela_contem_earnings": True, "pregoes_desde_earnings": 4,
+    "runup_atual_pct": 6.26, "runup_atual_ex_evento_pct": 14.92}}}}
+
+# Verbatim do texto publicado.
+_FRASE_ERRADA = ('O preço atual está "esticado" em relação ao próximo balanço, '
+                 "pois nos 4 pregões desde o último evento, o papel reagiu com "
+                 "14,92% de alta.")
+_FRASE_CERTA = ("Historicamente, em dois eventos anteriores nos quais o papel "
+                "chegou esticado (+10% nos 21 pregões pré-earnings), a reação "
+                "média foi de -0,3%.")
+
+
+def test_passado_historico_nao_e_mais_apontado():
+    """O falso positivo: 'chegou esticado' descrevendo eventos HISTÓRICOS é a
+    redação correta, e a primeira versão apontava contra ela."""
+    achados = validar_analise(_texto_completo(_FRASE_CERTA), _RUNUP_WOLF)
+    assert "ANALISE_BALANCO_NO_FUTURO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("forma", [
+    "O papel chega esticado ao balanço.",
+    "O papel chegando esticado ao evento.",
+    "O papel chegará esticado ao balanço.",
+])
+def test_presente_e_futuro_continuam_apontados(forma):
+    achados = validar_analise(_texto_completo(forma), _RUNUP_WOLF)
+    assert "ANALISE_BALANCO_NO_FUTURO" in _codigos(achados)
+
+
+def test_esticamento_pendurado_no_proximo_balanco_e_erro():
+    """O erro que escapou: a frase RECONHECE que o evento passou ('nos 4
+    pregões desde o último evento') e mesmo assim pendura o esticamento no
+    que vem."""
+    achados = validar_analise(_texto_completo(_FRASE_ERRADA), _RUNUP_WOLF)
+    assert "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO" in _codigos(achados)
+    assert "4 pregão" in [a["mensagem"] for a in achados
+                          if a["codigo"] == "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO"][0]
+
+
+def test_runup_apresentado_como_reacao_e_erro():
+    """O pior da rodada: 'o papel reagiu com 14,92% de alta', quando 14,92% é
+    o run-up EX-EVENTO e a reação do dia foi -7,53%. Sinal invertido com cara
+    de fato apurado."""
+    achados = validar_analise(_texto_completo(_FRASE_ERRADA), _RUNUP_WOLF)
+    assert "ANALISE_RUNUP_COMO_REACAO" in _codigos(achados)
+
+
+def test_runup_citado_como_runup_passa():
+    achados = validar_analise(_texto_completo(
+        "O run-up ex-evento é de 14,92% nos 21 pregões."), _RUNUP_WOLF)
+    assert "ANALISE_RUNUP_COMO_REACAO" not in _codigos(achados)
+
+
+def test_reacao_com_o_numero_certo_passa():
+    """A redação correta para o mesmo caso: a reação foi -7,53%."""
+    achados = validar_analise(_texto_completo(
+        "O papel reagiu com -7,53% no dia do balanço, quatro pregões atrás."),
+        _RUNUP_WOLF)
+    assert "ANALISE_RUNUP_COMO_REACAO" not in _codigos(achados)
+
+
+def test_sem_balanco_na_janela_nada_disso_e_cobrado():
+    """Quando o balanço realmente está à frente, falar do próximo é correto."""
+    achados = validar_analise(_texto_completo(_FRASE_ERRADA),
+                              {"reaction": {"summary": {"runup": {}}}})
+    assert "ANALISE_ESTICAMENTO_NO_PROXIMO_BALANCO" not in _codigos(achados)
+    assert "ANALISE_BALANCO_NO_FUTURO" not in _codigos(achados)
