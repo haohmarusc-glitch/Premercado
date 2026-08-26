@@ -928,3 +928,77 @@ def test_a_mensagem_traz_as_duas_distancias():
     msg = next(a["mensagem"] for a in achados
                if a["codigo"] == "ANALISE_ORDEM_DOS_NIVEIS")
     assert "+10.33%" in msg and "+9.40%" in msg
+
+
+# ═══ SMCI, 26/08/2026 — a checagem de rótulo trocado trocou o rótulo ═══════
+#
+# Primeiro falso positivo desta checagem, e com a ironia exata: ela existe
+# para pegar "número certo com rótulo errado" e foi isso que fez. O texto
+# dizia, com os DOIS números corretos:
+#
+#   "reação média absoluta de 15,09% no fechamento e um gap médio absoluto
+#    de 12,16% na abertura"
+#
+# A versão anterior via a palavra "gap" na frase e varria TODOS os percentuais
+# procurando um que não batesse com os campos de gap. Pegava o 15,09%, que é
+# do fechamento, e acusava.
+#
+# A regra que resolve não é distância: em pt-BR o rótulo tanto precede ("o
+# FECHAMENTO médio foi de 2,30%") quanto segue ("15,09% no FECHAMENTO") o
+# número. É a fronteira de ORAÇÃO.
+
+_RESUMO_SMCI = {"reaction": {"summary": {
+    "gap_pct_mean": 1.73, "gap_pct_abs_mean": 12.16,
+    "close_pct_mean": 2.30, "close_pct_abs_mean": 15.09,
+    "intraday_range_pct_mean": 10.29, "runup": {}}}}
+
+
+@pytest.mark.parametrize("frase", [
+    # O incidente, nas duas ordens.
+    "Reação média absoluta de 15,09% no fechamento e um gap médio absoluto "
+    "de 12,16% na abertura.",
+    "Gap médio absoluto de 12,16% na abertura e reação média de 15,09% "
+    "no fechamento.",
+    # Rótulo ANTES do número, nas duas ordens.
+    "O fechamento médio foi de 2,30% e o gap médio de 1,73%.",
+    "O gap médio de 1,73% e o fechamento médio de 2,30%.",
+    # Orações separadas por vírgula.
+    "O fechamento médio é de 2,30%, com gap médio de 1,73%.",
+    # Uma estatística só, correta.
+    "O gap médio absoluto é de 12,16% na abertura.",
+    "A volatilidade intraday média é de 10,29%.",
+])
+def test_duas_estatisticas_na_mesma_frase_nao_se_contaminam(frase):
+    assert "ANALISE_ESTATISTICA_TROCADA" not in _codigos(
+        validar_analise(_texto_completo(frase), _RESUMO_SMCI))
+
+
+@pytest.mark.parametrize("frase", [
+    "O gap médio na abertura é de 15,09%.",
+    "O fechamento médio do dia foi de 12,16%.",
+    "Reação média absoluta de 12,16% no fechamento e um gap médio de 1,73%.",
+    "O fechamento médio é de 12,16%, com gap médio de 1,73%.",
+])
+def test_a_troca_de_verdade_continua_caindo(frase):
+    """A correção não pode virar mordaça: trocar os dois números entre si é
+    exatamente o que a checagem existe para pegar."""
+    assert "ANALISE_ESTATISTICA_TROCADA" in _codigos(
+        validar_analise(_texto_completo(frase), _RESUMO_SMCI))
+
+
+def test_a_virgula_decimal_nao_parte_o_numero():
+    """Separar oração por vírgula sem guarda parte "15,09" em "15" e "09%" —
+    um número inventado dentro da checagem que existe para pegar número
+    trocado."""
+    from agent.analise_rapida_validator import _estatistica_trocada
+    resumo = _RESUMO_SMCI["reaction"]["summary"]
+    assert _estatistica_trocada(
+        "reação média absoluta de 15,09% no fechamento", resumo) is None
+
+
+def test_o_acento_e_o_que_permite_separar_a_oracao():
+    """A separação divide em " e ". Sem acento, "é" vira "e" e "o gap médio É
+    de 15,09%" seria partido no meio, deixando o número órfão do rótulo — e a
+    troca de verdade passaria."""
+    assert "ANALISE_ESTATISTICA_TROCADA" in _codigos(validar_analise(
+        _texto_completo("O gap médio na abertura é de 15,09%."), _RESUMO_SMCI))
