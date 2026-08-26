@@ -157,7 +157,7 @@ def test_toco_faz_a_cadeia_avancar_em_vez_de_falhar(monkeypatch):
     cliente = _Client(["ok.", TEXTO_OK], visto, provedores=("anthropic", "gemini"))
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
 
     out = ia.analisar(_dados())
 
@@ -173,7 +173,7 @@ def test_toco_em_todos_os_provedores_vira_erro_nomeando_o_ultimo(monkeypatch):
     cliente = _Client("ok.", {}, provedores=("anthropic",))
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
 
     out = ia.analisar(_dados())
 
@@ -189,7 +189,7 @@ def test_toco_nao_tenta_outro_provedor_sem_orcamento(monkeypatch):
     cliente = _Client("ok.", {}, provedores=("anthropic", "gemini"))
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
     monkeypatch.setattr(ia, "_ORCAMENTO_TOTAL_S", 0.0)
 
     out = ia.analisar(_dados())
@@ -361,7 +361,7 @@ def test_zero_chars_com_raciocinio_e_truncamento_nao_toco(monkeypatch):
     cliente.create = create_com_raciocinio
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
 
     out = ia.analisar(_dados())
 
@@ -376,7 +376,7 @@ def test_stop_reason_de_tamanho_e_truncamento(monkeypatch):
                       provedores=("deepseek", "gemini"))
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
 
     ia.analisar(_dados())
 
@@ -389,7 +389,7 @@ def test_texto_curto_sem_raciocinio_continua_sendo_toco(monkeypatch):
     cliente = _Client(["ok.", TEXTO_OK], {}, provedores=("anthropic", "gemini"))
     monkeypatch.setattr(ia, "get_client", lambda: cliente)
     monkeypatch.setattr(ia, "get_run_usage", lambda: {"calls": 2})
-    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, []))
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], []))
 
     ia.analisar(_dados())
 
@@ -412,7 +412,7 @@ def test_camada_fundamental_para_no_teto_de_tempo(monkeypatch):
     monkeypatch.setattr(ia.tools, "get_news",
                         lambda t, max_items=6: chamou.append("news") or {})
 
-    fundamento, fontes = ia._buscar_fundamento("INTC")
+    fundamento, fontes, _ausencias = ia._buscar_fundamento("INTC")
 
     assert chamou == [], "blocos além do teto não podem rodar"
 
@@ -526,3 +526,152 @@ def test_a_divergencia_pede_numero_e_nao_so_o_nome_do_campo():
     trecho = ia.SYSTEM[ia.SYSTEM.index("divergenciaPct"):][:600]
     assert "ESCREVENDO OS DOIS PREÇOS" in trecho
     assert "225,01" in trecho and "180,00" in trecho      # exemplo com números
+
+
+# ── o que não veio, e quem deveria ter buscado ──────────────────────────────
+#
+# Pedido do operador (26/08/2026), depois de uma análise de SNDK que dizia
+# "Informações fundamentais e de valuation não estavam disponíveis para
+# análise neste momento" e parava aí.
+#
+# A frase é um beco sem saída: não diz qual fonte falhou, nem por quê, nem
+# onde olhar. A única pista era a OMISSÃO na linha de fontes -- notar que
+# "valuation/DCF (FMP)" sumiu exige saber de cor que a lista tem três itens.
+# O motivo real só existia no stderr do processo, e a tela é onde o operador
+# estava olhando.
+
+import os  # noqa: E402
+
+
+class _FalhaDeRede(Exception):
+    pass
+
+
+def _fundamento_com(monkeypatch, *, info=None, valuation=None, noticias=None):
+    """Roda `_buscar_fundamento` com as três fontes sob controle. Qualquer
+    valor que for uma Exception é LEVANTADO, para exercitar o caminho de
+    fonte fora do ar."""
+    def _talvez(v):
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    class _YT:
+        def __init__(self, _t): pass
+        @property
+        def info(self): return _talvez(info if info is not None else {})
+
+    monkeypatch.setattr(ia, "yf", type("yf", (), {"Ticker": _YT}))
+    monkeypatch.setattr(ia.tools, "get_fundamentals_valuation",
+                        lambda t: _talvez(valuation if valuation is not None else {}))
+    monkeypatch.setattr(ia.tools, "get_news",
+                        lambda t, max_items=None: _talvez(
+                            noticias if noticias is not None else {}))
+    return ia._buscar_fundamento("SNDK")
+
+
+def test_camada_completa_nao_registra_ausencia(monkeypatch):
+    _f, fontes, ausencias = _fundamento_com(
+        monkeypatch,
+        info={"targetMeanPrice": 120.0, "regularMarketPrice": 100.0},
+        valuation={"configured": True, "pe": 12.0},
+        noticias={"SNDK": [{"title": "manchete", "summary": "resumo"}]},
+    )
+    assert len(fontes) == 3
+    assert ausencias == [], "sem ausência não pode haver linha na tela"
+
+
+def test_fmp_sem_chave_diz_isso_e_aponta_a_funcao(monkeypatch):
+    """O caso do SNDK: a FMP não está configurada. Antes isso saía como
+    silêncio; agora sai como motivo com endereço."""
+    _f, fontes, ausencias = _fundamento_com(
+        monkeypatch,
+        info={"targetMeanPrice": 120.0, "regularMarketPrice": 100.0},
+        valuation={"configured": False},
+        noticias={"SNDK": [{"title": "manchete"}]},
+    )
+    assert "valuation/DCF (FMP)" not in fontes
+    faltou = [a for a in ausencias if a["bloco"] == "valuation/DCF"]
+    assert len(faltou) == 1
+    assert "chave de API" in faltou[0]["motivo"]
+    assert faltou[0]["funcao"] == "get_fundamentals_valuation"
+
+
+def test_fonte_fora_do_ar_vira_ausencia_com_motivo_nao_excecao(monkeypatch):
+    """A camada é opcional POR DESENHO -- fonte caída não derruba a análise
+    técnica. O que muda é que a queda para de ser invisível."""
+    _f, fontes, ausencias = _fundamento_com(
+        monkeypatch,
+        info={"targetMeanPrice": 120.0, "regularMarketPrice": 100.0},
+        valuation=_FalhaDeRede("timeout depois de 8s"),
+        noticias={"SNDK": [{"title": "manchete"}]},
+    )
+    assert "alvos de analistas (yfinance)" in fontes, "as outras seguem valendo"
+    faltou = next(a for a in ausencias if a["bloco"] == "valuation/DCF")
+    assert "_FalhaDeRede" in faltou["motivo"] and "timeout" in faltou["motivo"]
+
+
+def test_cobertura_ausente_e_chave_ausente_nao_dizem_a_mesma_coisa(monkeypatch):
+    """Distinção que importa na hora de investigar: 'a FMP não cobre este
+    papel' não pede a mesma ação que 'a FMP não está configurada'."""
+    _f, _fo, ausencias = _fundamento_com(
+        monkeypatch, info={}, valuation={"configured": True}, noticias={})
+    motivo = next(a["motivo"] for a in ausencias if a["bloco"] == "valuation/DCF")
+    assert "cobertura de SNDK" in motivo
+    assert "chave" not in motivo
+
+
+def test_teto_de_tempo_registra_os_blocos_que_nem_comecaram(monkeypatch):
+    """Bloco que não rodou por falta de tempo é ausência como outra qualquer
+    -- e a mais confusa de todas se não for dita, porque a fonte está no ar."""
+    monkeypatch.setattr(ia, "_TETO_FUNDAMENTO_S", -1.0)
+    _f, _fo, ausencias = _fundamento_com(
+        monkeypatch, info={"targetMeanPrice": 120.0, "regularMarketPrice": 100.0})
+    blocos = {a["bloco"] for a in ausencias}
+    assert blocos == {"valuation/DCF", "notícias do feed"}
+    assert all("teto de tempo" in a["motivo"] for a in ausencias)
+
+
+def test_nenhuma_ausencia_e_registrada_duas_vezes(monkeypatch):
+    monkeypatch.setattr(ia, "_TETO_FUNDAMENTO_S", -1.0)
+    _f, _fo, ausencias = _fundamento_com(monkeypatch, info={})
+    blocos = [a["bloco"] for a in ausencias]
+    assert len(blocos) == len(set(blocos))
+
+
+def test_coletores_apontam_para_codigo_real():
+    """O caminho e o nome da função em `COLETORES` são o que a TELA usa para
+    montar o link. Mover a função sem mexer aqui deixaria o link mandando o
+    leitor para o arquivo errado -- e um link quebrado num painel de
+    diagnóstico é pior que nenhum link, porque custa a viagem antes de
+    revelar que não serve."""
+    raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    for chave, c in ia.COLETORES.items():
+        caminho = os.path.join(raiz, c["arquivo"])
+        assert os.path.isfile(caminho), f"{chave}: {c['arquivo']} não existe"
+        fonte = open(caminho, encoding="utf-8").read()
+        assert f"def {c['funcao']}(" in fonte, \
+            f"{chave}: {c['funcao']}() não está em {c['arquivo']}"
+
+
+def test_ausencia_chega_na_resposta_da_rota(monkeypatch):
+    """A rota repassa o JSON do script verbatim, então o que sai daqui é o
+    que a tela recebe. Sem esta ponte o registro morreria no processo."""
+    faltou = [{"bloco": "valuation/DCF", "funcao": "get_fundamentals_valuation",
+               "arquivo": "artifacts/api-server/src/agent/tools.py",
+               "motivo": "a FMP não está configurada (falta a chave de API)"}]
+    monkeypatch.setattr(ia, "get_client", lambda: _Client(TEXTO_OK, {}))
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, [], faltou))
+
+    out = ia.analisar(_dados())
+    assert out["ausencias"] == faltou
+
+
+def test_camada_completa_nao_manda_chave_vazia_pra_tela(monkeypatch):
+    """Lista vazia renderizaria uma caixa dizendo "0 blocos não vieram"."""
+    monkeypatch.setattr(ia, "get_client", lambda: _Client(TEXTO_OK, {}))
+    monkeypatch.setattr(ia, "get_run_usage", lambda: {})
+    monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, ["x"], []))
+
+    assert "ausencias" not in ia.analisar(_dados())

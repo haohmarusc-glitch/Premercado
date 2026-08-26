@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
 import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
+import { CamadaAusente, type AusenciaDeColeta } from "@/components/camada-ausente";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
 import { rotuloRvol } from "@/lib/indicators";
@@ -78,6 +79,17 @@ interface Snapshot {
   quoteError?: string;
   cenarioError?: string;
   error?: string;
+}
+
+interface AnaliseIA {
+  markdown: string;
+  usage?: { total_cost_usd?: number };
+  /** Blocos da camada fundamental que VIERAM. */
+  fontes?: string[];
+  /** Blocos que NÃO vieram, com o motivo e a função que os busca. */
+  ausencias?: AusenciaDeColeta[];
+  truncado?: boolean;
+  avisos?: string[];
 }
 
 interface SessionMove {
@@ -187,7 +199,7 @@ export default function AnaliseRapidaPage() {
   const [tech, setTech] = useState<TechItem | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
-  const [analiseIA, setAnaliseIA] = useState<{ markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean; avisos?: string[] } | null>(null);
+  const [analiseIA, setAnaliseIA] = useState<AnaliseIA | null>(null);
 
   const ticker = tickerInput.trim().toUpperCase();
 
@@ -277,7 +289,7 @@ export default function AnaliseRapidaPage() {
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
-      return data as { markdown: string; usage?: { total_cost_usd?: number }; fontes?: string[]; truncado?: boolean; avisos?: string[] };
+      return data as AnaliseIA;
     },
     onSuccess: setAnaliseIA,
   });
@@ -468,6 +480,10 @@ export default function AnaliseRapidaPage() {
             . Não é recomendação de compra ou venda.
             {analiseIA.usage?.total_cost_usd != null && ` · custo desta análise: ~$${analiseIA.usage.total_cost_usd.toFixed(4)}`}
           </p>
+          {/* O que NÃO veio fica logo abaixo do que veio: as duas metades da
+              mesma frase. Ver `camada-ausente.tsx` sobre por que a omissão
+              sozinha não bastava. */}
+          {analiseIA.ausencias?.length ? <CamadaAusente ausencias={analiseIA.ausencias} /> : null}
           {analiseIA.truncado && (
             <p className="font-mono text-xs px-3 py-2 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
               ⚠ O texto bateu o limite de tamanho e terminou no meio — rode de novo para uma versão completa.
