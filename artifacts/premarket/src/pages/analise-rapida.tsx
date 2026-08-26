@@ -71,6 +71,13 @@ interface Snapshot {
   yearHigh?: number | null;
   sma50?: number | null;
   sma200?: number | null;
+  /**
+   * De onde vieram as médias. "serie" é o normal -- mesmo `rolling(50)` do
+   * painel Técnica, então os dois painéis batem. "yahoo" é o fallback quando
+   * a série não veio: o campo pronto do Yahoo é caixa-preta e diverge ~0,8%,
+   * e foi o que fez este painel discordar do Técnica três vezes.
+   */
+  smaOrigem?: "serie" | "yahoo" | "indisponivel";
   volAnnual?: number | null;
   betaSector?: number | null;
   daysUsed?: number | null;
@@ -136,7 +143,19 @@ interface ReactionResult {
       runup_atual_ex_evento_pct?: number;
     };
   };
-  events?: { earnings_date: string; runup_pct?: number | null; announcement_day: SessionMove | null; next_day: SessionMove | null }[];
+  // `janela_reacao` diz QUAL das duas sessões é a reação medida: "anuncio"
+  // para quem divulga antes da abertura, "seguinte" para quem divulga depois
+  // do fechamento. Toda a estatística (correlação, médias, bandas) usa essa
+  // sessão -- e sem ela marcada na tabela o leitor toma "Fech. dia" por
+  // reação e chega a números que contradizem o resumo logo acima.
+  events?: {
+    earnings_date: string;
+    runup_pct?: number | null;
+    janela_reacao?: "anuncio" | "seguinte";
+    janela_inferida?: boolean;
+    announcement_day: SessionMove | null;
+    next_day: SessionMove | null;
+  }[];
 }
 
 function fmtPct(v: number | null | undefined): string {
@@ -603,7 +622,11 @@ export default function AnaliseRapidaPage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Metric label="Preço" value={fmtUsd(snapshot.price)} />
                   <Metric label="52 semanas" value={`${fmtUsd(snapshot.yearLow)} – ${fmtUsd(snapshot.yearHigh)}`} />
-                  <Metric label="MM50 / MM200" value={`${fmtUsd(snapshot.sma50)} / ${fmtUsd(snapshot.sma200)}`} />
+                  <Metric
+                    label="MM50 / MM200"
+                    value={`${fmtUsd(snapshot.sma50)} / ${fmtUsd(snapshot.sma200)}`}
+                    sub={snapshot.smaOrigem === "yahoo" ? "média do Yahoo (a série não veio)" : undefined}
+                  />
                   <Metric
                     label={`Vol / Beta (${snapshot.benchmark})`}
                     value={snapshot.volAnnual != null ? `${(snapshot.volAnnual * 100).toFixed(1)}%` : "—"}
@@ -669,25 +692,52 @@ export default function AnaliseRapidaPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {reaction.events.map((e, idx) => (
+                        {reaction.events.map((e, idx) => {
+                          // Qual das duas colunas de fechamento É a reação
+                          // medida. Sem isso a tabela convida ao erro: quem
+                          // divulga depois do fechamento (AMC) reage no dia
+                          // SEGUINTE, e ler "Fech. dia" como reação produz
+                          // números que contradizem a correlação logo acima.
+                          const reageNoSeguinte = e.janela_reacao === "seguinte";
+                          const reageNoAnuncio = e.janela_reacao === "anuncio";
+                          const marca = (ehAReacao: boolean) =>
+                            ehAReacao ? " bg-primary/10 font-bold" : "";
+                          const titulo = e.janela_inferida
+                            ? "sessão da reação (AMC suposto — a fonte não trouxe horário)"
+                            : "sessão da reação, medida pelo horário de divulgação";
+                          return (
                           <tr key={e.earnings_date} className={idx % 2 === 0 ? "bg-card" : "bg-secondary/10"}>
                             <td className="px-3 py-2 text-muted-foreground">{e.earnings_date}</td>
                             <td className="px-3 py-2 text-right text-muted-foreground">{e.runup_pct != null ? fmtPct(e.runup_pct) : "—"}</td>
                             <td className={`px-3 py-2 text-right ${(e.announcement_day?.gap_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                               {e.announcement_day ? fmtPct(e.announcement_day.gap_pct) : "—"}
                             </td>
-                            <td className={`px-3 py-2 text-right ${(e.announcement_day?.close_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            <td
+                              className={`px-3 py-2 text-right ${(e.announcement_day?.close_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}${marca(reageNoAnuncio)}`}
+                              title={reageNoAnuncio ? titulo : undefined}
+                            >
                               {e.announcement_day ? fmtPct(e.announcement_day.close_pct) : "—"}
+                              {reageNoAnuncio && <span className="text-muted-foreground"> ◂</span>}
                             </td>
-                            <td className={`px-3 py-2 text-right ${(e.next_day?.close_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            <td
+                              className={`px-3 py-2 text-right ${(e.next_day?.close_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400"}${marca(reageNoSeguinte)}`}
+                              title={reageNoSeguinte ? titulo : undefined}
+                            >
                               {e.next_day ? fmtPct(e.next_day.close_pct) : "—"}
+                              {reageNoSeguinte && <span className="text-muted-foreground"> ◂</span>}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
+                <p className="font-mono text-[10px] text-muted-foreground/70">
+                  <span className="bg-primary/10 font-bold px-1">◂ marca a sessão da reação</span> — é ela que entra na
+                  correlação, nas médias e nas bandas. Quem divulga depois do fechamento reage no dia seguinte,
+                  então "Fech. dia" nem sempre é a reação.
+                </p>
                 <p className="font-mono text-[10px] text-muted-foreground/70">
                   Para a interpretação completa do padrão de reação (esticado/descontado, viés, BMO/AMC), use a tela Reação a Earnings.
                 </p>

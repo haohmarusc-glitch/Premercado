@@ -10,8 +10,52 @@ interface NewsItem {
   source?: string;
   url?: string | null;
   relatedTickers?: string[] | null;
+  /**
+   * `false` quando o texto voltou em INGLÊS -- as três camadas de tradução
+   * (cache em disco -> Google gratuito -> LLM da cadeia) falharam. O campo
+   * já vinha de `get_news_feed.py` desde 25/08/2026; esta tela é que não o
+   * mostrava, e por isso a falha aparecia aqui como manchete em inglês sem
+   * explicação nenhuma. Ver o selo equivalente em `portfolio.tsx`.
+   */
+  traduzido?: boolean;
 }
 interface Item { ticker: string; news?: NewsItem[]; error?: string; }
+
+/**
+ * Contagem por CAMADA de tradução, de `get_news_feed.py`. As três degradam em
+ * ordem (cache -> Google gratuito -> LLM da cadeia), então a contagem já é o
+ * diagnóstico: só `cache`/`google` é o dia normal; muito `llm` significa que
+ * o gratuito caiu e isso está custando dinheiro; qualquer `original` é texto
+ * que chegou em inglês na tela.
+ */
+interface ResumoTraducao {
+  total?: number;
+  cache?: number;
+  google?: number;
+  llm?: number;
+  original?: number;
+}
+
+function AvisoDeTraducao({ r }: { r?: ResumoTraducao }) {
+  if (!r?.original) return null;
+  const camadas = [
+    r.cache ? `${r.cache} do cache` : null,
+    r.google ? `${r.google} pelo Google` : null,
+    r.llm ? `${r.llm} pelo modelo` : null,
+  ].filter(Boolean);
+  return (
+    <div className="font-mono text-[11px] px-3 py-2 rounded border border-yellow-500/30 bg-yellow-500/10 text-yellow-400">
+      <span className="font-semibold">
+        {r.original} de {r.total} textos ficaram em inglês.
+      </span>{" "}
+      As três camadas de tradução degradam em ordem — cache em disco, endpoint
+      gratuito do Google (que responde <span className="font-bold">429</span> a
+      tráfego automatizado) e o modelo da cadeia. Quando as três falham, o texto
+      volta como veio.
+      {camadas.length > 0 && ` Nesta busca: ${camadas.join(", ")}.`}
+    </div>
+  );
+}
 
 function NewsList({ it }: { it: Item }) {
   return (
@@ -48,6 +92,14 @@ function NewsList({ it }: { it: Item }) {
               <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono text-muted-foreground flex-wrap">
                 {n.source && <span className="px-1.5 py-0.5 rounded bg-secondary">{n.source}</span>}
                 {n.published && <span>{String(n.published).slice(0, 10)}</span>}
+                {n.traduzido === false && (
+                  <span
+                    className="px-1.5 py-0.5 rounded border border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+                    title="As três camadas falharam: cache em disco, endpoint gratuito do Google (que responde 429 a tráfego automatizado) e o LLM da cadeia."
+                  >
+                    original em inglês
+                  </span>
+                )}
                 {n.relatedTickers && n.relatedTickers.length > 0 && (
                   <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                     <Link2 className="h-2.5 w-2.5" />
@@ -70,7 +122,7 @@ export default function NewsPage() {
       const r = await fetch("/api/news", { credentials: "include" });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Falha");
-      return j as { items: Item[] };
+      return j as { items: Item[]; traducao?: ResumoTraducao };
     },
   });
   const items = data?.items ?? [];
@@ -90,7 +142,7 @@ export default function NewsPage() {
       const r = await fetch(`/api/news?tickers=${encodeURIComponent(searchTicker!)}`, { credentials: "include" });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Falha");
-      return j as { items: Item[] };
+      return j as { items: Item[]; traducao?: ResumoTraducao };
     },
     enabled: !!searchTicker,
   });
@@ -144,7 +196,10 @@ export default function NewsPage() {
           ) : searchError ? (
             <div className="font-mono text-red-400 text-sm">{String(searchError)}</div>
           ) : (
-            (searchData?.items ?? []).map((it) => <NewsList key={it.ticker} it={it} />)
+            <>
+              <AvisoDeTraducao r={searchData?.traducao} />
+              {(searchData?.items ?? []).map((it) => <NewsList key={it.ticker} it={it} />)}
+            </>
           )}
         </div>
       )}
@@ -155,6 +210,7 @@ export default function NewsPage() {
         <div className="p-6 border border-red-500/30 rounded-lg bg-red-500/5 font-mono text-red-400 text-sm">{String(error)}</div>
       ) : (
         <div className="space-y-6">
+          <AvisoDeTraducao r={data?.traducao} />
           {items.map((it) => <NewsList key={it.ticker} it={it} />)}
         </div>
       )}
