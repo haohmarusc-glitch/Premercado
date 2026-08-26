@@ -248,10 +248,38 @@ _FALA_DA_FAIXA = r"faixa|52\s*semanas|intervalo\s+anual|amplitude\s+anual|range"
 
 # "chegou ao evento com um run-up de X%" -- `runup_atual_ex_evento_pct` é o
 # run-up de HOJE, não o que o papel tinha ao CHEGAR num balanço que já passou.
-_CHEGADA_AO_EVENTO = (r"cheg\w+\s+(?:ao|no|até\s+o)\s+"
-                      r"(?:evento|balan[çc]o|resultado)|"
-                      r"veio\s+(?:ao|para\s+o)\s+(?:evento|balan[çc]o)|"
-                      r"antes\s+d[oe]\s+(?:evento|balan[çc]o|resultado)\s+com")
+_EVENTO = r"(?:evento|balan[çc]o|resultado|an[úu]ncio|divulga[çc][ãa]o)"
+
+# Como o texto diz "o papel CHEGOU ao balanço com tal run-up".
+#
+# As tres primeiras formas vieram do incidente SMCI. As duas ultimas foram
+# acrescentadas depois de o mesmo erro escapar em ARM e NVDA (26/08/2026) por
+# construcoes que ninguem tinha previsto:
+#
+#   ARM : "havia se valorizado 11,64% nos 21 pregoes que o ANTECEDERAM"
+#   NVDA: "ANTES DESTE EVENTO, o papel apresentava um run-up de 8,14%
+#          nos 21 pregoes anteriores"
+#
+# Duas ocorrencias em telas diferentes no mesmo dia dizem que nao era um
+# acidente de redacao: o modelo tem varias maneiras de dizer "chegou", e a
+# lista precisa cobrir a IDEIA, nao as tres frases que ja' vimos.
+#
+# "nos N pregoes anteriores" sozinho fica DE FORA de proposito: anteriores a
+# QUE? O run-up atual tambem e' medido sobre os 21 pregoes anteriores -- a
+# HOJE --, e essa frase esta certa. So' cai quando ha' ancora no EVENTO: o
+# pronome que retoma o balanco ("que O antecederam") ou "antes deste evento".
+# Sem essa exigencia, a checagem apontaria contra a redacao correta.
+_CHEGADA_AO_EVENTO = (rf"cheg\w+\s+(?:ao|no|até\s+o)\s+{_EVENTO}|"
+                      rf"veio\s+(?:ao|para\s+o)\s+{_EVENTO}|"
+                      rf"antes\s+d[oe]\s+{_EVENTO}\s+com|"
+                      # "nos 21 pregoes que O antecederam" -- o pronome
+                      # retoma o balanco, entao a ancora existe.
+                      r"preg[õo]es\s+que\s+(?:o|lhe|a)\s+anteced\w+|"
+                      rf"anteced\w+\s+(?:o\s+|este\s+|esse\s+)?{_EVENTO}|"
+                      # "antes deste evento", "antes do balanco" (sem exigir
+                      # o "com" que a forma antiga pedia logo em seguida).
+                      rf"antes\s+d(?:o|este|esse|aquele)\s+{_EVENTO}|"
+                      rf"pr[ée]-?\s?(?:balan[çc]o|earnings|{_EVENTO})\b")
 
 # Verbos que ATRIBUEM um movimento ao balanço. É o que separa "reagiu com X%"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
@@ -563,6 +591,29 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
+    # ── 8b. distância à média medida contra o PREÇO ─────────────────────────
+    #
+    # Ver `_base_da_media_trocada`: a checagem 8 confere o SINAL e aceita as
+    # duas bases de propósito; esta confere a BASE com o sinal já certo. Em
+    # ARM as duas passaram lado a lado -- "3,78% abaixo da MM20" tem a direção
+    # correta (o preço está mesmo abaixo) e a base errada, então a 8 não podia
+    # apontar e ninguém mais olhava.
+    if preco_atual:
+        vistas: set = set()
+        for frase in frases(prosa_sa):
+            for rotulo, citado, nivel, correto in \
+                    _base_da_media_trocada(frase, preco_atual, dados):
+                if rotulo in vistas:
+                    continue
+                vistas.add(rotulo)
+                add("ERRO", "ANALISE_DISTANCIA_DA_MEDIA",
+                    f"diz {citado:.2f}% em relação à {rotulo} "
+                    f"(US$ {nivel:.2f}), mas esse número vem de dividir pelo "
+                    f"PREÇO. Medido contra a própria {rotulo}, US$ "
+                    f"{preco_atual:.2f} está {correto:+.2f}% — que é o número "
+                    f"que o painel Técnica mostra. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+
     # ── 9. posição na faixa de 52 semanas ───────────────────────────────────
     #
     # Incidente real (SMCI, 26/08/2026): "o ativo negocia na METADE SUPERIOR da
@@ -771,6 +822,96 @@ def _bases_da_distancia_trocadas(frase: str, preco: float, lo: float,
             continue                      # a conta certa: nada a apontar
         if _perto(citado, abs(errado)):
             achados.append((rotulo, citado, referencia, correto))
+    return achados
+
+
+# A media movel como SUJEITO da frase: "a MM20 esta' 3% abaixo da MM50".
+#
+# Existe para nao acusar a frase que estava CERTA. Na mesma analise de ARM que
+# motivou a checagem, esta passou intacta:
+#
+#     "A MM200, em US$ 198,40, [...] estando 20,98% abaixo do preco atual."
+#
+# 198,40/251,06-1 = -20,98%. Confere -- porque ali o sujeito e' a MEDIA e a
+# referencia e' o PRECO, o inverso das outras frases. Quem mede o que muda
+# qual conta e' a certa, e um validador que ignora isso apontaria contra o
+# unico trecho correto do paragrafo.
+#
+# `est[áa]` com fronteira, e nao `est\w*`: "estando" e' o gerundio da frase do
+# MM200 acima, onde a media aparece antes mas NAO e' o sujeito da comparacao
+# medida em porcentagem.
+_MEDIA_COMO_SUJEITO = re.compile(
+    r"(?:" + "|".join(escrita for _, escrita, _ in _REFERENCIAS) + r")"
+    r"[^,;.]{0,40}?\best[áa]\b", re.IGNORECASE)
+
+# Quem e' o sujeito quando NAO e' uma media.
+_SUJEITO_E_O_PRECO = re.compile(
+    r"\b(?:pre[çc]o|papel|ativo|a[çc][ãa]o|cota[çc][ãa]o|ticker)\b",
+    re.IGNORECASE)
+
+
+def _base_da_media_trocada(frase: str, preco: float, dados) -> list[tuple]:
+    """[(rotulo, citado, nivel, correto), ...] -- distancia a media movel
+    calculada sobre o PRECO em vez de sobre a media.
+
+    Incidente real (ARM, 26/08/2026), publicado sem apontamento:
+
+        "O preco atual de US$ 251,06 esta' 3,78% abaixo da MM20 (US$ 260,55)
+         [...] e 17,22% abaixo da MM50 (US$ 294,28)"
+
+    O certo e' -3,64% e -14,69%. Os dois numeros sairam de dividir pelo PRECO:
+    260,55/251,06-1 = +3,78% e 294,28/251,06-1 = +17,22%.
+
+    ## Por que agora, se a nota da 9b dizia que a base nao importa nas medias
+
+    Ela dizia que preco e media andam perto e a convencao nao muda o numero o
+    bastante para valer a briga. O argumento e' bom onde e' verdade e fraco
+    exatamente onde importa: quanto MAIS longe da media, maior a divergencia.
+    Na MM20 dá 0,14pp; na MM50, 2,53pp.
+
+    E ha' um fato que aquela nota nao tinha: o painel Tecnica, na MESMA tela,
+    imprime "-14,69% de distancia" para a MM50. O campo `pctAboveSma50` e'
+    `_pct_diff(price, sma50)` = (preco-media)/media -- ou seja, este produto
+    JA' TEM uma convencao publicada. A prosa nao esta escolhendo outra
+    convencao legitima, esta contradizendo o painel dois paragrafos acima.
+
+    ## Guardas
+
+    Tres, e nenhuma e' opcional:
+
+    1. o sujeito precisa ser o PRECO (ver `_MEDIA_COMO_SUJEITO`);
+    2. so' aponta quando o citado bate com a conta ERRADA e nao com a certa --
+       numero que nao bate com nenhuma das duas e' outra conversa, mesmo
+       criterio da 9b;
+    3. quando as duas contas ficam dentro da folga UMA DA OUTRA, nao da' para
+       atribuir o numero a nenhuma delas. Nao e' cortesia, e' honestidade: o
+       apontamento afirmaria saber de onde veio um numero que e' compativel
+       com as duas origens.
+
+    Devolve TODOS os achados da frase: a forma tipica e' citar MM20 e MM50
+    juntas, com a mesma base trocada nas duas.
+    """
+    achados: list[tuple] = []
+    for rotulo, escrita, campos in _REFERENCIAS:
+        for m in re.finditer(_DIRECAO + rf"(?:{escrita})", frase):
+            antes = frase[:m.start()]
+            if _MEDIA_COMO_SUJEITO.search(antes):
+                continue          # o sujeito e' outra media, nao o preco
+            if not _SUJEITO_E_O_PRECO.search(antes):
+                continue          # sujeito indeterminado: silencio
+            citado = num_finito(m.group(1))
+            nivel = _primeiro_valor(*(caminho(dados, secao).get(campo)
+                                      for secao, campo in campos))
+            if citado is None or not nivel:
+                continue
+            correto = (preco - nivel) / nivel * 100
+            errado = (nivel - preco) / preco * 100
+            if _perto(citado, abs(correto)):
+                continue
+            if abs(abs(correto) - abs(errado)) <= _FOLGA_DE_MAGNITUDE:
+                continue
+            if _perto(citado, abs(errado)):
+                achados.append((rotulo, citado, nivel, correto))
     return achados
 
 
