@@ -5,8 +5,23 @@ Output (stdout JSON): {"fearGreed": {...}, "sectors": [{name, ticker, changePct}
 """
 import sys, json
 import yfinance as yf
-from security import friendly_error
-from http_retry import SESSION
+# Import duplo: estes scripts rodam dos DOIS jeitos -- spawn por caminho
+# (imports planos) e como membro do pacote agent (testes). `security` e
+# `http_retry` vinham so' na forma plana, e por isso o modulo era impossivel
+# de importar num teste: a convencao da suite proibe (com razao) por o
+# diretorio agent/ no sys.path, porque existe um agent.py DENTRO dele.
+try:
+    from security import friendly_error
+except ImportError:
+    from agent.security import friendly_error
+try:
+    from http_retry import SESSION
+except ImportError:
+    from agent.http_retry import SESSION
+try:
+    from sentimento import faixa as _faixa
+except ImportError:
+    from agent.sentimento import faixa as _faixa
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
 # duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
 # (imports planos) e como membro do pacote agent.
@@ -36,14 +51,6 @@ def fear_greed() -> dict:
         current = data.get("fear_and_greed", {})
         score = current.get("score")
 
-        def classify(s):
-            if s is None: return "desconhecido"
-            if s <= 25: return "medo extremo"
-            if s <= 45: return "medo"
-            if s <= 55: return "neutro"
-            if s <= 75: return "ganância"
-            return "ganância extrema"
-
         def safe(v):
             return round(v, 1) if isinstance(v, (int, float)) else None
 
@@ -54,7 +61,15 @@ def fear_greed() -> dict:
         return {
             "score": round(score, 1) if score is not None else None,
             "ratingEn": current.get("rating", ""),
-            "ratingPt": classify(score),
+            # Mesma tabela de faixas do agente (agent/sentimento.py). Ate
+            # 26/08/2026 eram duas copias identicas -- latente, nao ativo, mas
+            # e' exatamente a forma do defeito da MM50.
+            "ratingPt": _faixa(score)["rotulo"],
+            # A leitura de 26/08 mostrou 54,9 na prosa e 55,2 no painel: os
+            # dois rotulos certos, e 0,3 ponto de deriva atravessando a
+            # fronteira dos 55 e trocando "neutro" por "ganância". A distancia
+            # ate a borda viaja junto para a tela poder dizer isso.
+            "faixa": _faixa(score),
             "prevClose": safe(current.get("previous_close")),
             "oneWeekAgo": safe(current.get("previous_1_week")),
             "oneMonthAgo": safe(current.get("previous_1_month")),

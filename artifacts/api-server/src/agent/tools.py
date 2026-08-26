@@ -12,6 +12,8 @@ import requests
 import yfinance as yf
 
 from . import brt
+from .sentimento import (faixa as _faixa_sentimento,
+                         interpretar as _interpretar_sentimento)
 from . import config
 from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
@@ -2135,19 +2137,6 @@ def get_fear_greed_index() -> dict:
 
         hist = data.get("fear_and_greed_historical", {})
 
-        def _classify(s):
-            if s is None:
-                return "desconhecido"
-            if s <= 25:
-                return "medo extremo"
-            if s <= 45:
-                return "medo"
-            if s <= 55:
-                return "neutro"
-            if s <= 75:
-                return "ganância"
-            return "ganância extrema"
-
         def _safe_score(obj):
             if isinstance(obj, dict):
                 return obj.get("score")
@@ -2156,22 +2145,20 @@ def get_fear_greed_index() -> dict:
         return {
             "score": round(score, 1) if score is not None else None,
             "rating_en": rating,
-            "rating_pt": _classify(score),
+            # Tabela de faixas em agent/sentimento.py -- ate 26/08/2026 ela
+            # existia aqui E em get_macro.py, identicas. A MM50 mostrou no
+            # mesmo dia o que acontece quando duas copias divergem.
+            "rating_pt": _faixa_sentimento(score)["rotulo"],
+            "faixa": _faixa_sentimento(score),
             "prev_close": _safe_score(hist.get("previousClose")),
             "one_week_ago": _safe_score(hist.get("oneWeekAgo")),
             "one_month_ago": _safe_score(hist.get("oneMonthAgo")),
             "one_year_ago": _safe_score(hist.get("oneYearAgo")),
-            "interpretation": (
-                "Pânico — potencial oportunidade contrária"
-                if score and score <= 25
-                else "Medo predominante — cautela"
-                if score and score <= 45
-                else "Sentimento neutro"
-                if score and score <= 55
-                else "Mercado ganancioso — risco de reversão"
-                if score and score <= 75
-                else "Euforia — risco máximo de reversão"
-            ),
+            # Derivada do ROTULO (agent/sentimento.py), nao de uma segunda
+            # escada. A escada que estava aqui usava `score and score <= 25`,
+            # e `score and` e' falso em 0.0: o panico maximo do indice saia
+            # como "Euforia -- risco maximo de reversao".
+            "interpretation": _interpretar_sentimento(score),
         }
     except Exception as e:
         return {"error": str(e)}
