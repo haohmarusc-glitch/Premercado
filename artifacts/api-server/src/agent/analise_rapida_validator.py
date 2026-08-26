@@ -92,16 +92,36 @@ _META_RECUSA = (r"n[ãa]o\s+(?:vou\s+|cabe\s+|[ée]\s+papel\s+)?recomend",
 _BANDA = r"\b[rs][12]\b"
 _NIVEL = (r"\b(?:suportes?|resist[êe]ncias?|pisos?|zonas?\s+de\s+defesa"
           r"|tetos?\s+t[ée]cnicos?|fundos?\s+t[ée]cnicos?)\b")
-_LIGA = (r"(?:é|são|era|eram|vira|viram|virou|funciona\s+como|atua\s+como"
-         r"|serve\s+(?:de|como)|representa|equivale\s+a|marca)")
-_BANDA_VIRA_NIVEL = (rf"{_BANDA}[^.;]{{0,40}}?\s{_LIGA}\s+"
+_LIGA = (r"(?:é|são|era|eram|vira|viram|virou|funciona\w*\s+como"
+         r"|atua\w*\s+como|configura\w*[-\s]se\s+como|constitu\w+|form\w+"
+         r"|aparec\w+\s+como|serve\w*\s+(?:de|como)|representa\w*"
+         r"|equivale\w*\s+a|marca\w*)")
+# O vão passou de 40 para 90: em produção o modelo escreve o valor e a fonte
+# entre a banda e o predicado ("o S1 (banda de reação) em US$ 357,14 e a MM200
+# (US$ 343,15) configuram-se como suportes"), e 40 caracteres não alcançavam.
+# `[^.;]` continua barrando a travessia de frase.
+_BANDA_VIRA_NIVEL = (rf"{_BANDA}[^.;]{{0,90}}?\s{_LIGA}\s+"
                      rf"(?:o|a|os|as|um|uma|de|do|da)?\s*{_NIVEL}")
 _NIVEL_VIRA_BANDA = rf"{_NIVEL}\s+(?:em|de|do|da|no|na)?\s*\(?{_BANDA}"
+# A banda ARROLADA entre os níveis: "as resistências imediatas INCLUEM a MM50
+# e o R1". O verbo é restrito a "incluir/compreender" de propósito -- com um
+# `ser` genérico aqui, "a resistência é a máxima de julho e R1 fica acima"
+# (frase que DISTINGUE os dois) viraria apontamento.
+_NIVEL_ARROLA_BANDA = (rf"{_NIVEL}[^.;]{{0,30}}?\s(?:inclu\w+|compreend\w+|"
+                       rf"abrang\w+|contempl\w+)\s[^.;]{{0,60}}?{_BANDA}")
 # Cópula elíptica: "R2 é o teto E S2 O PISO" -- o verbo aparece uma vez só e
 # a segunda banda fica colada ao artigo. Aqui NÃO cabe vão nenhum: com o
 # `[^.;]{0,40}?` do padrão acima, um artigo solto casaria com qualquer
 # "resistência" que aparecesse depois na frase.
 _BANDA_ELIPSE = rf"{_BANDA}\s+(?:o|a|os|as)\s+{_NIVEL}"
+
+# O texto que NOMEIA a natureza da banda na mesma frase já disse ao leitor o
+# que ela é. "o S1 (banda de reação) ... configura-se como suporte" usa a
+# palavra proibida, mas não engana sobre a origem do número -- e acusá-lo
+# seria o quarto alarme falso desta checagem em quatro rodadas reais.
+_ROTULA_A_BANDA = (r"banda\s+(?:de\s+rea[cç][ãa]o|estat[íi]stica|"
+                   r"de\s+volatilidade)|rea[cç][ãa]o\s+m[ée]dia|"
+                   r"desvio\s+t[íi]pico")
 
 # Moeda: os ativos são listados nos EUA e o prompt manda não converter. Mas o
 # modelo ECOANDO a regra ("não converter para R$") ou citando o câmbio não
@@ -111,6 +131,21 @@ _MOEDA_LEGITIMA = (r"n[ãa]o\s+(?:converter|converta|use|usar)\b",
                    r"nunca\s+(?:converter|converta|use|usar)\b",
                    r"c[âa]mbio", r"d[óo]lar\s+(?:est[áa]|a|em|cotado)",
                    r"USD/BRL", r"em\s+vez\s+de\s+R\$", r"jamais\s+em\s+R\$")
+
+# Níveis de referência que o texto compara com o PREÇO, e como o modelo os
+# escreve. O valor vem do mesmo campo que alimenta a lista de níveis do prompt.
+_REFERENCIAS = (
+    ("MM20",  r"mm\s?20|m[ée]dia\s+(?:m[óo]vel\s+)?de\s+20",
+     (("technicals", "sma20"),)),
+    ("MM50",  r"mm\s?50|m[ée]dia\s+(?:m[óo]vel\s+)?de\s+50",
+     (("snapshot", "sma50"), ("technicals", "sma50"))),
+    ("MM200", r"mm\s?200|m[ée]dia\s+(?:m[óo]vel\s+)?de\s+200",
+     (("snapshot", "sma200"), ("technicals", "sma200"))),
+    ("VWAP",  r"vwap", (("technicals", "vwap"),)),
+)
+
+# "está 0,72% ACIMA da MM20" -- a direção afirmada, com o número ao lado.
+_DIRECAO = r"(\d+(?:[.,]\d+)?)\s*%\s*(acima|abaixo)\s+d[ao]s?\s+(?:sua\s+)?"
 
 # Verbos que ATRIBUEM um movimento ao balanço. É o que separa "reagiu com X%"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
@@ -270,9 +305,10 @@ def validar_analise(texto, dados=None) -> list:
         # A negação é avaliada contra `_NIVEL`, não contra o padrão inteiro:
         # em "S1 e S2 NÃO SÃO suporte" o "não" está no meio da construção, e
         # procurá-lo antes do padrão (que começa na banda) nunca o acharia.
-        if afirmacao_negada(frase, _NIVEL):
+        if afirmacao_negada(frase, _NIVEL) or re.search(_ROTULA_A_BANDA, frase):
             continue
-        for padrao in (_BANDA_VIRA_NIVEL, _BANDA_ELIPSE, _NIVEL_VIRA_BANDA):
+        for padrao in (_BANDA_VIRA_NIVEL, _BANDA_ELIPSE, _NIVEL_VIRA_BANDA,
+                       _NIVEL_ARROLA_BANDA):
             m = re.search(padrao, frase)
             if m:
                 achou = m
@@ -327,7 +363,36 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 8. run-up apresentado como reação ───────────────────────────────────
+    # ── 8. direção invertida contra média móvel ─────────────────────────────
+    #
+    # Incidente real (ADI, 26/08/2026), publicado sem nenhum apontamento: "o
+    # preço de US$ 373,66 está apenas 0,72% ACIMA da MM20 (US$ 376,36)". A
+    # magnitude estava certa e o sinal invertido -- 373,66 é MENOR que 376,36.
+    # A frase até se contradizia sozinha ("acima da MM20, MAS abaixo da MM50",
+    # como se fosse contraste), e ainda assim passou: nenhuma checagem olhava
+    # a DIREÇÃO, só os números.
+    #
+    # A guarda contra o falso positivo é a magnitude. Só aponta quando o
+    # percentual citado BATE com a distância real entre preço e nível — o que
+    # confirma que a frase fala dessa comparação e não de outra. "A MM50 está
+    # 12% acima da MM200" não casa, porque 12 não é a distância do PREÇO à
+    # MM200, e é assim que o sujeito da frase fica implicitamente checado.
+    preco_atual = _primeiro_valor(caminho(dados, "precoAtual").get("valor"),
+                                  caminho(dados, "snapshot").get("price"))
+    if preco_atual:
+        for frase in frases(prosa_sa):
+            achado = _direcao_contradita(frase, preco_atual, dados)
+            if achado:
+                rotulo, citado, dito, valor, real = achado
+                add("ERRO", "ANALISE_DIRECAO_INVERTIDA",
+                    f"diz que o preço está {citado:.2f}% {dito} da {rotulo} "
+                    f"(US$ {valor:.2f}), mas US$ {preco_atual:.2f} está "
+                    f"{'acima' if real > 0 else 'abaixo'} dela — magnitude "
+                    f"certa, sinal trocado. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+                break
+
+    # ── 9. run-up apresentado como reação ───────────────────────────────────
     #
     # O pior erro da rodada de WOLF, e o que nenhum validador pegava: "o papel
     # reagiu com 14,92% de alta", quando 14,92% é o run-up EX-EVENTO e a
@@ -358,6 +423,42 @@ def validar_analise(texto, dados=None) -> list:
                 break
 
     return achados
+
+
+# Folga entre o percentual escrito e o calculado. O modelo às vezes usa o
+# PREÇO como base e às vezes o nível ("3,55% abaixo da MM50" contra os "-3,42%"
+# do painel são a mesma distância medida de pontos diferentes), então as duas
+# bases contam como acerto de magnitude.
+_FOLGA_DE_MAGNITUDE = 0.06
+
+
+def _bate_a_magnitude(citado: float, preco: float, nivel: float) -> bool:
+    for base in (nivel, preco):
+        real = abs(preco - nivel) / base * 100
+        if abs(citado - real) <= max(_FOLGA_DE_MAGNITUDE, real * 0.02):
+            return True
+    return False
+
+
+def _direcao_contradita(frase: str, preco: float, dados) -> tuple | None:
+    """(rótulo, citado, direção_dita, valor_do_nível, distância_real) ou None.
+
+    Só devolve quando a magnitude bate E a direção não — ver a nota da
+    checagem 8 sobre por que a magnitude é a guarda do sujeito da frase."""
+    for rotulo, escrita, campos in _REFERENCIAS:
+        for m in re.finditer(_DIRECAO + rf"(?:{escrita})", frase):
+            citado = num_finito(m.group(1))
+            nivel = _primeiro_valor(*(caminho(dados, secao).get(campo)
+                                      for secao, campo in campos))
+            if citado is None or not nivel:
+                continue
+            if not _bate_a_magnitude(citado, preco, nivel):
+                continue
+            real = preco - nivel
+            dito_acima = m.group(2) == "acima"
+            if dito_acima != (real > 0):
+                return rotulo, citado, m.group(2), nivel, real
+    return None
 
 
 def _cita_percentual(frase: str, valor: float) -> bool:
