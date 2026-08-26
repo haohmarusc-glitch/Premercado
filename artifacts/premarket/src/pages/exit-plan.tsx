@@ -27,62 +27,28 @@ import { useTacticalContext, tacticalSignal, type TacticalContext, type Tone } f
 // Seed inicial da análise feita no chat (carteira Nomad, prazo real 30/set,
 // dinheiro usado em out/2026). Só usado pra popular a tabela na primeira
 // visita à página -- depois disso os itens vivem só no banco (exit_plan_items).
-const SEED_ITEMS = [
-  {
-    ticker: "SKHY", phase: 1, phaseLabel: "Fase 1 · 17–24 de julho",
-    targetDate: "2026-07-17", action: "Vender",
-    rationale: "Sem tese pra segurar: comprado 1 dia antes do selloff, sem histórico técnico (IPO em 10/jul).",
-    eventDate: null,
-  },
-  {
-    ticker: "GOOGL", phase: 1, phaseLabel: "Fase 1 · 17–24 de julho",
-    targetDate: "2026-07-20", action: "Vender antes do earnings",
-    rationale: "Trava o valor atual e remove o risco binário do resultado — não vale segurar earnings de algo que já vai sair no trimestre.",
-    eventDate: "2026-07-21",
-  },
-  {
-    ticker: "TSLA", phase: 1, phaseLabel: "Fase 1 · 17–24 de julho",
-    targetDate: "2026-07-21", action: "Vender antes do earnings",
-    rationale: "Mesma lógica da GOOGL: sem motivo pra correr risco de earnings numa posição que já será liquidada.",
-    eventDate: "2026-07-22",
-  },
-  {
-    ticker: "SMCI", phase: 2, phaseLabel: "Fase 2 · 27 jul – 15 ago",
-    targetDate: "2026-08-03", action: "Vender antes do earnings",
-    rationale: "Earnings confirmado 04/ago, -37% e sem reversão técnica — não segurar apostando numa recuperação incerta.",
-    eventDate: "2026-08-04",
-  },
-  {
-    ticker: "ARM", phase: 2, phaseLabel: "Fase 2 · 27 jul – 15 ago",
-    targetDate: "2026-08-15", action: "Vender (na força, se houver repique)",
-    rationale: "RSI perto de sobrevenda — usar qualquer repique pós-resultados de capex das big techs. Confirme a data de earnings de agosto antes.",
-    eventDate: null,
-  },
-  {
-    ticker: "AVGO", phase: 2, phaseLabel: "Fase 2 · 27 jul – 15 ago",
-    targetDate: "2026-08-15", action: "Vender (na força, se houver repique)",
-    rationale: "Um dos nomes mais citados no medo de desaceleração de capex de IA — vende na força ou no fim da janela se ela não vier.",
-    eventDate: null,
-  },
-  {
-    ticker: "MRVL", phase: 2, phaseLabel: "Fase 2 · 27 jul – 15 ago",
-    targetDate: "2026-08-15", action: "Vender (na força, se houver repique)",
-    rationale: "Citado como o principal afetado pelo medo de capex de IA do dia 16/jul.",
-    eventDate: null,
-  },
-  {
-    ticker: "NVDA", phase: 3, phaseLabel: "Fase 3 · 18 ago – 20 set",
-    targetDate: "2026-09-01", action: "Vender na semana pós-earnings",
-    rationale: "Maior posição e melhor qualidade — dá tempo até o earnings de 26/ago, mas sem estender pra setembro.",
-    eventDate: "2026-08-26",
-  },
-  {
-    ticker: "ETF", phase: 3, phaseLabel: "Fase 3 · 18 ago – 20 set",
-    targetDate: "2026-09-15", action: "Vender",
-    rationale: "Cota ~US$100, baixa volatilidade, sem risco de tese/earnings — fecha a conta perto do prazo, sem pressa. Ticker exato não confirmado; edite/recrie se identificar qual é.",
-    eventDate: null,
-  },
-];
+// O botão "Carregar plano de 16/jul/2026" morava aqui, com nove itens fixos
+// no código: SKHY, GOOGL, TSLA, SMCI, ARM, AVGO, MRVL, NVDA e um ETF, com as
+// datas de julho/agosto e a JUSTIFICATIVA de cada um escrita em primeira
+// pessoa ("comprado 1 dia antes do selloff", "não vale segurar earnings de
+// algo que já vai sair no trimestre").
+//
+// Era o plano de UMA pessoa -- o operador -- e virava oferta para qualquer
+// conta com o plano vazio (26/08/2026: uma conta nova abriu a tela e recebeu
+// o convite). Três problemas, em ordem crescente:
+//
+//   1. o raciocínio de investimento de alguém viajava no bundle, legível por
+//      qualquer um que carregasse o app;
+//   2. clicar ESCREVIA nove itens na conta de quem clicou -- decisões sobre
+//      papéis que a pessoa pode nem ter;
+//   3. sete das nove datas já passaram. O plano nascia vencido: uma tela
+//      cheia de ordens de venda urgentes para ações alheias.
+//
+// O (3) ficou pior depois que o Veredito passou a LER o plano de saída
+// (BLOCO_CONTRA_PLANO): um plano semeado alimentaria a checagem com ruído
+// sobre posições que não existem.
+//
+// O caminho certo já existe e é o botão "Novo item" no topo.
 
 type Urgency = "critico" | "atencao" | "info" | "done";
 
@@ -343,12 +309,6 @@ export default function ExitPlanPage() {
   const invalidate = () => qc.invalidateQueries({ queryKey: getListExitPlanQueryKey() });
   const create = useCreateExitPlanItem({ mutation: { onSuccess: invalidate } });
 
-  async function seedPlan() {
-    for (const item of SEED_ITEMS) {
-      await create.mutateAsync({ data: item });
-    }
-  }
-
   // ── Reavaliar plano (agente) ────────────────────────────────────────────────
   // Mesmo padrão do runFastMode em components/layout.tsx: POST direto em
   // /api/agent/run (o hook gerado useRunAgent não é usado ali por esse motivo).
@@ -491,11 +451,13 @@ export default function ExitPlanPage() {
           <Skeleton className="h-20 w-full" />
         </div>
       ) : items.length === 0 ? (
-        <div className="border border-dashed border-border rounded-lg p-8 text-center space-y-3">
+        <div className="border border-dashed border-border rounded-lg p-8 text-center space-y-2">
           <p className="text-sm text-muted-foreground">Nenhum item no plano de saída ainda.</p>
-          <Button onClick={() => seedPlan()} disabled={create.isPending}>
-            Carregar plano de 16/jul/2026
-          </Button>
+          <p className="text-xs text-muted-foreground/70">
+            Use <span className="font-mono">Novo item</span> para cadastrar uma meta de venda,
+            ou <span className="font-mono">Reavaliar plano</span> para o agente propor uma a
+            partir das suas posições.
+          </p>
         </div>
       ) : (
         <div className="space-y-6">
