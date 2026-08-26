@@ -119,7 +119,7 @@ from agent.ordem_das_telas import (
 # casa faria um refactor virar dois.
 _aplicar_ordem_na_env()
 
-from agent.security import sanitize_for_llm
+from agent.security import mask_sensitive_data, sanitize_for_llm
 from agent import tools
 
 _probe_imports()
@@ -288,8 +288,29 @@ _MOTIVO_TETO = ("a camada fundamental bateu o teto de tempo antes de chegar "
 def _motivo_curto(e: Exception) -> str:
     """Uma linha, curta, para caber na tela. O stderr guarda o traceback
     inteiro; aqui interessa dar ao leitor o suficiente para saber SE vale
-    abrir o log -- 'ConnectionError: timeout' ja decide isso."""
-    texto = str(e).strip().splitlines()[0] if str(e).strip() else ""
+    abrir o log -- 'ConnectionError: timeout' ja decide isso.
+
+    Incidente real (ARM, 26/08/2026): a FMP respondeu 402 e a tela publicou
+
+        402 Client Error: Payment Required for url:
+        https://financialmodelingprep.com/...?symbol=ARM&apikey=<A CHAVE>
+
+    `requests` monta a URL a partir de `params={..., "apikey": key}` e poe a
+    URL INTEIRA na mensagem do HTTPError. `str(e)` copiou, e isto publicou --
+    na tela, no .md e no e-mail.
+
+    `mask_sensitive_data` ja' existia e ja' pegava exatamente esse formato:
+    foi escrita em 02/08 para o MESMO vazamento, quando um 403 da FMP mandou
+    a chave pro log de `news_sources.py`. Ela so' nunca foi chamada aqui. Uma
+    defesa que mora num lugar so' e' uma chance de a proxima tela nascer sem.
+
+    Ela vem ANTES do corte, nao depois: a chave fica no FIM da URL, entao
+    truncar primeiro deixaria um PEDACO da credencial na tela em vez da
+    credencial toda -- que nao e' protecao, e' um vazamento mais dificil de
+    notar.
+    """
+    bruto = mask_sensitive_data(str(e)).strip()
+    texto = bruto.splitlines()[0] if bruto else ""
     rotulo = type(e).__name__
     return f"{rotulo}: {texto[:120]}" if texto else rotulo
 
