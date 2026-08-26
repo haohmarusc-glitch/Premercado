@@ -1091,3 +1091,69 @@ def test_o_aviso_chega_na_tela():
     rep = validar_bloco_estruturado(
         _bloco_arm(), _snap_plano({"_leitura_falhou": True}))
     assert "PLANO_NAO_CONFERIDO" in rep.bloco_para_a_tela()
+
+
+# ── moeda: a checagem que existia num validador só ─────────────────────────
+#
+# Veredito real de ARM (26/08/2026 16:17), publicado com a caixa amarela
+# funcionando pela primeira vez -- e ela apontou OUTRA coisa (`MACD_NEGATIVO`
+# fora do vocabulário) enquanto a primeira frase do texto dizia:
+#
+#     "ARM encerra 26/08 em R$ 249,57"
+#
+# ARM é NASDAQ. Não é erro de digitação: é um número cinco vezes menor que o
+# real, num texto cuja conclusão era "recomenda-se saída ordenada".
+#
+# A checagem existia desde 25/08 -- no `analise_rapida_validator`, e só lá.
+# Uma cópia por validador é uma chance de a próxima tela ficar sem; agora mora
+# no núcleo e os dois chamam a mesma.
+
+_SNAP_MOEDA = {"as_of": "2026-08-26",
+               "quotes": {"ARM": {"price": 249.57, "as_of": "2026-08-26"}},
+               "technicals": {}, "earnings": {}}
+
+
+def _cods_moeda(texto):
+    return [i.code for i in lint_veredito(texto, _SNAP_MOEDA).issues]
+
+
+def test_o_incidente_do_arm_em_reais():
+    achados = [i for i in lint_veredito(
+        "ARM encerra 26/08 em R$ 249,57, acumulando +3,53% no dia.",
+        _SNAP_MOEDA).issues if i.code == "MOEDA_ERRADA"]
+    assert len(achados) == 1
+    assert "US$" in achados[0].message, "a mensagem tem que dizer o que escrever"
+
+
+@pytest.mark.parametrize("frase,cai", [
+    ("ARM encerra 26/08 em R$ 249,57.", True),
+    ("O alvo dos analistas é R$ 285,72.", True),
+    # A grafia certa.
+    ("ARM encerra 26/08 em US$ 249,57.", False),
+    ("O alvo dos analistas é US$ 285,72.", False),
+    # Ecoar a regra é o modelo obedecendo, não errando.
+    ("Os valores ficam em US$ — não converter para R$.", False),
+    ("Nunca use R$ para estes papéis.", False),
+    # Citar câmbio para contextualizar é legítimo.
+    ("Com o câmbio a R$ 5,40, a posição rende mais em reais.", False),
+    ("O dólar está a R$ 5,40 hoje.", False),
+])
+def test_moeda_par_a_par(frase, cai):
+    assert ("MOEDA_ERRADA" in _cods_moeda(frase)) is cai
+
+
+def test_a_checagem_le_o_texto_com_maiuscula():
+    """`_norm` deixa tudo minúsculo e "R$" vira "r$", que o padrão nunca
+    casaria -- a checagem ficaria morta sem ninguém notar. Terceira vez que
+    esta armadilha aparece neste repo."""
+    from agent.veredito_validator import _norm
+    assert "R$" not in _norm("ARM em R$ 249,57")
+    assert "MOEDA_ERRADA" in _cods_moeda("ARM em R$ 249,57")
+
+
+def test_os_dois_validadores_usam_a_mesma_regra():
+    """Uma cópia por validador é uma chance de a próxima tela ficar sem -- foi
+    exatamente o que aconteceu com o Veredito por um dia inteiro."""
+    from agent import analise_rapida_validator, validador_nucleo
+    assert (analise_rapida_validator.frase_com_moeda_errada
+            is validador_nucleo.frase_com_moeda_errada)
