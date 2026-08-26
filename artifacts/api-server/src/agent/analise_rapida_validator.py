@@ -458,7 +458,10 @@ def validar_analise(texto, dados=None) -> list:
     # quem lê o apontamento não sabe se corrige o número ou o rótulo.
     resumo = caminho(dados, "reaction", "summary")
     if resumo:
-        for frase in frases(prosa_sa):
+        # Sobre `prosa_min` (COM acento) porque a separação por oração divide
+        # em " e ": sem acento "é" vira "e" e "o gap médio É de 15,09%" seria
+        # partido no meio, deixando o número órfão do seu rótulo.
+        for frase in frases(prosa_min):
             achado = _estatistica_trocada(frase, resumo)
             if achado:
                 rotulo, citado, esperados, bate_com = achado
@@ -566,23 +569,49 @@ def _ordem_invertida(frase: str) -> tuple | None:
 def _estatistica_trocada(frase: str, resumo: dict) -> tuple | None:
     """(rótulo, citado, valores esperados, campo que o número realmente é).
 
+    Cada percentual pertence ao rótulo MAIS PRÓXIMO dele na frase. A primeira
+    versão varria todos os percentuais procurando um que não batesse com o
+    rótulo encontrado -- e numa frase com DUAS estatísticas isso atribuía o
+    número de uma ao nome da outra:
+
+      "reação média absoluta de 15,09% no fechamento e um gap médio absoluto
+       de 12,16% na abertura"
+
+    Os dois números estavam certos (SMCI, 26/08/2026), e a checagem acusou os
+    15,09% de serem o gap -- ela própria cometendo o erro de rótulo trocado
+    que existe para pegar.
+
     Só olha frases que dizem MÉDIA: "o gap de +2,19% em abril" cita um evento
     específico e não é o campo do resumo."""
     if not re.search(r"m[ée]di[ao]", frase):
         return None
-    for rotulo, escrita, campos in _ESTATISTICAS:
-        if not re.search(escrita, frase):
+
+    # UMA ORAÇÃO, UM RÓTULO, UM NÚMERO. Nem distância nem "olhar para trás"
+    # resolvem os dois sentidos do português: em "12,16% na abertura E reação
+    # média de 15,09% no fechamento", o "abertura" do primeiro trecho fica
+    # antes do segundo número e o roubaria. A fronteira de oração é o que
+    # separa de verdade.
+    # A vírgula separa oração SÓ quando não está entre dígitos: em pt-BR ela é
+    # o separador decimal, e dividir sem essa guarda parte "15,09" em "15" e
+    # "09%" -- um número inventado no meio da checagem que existe para pegar
+    # número trocado.
+    for oracao in re.split(r"\s+(?:e|mas|enquanto)\s+|;|(?<!\d),(?!\d)", frase):
+        marcas = [(m.start(), rotulo, campos)
+                  for rotulo, escrita, campos in _ESTATISTICAS
+                  for m in re.finditer(escrita, oracao)]
+        if not marcas:
             continue
-        esperados = [v for v in (num_finito(resumo.get(c)) for c in campos)
-                     if v is not None]
-        if not esperados:
-            continue
-        for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*%", frase):
+        for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*%", oracao):
             citado = num_finito(m.group(1))
             if citado is None:
                 continue
+            _, rotulo, campos = min(marcas, key=lambda x: abs(x[0] - m.start()))
+            esperados = [v for v in (num_finito(resumo.get(c)) for c in campos)
+                         if v is not None]
+            if not esperados:
+                continue
             if any(abs(citado - abs(v)) <= 0.06 for v in esperados):
-                return None  # bate com o campo certo: nada a apontar
+                continue  # bate com o campo do rótulo desta oração
             bate_com = next(
                 (c for c in _CAMPOS_DE_RESUMO
                  if (v := num_finito(resumo.get(c))) is not None
