@@ -533,6 +533,45 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
+        # ── 9b. a distância à máxima/mínima medida contra o PREÇO ───────────
+        #
+        # Incidente real (SNDK, 26/08/2026), publicado com a caixa apontando
+        # OUTRA coisa: "está 58,51% abaixo da máxima de 52 semanas (US$
+        # 2354,39) e 96,81% acima da mínima (US$ 47,40)". Com o papel a US$
+        # 1485,30, o certo é -36,91% e +3033,54%. Os dois números saíram de
+        # dividir pelo PREÇO em vez de pela referência.
+        #
+        # Por que isto merece checagem própria, e não uma linha em
+        # `_REFERENCIAS`: `_bate_a_magnitude` aceita as DUAS bases de
+        # propósito, porque preço e média móvel andam perto e a convenção
+        # não muda o número o bastante para valer uma briga. Com a mínima
+        # anual não é assim -- US$ 1485,30 é 31 vezes US$ 47,40. Trocar a
+        # base transforma +3033% em +96,81%.
+        #
+        # E é justamente aí que mora o veneno: dividir pelo preço produz um
+        # número que NUNCA passa de 100%. "96,81% acima da mínima" se lê como
+        # "quase no teto da faixa" -- plausível, arredondado, e a 3000% da
+        # verdade. Um erro que se disfarça de número bem-comportado é pior
+        # que um número absurdo, porque o absurdo o leitor pega sozinho.
+        #
+        # A guarda contra falso positivo é a mesma da checagem 8: só aponta
+        # quando o citado bate com a conta ERRADA. Número que não bate com
+        # nenhuma das duas é outra conversa, e o silêncio aqui é de propósito.
+        vistos: set = set()
+        for frase in frases(prosa_sa):
+            for rotulo, citado, referencia, correto in \
+                    _bases_da_distancia_trocadas(frase, preco_atual,
+                                                 faixa_lo, faixa_hi):
+                if rotulo in vistos:
+                    continue
+                vistos.add(rotulo)
+                add("ERRO", "ANALISE_DISTANCIA_DA_FAIXA",
+                    f"diz {citado:.2f}% em relação à {rotulo} "
+                    f"(US$ {referencia:.2f}), mas esse número vem de dividir "
+                    f"pelo PREÇO. Medido contra a própria {rotulo}, US$ "
+                    f"{preco_atual:.2f} está {correto:+.2f}%. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+
     # ── 10. níveis descritos fora de ordem ──────────────────────────────────
     #
     # Incidente real (INTC, 26/08/2026): "encontra seu primeiro nível técnico
@@ -630,6 +669,53 @@ def _bate_a_magnitude(citado: float, preco: float, nivel: float) -> bool:
         if abs(citado - real) <= max(_FOLGA_DE_MAGNITUDE, real * 0.02):
             return True
     return False
+
+
+# "58,51% abaixo da maxima", "96,81% acima da minima" -- o numero, a direcao
+# e a referencia anual. `do dia`/`intraday` fica de fora: maxima do dia e outro
+# dado, e apontar contra o `yearHigh` seria acusar o texto de dizer o que ele
+# nao disse.
+_DISTANCIA_DA_FAIXA = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*%\s*(?:acima|abaixo|d[eo]|da)\s+"
+    r"(?:d[ao]s?\s+)?(m[áa]xima|m[íi]nima|topo|fundo)"
+    r"(?!\s+(?:do\s+dia|di[áa]ri\w+|intrad\w+|da\s+sess[ãa]o))",
+    re.IGNORECASE)
+
+
+def _bases_da_distancia_trocadas(frase: str, preco: float, lo: float,
+                                 hi: float) -> list[tuple]:
+    """[(rotulo, citado, referencia, distancia_correta), ...].
+
+    So entra na lista o percentual que bate com a conta feita sobre o PRECO
+    e NAO bate com a conta sobre a referencia -- ver a nota da checagem 9b
+    sobre por que a base importa aqui e nao nas medias moveis.
+
+    Devolve TODOS os achados da frase, nao o primeiro: a forma tipica do erro
+    e' citar maxima e minima na mesma frase, com a mesma base trocada nas
+    duas. Reportar so uma deixaria a outra parecendo conferida."""
+    achados: list[tuple] = []
+    for m in _DISTANCIA_DA_FAIXA.finditer(frase):
+        citado = num_finito(m.group(1))
+        if citado is None:
+            continue
+        palavra = m.group(2).lower()
+        de_cima = palavra.startswith("max") or palavra.startswith("máx") \
+            or palavra == "topo"
+        referencia = hi if de_cima else lo
+        rotulo = "máxima de 52 semanas" if de_cima else "mínima de 52 semanas"
+        if not referencia:
+            continue
+        correto = (preco - referencia) / referencia * 100
+        errado = (preco - referencia) / preco * 100
+        if _perto(citado, abs(correto)):
+            continue                      # a conta certa: nada a apontar
+        if _perto(citado, abs(errado)):
+            achados.append((rotulo, citado, referencia, correto))
+    return achados
+
+
+def _perto(citado: float, real: float) -> bool:
+    return abs(citado - real) <= max(_FOLGA_DE_MAGNITUDE, real * 0.02)
 
 
 def _direcao_contradita(frase: str, preco: float, dados) -> tuple | None:

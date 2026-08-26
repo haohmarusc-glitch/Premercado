@@ -281,12 +281,63 @@ SYSTEM = (
 )
 
 
-def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
+_MOTIVO_TETO = ("a camada fundamental bateu o teto de tempo antes de chegar "
+                "neste bloco")
+
+
+def _motivo_curto(e: Exception) -> str:
+    """Uma linha, curta, para caber na tela. O stderr guarda o traceback
+    inteiro; aqui interessa dar ao leitor o suficiente para saber SE vale
+    abrir o log -- 'ConnectionError: timeout' ja decide isso."""
+    texto = str(e).strip().splitlines()[0] if str(e).strip() else ""
+    rotulo = type(e).__name__
+    return f"{rotulo}: {texto[:120]}" if texto else rotulo
+
+
+# Onde cada bloco da camada fundamental e' BUSCADO. Quando um deles nao vem,
+# a tela mostra o nome da funcao e o arquivo -- ate aqui a ausencia so
+# aparecia por OMISSAO na linha de fontes, e notar que "valuation/DCF (FMP)"
+# sumiu exige saber de cor que a lista tem tres itens.
+#
+# O caminho do arquivo e' dado, nao decoracao: e' por ele que a tela monta o
+# link pro fonte. Mover a funcao sem mexer aqui deixa o link apontando pra
+# lugar errado -- por isso o teste `test_coletores_apontam_para_codigo_real`
+# abre cada arquivo e confere que a funcao existe mesmo.
+COLETORES = {
+    "alvosAnalistas": {
+        "bloco": "alvos de analistas",
+        "funcao": "_buscar_fundamento",
+        "arquivo": "artifacts/api-server/src/agent/analise_rapida_ia.py",
+    },
+    "valuation": {
+        "bloco": "valuation/DCF",
+        "funcao": "get_fundamentals_valuation",
+        "arquivo": "artifacts/api-server/src/agent/tools.py",
+    },
+    "manchetes": {
+        "bloco": "notícias do feed",
+        "funcao": "get_news",
+        "arquivo": "artifacts/api-server/src/agent/tools.py",
+    },
+}
+
+
+def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
     """Camada fundamental das fontes do app. Cada bloco é opcional: fonte
     fora do ar (ou sem chave de API) vira ausência no prompt, nunca erro —
-    a análise técnica sozinha ainda vale. Devolve (dados, fontes_usadas)."""
+    a análise técnica sozinha ainda vale.
+
+    Devolve (dados, fontes_usadas, ausências). A terceira parte é a novidade:
+    bloco que não veio sai com o MOTIVO e com a função que o busca, para o
+    texto "não estava disponível" parar de ser um beco sem saída para quem
+    lê. Sem isso o operador só descobre qual fonte falhou lendo o stderr do
+    processo — e a tela é o único lugar onde ele estava olhando."""
     fundamento: dict = {}
     fontes: list[str] = []
+    ausencias: list[dict] = []
+
+    def _faltou(chave: str, motivo: str) -> None:
+        ausencias.append({**COLETORES[chave], "motivo": motivo})
 
     def _estourou() -> bool:
         """Teto proprio da camada opcional, conferido ENTRE os blocos.
@@ -328,25 +379,38 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
         if analistas:
             fundamento["alvosAnalistas"] = analistas
             fontes.append("alvos de analistas (yfinance)")
+        else:
+            _faltou("alvosAnalistas", "o yfinance não trouxe alvo nem consenso")
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] alvos indisponíveis: {e}", file=sys.stderr)
+        _faltou("alvosAnalistas", f"a busca falhou: {_motivo_curto(e)}")
 
     if _estourou():
-        return fundamento, fontes
+        _faltou("valuation", _MOTIVO_TETO)
+        _faltou("manchetes", _MOTIVO_TETO)
+        return fundamento, fontes, ausencias
 
     try:
         val = tools.get_fundamentals_valuation(ticker) or {}
-        if val.get("configured") and not val.get("error"):
+        if not val.get("configured"):
+            _faltou("valuation", "a FMP não está configurada (falta a chave de API)")
+        elif val.get("error"):
+            _faltou("valuation", f"a FMP respondeu com erro: {val['error']}")
+        else:
             limpo = {k: v for k, v in val.items()
                      if k not in ("configured", "ticker") and v is not None}
             if limpo:
                 fundamento["valuation"] = limpo
                 fontes.append("valuation/DCF (FMP)")
+            else:
+                _faltou("valuation", f"a FMP não tem cobertura de {ticker}")
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] valuation indisponível: {e}", file=sys.stderr)
+        _faltou("valuation", f"a busca falhou: {_motivo_curto(e)}")
 
     if _estourou():
-        return fundamento, fontes
+        _faltou("manchetes", _MOTIVO_TETO)
+        return fundamento, fontes, ausencias
 
     try:
         noticias = (tools.get_news([ticker], max_items=MAX_NOTICIAS) or {}).get(ticker) or []
@@ -358,10 +422,13 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str]]:
         if manchetes:
             fundamento["manchetes"] = manchetes
             fontes.append("notícias do feed")
+        else:
+            _faltou("manchetes", f"o feed não trouxe manchete de {ticker}")
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] notícias indisponíveis: {e}", file=sys.stderr)
+        _faltou("manchetes", f"a busca falhou: {_motivo_curto(e)}")
 
-    return fundamento, fontes
+    return fundamento, fontes, ausencias
 
 
 # Divergência a partir da qual os painéis não estão mais "só" defasados por
@@ -534,7 +601,7 @@ def analisar(dados: dict) -> dict:
 
     # Busca a camada fundamental ANTES do prompt (rede lenta, mas é o que
     # separa análise de gráfico de análise de empresa).
-    fundamento, fontes = _buscar_fundamento(ticker)
+    fundamento, fontes, ausencias = _buscar_fundamento(ticker)
     if fundamento:
         dados = {**dados, "_fundamento": fundamento}
 
@@ -700,6 +767,10 @@ def analisar(dados: dict) -> dict:
         print(f"[analise_rapida_ia] validador: {linha}", file=sys.stderr, flush=True)
 
     saida = {"markdown": texto, "usage": get_run_usage(), "fontes": fontes}
+    if ausencias:
+        # "não estava disponível" sem dizer O QUE não veio nem QUEM busca
+        # deixa o leitor sem próximo passo. A tela mostra estas linhas.
+        saida["ausencias"] = ausencias
     if achados:
         # Vão para a TELA junto do texto, nunca no lugar dele: análise
         # suprimida deixa a página vazia sem dizer por quê.
