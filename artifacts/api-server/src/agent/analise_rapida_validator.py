@@ -374,6 +374,33 @@ _AFIRMA_SIGNIFICANCIA = (
 )
 
 
+# ── Contagem do balde "chegou esticado" ─────────────────────────────────────
+#
+# Incidente real (ARM, 26/08/2026): "Historicamente, em 3 dos 7 eventos onde o
+# papel chegou esticado, ele reagiu com uma media de 1,37% de alta."
+#
+# O dado diz outra coisa: 3 eventos esticados, dos quais 2 CAIRAM, media
+# +1,37%. O modelo trocou o par de numeros e, de quebra, transformou "2 de 3
+# cairam" em "reagiu com media de alta" -- some a informacao de que a maioria
+# caiu, que e' a unica que muda decisao.
+#
+# A auditoria propos "mandar agregados pre-calculados para o modelo nao contar
+# sozinho". Eles JA' VAO: `esticado_n`, `esticado_caiu_n` e
+# `esticado_reacao_media` estao no `summary.runup` que o payload carrega
+# inteiro. O modelo tinha os tres na mao e contou assim mesmo. Entao o que
+# falta nao e' o dado, e' a CONFERENCIA.
+#
+# Dois pares sao legitimos e a checagem aceita os dois, porque as duas leituras
+# aparecem em texto correto:
+#
+#     (esticado_caiu_n, esticado_n)  -- "2 de 3 esticados cairam"
+#     (esticado_n,      n_events)    -- "3 dos 8 eventos chegaram esticados"
+_PAR_CONTADO = re.compile(
+    r"(\d+)\s+d(?:e|os|as)\s+(\d+)\s+"
+    r"(?:eventos?|balan[çc]os?|casos?|resultados?|trimestres?)",
+    re.IGNORECASE)
+
+
 def validar_analise(texto, dados=None) -> list:
     """[{nivel, codigo, mensagem}] -- vazio quando nada destoa.
 
@@ -855,6 +882,35 @@ def validar_analise(texto, dados=None) -> list:
                 + " — não há p-valor nem `corr_sobrevive` nesta tela, então a "
                 "afirmação não vem do dado. "
                 f"Trecho: “{frase.strip()[:120]}”.")
+            break
+
+    # ── 14. contagem do balde "chegou esticado" ─────────────────────────────
+    resumo_reacao = caminho(dados, "reaction", "summary")
+    ru_balde = dic(resumo_reacao.get("runup"))
+    esticado_n = num_finito(ru_balde.get("esticado_n"))
+    caiu_n = num_finito(ru_balde.get("esticado_caiu_n"))
+    n_eventos = num_finito(resumo_reacao.get("n_events"))
+    if esticado_n is not None and caiu_n is not None:
+        legitimos = {(int(caiu_n), int(esticado_n))}
+        if n_eventos is not None:
+            legitimos.add((int(esticado_n), int(n_eventos)))
+        for frase in frases(prosa_sa):
+            if not re.search(r"esticad", frase):
+                continue
+            achado_par = next(
+                ((int(m.group(1)), int(m.group(2)))
+                 for m in _PAR_CONTADO.finditer(frase)
+                 if (int(m.group(1)), int(m.group(2))) not in legitimos),
+                None)
+            if achado_par is None:
+                continue
+            add("ERRO", "ANALISE_BUCKET_CONTADO_ERRADO",
+                f"conta {achado_par[0]} de {achado_par[1]} para o balde "
+                f"'chegou esticado', mas o dado diz {int(caiu_n)} de "
+                f"{int(esticado_n)} esticados caíram"
+                + (f" (de {int(n_eventos)} eventos no total)"
+                   if n_eventos is not None else "")
+                + f". Trecho: “{frase.strip()[:120]}”.")
             break
 
     return achados

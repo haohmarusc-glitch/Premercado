@@ -1657,3 +1657,70 @@ def test_sem_correlacao_no_payload_a_checagem_se_cala():
     assert "ANALISE_SIGNIFICANCIA_SEM_CAMPO" not in _codigos(
         validar_analise(_texto_completo(
             "A correlação é estatisticamente significativa."), {}))
+
+
+# ── contagem do balde "chegou esticado" ─────────────────────────────────────
+#
+# ARM: "Historicamente, em 3 dos 7 eventos onde o papel chegou esticado, ele
+# reagiu com uma média de 1,37% de alta."
+#
+# O dado diz: 3 eventos esticados, dos quais 2 CAÍRAM, média +1,37%. O modelo
+# trocou o par e, de quebra, transformou "2 de 3 caíram" em "reagiu com média
+# de alta" — some justamente a informação de que a maioria caiu.
+#
+# A auditoria propôs mandar agregados pré-calculados. Eles JÁ VÃO:
+# `esticado_n`, `esticado_caiu_n` e `esticado_reacao_media` estão no
+# `summary.runup` que o payload carrega inteiro. O modelo tinha os três na mão
+# e contou assim mesmo — o que falta não é o dado, é a conferência.
+
+_BALDE_ESTICADO = {
+    "reaction": {"summary": {
+        "n_events": 8,
+        "runup": {"esticado_n": 3, "esticado_caiu_n": 2,
+                  "esticado_reacao_media": 1.37},
+    }},
+}
+
+
+def test_par_inventado_do_balde_e_erro():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, em 3 dos 7 eventos onde o papel chegou esticado, "
+        "ele reagiu com uma média de 1,37% de alta."), _BALDE_ESTICADO)
+    assert "ANALISE_BUCKET_CONTADO_ERRADO" in _codigos(achados)
+
+
+def test_a_mensagem_traz_o_par_certo():
+    msg = next(a["mensagem"] for a in validar_analise(_texto_completo(
+        "Em 3 dos 7 eventos esticados a reação foi positiva."),
+        _BALDE_ESTICADO)
+        if a["codigo"] == "ANALISE_BUCKET_CONTADO_ERRADO")
+    assert "2 de 3" in msg and "8 eventos" in msg
+
+
+@pytest.mark.parametrize("frase", [
+    # o par "quantos caíram entre os esticados" -- como o card escreve
+    "Em 2 de 3 balanços em que o papel chegou esticado, a reação foi de "
+    "queda (média +1,37%).",
+    # o par "quantos do total chegaram esticados" -- a outra leitura legítima
+    "Dos 8 eventos, 3 chegaram esticados.",
+    "Em 3 de 8 eventos o papel chegou esticado.",
+    # sem par nenhum: nada a conferir
+    "O papel chegou esticado ao último balanço.",
+])
+def test_as_duas_leituras_legitimas_passam(frase):
+    assert "ANALISE_BUCKET_CONTADO_ERRADO" not in _codigos(
+        validar_analise(_texto_completo(frase), _BALDE_ESTICADO))
+
+
+def test_sem_o_balde_no_payload_a_checagem_se_cala():
+    assert "ANALISE_BUCKET_CONTADO_ERRADO" not in _codigos(
+        validar_analise(_texto_completo(
+            "Em 3 dos 7 eventos esticados a reação foi positiva."), {}))
+
+
+def test_frase_sem_esticado_nao_e_conferida():
+    """"3 de 7" falando de outra coisa não é o balde."""
+    assert "ANALISE_BUCKET_CONTADO_ERRADO" not in _codigos(
+        validar_analise(_texto_completo(
+            "Em 3 dos 7 eventos o gap de abertura foi positivo."),
+            _BALDE_ESTICADO))
