@@ -261,6 +261,98 @@ def validate_snapshot(snapshot: dict[str, Any]) -> ValidationReport:
                         f"{as_of}). Recarregar indicador antes de gerar veredito.",
                         ticker=tk)
 
+    # 6) GATE de balanço iminente -- fato, e regra junto do fato.
+    #
+    # Auditoria de 26/08/2026: o texto do veredito escreveu, para NVDA,
+    # "Earnings estão longe (próximo em nov/dez)" com o balanço saindo NAQUELE
+    # dia, depois do fechamento. A tela de Previsão de Vol avisava; a Análise
+    # Rápida ganhou o gate na #413; o veredito era a única tela sem ele.
+    #
+    # O fato vai no prompt com a regra colada, porque regra longe do fato é o
+    # que o modelo ignora: e' assim que "earnings hoje" virou "earnings longe".
+    for tk, data in (snapshot.get("earnings") or {}).items():
+        try:
+            dias = (_parse_date(data) - as_of).days
+        except Exception:
+            continue
+        if 0 <= dias <= EARNINGS_PROXIMO_DIAS:
+            rep.add("INFO", "EVENTO_IMINENTE",
+                    f"{tk}: balanço em {dias} dia(s) ({data}) -- a sessão de "
+                    f"reação ainda NÃO ocorreu. Não converta técnica em "
+                    f"COMPRAR/AUMENTAR; se a decisão depender do resultado, "
+                    f"é MANTER com EARNINGS_PROXIMO declarado, nunca 'earnings "
+                    f"longe'.", ticker=tk, signal=True)
+
+    # 7) o lado do nível do plano é CONTA, não leitura.
+    #
+    # Auditoria de 26/08/2026: BABA a 119,83 com "vender se quebrar suporte
+    # $126" saiu no texto como "ainda acima, mas em risco" -- 119,83 é MENOR
+    # que 126, o gatilho do plano já tinha disparado, e o bloco saiu MANTER.
+    # O modelo recebia os dois números e fazia a comparação errado; agora
+    # recebe a comparação feita, com a distância em % e em ATR (o mesmo -4,9%
+    # é ruído num papel de ATR 11% e evento num de ATR 2%).
+    for tk, itens in (snapshot.get("plano_de_saida") or {}).items():
+        if not isinstance(itens, list):
+            continue
+        preco = (quotes.get(tk) or {}).get("price")
+        atr_pct = (technicals.get(tk) or {}).get("atr_pct")
+        if not preco:
+            continue
+        for it in itens:
+            nivel = it.get("nivel") if isinstance(it, dict) else None
+            if not nivel:
+                continue
+            dist_pct = (preco - nivel) / nivel * 100
+            em_atr = (f", {abs(dist_pct) / atr_pct:.1f} ATR"
+                      if atr_pct else "")
+            rep.add("INFO", "NIVEL_DO_PLANO",
+                    f"{tk}: preço {preco:.2f} está "
+                    f"{'ACIMA' if dist_pct > 0 else 'ABAIXO'} do nível "
+                    f"${nivel:.2f} do plano ({dist_pct:+.2f}%{em_atr}) -- "
+                    f"item: \"{str(it.get('acao'))[:60]}\". Use ESTE lado, "
+                    f"não recalcule.", ticker=tk, signal=True)
+
+    # 8) reação a earnings como fato nomeado.
+    #
+    # Os nomes importam mais que os números: `runup_ate_agora_pct` é o
+    # acumulado rumo ao PRÓXIMO balanço -- não é reação, e não é o run-up de
+    # chegada de evento passado. Foi a confusão exata de SMCI/ARM/NVDA.
+    for tk, r in (snapshot.get("reacao_earnings") or {}).items():
+        if not isinstance(r, dict):
+            continue
+        partes = [f"{tk}: balanço em {r.get('dias_ate_earnings')} dia(s)."]
+        if r.get("runup_ate_agora_pct") is not None:
+            partes.append(
+                f"Run-up ATÉ AGORA rumo ao balanço: "
+                f"{r['runup_ate_agora_pct']:+.2f}%"
+                + (f" ({r['estado']})" if r.get("estado") else "") + ".")
+        if r.get("reacao_abs_media_pct") is not None:
+            partes.append(
+                f"Histórico ({r.get('n_eventos')} eventos): |reação média| "
+                f"{r['reacao_abs_media_pct']:.2f}%"
+                + (f", média assinada {r['reacao_media_pct']:+.2f}%"
+                   if r.get("reacao_media_pct") is not None else "")
+                + (f", gap |médio| {r['gap_abs_medio_pct']:.2f}%"
+                   if r.get("gap_abs_medio_pct") is not None else "") + ".")
+        if r.get("threshold_pct") is not None:
+            partes.append(f"Threshold de reação: ±{r['threshold_pct']:.2f}%.")
+        partes.append("Estes são OS números de earnings deste veredito -- "
+                      "variação do dia não é reação histórica.")
+        rep.add("INFO", "REACAO_EARNINGS_FIXADA", " ".join(partes),
+                ticker=tk, signal=True)
+
+    # 9) direção do MACD -- o delta vale mais que o sinal.
+    for tk, tec in technicals.items():
+        hist = tec.get("macd_hist")
+        direcao = tec.get("macd_direcao")
+        if hist is None or not direcao:
+            continue
+        rep.add("INFO", "MACD_FIXADO",
+                f"{tk}: MACD hist {hist:+.4f}, {direcao} vs 5 pregões atrás. "
+                f"'Negativo melhorando' e 'negativo piorando' pedem leituras "
+                f"opostas -- cite a direção junto do sinal.",
+                ticker=tk, signal=True)
+
     return rep
 
 

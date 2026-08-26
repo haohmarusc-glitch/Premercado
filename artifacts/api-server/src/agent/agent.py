@@ -496,6 +496,13 @@ Carteira: {", ".join(config.PORTFOLIO_TICKERS)}.
    vender/manter/aumentar sem olhar valuation é incompleta quando o múltiplo
    está claramente fora do normal histórico do ativo/setor.
 
+**GATE DE BALANÇO:** se um ticker tem earnings HOJE ou em até 2 pregões e a
+sessão de reação ainda não ocorreu, a técnica sozinha não sustenta
+COMPRAR/AUMENTAR -- a decisão vira MANTER com EARNINGS_PROXIMO declarado, e o
+texto diz que aguarda a reação. VENDER ordenado pelo Plano de Saída continua
+valendo: stop acionado não espera balanço. Nunca escreva que os earnings
+"estão longe" sem conferir a data no snapshot.
+
 **NÃO USE:** save_observation, alertas (list/create/delete_alert),
 update_exit_plan_item, create_exit_plan_item, EDGAR, opções.
 
@@ -1579,10 +1586,21 @@ def _build_veredito_snapshot(tickers: list[str]) -> dict:
             # pct_above_sma50 entra pro check DISTRIBUICAO_INVERTIDA do lint:
             # sem ele não dá pra distinguir topo de fundo, que é exatamente o
             # que o veredito de 01/08 errou em ARM e MRVL.
+            macd = ti.get("macd") or {}
             technicals[tk] = {
                 "rsi": ti["rsi_14"],
                 "rsi_date": ti["rsi_date"],
                 "pct_above_sma50": ti.get("pct_above_sma50"),
+                # Auditoria de 26/08/2026: o texto do veredito decidia com
+                # MACD, ATR e Bollinger que NAO estavam no snapshot -- entao
+                # nada do que ele dizia sobre eles era conferivel, e o RSI de
+                # WOLF saiu 31,02 com o dado em 44,90. O que o texto usa tem
+                # de estar no snapshot; o que nao esta, ele nao deveria usar.
+                "pct_above_sma200": ti.get("pct_above_sma200"),
+                "atr_pct": ti.get("atr_pct"),
+                "macd_hist": macd.get("histogram"),
+                "macd_direcao": macd.get("histogram_direcao"),
+                "bollinger_pct_b": (ti.get("bollinger") or {}).get("pct_b"),
             }
 
     earnings: dict = {}
@@ -1713,15 +1731,74 @@ def _plano_de_saida_do_snapshot(tickers: list[str]) -> dict | None:
             tk = str(it.get("ticker") or "").upper()
             if tk not in alvo or str(it.get("status") or "pending") != "pending":
                 continue
+            acao_txt = str(it.get("action") or "")
+            # O nivel NUMERICO da condicao, quando o item tem um. "Vender se
+            # quebrar suporte $126" carrega o gatilho no texto; extrai-lo aqui
+            # e' o que permite ao validador dizer DE QUE LADO o preco esta --
+            # em 26/08/2026 o texto do veredito leu 119,83 contra 126 e
+            # escreveu "ainda acima". A conta nao e' da IA.
+            m_nivel = re.search(r"\$\s*(\d+(?:[.,]\d+)?)", acao_txt)
             saida.setdefault(tk, []).append({
-                "acao": str(it.get("action") or ""),
+                "acao": acao_txt,
                 "data_alvo": it.get("targetDate"),
                 "fase": it.get("phaseLabel"),
+                "nivel": (float(m_nivel.group(1).replace(",", "."))
+                          if m_nivel else None),
             })
         return saida or None
     except Exception as e:
         print(f"[veredito] plano de saída indisponível: {e}", file=sys.stderr, flush=True)
         return None
+
+
+def _reacao_do_snapshot(tickers: list[str], earnings: dict,
+                        as_of: str) -> dict | None:
+    """Estatística de reação a earnings, SÓ para ticker com balanço iminente.
+
+    Auditoria de 26/08/2026: o veredito discutiu a reação esperada de MRVL
+    (balanço no dia seguinte) citando média e desvio que não estavam em dado
+    nenhum do snapshot -- e para NVDA rotulou a variação DO DIA (-1,59%) de
+    "reação média nos 21 pregões pós-earnings". Os números certos existem em
+    get_earnings_reaction_history; o texto só não tinha acesso a eles pelo
+    snapshot, então inventou.
+
+    Os nomes aqui são deliberados: `runup_ate_agora_pct` é o acumulado até
+    HOJE rumo ao próximo balanço -- não é o run-up de chegada de um evento
+    passado, e não pode ser citado como reação. As três grandezas com nomes
+    distintos são a lição do incidente SMCI/ARM/NVDA do mesmo dia.
+    """
+    saida: dict = {}
+    for tk in tickers:
+        data = earnings.get(tk)
+        if not data:
+            continue
+        try:
+            dias = (datetime.date.fromisoformat(str(data)[:10])
+                    - datetime.date.fromisoformat(as_of)).days
+        except Exception:
+            continue
+        if not (0 <= dias <= 7):
+            continue
+        try:
+            resumo = (t.get_earnings_reaction_history(tk) or {}).get("summary") or {}
+        except Exception as e:
+            print(f"[veredito] reação de earnings indisponível para {tk}: {e}",
+                  file=sys.stderr, flush=True)
+            continue
+        ru = resumo.get("runup") or {}
+        saida[tk] = {
+            "dias_ate_earnings": dias,
+            "threshold_pct": resumo.get("suggested_threshold_pct"),
+            "reacao_abs_media_pct": resumo.get("close_pct_abs_mean"),
+            "reacao_media_pct": resumo.get("close_pct_mean"),
+            "gap_abs_medio_pct": resumo.get("gap_pct_abs_mean"),
+            "n_eventos": resumo.get("n_events"),
+            "runup_ate_agora_pct": ru.get("runup_atual_ex_evento_pct")
+            if ru.get("runup_atual_ex_evento_pct") is not None
+            else ru.get("runup_atual_pct"),
+            "estado": ru.get("estado_atual"),
+        }
+    return saida or None
 
 
 def run_veredito(progress_callback=None) -> str:
@@ -1756,6 +1833,12 @@ def run_veredito(progress_callback=None) -> str:
     plano = _plano_de_saida_do_snapshot(tickers)
     if plano:
         snapshot["plano_de_saida"] = plano
+    # Reação a earnings dos tickers com balanço iminente: o threshold e o
+    # histórico entram como FATO, com nomes que separam run-up de reação.
+    reacao = _reacao_do_snapshot(tickers, snapshot.get("earnings") or {},
+                                 snapshot["as_of"])
+    if reacao:
+        snapshot["reacao_earnings"] = reacao
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)

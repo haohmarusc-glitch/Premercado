@@ -1117,6 +1117,19 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                 "signal_line": round(float(signal_line.iloc[-1]), 4),
                 "histogram": round(float(histogram.iloc[-1]), 4),
                 "trend": "bullish" if float(histogram.iloc[-1]) > 0 else "bearish",
+                # O DELTA do histograma vale mais que o sinal dele: MACD
+                # negativo MELHORANDO e MACD negativo PIORANDO pedem leituras
+                # opostas, e "bearish" sozinho nao distingue os dois. Cinco
+                # pregoes porque um so' e' ruido de arredondamento.
+                "histogram_5d_atras": (round(float(histogram.iloc[-6]), 4)
+                                       if len(histogram) >= 6 else None),
+                "histogram_direcao": (
+                    None if len(histogram) < 6
+                    else "melhorando"
+                    if float(histogram.iloc[-1]) > float(histogram.iloc[-6])
+                    else "piorando"
+                    if float(histogram.iloc[-1]) < float(histogram.iloc[-6])
+                    else "estavel"),
             },
             "bollinger": {
                 "upper": round(bb_upper, 2),
