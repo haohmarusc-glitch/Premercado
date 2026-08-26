@@ -8,6 +8,8 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_veredito
 (conftest.py no mesmo diretório já cuida do sys.path)
 """
 
+import pytest
+
 from agent.veredito_validator import lint_veredito, validate_snapshot
 
 SNAPSHOT = {
@@ -256,3 +258,88 @@ def test_concentracao_mencao_sem_verbo_de_compra_nao_conta():
     texto = "MU segue pressionada e SNDK acompanha o cluster de memória."
     rep = lint_veredito(texto, _snap_concentracao())
     assert not any(i.code == "CONCENTRACAO_CORRELACAO" for i in rep.issues)
+
+
+# ═══ Veredito de 26/08/2026 — o dia errado e o lado errado ════════════════
+#
+# Duas famílias que passavam batidas nesta tela, ambas achadas lendo o texto
+# publicado contra os próprios painéis dele.
+
+_HOJE = {"as_of": "2026-08-26", "quotes": {}, "earnings": {}, "technicals": {}}
+
+
+def _codigos(texto, snap=None):
+    return sorted({i.code for i in lint_veredito(texto, dict(snap or _HOJE)).issues})
+
+
+# ── "amanhã" num dia que é hoje ───────────────────────────────────────────
+#
+# O veredito abriu com "NVDA amanhã (26/ago)" num dia em que as_of ERA
+# 26/08 -- o painel dizia "hoje". A seção inteira de "URGÊNCIAS DO PLANO
+# (próximas 24h)" foi escrita em cima disso, mandando aguardar amanhã um
+# resultado que sai hoje.
+
+@pytest.mark.parametrize("texto", [
+    "NVDA amanhã (26/ago): EPS consenso 2,09.",
+    "NVDA earnings 26/ago (amanhã) — reavalie pós-abertura.",
+    "MRVL hoje (27/ago): runup esticado.",
+])
+def test_prazo_relativo_que_contradiz_a_data_e_erro(texto):
+    assert "PRAZO_RELATIVO_ERRADO" in _codigos(texto)
+
+
+@pytest.mark.parametrize("texto", [
+    "NVDA hoje (26/ago): EPS consenso 2,09.",
+    "MRVL amanhã (27/ago): runup esticado.",
+    # A adjacência é exigida: aqui o "hoje" fala de outra coisa.
+    "O balanço de 22/out, mas hoje o papel caiu 2%.",
+    # Data sem prazo relativo nenhum.
+    "Earnings em 04/nov, sem catalisador próximo.",
+])
+def test_prazo_relativo_correto_ou_ausente_passa(texto):
+    assert "PRAZO_RELATIVO_ERRADO" not in _codigos(texto)
+
+
+def test_a_mensagem_diz_qual_era_a_data_certa():
+    itens = [i for i in lint_veredito("NVDA amanhã (26/ago).", dict(_HOJE)).issues
+             if i.code == "PRAZO_RELATIVO_ERRADO"]
+    assert "2026-08-27" in itens[0].message
+
+
+# ── o preço do lado errado do nível ───────────────────────────────────────
+#
+# "vender se quebrar suporte $126. Preço ainda $121, ACIMA do suporte" --
+# 121 é MENOR que 126, o suporte estava rompido, e a leitura virou
+# "aguardando consolidação". O JSON de saída saiu com BABA: MANTER.
+#
+# A checagem não consulta o plano: os dois números estão no próprio
+# parágrafo, então a contradição é interna.
+
+@pytest.mark.parametrize("texto", [
+    "BABA: Plano: vender se quebrar suporte $126. Preço ainda $121, acima "
+    "do suporte, aguardando consolidação.",
+    "Stop em $370. O papel a $380, abaixo do stop, exige resgate.",
+])
+def test_lado_do_nivel_contradito_pelo_proprio_texto(texto):
+    assert "NIVEL_LADO_INVERTIDO" in _codigos(texto)
+
+
+@pytest.mark.parametrize("texto", [
+    "BABA: vender se quebrar suporte $126. Preço $131, acima do suporte.",
+    "Plano: suporte $126. Preço ainda $121, abaixo do suporte, venda exigida.",
+    # "acima SMA50" não é "acima DO suporte" — média móvel não é o nível
+    # nomeado, e comparar contra o suporte seria inventar a contradição.
+    "EMA8 bullish acima SMA50 (+5,42%), com suporte em $126.",
+    # Dois valores sem afirmação de lado.
+    "ADI: take-profit em $390. Bollinger upper atual $393,62.",
+])
+def test_lado_coerente_ou_sem_afirmacao_passa(texto):
+    assert "NIVEL_LADO_INVERTIDO" not in _codigos(texto)
+
+
+def test_o_nivel_vem_do_paragrafo_e_nao_atravessa_linhas():
+    """Cada posição é um bullet. O suporte de um papel não pode ser
+    confrontado com o preço de outro."""
+    texto = ("BABA: vender se quebrar suporte $126.\n"
+             "ADI: preço $372, acima do suporte.")
+    assert "NIVEL_LADO_INVERTIDO" not in _codigos(texto)

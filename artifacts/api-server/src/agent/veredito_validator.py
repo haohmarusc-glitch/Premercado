@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from itertools import combinations
 from typing import Any
 
@@ -235,6 +235,28 @@ _TICKER_PCT = re.compile(r"\b([A-Z]{2,5})\b[^.\n]{0,80}?([+-]?\d{1,2}[.,]\d{1,2}
 # isso, re.IGNORECASE no regex inteiro faria [A-Z]{2,5} casar ticker em
 # minúsculo também, e group(1) devolveria algo que nunca bate com as
 # chaves (sempre maiúsculas) de `quotes`.
+# "amanha (26/ago)" e "26/ago (hoje)" -- o prazo relativo COLADO a data.
+# A adjacencia e' exigida de proposito: em "o balanco de 22/out, mas hoje o
+# papel caiu" o "hoje" fala de outra coisa, e uma janela larga o pegaria.
+_MES = r"jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez"
+_PRAZO_DEPOIS = re.compile(
+    rf"(\d{{1,2}})\s*/?\s*({_MES})\w*\s*[(,]\s*(hoje|amanha|amanhã)\b",
+    re.IGNORECASE)
+_PRAZO_ANTES = re.compile(
+    rf"\b(hoje|amanha|amanhã)\s*\(\s*(\d{{1,2}})\s*/?\s*({_MES})",
+    re.IGNORECASE)
+
+# O texto afirmando de que lado de um nivel o preco esta, com os DOIS numeros
+# escritos por ele mesmo. Nao precisa consultar o plano: a contradicao esta
+# dentro da propria frase.
+_NIVEL_COM_VALOR = re.compile(
+    r"(suporte|resist[êe]ncia|stop)[^.\n]{0,25}?\$\s*(\d+(?:[.,]\d+)?)",
+    re.IGNORECASE)
+_LADO_AFIRMADO = re.compile(
+    r"\$\s*(\d+(?:[.,]\d+)?)[^.\n]{0,20}?\b(acima|abaixo)\s+d[oa]\s+"
+    r"(suporte|resist[êe]ncia|stop)",
+    re.IGNORECASE)
+
 _TICKER_FLAT = re.compile(
     r"\b([A-Z]{2,5})\b[^.\n]{0,40}?\b((?i:flat|estavel|estável|lateral|sem variacao|sem variação))\b"
 )
@@ -350,6 +372,60 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                         f"Texto atribui movimento a earnings de {tk}, mas o "
                         f"earnings so ocorre em {ed.isoformat()} (as_of={as_of}). "
                         f"Alucinacao provavel.", ticker=tk)
+
+    # 3b) "hoje"/"amanha" colado a uma data que diz outra coisa.
+    #
+    # Visto em producao (26/08/2026): o veredito abriu com "NVDA amanha
+    # (26/ago)" num dia em que as_of ERA 26/08 -- o painel dizia "hoje". A
+    # secao inteira de "URGENCIAS DO PLANO (proximas 24h)" foi escrita em
+    # cima disso, mandando aguardar amanha um resultado que sai hoje.
+    for pat, ordem in ((_PRAZO_DEPOIS, "data_primeiro"), (_PRAZO_ANTES, "prazo_primeiro")):
+        for m in pat.finditer(texto):
+            if ordem == "data_primeiro":
+                dia, mes_txt, prazo = int(m.group(1)), m.group(2), m.group(3)
+            else:
+                prazo, dia, mes_txt = m.group(1), int(m.group(2)), m.group(3)
+            try:
+                citada = date(year, MONTHS_PT[mes_txt.lower()[:3]], dia)
+            except (ValueError, KeyError):
+                continue
+            esperada = as_of if _norm(prazo) == "hoje" else as_of + timedelta(days=1)
+            if citada != esperada:
+                rep.add("ERROR", "PRAZO_RELATIVO_ERRADO",
+                        f"Texto diz '{prazo}' para {dia:02d}/{mes_txt}, mas "
+                        f"com as_of={as_of} '{_norm(prazo)}' e "
+                        f"{esperada.isoformat()}. O leitor age no dia errado.")
+
+    # 3c) o texto afirma de que lado de um nivel o preco esta, e se contradiz.
+    #
+    # Visto em producao (26/08/2026): "vender se quebrar suporte $126. Preco
+    # ainda $121, ACIMA do suporte" -- 121 e MENOR que 126, o suporte estava
+    # rompido, e a leitura virou "aguardando consolidacao". O JSON de saida
+    # saiu com BABA: MANTER.
+    #
+    # Nao consulta o plano: os dois numeros estao no proprio paragrafo, entao
+    # a contradicao e' interna e nao depende de payload nenhum.
+    for paragrafo in texto.split("\n"):
+        niveis = [(m.start(), m.group(1).lower(), float(m.group(2).replace(",", ".")))
+                  for m in _NIVEL_COM_VALOR.finditer(paragrafo)]
+        if not niveis:
+            continue
+        for m in _LADO_AFIRMADO.finditer(paragrafo):
+            preco = float(m.group(1).replace(",", "."))
+            lado, especie = m.group(2).lower(), m.group(3).lower()
+            antes = [n for n in niveis
+                     if n[0] < m.start() and n[1].startswith(especie[:5])]
+            if not antes:
+                continue
+            _, _, valor = antes[-1]
+            if preco == valor:
+                continue
+            if (preco > valor) != (lado == "acima"):
+                rep.add("ERROR", "NIVEL_LADO_INVERTIDO",
+                        f"Texto diz que ${preco:.2f} esta {lado} do {especie} "
+                        f"de ${valor:.2f} -- esta "
+                        f"{'acima' if preco > valor else 'abaixo'}. O lado "
+                        f"errado inverte a acao que o plano pede.")
 
     # 4) percentuais citados por ticker batem com o snapshot do dia?
     for m in _TICKER_PCT.finditer(texto):
