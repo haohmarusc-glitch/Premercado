@@ -25,11 +25,13 @@ except ImportError:
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
     from agent.news_sources import fala_do_papel
+    from agent.ciclo_volatilidade import _earnings_proximo
     from agent.http_retry import SESSION
     from agent import market_data_provider
 except ImportError:
     from security import sanitize_ticker, friendly_error
     from news_sources import fala_do_papel
+    from ciclo_volatilidade import _earnings_proximo
     from http_retry import SESSION
     import market_data_provider
 
@@ -183,6 +185,45 @@ def _translate_join(texts: list[str]) -> list[str]:
 # zera tudo. E' julgamento, nao teorema -- por isso esta' nomeado aqui e nao
 # enterrado numa comparacao.
 MINIMO_PARA_ROTULAR = 3
+
+# ── Veto de balanço: sinal direcional na véspera ────────────────────────────
+#
+# A tela de Previsao de Vol ja' avisa, no mesmo papel e no mesmo dia:
+#
+#     "Balanco em 0 dia(s) (2026-08-26) -- na vespera de earnings a previsao
+#      certa vem do threshold da Reacao a Earnings, nao da banda de vol."
+#
+# A Analise Rapida de NVDA, com o balanco saindo depois do fechamento DAQUELE
+# dia, recomendou COMPRA -- "tecnico de alta forte sem noticias contrarias".
+# O aviso existia numa tela e a vizinha nasceu sem ele. E' o quinto caso do
+# mesmo padrao em 26/08/2026.
+#
+# O tecnico nao esta errado; ele so' nao sabe do evento. Um papel com score 60
+# na vespera de um resultado que ainda vai sair nao e' "compra", e' "compra
+# se o numero vier bom" -- e isso o modelo nao tem como saber. O sinal vira
+# `aguardar` e diz por que, em vez de sumir com a leitura tecnica.
+#
+# DOIS pregoes, mesma janela do veto de catalisador do veredito
+# (`EARNINGS_PROXIMO_DIAS` em veredito_validator.py). Duplicado aqui porque
+# este arquivo roda por spawn e nao importa o pacote de validacao; ha' teste
+# fixando que os dois numeros nao divergem, mesmo padrao de _rvol_signal.
+EARNINGS_VETO_DIAS = 2
+
+
+def balanco_que_veta(sinal: str, ticker: str) -> dict | None:
+    """O balanço que veta este sinal direcional, ou None.
+
+    A consulta ao calendário só acontece quando HÁ sinal para vetar: sem essa
+    guarda seria uma chamada de rede por ticker para mudar nada, no caminho
+    que existe para ser rápido.
+    """
+    if sinal not in ("compra", "venda"):
+        return None
+    proximo = _earnings_proximo(ticker)
+    if proximo and proximo.get("dias") is not None \
+            and proximo["dias"] <= EARNINGS_VETO_DIAS:
+        return proximo
+    return None
 
 
 def news_sentiment(ticker: str, max_items: int = 8) -> dict:
@@ -479,6 +520,16 @@ def for_ticker(ticker: str) -> dict:
         else:
             sinal, sinal_motivo = "aguardar", ("divergência técnico × notícias" if tech_dir != 0 and news_dir != 0 and tech_dir != news_dir else "sinais insuficientes")
 
+        # ── Veto de balanço ──────────────────────────────────────────────────
+        balanco = balanco_que_veta(sinal, ticker)
+        if balanco:
+            tecnico_dizia = sinal
+            sinal = "aguardar"
+            sinal_motivo = (
+                f"balanço em {balanco['dias']} pregão(ões) ({balanco['data']}) "
+                f"— a reação ainda não ocorreu; o técnico sozinho dizia "
+                f"{tecnico_dizia}")
+
         saida = {
             "ticker": ticker,
             "price": round(price, 2),
@@ -489,6 +540,9 @@ def for_ticker(ticker: str) -> dict:
             "confluence": confluence,
             "sinal": sinal,
             "sinalMotivo": sinal_motivo,
+            # Presente só quando o veto ATUOU. A tela usa para explicar que o
+            # "aguardar" veio do calendário, não de sinal fraco.
+            "vetoDeBalanco": balanco,
         }
         # Reaproveita o campo `stale` que o módulo já emite no stale-if-error
         # do __main__, em vez de inventar um segundo vocabulário de
