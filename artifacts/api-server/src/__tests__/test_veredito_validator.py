@@ -656,3 +656,169 @@ def test_lado_invertido_em_ingles_tambem_cai(texto):
 ])
 def test_lado_coerente_em_ingles_passa(texto):
     assert "NIVEL_LADO_INVERTIDO" not in _cods_1154(texto)
+
+
+# ── a data de earnings que o texto ATRIBUI ─────────────────────────────────
+#
+# Incidente real (Veredito de 26/08/2026 13:30), publicado com a caixa vazia.
+# O parágrafo do INTC dizia:
+#
+#   "...com plano de saída recomendando monitoramento até 22/out; ... e
+#    carregar por 57 dias adicionais sem catalisador visível (próximos
+#    earnings em 24/11) é risco de oportunidade perdida"
+#
+# O painel diz INTC 22/10. Duas cegueiras somadas deixaram passar:
+#
+#   1. `_DATE_PT` só casava `dd/mês` -- "24/11" era invisível.
+#   2. A checagem usava `.search()`, a PRIMEIRA data do trecho. "22/out"
+#      casava com o painel, dava por conferido, e "24/11" nunca era olhado.
+#
+# A segunda é a pior: transforma o acerto num álibi para o erro ao lado.
+
+_SNAP_INTC = {
+    "as_of": "2026-08-26",
+    "quotes": {"INTC": {"price": 86.94, "as_of": "2026-08-26"}},
+    "technicals": {},
+    "earnings": {"INTC": "2026-10-22"},
+}
+
+
+def _cods_intc(texto):
+    return [i.code for i in lint_veredito(texto, _SNAP_INTC).issues]
+
+
+def test_o_incidente_da_data_numerica_ao_lado_da_certa():
+    achados = _cods_intc(
+        "INTC: plano de saída recomendando monitoramento até 22/out; e "
+        "carregar sem catalisador (próximos earnings em 24/11) é risco.")
+    assert "EARNINGS_DATE_MISMATCH" in achados
+
+
+@pytest.mark.parametrize("frase,cai", [
+    # A data que o texto pendura em earnings, nas duas grafias e nas duas ordens.
+    ("INTC: earnings em 24/11 sem catalisador antes.", True),
+    ("INTC: earnings em 24/nov sem catalisador antes.", True),
+    ("INTC: earnings em 24/11/2026 sem catalisador antes.", True),
+    ("INTC: 24/11, data do próximo balanço.", True),
+    # A data CERTA, nas mesmas grafias.
+    ("INTC: earnings em 22/10 é o próximo catalisador.", False),
+    ("INTC: earnings em 22/out é o próximo catalisador.", False),
+    ("INTC: 22/out, data do próximo balanço.", False),
+    # Data de OUTRA coisa, separada por quebra dura de oração. Sem esta
+    # guarda a janela pulava o ponto-e-vírgula e pendurava em earnings uma
+    # data que o texto atribuiu ao plano de saída.
+    ("INTC: monitoramento até 24/11; o balanço muda a tese.", False),
+    # Fração perto de preço em formato americano -- `4/5` não é data, e o
+    # ponto de "$507.66" não pode cortar a janela nem criar uma.
+    ("INTC: earnings distante; o preço $507.66 fica 4/5 do caminho.", False),
+])
+def test_data_de_earnings_par_a_par(frase, cai):
+    assert ("EARNINGS_DATE_MISMATCH" in _cods_intc(frase)) is cai
+
+
+def test_uma_data_certa_nao_absolve_a_errada():
+    """O ponto do incidente: as DUAS são olhadas."""
+    achados = [i for i in lint_veredito(
+        "INTC: earnings em 22/out confirmado. INTC: earnings em 24/11 também.",
+        _SNAP_INTC).issues if i.code == "EARNINGS_DATE_MISMATCH"]
+    assert len(achados) == 1, "só a errada aponta, e ela aponta"
+    assert "24/11" in achados[0].message
+
+
+# ── o bloco contra o Plano de Saída ────────────────────────────────────────
+#
+# Mesmo veredito de 26/08/2026. O bloco saiu com ARM e INTC em MANTER
+# enquanto o painel Plano de Saída dizia, para os dois, "Vender imediatamente
+# -- stop-loss acionado", vencido havia 6 dias. Nenhum declarou
+# PLANO_DE_SAIDA. E SKHY, sem item no plano, declarou.
+#
+# A checagem NÃO proíbe contrariar o plano -- o mercado muda. Proíbe
+# contrariar em SILÊNCIO: quem lê a tabela vê MANTER e não fica sabendo que
+# há uma ordem de venda vencida três painéis abaixo, na mesma tela.
+
+_SNAP_PLANO = {
+    "as_of": "2026-08-26",
+    "quotes": {"ARM": {}, "INTC": {}, "SKHY": {}, "NVDA": {}},
+    "technicals": {}, "earnings": {},
+    "plano_de_saida": {
+        "ARM": [{"acao": "Vender imediatamente — stop-loss acionado",
+                 "data_alvo": "2026-08-20"}],
+        "INTC": [{"acao": "Vender imediatamente — stop-loss acionado",
+                  "data_alvo": "2026-08-20"}],
+        "NVDA": [{"acao": "HOLD até earnings 26/ago — reavalie pós-abertura",
+                  "data_alvo": "2026-08-26"}],
+    },
+}
+
+
+def _cods_plano(itens):
+    return [(i.code, i.ticker) for i in
+            validar_bloco_estruturado({"tickers": itens}, _SNAP_PLANO).issues]
+
+
+def _item(tk, acao, codes):
+    return {"ticker": tk, "action": acao, "confidence": 0.5, "reason_codes": codes}
+
+
+def test_o_incidente_do_bloco_contra_o_plano():
+    achados = _cods_plano([
+        _item("ARM", "MANTER", ["TENDENCIA_BAIXA"]),
+        _item("INTC", "MANTER", ["TENDENCIA_BAIXA"]),
+        _item("SKHY", "MANTER", ["PLANO_DE_SAIDA"]),
+        _item("NVDA", "AGUARDAR", ["EARNINGS_PROXIMO"]),
+    ])
+    assert ("BLOCO_CONTRA_PLANO", "ARM") in achados
+    assert ("BLOCO_CONTRA_PLANO", "INTC") in achados
+    assert ("BLOCO_PLANO_SEM_ITEM", "SKHY") in achados
+    assert not [a for a in achados if a[1] == "NVDA"], \
+        "HOLD até earnings é acompanhamento, não ordem de venda"
+
+
+@pytest.mark.parametrize("acao,codes,cai", [
+    # Declarar torna a divergência consciente -- mesma isenção que
+    # RISCO_CORRELACAO dá à compra do par correlacionado.
+    ("MANTER", ["PLANO_DE_SAIDA", "TENDENCIA_BAIXA"], False),
+    # Obedecer também passa, claro.
+    ("VENDER", ["TENDENCIA_BAIXA"], False),
+    # REDUZIR cumpre um plano de saída: vender parte não é contrariar.
+    ("REDUZIR", ["TENDENCIA_BAIXA"], False),
+    # Contrariar calado é o caso.
+    ("MANTER", ["TENDENCIA_BAIXA"], True),
+    ("AGUARDAR", ["VOLUME_FRACO"], True),
+    ("COMPRAR", ["MACRO_FAVORAVEL"], True),
+])
+def test_plano_de_saida_par_a_par(acao, codes, cai):
+    achados = _cods_plano([_item("ARM", acao, codes)])
+    assert (("BLOCO_CONTRA_PLANO", "ARM") in achados) is cai
+
+
+def test_item_de_acompanhamento_nao_e_ordem_de_venda():
+    """"Monitorar", "aguardar earnings" e "reavaliar" são acompanhamento. Se
+    qualquer item do plano contasse, todo ticker com plano viraria apontamento
+    e a checagem morreria de ruído no primeiro dia."""
+    snap = {**_SNAP_PLANO, "plano_de_saida": {
+        "ARM": [{"acao": "Monitorar suporte em $250", "data_alvo": "2026-09-01"}]}}
+    achados = [i.code for i in validar_bloco_estruturado(
+        {"tickers": [_item("ARM", "MANTER", ["TENDENCIA_BAIXA"])]}, snap).issues]
+    assert "BLOCO_CONTRA_PLANO" not in achados
+
+
+def test_sem_plano_no_snapshot_nao_ha_checagem():
+    """Ausência é ausência -- mesma regra do capex e do fôlego. Sem o painel,
+    apontar seria acusar a partir de dado que não foi lido."""
+    snap = {k: v for k, v in _SNAP_PLANO.items() if k != "plano_de_saida"}
+    achados = [i.code for i in validar_bloco_estruturado(
+        {"tickers": [_item("ARM", "MANTER", ["TENDENCIA_BAIXA"]),
+                     _item("SKHY", "MANTER", ["PLANO_DE_SAIDA"])]}, snap).issues]
+    assert "BLOCO_CONTRA_PLANO" not in achados
+    assert "BLOCO_PLANO_SEM_ITEM" not in achados
+
+
+def test_item_ja_vendido_nao_e_ordem_em_aberto():
+    """O snapshot só carrega `pending` (ver `_plano_de_saida_do_snapshot`),
+    mas a checagem não pode depender disso: lista vazia é o mesmo que nenhum
+    item."""
+    snap = {**_SNAP_PLANO, "plano_de_saida": {"ARM": []}}
+    achados = [i.code for i in validar_bloco_estruturado(
+        {"tickers": [_item("ARM", "MANTER", ["TENDENCIA_BAIXA"])]}, snap).issues]
+    assert "BLOCO_CONTRA_PLANO" not in achados

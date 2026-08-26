@@ -237,6 +237,48 @@ def validate_snapshot(snapshot: dict[str, Any]) -> ValidationReport:
 
 _DATE_PT = re.compile(r"(\d{1,2})\s*/?\s*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)",
                        re.IGNORECASE)
+# Data por EXTENSO ou NUMERICA. O veredito escreve os dois jeitos, as vezes na
+# mesma frase -- e ate 26/08/2026 so' a forma por extenso era enxergada.
+_DIA_MES = r"(\d{1,2})\s*/\s*(?:(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)|(\d{1,2}))"
+
+# A data que o texto ATRIBUI a earnings, em qualquer das duas ordens. Casar a
+# data solta do trecho nao serve: o paragrafo do INTC de 26/08/2026 trazia
+# "monitoramento ate 22/out" (que por acaso E' a data do painel) e, tres
+# oracoes depois, "proximos earnings em 24/11" (que nao e'). Com `.search()`
+# a primeira casava, a checagem dava por conferido e a segunda nunca era
+# olhada.
+#
+# `[^\n]` e nao `[^.\n]`: ponto e' separador decimal em "$507.66", e a
+# janela morria dentro do numero -- mesma armadilha que matou as janelas por
+# ticker. O que delimita aqui e' o tamanho, nao a pontuacao.
+# `[^;\n]` e nao `[^\n]`: ponto-e-virgula e' quebra dura de oracao. Sem ela a
+# janela pulava de "monitoramento ate 22/out;" para o "earnings" da oracao
+# seguinte e pendurava naquela data uma afirmacao que o texto nao fez.
+_EARNINGS_COM_DATA = re.compile(
+    rf"(?:earnings|resultado|balan[cç]o)[^;\n]{{0,30}}?{_DIA_MES}"
+    rf"|{_DIA_MES}[^;\n]{{0,20}}?(?:earnings|resultado|balan[cç]o)",
+    re.IGNORECASE)
+
+
+def _datas_atribuidas_a_earnings(seg: str):
+    """(dia, mes) de cada data que o trecho pendura em earnings.
+
+    Devolve TODAS, nao a primeira: a forma tipica do erro e' o trecho trazer
+    uma data certa e uma errada, e conferir so' a primeira transforma o acerto
+    num alibi para o erro."""
+    achadas = []
+    for m in _EARNINGS_COM_DATA.finditer(seg):
+        # Os dois lados da alternancia: grupos 1-3 (predicado antes) ou 4-6.
+        dia, mes_txt, mes_num = m.group(1), m.group(2), m.group(3)
+        if dia is None:
+            dia, mes_txt, mes_num = m.group(4), m.group(5), m.group(6)
+        mes = MONTHS_PT[mes_txt[:3].lower()] if mes_txt else int(mes_num)
+        dia = int(dia)
+        if 1 <= dia <= 31 and 1 <= mes <= 12:
+            achadas.append((dia, mes))
+    return achadas
+
+
 _DATE_WEEKDAY = re.compile(
     r"(\d{1,2})\s*/?\s*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\s*"
     # [\s(]* em vez de \s*: a forma mais comum no texto gerado e' "dd/mes
@@ -456,12 +498,18 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     for tk, edate in earnings.items():
         ed = _parse_date(edate)
         # procura mencoes tipo "earnings ... 11/ago" no trecho do ticker
+        vistas: set = set()
         for seg in segmentos.get(tk, []):
-            if "earnings" not in seg and "resultado" not in seg:
+            # As tres palavras que `_EARNINGS_COM_DATA` reconhece. O guard
+            # conhecia so' duas, entao "24/11, data do proximo balanco" era
+            # descartado antes de o regex olhar -- filtro barato mais estreito
+            # que a checagem que ele protege e' filtro que esconde achado.
+            if not any(p in seg for p in ("earnings", "resultado", "balanc")):
                 continue
-            dm = _DATE_PT.search(seg)
-            if dm:
-                day, mon = int(dm.group(1)), MONTHS_PT[dm.group(2)[:3]]
+            for day, mon in _datas_atribuidas_a_earnings(seg):
+                if (day, mon) in vistas:
+                    continue
+                vistas.add((day, mon))
                 if (day, mon) != (ed.day, ed.month):
                     # WARN, nao ERROR: visto em producao um caso onde a data
                     # citada nao era a de earnings (era a data de um outro
@@ -765,6 +813,19 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
 # interpretação.
 
 ACOES_VALIDAS = {"COMPRAR", "AUMENTAR", "MANTER", "REDUZIR", "VENDER", "AGUARDAR"}
+# Acoes que ATENDEM uma ordem de venda do plano. REDUZIR entra: vender parte
+# e' cumprir um plano que manda reduzir exposicao, e tratar como contradicao
+# transformaria a checagem em exigencia de tudo-ou-nada.
+ACOES_DE_SAIDA = {"VENDER", "REDUZIR"}
+
+# A acao do item do plano que constitui ORDEM DE VENDA. "Monitorar", "aguardar
+# earnings" e "reavaliar" sao itens de acompanhamento, nao ordens -- e' por
+# isso que a checagem casa o VERBO e nao a existencia do item.
+_ORDEM_DE_VENDA = re.compile(
+    r"\bvend\w+|\bsai[rd]\w*|\bzer\w+\s+(?:a\s+)?posi[cç][aã]o|"
+    r"\bstop[-\s]?loss\s+acionado|\brealizar?\s+(?:o\s+)?lucro|"
+    r"\btake[-\s]?profit", re.IGNORECASE)
+
 ACOES_DE_COMPRA = {"COMPRAR", "AUMENTAR"}
 
 # Vocabulário CONHECIDO de reason_codes. Código fora da lista é WARN, não
@@ -1003,6 +1064,48 @@ def validar_bloco_estruturado(bloco: dict, snapshot: dict[str, Any]) -> Validati
                 rep.add("ERROR", "BLOCO_COMPRA_SEM_VETO_DECLARADO",
                         f"{acao} com earnings em {dias} pregão(ões) sem "
                         f"EARNINGS_PROXIMO nos reason_codes.", ticker=tk)
+
+    # ── o bloco contra o Plano de Saída ─────────────────────────────────────
+    #
+    # Visto em producao (26/08/2026): o bloco saiu com ARM e INTC em MANTER
+    # enquanto o painel Plano de Saida dizia, para os dois, "Vender
+    # imediatamente -- stop-loss acionado", vencido havia 6 dias. Nenhum dos
+    # dois declarou PLANO_DE_SAIDA nos reason_codes. E SKHY, que NAO tinha
+    # item no plano, declarou.
+    #
+    # O plano e' decisao ja' tomada. O veredito pode contraria-la -- o mercado
+    # muda, e a checagem nao proibe isso. O que ela proibe e' contrariar em
+    # SILENCIO: quem le a tabela ve MANTER e nao fica sabendo que existe uma
+    # ordem de venda vencida na mesma tela, tres paineis abaixo.
+    #
+    # Por isso a saida e' declarar, nao obedecer: com PLANO_DE_SAIDA nos
+    # reason_codes o item passa, porque a divergencia virou consciente. E' a
+    # mesma isencao que RISCO_CORRELACAO da' a' compra do par correlacionado.
+    plano = snapshot.get("plano_de_saida")
+    plano = plano if isinstance(plano, dict) else {}
+    for item in bloco.get("tickers", []):
+        if not isinstance(item, dict):
+            continue
+        tk = str(item.get("ticker") or "").upper()
+        acao = str(item.get("action") or "").upper()
+        codes = [str(c).upper() for c in (item.get("reason_codes") or [])]
+        itens_do_ticker = plano.get(tk) or []
+        manda_vender = [i for i in itens_do_ticker
+                        if _ORDEM_DE_VENDA.search(str(i.get("acao") or ""))]
+        if manda_vender and acao not in ACOES_DE_SAIDA \
+                and "PLANO_DE_SAIDA" not in codes:
+            qual = str(manda_vender[0].get("acao") or "")[:60]
+            rep.add("ERROR", "BLOCO_CONTRA_PLANO",
+                    f"decide {acao}, mas o Plano de Saída manda \"{qual}\" "
+                    f"(alvo {manda_vender[0].get('data_alvo') or '?'}) — "
+                    f"contrariar o plano é permitido, contrariar em silêncio "
+                    f"não: declare PLANO_DE_SAIDA.", ticker=tk)
+        # O inverso: declarar o que nao existe. SKHY citou PLANO_DE_SAIDA sem
+        # ter item pendente -- razao sem fato por tras, mesma regra do capex.
+        if "PLANO_DE_SAIDA" in codes and plano and not itens_do_ticker:
+            rep.add("WARN", "BLOCO_PLANO_SEM_ITEM",
+                    "declara PLANO_DE_SAIDA, mas não há item pendente para "
+                    "este ticker no plano do dia.", ticker=tk)
 
     # Completude: todo ticker da carteira precisa de um veredito -- omissão
     # silenciosa é como o LLM "resolve" o ticker difícil.
