@@ -770,3 +770,112 @@ def test_verbo_de_lista_nao_pega_frase_que_distingue():
                   "R1 e R2 ficam acima; a resistência é a máxima de julho."):
         assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
             validar_analise(_texto_completo(frase)))
+
+
+# ═══ INTC, 26/08/2026 — a segunda rodada limpa com erro dentro ═════════════
+#
+# Mesmo padrão do ADI: nenhum apontamento na tela, dois problemas no texto.
+#
+#   "Abaixo, o suporte imediato É A S1 em US$ 79,30"
+#   "um descolamento (gap) médio de 8,25% na abertura"
+#
+# O primeiro é a cópula REVERSA (nível → banda); só o sentido banda → nível
+# estava coberto. O segundo é o número certo de OUTRA linha do resumo com o
+# rótulo do gap: os oito gaps da tabela ficam abaixo de 2,2% e a média
+# absoluta é 0,83%.
+
+# ── cópula reversa: "o suporte é a S1" ─────────────────────────────────────
+
+@pytest.mark.parametrize("frase", [
+    "Abaixo, o suporte imediato é a S1 em US$ 79,30, seguido pela MM200.",
+    "A resistência mais próxima é a R1.",
+    "O piso do movimento está em S2.",
+    "A zona de defesa fica no S1.",
+])
+def test_nivel_identificado_COM_a_banda_tambem_cai(frase):
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+@pytest.mark.parametrize("frase", [
+    # Níveis de gráfico de verdade — máxima e MM são suporte/resistência
+    # legítimos, e chamá-los assim é o que o SYSTEM manda.
+    "A principal resistência é a máxima de US$ 142,35.",
+    "O suporte da MM200 está em US$ 72,00.",
+    # Distingue os dois na mesma frase.
+    "A resistência do gráfico é a máxima de julho e R1 fica acima.",
+    "R1 e R2 ficam acima; a resistência é a máxima de julho.",
+    # Rotula a banda ao lado.
+    "O suporte imediato é a S1 (banda de reação) em US$ 79,30.",
+])
+def test_a_copula_reversa_nao_pega_nivel_legitimo(frase):
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+# ── estatística com o rótulo de outra ──────────────────────────────────────
+
+_RESUMO_INTC = {"reaction": {"summary": {
+    "gap_pct_mean": 0.03, "gap_pct_abs_mean": 0.83,
+    "close_pct_mean": -1.42, "close_pct_abs_mean": 9.35,
+    "intraday_range_pct_mean": 8.25, "runup": {}}}}
+
+
+def test_o_incidente_do_intc_reproduzido():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, INTC mostra um descolamento (gap) médio de 8,25% "
+        "na abertura."), _RESUMO_INTC)
+    assert "ANALISE_ESTATISTICA_TROCADA" in _codigos(achados)
+
+
+def test_a_mensagem_nomeia_o_campo_que_o_numero_realmente_e():
+    """O erro típico não é inventar número, é pegar o CERTO de outro campo.
+    Sem dizer qual, quem lê o apontamento não sabe se corrige o número ou o
+    rótulo."""
+    achados = validar_analise(_texto_completo(
+        "O gap médio na abertura é de 8,25%."), _RESUMO_INTC)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_ESTATISTICA_TROCADA")
+    assert "intraday_range_pct_mean" in msg
+    assert "0.83" in msg, "e tem que dizer qual era o valor certo"
+
+
+@pytest.mark.parametrize("frase", [
+    "INTC mostra um gap médio de 0,83% na abertura.",
+    "O gap médio na abertura é de 0,03%.",
+    "A volatilidade média de 9,35% no fechamento do dia do balanço.",
+    "O fechamento médio foi de -1,42%.",
+    # Evento específico, não a média do resumo.
+    "O gap de +2,19% em abril foi o maior da série.",
+    # O rótulo certo para o número certo.
+    "A amplitude intradiária média é de 8,25%.",
+])
+def test_estatistica_com_o_rotulo_certo_passa(frase):
+    assert "ANALISE_ESTATISTICA_TROCADA" not in _codigos(
+        validar_analise(_texto_completo(frase), _RESUMO_INTC))
+
+
+def test_a_troca_vale_nos_dois_sentidos():
+    for frase in ("O gap médio na abertura é de 9,35%.",
+                  "O fechamento médio do dia foi de 0,83%."):
+        assert "ANALISE_ESTATISTICA_TROCADA" in _codigos(
+            validar_analise(_texto_completo(frase), _RESUMO_INTC))
+
+
+def test_sem_resumo_de_earnings_a_checagem_se_cala():
+    assert "ANALISE_ESTATISTICA_TROCADA" not in _codigos(validar_analise(
+        _texto_completo("O gap médio na abertura é de 8,25%."), {}))
+
+
+def test_o_texto_correto_do_intc_nao_produz_apontamento():
+    """As frases do INTC que estavam certas continuam passando — a rodada não
+    pode virar uma tela cheia de amarelo."""
+    achados = _codigos(validar_analise(_texto_completo(
+        "O papel está em US$ 87,48, 22,14% abaixo da MM50 e 17,7% acima da "
+        "MM200 (US$ 72,00). O preço está abaixo da VWAP de US$ 88,47 (-1,12%). "
+        "O preço atual está posicionado entre a VWAP e a banda de reação S1 "
+        "(US$ 79,30)."),
+        {"precoAtual": {"valor": 87.48},
+         "snapshot": {"price": 87.48, "sma50": 106.85, "sma200": 72.00},
+         "technicals": {"sma20": 95.54, "vwap": 88.47}}))
+    assert achados == set()

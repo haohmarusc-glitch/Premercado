@@ -109,6 +109,12 @@ _NIVEL_VIRA_BANDA = rf"{_NIVEL}\s+(?:em|de|do|da|no|na)?\s*\(?{_BANDA}"
 # (frase que DISTINGUE os dois) viraria apontamento.
 _NIVEL_ARROLA_BANDA = (rf"{_NIVEL}[^.;]{{0,30}}?\s(?:inclu\w+|compreend\w+|"
                        rf"abrang\w+|contempl\w+)\s[^.;]{{0,60}}?{_BANDA}")
+# Cópula REVERSA: "o suporte imediato É A S1". Só o sentido banda→nível estava
+# coberto, e a rodada de INTC (26/08/2026) publicou este sem apontamento.
+# O vão é curto e não atravessa vírgula: "a resistência do gráfico é a máxima
+# de julho e R1 fica acima" distingue os dois e tem que passar.
+_NIVEL_E_A_BANDA = (rf"{_NIVEL}[^.;,]{{0,25}}?\s(?:é|são|seria[m]?|fica[m]?|"
+                    rf"est[áa]|est[ãa]o)\s+(?:o|a|os|as|em|n[oa]s?)?\s*\(?{_BANDA}")
 # Cópula elíptica: "R2 é o teto E S2 O PISO" -- o verbo aparece uma vez só e
 # a segunda banda fica colada ao artigo. Aqui NÃO cabe vão nenhum: com o
 # `[^.;]{0,40}?` do padrão acima, um artigo solto casaria com qualquer
@@ -146,6 +152,22 @@ _REFERENCIAS = (
 
 # "está 0,72% ACIMA da MM20" -- a direção afirmada, com o número ao lado.
 _DIRECAO = r"(\d+(?:[.,]\d+)?)\s*%\s*(acima|abaixo)\s+d[ao]s?\s+(?:sua\s+)?"
+
+# Estatísticas de earnings que o texto costuma nomear, e os campos do resumo
+# que as bancam. O nome do campo entra na mensagem porque a forma típica do
+# erro não é inventar número: é pegar o número CERTO de outra linha do resumo
+# e dar a ele o rótulo errado.
+_ESTATISTICAS = (
+    ("gap de abertura", r"gap|abertura|descolamento",
+     ("gap_pct_mean", "gap_pct_abs_mean")),
+    ("fechamento do dia", r"fechamento|fech\.",
+     ("close_pct_mean", "close_pct_abs_mean")),
+)
+# Todos os campos do resumo que são percentuais médios — para dizer QUAL deles
+# o número citado realmente é, quando não for o rotulado.
+_CAMPOS_DE_RESUMO = ("gap_pct_mean", "gap_pct_abs_mean", "close_pct_mean",
+                     "close_pct_abs_mean", "close_pct_std",
+                     "intraday_range_pct_mean")
 
 # Verbos que ATRIBUEM um movimento ao balanço. É o que separa "reagiu com X%"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
@@ -308,7 +330,7 @@ def validar_analise(texto, dados=None) -> list:
         if afirmacao_negada(frase, _NIVEL) or re.search(_ROTULA_A_BANDA, frase):
             continue
         for padrao in (_BANDA_VIRA_NIVEL, _BANDA_ELIPSE, _NIVEL_VIRA_BANDA,
-                       _NIVEL_ARROLA_BANDA):
+                       _NIVEL_ARROLA_BANDA, _NIVEL_E_A_BANDA):
             m = re.search(padrao, frase)
             if m:
                 achou = m
@@ -392,7 +414,31 @@ def validar_analise(texto, dados=None) -> list:
                     f"Trecho: “{frase.strip()[:120]}”.")
                 break
 
-    # ── 9. run-up apresentado como reação ───────────────────────────────────
+    # ── 9. estatística de earnings com o rótulo de outra ────────────────────
+    #
+    # Incidente real (INTC, 26/08/2026), publicado sem apontamento: "um
+    # descolamento (gap) médio de 8,25% na abertura". Os oito gaps da tabela
+    # ficam todos abaixo de 2,2% e a média absoluta é 0,83% -- 8,25% é outra
+    # linha do resumo com o rótulo do gap.
+    #
+    # O erro típico não é inventar número, é PEGAR O NÚMERO CERTO DE OUTRO
+    # CAMPO. Por isso a mensagem diz qual campo o valor realmente é: sem isso,
+    # quem lê o apontamento não sabe se corrige o número ou o rótulo.
+    resumo = caminho(dados, "reaction", "summary")
+    if resumo:
+        for frase in frases(prosa_sa):
+            achado = _estatistica_trocada(frase, resumo)
+            if achado:
+                rotulo, citado, esperados, bate_com = achado
+                add("ERRO", "ANALISE_ESTATISTICA_TROCADA",
+                    f"atribui {citado:.2f}% ao {rotulo}, mas o resumo traz "
+                    + " e ".join(f"{v:.2f}%" for v in esperados)
+                    + (f" — o número citado é o campo `{bate_com}`"
+                       if bate_com else " — o número não está no resumo")
+                    + f". Trecho: “{frase.strip()[:120]}”.")
+                break
+
+    # ── 10. run-up apresentado como reação ──────────────────────────────────
     #
     # O pior erro da rodada de WOLF, e o que nenhum validador pegava: "o papel
     # reagiu com 14,92% de alta", quando 14,92% é o run-up EX-EVENTO e a
@@ -458,6 +504,34 @@ def _direcao_contradita(frase: str, preco: float, dados) -> tuple | None:
             dito_acima = m.group(2) == "acima"
             if dito_acima != (real > 0):
                 return rotulo, citado, m.group(2), nivel, real
+    return None
+
+
+def _estatistica_trocada(frase: str, resumo: dict) -> tuple | None:
+    """(rótulo, citado, valores esperados, campo que o número realmente é).
+
+    Só olha frases que dizem MÉDIA: "o gap de +2,19% em abril" cita um evento
+    específico e não é o campo do resumo."""
+    if not re.search(r"m[ée]di[ao]", frase):
+        return None
+    for rotulo, escrita, campos in _ESTATISTICAS:
+        if not re.search(escrita, frase):
+            continue
+        esperados = [v for v in (num_finito(resumo.get(c)) for c in campos)
+                     if v is not None]
+        if not esperados:
+            continue
+        for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*%", frase):
+            citado = num_finito(m.group(1))
+            if citado is None:
+                continue
+            if any(abs(citado - abs(v)) <= 0.06 for v in esperados):
+                return None  # bate com o campo certo: nada a apontar
+            bate_com = next(
+                (c for c in _CAMPOS_DE_RESUMO
+                 if (v := num_finito(resumo.get(c))) is not None
+                 and abs(citado - abs(v)) <= 0.06), None)
+            return rotulo, citado, esperados, bate_com
     return None
 
 
