@@ -279,6 +279,28 @@ def _datas_atribuidas_a_earnings(seg: str):
     return achadas
 
 
+# "dados tecnicos limitados", "sem dados no painel", "informacoes
+# indisponiveis". Precisa da NEGACAO junto com o SUJEITO ser o dado -- "o
+# volume esta limitado" fala de liquidez, nao de disponibilidade.
+_NEGA_DADO_DO_TICKER = re.compile(
+    r"(?:dados?|informa[cç][oõ]es|indicadores?|m[ée]tricas?)"
+    r"[^;\n]{0,30}?(?:limitad\w+|indispon[ií]ve\w+|ausent\w+|faltando|"
+    r"insuficient\w+|n[aã]o\s+dispon[ií]ve\w+)"
+    r"|(?:sem|falta\w*)\s+(?:dados?|informa[cç][oõ]es|indicadores?)"
+    r"[^;\n]{0,25}?(?:no\s+painel|dispon[ií]ve\w+|para\s+este)",
+    re.IGNORECASE)
+
+
+def _o_que_tem(tec: dict) -> str:
+    """Os campos que o snapshot REALMENTE trouxe, nomeados na mensagem: sem
+    isso o apontamento vira "voce esta errado" sem dizer sobre o que."""
+    nomes = {"rsi": "RSI", "pct_above_sma50": "distância à SMA50",
+             "rsi_date": "data do RSI"}
+    tem = [rotulo for campo, rotulo in nomes.items()
+           if tec.get(campo) is not None and campo != "rsi_date"]
+    return ", ".join(tem) if tem else "dados técnicos"
+
+
 _DATE_WEEKDAY = re.compile(
     r"(\d{1,2})\s*/?\s*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\s*"
     # [\s(]* em vez de \s*: a forma mais comum no texto gerado e' "dd/mes
@@ -493,6 +515,37 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
             rep.add("ERROR", "WEEKDAY_WRONG",
                     f"Texto diz '{day:02d}/{m.group(2)} ({wd_claimed}-feira?)', "
                     f"mas {d.isoformat()} e {real_wd}.")
+
+    # 1b) o texto NEGA o dado do ticker que o snapshot trouxe
+    #
+    # Visto em producao duas vezes (25 e 26/08/2026), sempre no WOLF. Na
+    # segunda: "WOLF: Dados tecnicos limitados no painel", enquanto o painel
+    # da mesma tela mostrava "WOLF RSI 44 - Subindo 5.7% hoje" -- o unico
+    # ticker do dia com sinal destacado.
+    #
+    # Mesmo defeito que o `ANALISE_NEGA_DADO_PRESENTE` da analise rapida
+    # pega: ninguem conferia as afirmacoes do texto sobre a DISPONIBILIDADE
+    # do dado, so' sobre o valor dele. E negar dado presente e' pior que
+    # omitir -- quem le "dados limitados" para de procurar, e desconta a
+    # posicao inteira por uma escassez que nao existe.
+    #
+    # O que esta checagem NAO faz, de proposito: apontar "sem mudanca
+    # estrutural visivel" contra a alta de 5,7% do dia. Estrutura e'
+    # tendencia e niveis, e um pregao nao muda estrutura -- um analista
+    # cuidadoso defende essa frase. Mesma razao para deixar passar o "sem
+    # movimento urgente" da ocorrencia de 25/08: urgencia nao e' magnitude.
+    # Apontar as duas seria trocar um achado real por dois palpites.
+    for tk in list(technicals):
+        if not technicals.get(tk):
+            continue
+        for seg in segmentos.get(tk, []):
+            if not _NEGA_DADO_DO_TICKER.search(seg):
+                continue
+            rep.add("ERROR", "DADO_DO_TICKER_NEGADO",
+                    f"diz que falta dado tecnico, mas o snapshot traz "
+                    f"{_o_que_tem(technicals[tk])} para {tk} — quem lê isso "
+                    f"para de procurar o que está na mão.", ticker=tk)
+            break
 
     # 2) datas de earnings citadas batem com o painel?
     for tk, edate in earnings.items():

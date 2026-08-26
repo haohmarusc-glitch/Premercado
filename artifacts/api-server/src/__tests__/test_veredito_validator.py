@@ -822,3 +822,98 @@ def test_item_ja_vendido_nao_e_ordem_em_aberto():
     achados = [i.code for i in validar_bloco_estruturado(
         {"tickers": [_item("ARM", "MANTER", ["TENDENCIA_BAIXA"])]}, snap).issues]
     assert "BLOCO_CONTRA_PLANO" not in achados
+
+
+# ── o texto que nega o dado do ticker ───────────────────────────────────────
+#
+# Visto em produção DUAS vezes (25 e 26/08/2026), sempre no WOLF. Na segunda:
+#
+#   "WOLF: Dados técnicos limitados no painel. RVOL histórico reflete baixa
+#    liquidez. A posição está marcada como 'monitorar'; sem mudança
+#    estrutural visível."
+#
+# enquanto o painel Técnicos da MESMA tela mostrava "WOLF RSI 44 · Subindo
+# 5.7% hoje" -- o único ticker do dia com sinal destacado.
+#
+# Mesmo defeito que `ANALISE_NEGA_DADO_PRESENTE` pega na análise rápida:
+# ninguém conferia as afirmações do texto sobre a DISPONIBILIDADE do dado, só
+# sobre o valor dele. Negar dado presente é pior que omitir -- quem lê "dados
+# limitados" para de procurar, e desconta a posição inteira por uma escassez
+# que não existe.
+
+_SNAP_WOLF = {
+    "as_of": "2026-08-26",
+    "quotes": {"WOLF": {"price": 26.57, "as_of": "2026-08-26",
+                        "change_percent": 5.7}},
+    "technicals": {"WOLF": {"rsi": 44.2, "rsi_date": "2026-08-26",
+                            "pct_above_sma50": -21.4}},
+    "earnings": {},
+}
+
+
+def _cods_wolf(texto, snap=None):
+    return [i.code for i in lint_veredito(texto, snap or _SNAP_WOLF).issues]
+
+
+def test_o_incidente_do_wolf():
+    achados = [i for i in lint_veredito(
+        "WOLF: Dados técnicos limitados no painel. A posição segue em "
+        "monitoramento.", _SNAP_WOLF).issues
+        if i.code == "DADO_DO_TICKER_NEGADO"]
+    assert len(achados) == 1
+    assert achados[0].ticker == "WOLF"
+    assert "RSI" in achados[0].message, "a mensagem tem que nomear o que veio"
+
+
+@pytest.mark.parametrize("frase", [
+    "WOLF: Dados técnicos limitados no painel.",
+    "WOLF: indicadores indisponíveis nesta leitura.",
+    "WOLF: sem dados no painel para este ticker.",
+    "WOLF: métricas ausentes, leitura prejudicada.",
+    "WOLF: informações não disponíveis para o papel.",
+])
+def test_negar_dado_presente_cai(frase):
+    assert "DADO_DO_TICKER_NEGADO" in _cods_wolf(frase)
+
+
+# ── o que esta checagem NÃO aponta, de propósito ────────────────────────────
+#
+# As duas ocorrências do WOLF traziam junto uma frase que PARECE contradita
+# pelo painel e não é. Apontar as duas seria trocar um achado real por dois
+# palpites -- e o custo do palpite é o leitor aprender a ignorar a caixa.
+
+@pytest.mark.parametrize("frase", [
+    # "Estrutura" é tendência e níveis. Um pregão de +5,7% não muda estrutura,
+    # e um analista cuidadoso defende essa frase.
+    "WOLF: sem mudança estrutural visível; a posição segue em monitoramento.",
+    # Urgência não é magnitude -- a ocorrência de 25/08.
+    "WOLF: sem movimento urgente hoje.",
+    # Liquidez, não disponibilidade: o dado existe e está dizendo que é fino.
+    "WOLF: o volume está limitado, refletindo baixa liquidez.",
+    # Afirmar o dado, obviamente, passa.
+    "WOLF: RSI 44,2 e -21,4% abaixo da SMA50.",
+])
+def test_frase_defensavel_passa(frase):
+    assert "DADO_DO_TICKER_NEGADO" not in _cods_wolf(frase)
+
+
+def test_sem_technicals_a_frase_e_verdade():
+    """Quando o snapshot REALMENTE não tem o ticker, dizer que falta dado é
+    correto -- e é o que o prompt manda fazer."""
+    snap = {**_SNAP_WOLF, "technicals": {}}
+    assert "DADO_DO_TICKER_NEGADO" not in _cods_wolf(
+        "WOLF: Dados técnicos limitados no painel.", snap)
+
+
+def test_a_negacao_de_um_ticker_nao_acusa_o_outro():
+    """O trecho de cada ticker vai da menção dele até a do próximo (ver
+    `_segmentos_por_ticker`). Sem isso, uma frase sobre WOLF derrubaria BABA
+    por vizinhança."""
+    snap = {**_SNAP_WOLF,
+            "quotes": {**_SNAP_WOLF["quotes"], "BABA": {"price": 121.0, "as_of": "2026-08-26"}},
+            "technicals": {**_SNAP_WOLF["technicals"],
+                           "BABA": {"rsi": 48.9, "rsi_date": "2026-08-26"}}}
+    achados = [i.ticker for i in lint_veredito(
+        "BABA: RSI 48,9, dentro da faixa. WOLF: dados técnicos limitados.",
+        snap).issues if i.code == "DADO_DO_TICKER_NEGADO"]
+    assert achados == ["WOLF"]
