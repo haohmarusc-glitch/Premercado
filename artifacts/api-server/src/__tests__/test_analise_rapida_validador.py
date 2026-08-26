@@ -1002,3 +1002,104 @@ def test_o_acento_e_o_que_permite_separar_a_oracao():
     troca de verdade passaria."""
     assert "ANALISE_ESTATISTICA_TROCADA" in _codigos(validar_analise(
         _texto_completo("O gap médio na abertura é de 15,09%."), _RESUMO_SMCI))
+
+
+# ═══ SMCI, segunda rodada — dois "número certo, leitura errada" ════════════
+#
+# A caixa amarela saiu limpa (o falso positivo da rodada anterior estava
+# corrigido) e o texto trazia dois erros de DERIVAÇÃO:
+#
+#   "48,57% acima da mínima ... 55,17% da máxima ... indicando que o ativo
+#    negocia na METADE SUPERIOR da sua faixa anual"
+#
+#   "a ação CHEGOU AO EVENTO com um run-up de 32,46%"
+#
+# No primeiro, os dois números da própria frase já dizem o contrário: 48,57 é
+# MENOR que 55,17, logo o papel está mais perto da mínima. No segundo, 32,46%
+# é o run-up de AGORA (11 pregões depois); o de chegada foi +11,13%.
+
+_SMCI = {
+    "precoAtual": {"valor": 37.88},
+    "snapshot": {"price": 37.88, "yearLow": 19.48, "yearHigh": 58.78,
+                 "sma50": 30.71, "sma200": 31.37},
+    "technicals": {"sma20": 34.22, "vwap": 37.89},
+    "reaction": {"summary": {"runup": {
+        "janela_contem_earnings": True, "pregoes_desde_earnings": 11,
+        "runup_atual_ex_evento_pct": 32.46}}},
+}
+
+
+# ── posição na faixa de 52 semanas ─────────────────────────────────────────
+
+def test_o_incidente_da_metade_superior():
+    """US$ 37,88 numa faixa de 19,48 a 58,78 está a 46,8% dela."""
+    achados = validar_analise(_texto_completo(
+        "O ativo negocia na metade superior da sua faixa anual."), _SMCI)
+    assert "ANALISE_POSICAO_NA_FAIXA" in _codigos(achados)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_POSICAO_NA_FAIXA")
+    assert "46.8%" in msg, "a mensagem tem que dar a posição real"
+
+
+@pytest.mark.parametrize("frase", [
+    "O ativo negocia na metade superior da sua faixa anual.",
+    "O papel está próximo da máxima dentro da faixa de 52 semanas.",
+    "O ativo opera no topo da faixa.",
+])
+def test_metade_errada_da_faixa_cai(frase):
+    assert "ANALISE_POSICAO_NA_FAIXA" in _codigos(
+        validar_analise(_texto_completo(frase), _SMCI))
+
+
+@pytest.mark.parametrize("frase", [
+    # A leitura certa.
+    "O ativo negocia na metade inferior da sua faixa anual.",
+    "O papel está mais perto da mínima na faixa de 52 semanas.",
+    # "metade superior" de outra coisa que não a faixa.
+    "O ativo negocia na metade superior do setor.",
+    # Só declara os extremos, não a posição.
+    "A faixa de 52 semanas vai de US$ 19,48 a US$ 58,78.",
+])
+def test_a_leitura_certa_da_faixa_passa(frase):
+    assert "ANALISE_POSICAO_NA_FAIXA" not in _codigos(
+        validar_analise(_texto_completo(frase), _SMCI))
+
+
+def test_sem_a_faixa_no_payload_a_checagem_se_cala():
+    assert "ANALISE_POSICAO_NA_FAIXA" not in _codigos(validar_analise(
+        _texto_completo("O ativo negocia na metade superior da sua faixa anual."),
+        {"precoAtual": {"valor": 37.88}}))
+
+
+# ── run-up de HOJE atribuído à chegada num balanço passado ─────────────────
+
+@pytest.mark.parametrize("frase", [
+    'A ação chegou ao evento com um "run-up" de 32,46%, considerada "esticada".',
+    "O papel veio ao balanço com run-up de 32,46%.",
+])
+def test_run_up_atual_atribuido_a_chegada_cai(frase):
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" in _codigos(
+        validar_analise(_texto_completo(frase), _SMCI))
+
+
+@pytest.mark.parametrize("frase", [
+    # O número certo para o momento certo.
+    "O run-up atual, ex-evento, é de 32,46%.",
+    "O papel está esticado com run-up de 32,46% nos 11 pregões desde o "
+    "último balanço.",
+    # O run-up de CHEGADA de verdade, que está na tabela de eventos.
+    "A ação chegou ao evento com um run-up de 11,13%.",
+])
+def test_o_run_up_no_momento_certo_passa(frase):
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" not in _codigos(
+        validar_analise(_texto_completo(frase), _SMCI))
+
+
+def test_as_duas_checagens_de_run_up_nao_se_confundem():
+    """A checagem 7 excusa o PASSADO ("chegou esticado" descrevendo histórico
+    é a redação certa). Esta aqui aceita o tempo verbal e recusa o NÚMERO, que
+    é de outro momento. As duas têm que conviver."""
+    achados = _codigos(validar_analise(_texto_completo(
+        "A ação chegou ao evento com um run-up de 32,46%."), _SMCI))
+    assert "ANALISE_RUNUP_ATUAL_COMO_CHEGADA" in achados
+    assert "ANALISE_BALANCO_NO_FUTURO" not in achados
