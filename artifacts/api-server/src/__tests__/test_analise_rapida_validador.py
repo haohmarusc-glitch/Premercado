@@ -658,3 +658,115 @@ def test_negar_o_nivel_com_a_banda_no_meio_passa():
                   "S1 e S2 não são suporte; a resistência é a máxima."):
         assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
             validar_analise(_texto_completo(frase)))
+
+
+# ═══ ADI, 26/08/2026 — a rodada que passou LIMPA e tinha erro ═══════════════
+#
+# Depois de fechar 37 defeitos das auditorias, a Análise Rápida do ADI saiu sem
+# nenhum apontamento. O texto publicado dizia:
+#
+#   "O preço de US$ 373,66 está apenas 0,72% ACIMA da MM20 (US$ 376,36),
+#    mas 3,55% abaixo da MM50 (US$ 386,91)"
+#
+# 373,66 é MENOR que 376,36. Magnitude certa, sinal invertido — e a frase até
+# se contradizia sozinha ("acima da MM20, MAS abaixo da MM50", como se fosse
+# contraste, quando está abaixo das duas). Nenhuma checagem olhava DIREÇÃO.
+#
+# A lição: caixa amarela vazia prova que os alarmes falsos sumiram, não que o
+# texto está certo.
+
+_DADOS_ADI = {
+    "precoAtual": {"valor": 373.66},
+    "snapshot": {"price": 373.66, "sma50": 386.91, "sma200": 343.15},
+    "technicals": {"sma20": 376.36, "vwap": 372.54},
+}
+
+
+def test_o_incidente_do_adi_reproduzido():
+    achados = validar_analise(_texto_completo(
+        "O preço de US$ 373,66 está apenas 0,72% acima da MM20 (US$ 376,36), "
+        "mas 3,55% abaixo da MM50 (US$ 386,91)."), _DADOS_ADI)
+    assert "ANALISE_DIRECAO_INVERTIDA" in _codigos(achados)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_DIRECAO_INVERTIDA")
+    assert "MM20" in msg and "abaixo" in msg
+
+
+@pytest.mark.parametrize("frase", [
+    "O preço está 3,55% acima da MM50.",
+    "O preço está 8,90% abaixo da MM200.",
+    "O papel fechou 0,30% abaixo da VWAP.",
+])
+def test_qualquer_direcao_invertida_cai(frase):
+    assert "ANALISE_DIRECAO_INVERTIDA" in _codigos(
+        validar_analise(_texto_completo(frase), _DADOS_ADI))
+
+
+@pytest.mark.parametrize("frase", [
+    "O preço de US$ 373,66 está 0,72% abaixo da MM20 (US$ 376,36).",
+    "O preço está 3,55% abaixo da MM50.",
+    "O preço está 8,90% acima da MM200.",
+    "O preço está 0,30% acima da VWAP.",
+    "O setor subiu 55,29% acima da média histórica.",
+])
+def test_direcao_correta_nao_cai(frase):
+    assert "ANALISE_DIRECAO_INVERTIDA" not in _codigos(
+        validar_analise(_texto_completo(frase), _DADOS_ADI))
+
+
+def test_a_magnitude_e_a_guarda_do_sujeito_da_frase():
+    """"A MM50 está 12,75% acima da MM200" fala de duas MÉDIAS, não do preço.
+    Não há como saber o sujeito por regex — mas 12,75 não é a distância do
+    PREÇO à MM200, e é a magnitude que denuncia isso."""
+    assert "ANALISE_DIRECAO_INVERTIDA" not in _codigos(
+        validar_analise(_texto_completo("A MM50 está 12,75% acima da MM200."),
+                        _DADOS_ADI))
+
+
+def test_sem_preco_no_payload_a_checagem_se_cala():
+    assert "ANALISE_DIRECAO_INVERTIDA" not in _codigos(validar_analise(
+        _texto_completo("O preço está 0,72% acima da MM20."),
+        {"technicals": {"sma20": 376.36}}))
+
+
+# ── banda arrolada entre os níveis ─────────────────────────────────────────
+#
+# O mesmo texto do ADI trazia "o S1 (banda de reação) ... configuram-se como
+# suportes críticos". A checagem de banda não pegava: `configurar-se como` não
+# estava entre os verbos e o vão de 40 caracteres não alcançava o predicado.
+
+@pytest.mark.parametrize("frase", [
+    "O S1 em US$ 357,14 e a MM200 configuram-se como suportes críticos.",
+    "As resistências imediatas incluem a MM50 e o R1 em US$ 390,18.",
+    "Os suportes compreendem a MM200 e o S1.",
+    "R1 constitui a resistência mais próxima.",
+    "S2 forma o piso do movimento.",
+    "R1 aparece como resistência relevante.",
+])
+def test_predicados_alem_da_copula_simples(frase):
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+@pytest.mark.parametrize("frase", [
+    "Abaixo do preço, o S1 (banda de reação) em US$ 357,14 e a MM200 "
+    "configuram-se como suportes críticos.",
+    "As resistências imediatas incluem a MM50 e o R1 (banda de reação).",
+])
+def test_rotular_a_banda_na_frase_e_o_bastante(frase):
+    """Usar a palavra proibida enquanto se declara "(banda de reação)" ao lado
+    não engana o leitor sobre a origem do número. Apontar isto seria o quarto
+    alarme falso desta checagem em quatro rodadas reais — e alarme falso é o
+    que mata a credibilidade da caixa amarela."""
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+def test_verbo_de_lista_nao_pega_frase_que_distingue():
+    """"a resistência é a máxima de julho E R1 fica acima" cita os dois sem
+    confundi-los — por isso o verbo da lista é restrito a incluir/compreender,
+    e não um `ser` genérico."""
+    for frase in ("A resistência do gráfico é a máxima de julho e R1 fica acima.",
+                  "R1 e R2 ficam acima; a resistência é a máxima de julho."):
+        assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+            validar_analise(_texto_completo(frase)))
