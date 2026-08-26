@@ -49,9 +49,34 @@ _META_RECUSA = (r"n[ãa]o\s+(?:vou\s+|cabe\s+|é\s+papel\s+)?recomend",
 # suporte/resistência do gráfico. O prompt proíbe chamá-los de "piso" ou "zona
 # de defesa" -- e é a mesma ressalva que o relatório de earnings imprime em
 # toda seção.
-_BANDAS = r"\b[RS][12]\b"
-_TERMOS_TECNICOS = ("suporte", "resistencia", "piso", "zona de defesa",
-                    "teto tecnico", "fundo tecnico")
+# R1/R2/S1/S2 e os nomes de nível de GRÁFICO que o SYSTEM proíbe aplicar a
+# eles. Estes dois padrões rodam sobre o texto em minúsculas COM acento (e não
+# sobre `prosa_sa`), porque sem acento "é" e "e" viram a mesma letra -- e a
+# diferença entre "R1 É a resistência" (erro) e "R1 E a resistência" (lista de
+# duas coisas) é justamente essa.
+_BANDA = r"\b[rs][12]\b"
+_NIVEL = (r"\b(?:suportes?|resist[êe]ncias?|pisos?|zonas?\s+de\s+defesa"
+          r"|tetos?\s+t[ée]cnicos?|fundos?\s+t[ée]cnicos?)\b")
+
+# A banda IDENTIFICADA como nível: "R1 funciona como resistência".
+_LIGA = (r"(?:é|são|era|eram|vira|viram|virou|funciona\s+como|atua\s+como"
+         r"|serve\s+(?:de|como)|representa|equivale\s+a|marca)")
+_BANDA_VIRA_NIVEL = (rf"{_BANDA}[^.;]{{0,40}}?\s{_LIGA}\s+"
+                     rf"(?:o|a|os|as|um|uma|de|do|da)?\s*{_NIVEL}")
+# O nome de nível aplicado à banda: "o suporte R1", "a resistência em S2".
+_NIVEL_VIRA_BANDA = rf"{_NIVEL}\s+(?:em|de|do|da|no|na)?\s*\(?{_BANDA}"
+# Cópula elíptica: "R2 é o teto E S2 O PISO" -- o verbo aparece uma vez só e
+# a segunda banda fica colada ao artigo. Aqui NÃO cabe vão nenhum: com o
+# `[^.;]{0,40}?` do padrão acima, um artigo solto casaria com qualquer
+# "resistência" que aparecesse depois na frase, que é o defeito que esta
+# reescrita veio corrigir.
+_BANDA_ELIPSE = rf"{_BANDA}\s+(?:o|a|os|as)\s+{_NIVEL}"
+
+# O SYSTEM manda o modelo escrever a distinção ("suporte e resistência de
+# verdade só a partir de máximas/mínimas e médias móveis"). Uma frase que NEGA
+# a identificação está obedecendo, não errando -- é o mesmo anteparo que a
+# checagem de recomendação já tem em `_META_RECUSA`.
+_NEGA_O_NIVEL = r"\b(?:não|nao|nem|jamais|nunca|ao\s+contrário|ao\s+contrario)\b"
 
 
 def _sem_acento(texto: str) -> str:
@@ -189,14 +214,26 @@ def validar_analise(texto: str, dados: dict | None = None) -> list:
         break
 
     # ── 6. bandas estatísticas tratadas como nível técnico ──────────────────
-    for frase in _frases(prosa_sa):
-        if not re.search(_BANDAS, frase, re.IGNORECASE):
+    #
+    # A primeira versão exigia só CO-OCORRÊNCIA de "R1" e "resistência" na
+    # mesma frase. Isso apontava contra o modelo OBEDECENDO o SYSTEM, que lhe
+    # manda escrever exatamente a distinção -- "R1 é banda de volatilidade,
+    # não resistência do gráfico" era apontado igual a "R1 funciona como
+    # resistência". Terceiro falso positivo do validador em três rodadas
+    # reais (ADI, 26/08/2026), e o segundo por casar TOKEN em vez de
+    # AFIRMAÇÃO. Agora é preciso a identificação, e a negação dela passa.
+    for frase in _frases(prosa.lower()):
+        for padrao in (_BANDA_VIRA_NIVEL, _BANDA_ELIPSE, _NIVEL_VIRA_BANDA):
+            m = re.search(padrao, frase)
+            if m and not re.search(_NEGA_O_NIVEL, m.group(0)):
+                add("ERRO", "ANALISE_BANDA_COMO_NIVEL_TECNICO",
+                    "trata R1/R2/S1/S2 como suporte ou resistência do gráfico — "
+                    "são bandas de volatilidade (preço ± reação média a "
+                    f"earnings). Trecho: \u201c{m.group(0).strip()}\u201d.")
+                break
+        else:
             continue
-        if any(t in frase for t in _TERMOS_TECNICOS):
-            add("ERRO", "ANALISE_BANDA_COMO_NIVEL_TECNICO",
-                "trata R1/R2/S1/S2 como suporte ou resistência do gráfico — "
-                "são bandas de volatilidade (preço ± reação média a earnings).")
-            break
+        break
 
     # ── 7. balanço já ocorrido escrito no futuro ────────────────────────────
     #

@@ -390,3 +390,68 @@ def test_divergencia_continua_funcionando_com_a_fronteira():
         _texto_completo("O valuation usa US$ 225,01 contra os US$ 180 dos níveis."),
         _DADOS_DIVERGENCIA)
     assert "ANALISE_DIVERGENCIA_OMITIDA" not in _codigos(achados)
+
+
+# ── a rodada de ADI (26/08/2026): banda x nível pedia AFIRMAÇÃO, não token ──
+#
+# Terceiro falso positivo em três rodadas reais, e o segundo por casar TOKEN
+# em vez de AFIRMAÇÃO. A checagem exigia só que "R1" e "resistência"
+# aparecessem na mesma frase -- e o SYSTEM manda o modelo escrever exatamente
+# essa distinção ("suporte e resistência de verdade só a partir de
+# máximas/mínimas e médias móveis"). Obedecer e errar davam o mesmo apontamento.
+
+@pytest.mark.parametrize("frase", [
+    "R1 em US$ 245 é banda de volatilidade, não resistência do gráfico.",
+    "S1 e S2 não são suporte; a resistência de verdade é a máxima de US$ 251.",
+    "R1 (US$ 245) marca a banda de reação, enquanto a resistência técnica fica na MM200.",
+    "R1 e R2 ficam acima; a resistência do gráfico é a máxima de julho.",
+])
+def test_negar_a_identificacao_e_obediencia_ao_system(frase):
+    achados = validar_analise(_texto_completo(frase))
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(achados)
+
+
+def test_piso_nao_casa_dentro_de_episodio():
+    """Mesma família do coringa do arredondamento: substring sem fronteira.
+    'episódio' contém 'piso'."""
+    achados = validar_analise(
+        _texto_completo("O episódio de agosto levou o papel até R1."))
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    "R1 em US$ 245 funciona como resistência.",
+    "R1 é a resistência mais próxima.",
+    "S1 atua como piso do movimento.",
+    "O suporte S1 segura o papel.",
+    "A resistência em R2 trava a alta.",
+    "S1 e S2 são os suportes relevantes.",
+    "R1 vira zona de defesa se perder o nível.",
+])
+def test_identificar_a_banda_com_o_nivel_continua_sendo_erro(frase):
+    """A reescrita não pode virar mordaça: o erro que a checagem existe para
+    pegar tem que continuar caindo."""
+    achados = validar_analise(_texto_completo(frase))
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" in _codigos(achados)
+
+
+def test_a_mensagem_mostra_o_trecho_apontado():
+    """Sem o trecho, quem lê a caixa amarela não sabe QUAL frase revisar --
+    foi o que custou uma rodada de diagnóstico nos dois falsos positivos
+    anteriores."""
+    achados = validar_analise(
+        _texto_completo("R1 em US$ 245 funciona como resistência."))
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_BANDA_COMO_NIVEL_TECNICO")
+    assert "funciona como resistência" in msg
+
+
+def test_acento_separa_a_copula_da_conjuncao():
+    """A checagem roda sobre o texto COM acento de propósito: sem ele "é" e
+    "e" viram a mesma letra, e "R1 E a resistência" (lista) não teria como se
+    distinguir de "R1 É a resistência" (identificação)."""
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" in _codigos(
+        validar_analise(_texto_completo("R1 é a resistência do papel.")))
+    assert "ANALISE_BANDA_COMO_NIVEL_TECNICO" not in _codigos(
+        validar_analise(_texto_completo(
+            "R1 e a resistência de julho ficam acima do preço.")))

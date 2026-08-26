@@ -255,3 +255,41 @@ def test_o_gerador_chama_o_validador():
     assert "validar_leitura(" in codigo
     assert "bloco_de_correcao(" in codigo, "o erro tem que voltar ao modelo"
     assert '"avisos"' in codigo, "e o apontamento tem que chegar à tela"
+
+
+# ── negar o rótulo é obediência, não erro ───────────────────────────────────
+#
+# Mesmo defeito que produziu três falsos positivos no validador da Análise
+# Rápida: casar a PALAVRA em vez da AFIRMAÇÃO. Com `estado_atual = neutro`, a
+# redação que o dado pede é justamente "não está descontado" -- e a primeira
+# versão apontava contra ela.
+
+@pytest.mark.parametrize("frase", [
+    "AVGO não está descontado — o run-up de -6,91% é neutro.",
+    "AVGO deixou de estar descontado nesta janela.",
+    "AVGO está neutro, longe de esticado ou descontado.",
+])
+def test_negar_o_rotulo_nao_e_apontamento(frase):
+    achados = validar_leitura(frase, [_ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    "AVGO está atualmente descontado.",
+    "AVGO não está neutro, está descontado.",
+    "AVGO está esticado, não descontado.",
+])
+def test_afirmar_o_rotulo_contradito_continua_erro(frase):
+    """A negação só vale COLADA ao rótulo (até duas palavras). 'não está
+    neutro, está descontado' nega o outro termo e afirma este -- se a janela
+    fosse larga, a reescrita teria virado mordaça."""
+    achados = validar_leitura(frase, [_ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" in _codigos(achados)
+
+
+def test_o_rotulo_que_bate_com_o_dado_nao_cai_pela_negacao_do_outro():
+    """'AVGO está esticado, não descontado' com dado 'esticado': o primeiro
+    rótulo confere e o segundo está negado — nada a apontar."""
+    achados = validar_leitura("AVGO está esticado, não descontado.",
+                              [_ticker("AVGO", estado="esticado")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)

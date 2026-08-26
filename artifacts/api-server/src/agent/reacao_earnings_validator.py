@@ -54,6 +54,19 @@ _MESMO_TRADE = ("mesmo trade", "praticamente o mesmo", "na pratica o mesmo",
 # Abaixo disso o SYSTEM manda declarar o n ao citar o papel.
 N_EVENTOS_DECLARAR = 5
 
+# NEGAR o rótulo é obediência, não erro. "AVGO não está descontado" e "AVGO
+# está neutro, longe de esticado ou descontado" são a redação que o dado pede
+# quando `estado_atual` é neutro -- e a primeira versão apontava contra as
+# duas, porque casava a PALAVRA em vez da AFIRMAÇÃO. Mesmo defeito que custou
+# três falsos positivos ao validador da Análise Rápida.
+#
+# A negação tem que estar COLADA (no máximo duas palavras antes do rótulo):
+# "não está descontado" passa, mas "não está neutro, está descontado" é
+# afirmação de verdade e continua caindo.
+_NEGA_O_ESTADO = (r"\b(?:nao|nem|nunca|jamais|longe de|deixou de|deixaram de|"
+                  r"ja nao|tampouco|ao contrario|diferente de)\b"
+                  r"(?:\s+\w+){0,2}\s+")
+
 
 def _sem_acento(texto: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", str(texto or ""))
@@ -142,11 +155,16 @@ def validar_leitura(texto: str, resultados: list, correlacoes: dict | None = Non
             continue
         for frase in _trechos_do_ticker(prosa, tk):
             for rotulo in ("esticado", "descontado"):
-                if re.search(rf"\b{rotulo}", frase) and estado != rotulo:
-                    add("ERRO", "LEITURA_ESTADO_CONTRADITO",
-                        f"diz que {tk} está '{rotulo}', mas o dado do dia "
-                        f"marca '{estado}'.", ticker=tk)
-                    break
+                if estado == rotulo:
+                    continue
+                if not re.search(rf"\b{rotulo}", frase):
+                    continue
+                if re.search(_NEGA_O_ESTADO + rotulo, frase):
+                    continue  # o texto está NEGANDO o rótulo -- é obediência
+                add("ERRO", "LEITURA_ESTADO_CONTRADITO",
+                    f"diz que {tk} está '{rotulo}', mas o dado do dia "
+                    f"marca '{estado}'.", ticker=tk)
+                break
 
     # ── 4. co-movimento afirmado forte demais ───────────────────────────────
     if any(m in prosa_sa for m in (_sem_acento(x) for x in _MESMO_TRADE)):
