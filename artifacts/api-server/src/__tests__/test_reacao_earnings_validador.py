@@ -25,7 +25,7 @@ from agent.reacao_earnings_validator import (
 
 
 def _ticker(nome, *, corr=None, sobrevive=False, p_corrigido=None,
-            estado=None, n_events=8, erro=None):
+            estado=None, n_events=8, erro=None, close_pct_mean=None):
     if erro:
         return {"ticker": nome, "error": erro}
     runup = {}
@@ -34,7 +34,10 @@ def _ticker(nome, *, corr=None, sobrevive=False, p_corrigido=None,
                  "corr_p_corrigido": p_corrigido}
     if estado:
         runup["estado_atual"] = estado
-    return {"ticker": nome, "summary": {"n_events": n_events, "runup": runup}}
+    summary = {"n_events": n_events, "runup": runup}
+    if close_pct_mean is not None:
+        summary["close_pct_mean"] = close_pct_mean
+    return {"ticker": nome, "summary": summary}
 
 
 def _codigos(achados):
@@ -663,3 +666,58 @@ def test_o_presente_continua_caindo(frase):
     achados = validar_leitura(frase, [_ticker("NVDA", estado="neutro"),
                                       _ticker("AVGO", estado="neutro")])
     assert "LEITURA_ESTADO_CONTRADITO" in _codigos(achados), frase
+
+
+# ── viés direcional atribuído sem o close_pct_mean sustentar ────────────────
+#
+# Auditoria de 27/08/2026 (segunda execução da cesta): "AVGO ... apresenta um
+# close_pct_mean positivo de 0.99%, indicando que tende a manter ou ampliar
+# ganhos." O card do próprio AVGO, gerado sem LLM a partir do MESMO número,
+# diz "Sem viés direcional claro: a média de fechamento (+0.99%) é próxima de
+# zero" -- 0,99 fica abaixo do corte de 1pp que o card usa. A leitura
+# contradisse o dado que ela mesma citou.
+
+def test_o_caso_avgo_real_e_erro():
+    texto = ("AVGO, por sua vez, apresenta um close_pct_mean positivo de "
+             "0.99%, indicando que tende a manter ou ampliar ganhos.")
+    achados = validar_leitura(texto, [_ticker("AVGO", close_pct_mean=0.99)])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    "SMCI apresenta viés positivo de 2.3%.",
+    "AVGO apresenta viés negativo de -1.5%.",
+    "SMCI tem tendência de alta, com close_pct_mean de 4%.",
+    "AVGO mostra inclinação de baixa, close_pct_mean -3.2%.",
+])
+def test_vies_forte_o_bastante_nao_cai(frase):
+    tk = "SMCI" if "SMCI" in frase else "AVGO"
+    media = 2.3 if "2.3" in frase else -1.5 if "-1.5" in frase else 4.0 if "4%" in frase else -3.2
+    achados = validar_leitura(frase, [_ticker(tk, close_pct_mean=media)])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" not in _codigos(achados)
+
+
+def test_sem_viel_declarado_corretamente_nao_cai():
+    texto = ("AVGO apresenta close_pct_mean de 0.99%, próximo de zero, sem "
+             "viés direcional claro.")
+    achados = validar_leitura(texto, [_ticker("AVGO", close_pct_mean=0.99)])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" not in _codigos(achados)
+
+
+def test_sem_close_pct_mean_no_payload_a_checagem_se_cala():
+    achados = validar_leitura("AVGO tende a manter ganhos.",
+                              [{"ticker": "AVGO", "summary": {"n_events": 8}}])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" not in _codigos(achados)
+
+
+def test_media_fraca_sem_linguagem_de_vies_nao_cai():
+    texto = "AVGO teve close_pct_mean de 0.99% no período analisado."
+    achados = validar_leitura(texto, [_ticker("AVGO", close_pct_mean=0.99)])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" not in _codigos(achados)
+
+
+def test_no_limiar_exato_de_1pp_nao_cai():
+    """1,0 bate o corte do card (`>= 1`), não fica abaixo dele."""
+    texto = "AVGO tende a manter ganhos, com close_pct_mean de 1.0%."
+    achados = validar_leitura(texto, [_ticker("AVGO", close_pct_mean=1.0)])
+    assert "LEITURA_VIES_CONTRADIZ_CARD" not in _codigos(achados)
