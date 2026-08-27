@@ -1,5 +1,13 @@
 import os
-from .security import validate_api_key
+try:  # membro do pacote (from agent import config) e modulo plano (spawn).
+    # A perna plana existe por causa do folego_de_caixa: ele roda por
+    # runScript SEM PYTHONPATH, tenta `import config` primeiro, e esta linha
+    # relativa matava a tentativa -- o fallback dele (`from agent import`)
+    # morria no agent.py que faz sombra ao pacote, e o folego-checker
+    # falhava em silencio desde a criacao. 27/08/2026.
+    from .security import validate_api_key
+except ImportError:
+    from security import validate_api_key
 
 _DEFAULT_TICKERS = [
     "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
