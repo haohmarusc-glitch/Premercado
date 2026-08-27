@@ -212,3 +212,89 @@ def test_fora_da_vespera_nada_disso_roda():
 def test_o_teto_esta_nomeado():
     assert 0.5 <= CONFIANCA_MAXIMA_NA_VESPERA < 1.0
     assert EARNINGS_PROXIMO_DIAS == 2
+
+
+# ═══ 27/08/2026 — o stop atribuído ao plano tem que existir no plano ════════
+#
+# Veredito das 23:22: "INTC (stop-loss $100 acionado)" e "ARM (stop-loss $275
+# acionado)" — os itens do plano dizem só "Vender imediatamente — stop-loss
+# acionado", SEM número. O detalhe perverso: a ação estava CERTA (VENDER, do
+# plano) e os números eram plausíveis — $275 para um papel a $251 parece um
+# stop de verdade. Número inventado que não muda a ação é o mais difícil de
+# notar, e é o que o leitor cita amanhã como se fosse fato.
+
+_ITEM_SEM_NUMERO = [{"acao": "Vender imediatamente — stop-loss acionado",
+                     "data_alvo": None, "fase": None, "nivel": None}]
+_ITEM_ADI = [{"acao": "Vender 50% em $390 (resistência Bollinger upper) com "
+                      "stop em $370",
+              "data_alvo": None, "fase": None, "nivel": 390.0}]
+
+
+def _snap_stop(plano, tickers=("INTC", "ARM", "ADI")):
+    return _snap(quotes={tk: {} for tk in tickers}, plano_de_saida=plano)
+
+
+def test_stop_inventado_para_item_sem_numero_e_erro():
+    """As duas frases do incidente."""
+    for texto, tk in [
+        ("INTC (Pendente desde 20/ago, stop-loss $100 acionado): aguarda "
+         "execução imediata.", "INTC"),
+        ("ARM (Pendente desde 20/ago, stop-loss $275 acionado): aguarda "
+         "execução imediata.", "ARM"),
+    ]:
+        rep = lint_veredito(texto, _snap_stop({tk: _ITEM_SEM_NUMERO}))
+        assert "STOP_SEM_FONTE" in _codigos(rep), texto
+
+
+def test_a_mensagem_diz_que_o_item_nao_traz_numero():
+    rep = lint_veredito("INTC: stop-loss $100 acionado.",
+                        _snap_stop({"INTC": _ITEM_SEM_NUMERO}))
+    msg = next(i.message for i in rep.issues if i.code == "STOP_SEM_FONTE")
+    assert "não trazem número" in msg
+
+
+def test_stop_que_esta_no_item_passa():
+    """O $370 do ADI é o SEGUNDO número do texto do item — todos contam,
+    não só o primeiro (que é o `nivel`)."""
+    rep = lint_veredito(
+        "ADI: perto do stop $370; plano manda vender 50% em $390.",
+        _snap_stop({"ADI": _ITEM_ADI}))
+    assert "STOP_SEM_FONTE" not in _codigos(rep)
+
+
+def test_stop_errado_com_itens_numerados_lista_os_certos():
+    rep = lint_veredito("ADI: stop $360 acionado.",
+                        _snap_stop({"ADI": _ITEM_ADI}))
+    msg = next(i.message for i in rep.issues if i.code == "STOP_SEM_FONTE")
+    assert "$370" in msg and "$390" in msg
+
+
+def test_stop_sem_numero_no_texto_nao_e_conferido():
+    """"stop-loss acionado" sem valor é exatamente o que o item diz."""
+    rep = lint_veredito(
+        "INTC: vender imediatamente conforme stop-loss acionado do plano.",
+        _snap_stop({"INTC": _ITEM_SEM_NUMERO}))
+    assert "STOP_SEM_FONTE" not in _codigos(rep)
+
+
+def test_sem_plano_no_snapshot_ha_silencio():
+    """Sem contra o que conferir, silêncio honesto — o 'stop emocional em
+    $25' do WOLF (que não tem item) fica para o leitor julgar."""
+    rep = lint_veredito("ARM com stop $275 acionado.", _snap_stop({}))
+    assert "STOP_SEM_FONTE" not in _codigos(rep)
+
+
+def test_leitura_falhada_do_plano_tambem_cala():
+    rep = lint_veredito("INTC stop $100.",
+                        _snap_stop({"_leitura_falhou": True}))
+    assert "STOP_SEM_FONTE" not in _codigos(rep)
+
+
+def test_alvo_de_analista_nao_e_stop():
+    """"alvo $305,79 (consenso)" tem número fora do plano — mas não é stop,
+    e o escopo é deliberadamente só stop para não acusar o consenso."""
+    rep = lint_veredito(
+        "NVDA: consenso Strong Buy, alvo $305.79 (upside 45.9%).",
+        _snap(quotes={"NVDA": {}},
+              plano_de_saida={"NVDA": _ITEM_SEM_NUMERO}))
+    assert "STOP_SEM_FONTE" not in _codigos(rep)

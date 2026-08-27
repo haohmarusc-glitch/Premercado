@@ -514,6 +514,14 @@ _LADO_AFIRMADO = re.compile(
     re.IGNORECASE)
 _LADO_DE_CIMA = ("acima", "above")
 
+# "stop-loss $100 acionado", "stop $275", "stop em $370" -- um stop com valor,
+# atribuido ao plano. So' STOP, de proposito: "alvo $305,79" pode ser o
+# preco-alvo dos ANALISTAS (consenso), e acusar esse numero seria falso
+# positivo garantido. Stop, neste produto, mora no Plano de Saida.
+_STOP_CITADO = re.compile(
+    r"stop(?:[-\s]?loss)?\s*(?:em\s+|de\s+|a\s+)?\$\s*(\d+(?:[.,]\d+)?)",
+    re.IGNORECASE)
+
 # O lado afirmado SEM preco na clausula -- "-- ainda acima, mas em risco".
 #
 # Visto em producao (26/08/2026, terceira aparicao do MESMO defeito): BABA a
@@ -1081,6 +1089,54 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                         f"para o papel ({lista}); o snapshot marca "
                         f"{preco_snap:.2f}. Um número só -- o do snapshot.",
                         ticker=tk)
+                break
+
+    # 3k) o stop que o texto atribui ao plano tem que EXISTIR no plano.
+    #
+    # Visto em producao (26/08/2026, veredito das 23:22): "INTC (Pendente
+    # desde 20/ago, stop-loss $100 acionado)" e "ARM (stop-loss $275
+    # acionado)" -- os itens do plano dizem so' "Vender imediatamente --
+    # stop-loss acionado", SEM numero. Os $100 e $275 nao vem de dado nenhum.
+    #
+    # O detalhe perverso: a acao estava CERTA (VENDER, do plano) e os numeros
+    # eram plausiveis -- $275 para um papel a $251 parece um stop de verdade.
+    # Numero inventado que nao muda a acao e' o mais dificil de notar, e e'
+    # tambem o que o leitor vai citar amanha como se fosse fato.
+    #
+    # Escopo deliberado: so' tickers COM itens legiveis no snapshot. Sem
+    # plano (ou leitura falhada) nao ha' contra o que conferir, e silencio
+    # honesto e' melhor que acusacao chutada. Tolerancia zero no valor: stop
+    # e' numero exato, nao estimativa.
+    plano_snap = snapshot.get("plano_de_saida") or {}
+    if isinstance(plano_snap, dict) and not plano_snap.get("_leitura_falhou"):
+        for tk, itens in plano_snap.items():
+            if not isinstance(itens, list) or not itens:
+                continue
+            numeros_do_plano: set = set()
+            for it in itens:
+                if isinstance(it, dict):
+                    for m in re.finditer(r"\$\s*(\d+(?:[.,]\d+)?)",
+                                         str(it.get("acao") or "")):
+                        numeros_do_plano.add(float(m.group(1).replace(",", ".")))
+            for seg in segmentos.get(tk, []):
+                m = next((m for m in _STOP_CITADO.finditer(seg)
+                          if float(m.group(1).replace(",", "."))
+                          not in numeros_do_plano), None)
+                if m is None:
+                    continue
+                citado = float(m.group(1).replace(",", "."))
+                if numeros_do_plano:
+                    detalhe = ("os números que os itens trazem são "
+                               + ", ".join(f"${v:g}" for v in
+                                           sorted(numeros_do_plano)))
+                else:
+                    detalhe = ("os itens deste ticker não trazem número "
+                               "nenhum")
+                rep.add("ERROR", "STOP_SEM_FONTE",
+                        f"o texto atribui ao plano um stop de ${citado:g}, "
+                        f"mas {detalhe}. Número que não vem do dado é "
+                        f"inventado -- e stop inventado vira 'fato' na "
+                        f"próxima leitura.", ticker=tk)
                 break
 
 
