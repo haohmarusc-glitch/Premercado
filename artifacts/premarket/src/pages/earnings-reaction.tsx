@@ -28,6 +28,14 @@ interface ReactionEvent {
   runup_pct?: number | null;
   announcement_day: SessionMove | null;
   next_day: SessionMove | null;
+  /** Em qual sessão a notícia é precificada -- decidido pelo HORÁRIO de
+   * divulgação (ver `_janela_da_reacao` no backend), nunca pela magnitude
+   * do movimento. "anuncio" = BMO (reage no próprio dia); "seguinte" = AMC
+   * (reage no pregão seguinte). */
+  janela_reacao?: "anuncio" | "seguinte";
+  /** true quando o horário de divulgação não veio da fonte e a janela foi
+   * assumida pelo padrão dominante (AMC), não confirmada. */
+  janela_inferida?: boolean;
   /** Até 10 pregões após o balanço. Vazio nos earnings recentes demais. */
   trajetoria?: PontoTrajetoria[];
 }
@@ -200,6 +208,49 @@ export function payloadDaInterpretacao(
   };
 }
 
+/**
+ * Frase do estado atual (esticado/descontado) -- antes era um rótulo FIXO
+ * ("historicamente é o estado que precede reações negativas") que ignorava
+ * o histórico de reação daquele MESMO papel exibido duas frases acima.
+ *
+ * Auditoria de 27/08/2026: NVDA mostrava "em 1 de 1 balanços esticados a
+ * reação foi de ALTA (média +3,25%)" e, logo depois, "ESTICADO —
+ * historicamente é o estado que precede reações NEGATIVAS" -- contradição
+ * direta dentro do mesmo card. Mesmo problema em SMCI (3 de 4 esticados
+ * subiram, média +9,38%, rótulo continuava dizendo "precede negativas").
+ *
+ * Agora o rótulo só afirma a hipótese de reversão quando a MAIORIA dos
+ * eventos daquele bucket, NESTE papel, confirma; senão diz explicitamente
+ * que o padrão geral não se confirmou na amostra dele. Sem histórico do
+ * bucket (n=0, caso do SKHY com 1 evento e run-up prévio "n/d"), não afirma
+ * nada que não dá pra sustentar.
+ */
+export function rotuloEstadoAtual(ru: RunupSummary): string {
+  const estado = ru.estado_atual;
+  if (estado !== "esticado" && estado !== "descontado") return "neutro";
+  const esticado = estado === "esticado";
+  const NOME = esticado ? "ESTICADO" : "DESCONTADO";
+  const n = (esticado ? ru.esticado_n : ru.descontado_n) ?? 0;
+  const media = esticado ? ru.esticado_reacao_media : ru.descontado_reacao_media;
+  const trecho = esticado ? "esticados" : "descontados";
+  if (n <= 0) {
+    return `${NOME} — sem eventos ${trecho} no histórico deste papel para confirmar ou contradizer o padrão geral`;
+  }
+  // "a favor" = confirma a hipótese de reversão: caiu (esticado) ou subiu (descontado).
+  const aFavor = (esticado ? ru.esticado_caiu_n : ru.descontado_subiu_n) ?? 0;
+  const contra = n - aFavor;
+  const maioriaAFavor = aFavor >= contra;
+  const mediaTxt = media != null ? `, média ${fmtPct(media)}` : "";
+  if (maioriaAFavor) {
+    const hipotese = esticado
+      ? "historicamente é o estado que precede reações negativas mesmo com resultado bom"
+      : "historicamente o estado com mais espaço pra surpresa positiva";
+    return `${NOME} — ${hipotese} (neste papel: ${aFavor} de ${n}${mediaTxt})`;
+  }
+  return `${NOME} — mas NESTE papel a maioria dos eventos ${trecho} foi na direção oposta ` +
+    `(${contra} de ${n}${mediaTxt}); o padrão geral não se confirma nesta amostra`;
+}
+
 export function interpretResult(r: ReactionResult): string[] {
   if (!r.summary) return [];
   const s = r.summary;
@@ -259,40 +310,65 @@ export function interpretResult(r: ReactionResult): string[] {
     );
   }
 
+  // AMC/BMO vem do HORÁRIO real de divulgação (`janela_reacao`, calculado por
+  // `_janela_da_reacao` no backend a partir do timestamp da fonte), não de
+  // qual sessão se moveu mais -- essa era a heurística antiga, e o próprio
+  // backend já abandonou a versão por magnitude por seleção-pelo-resultado
+  // (ver o comentário em `_janela_da_reacao`): no momento em que o número
+  // seria útil, ninguém sabe qual sessão vai andar mais. O evento já chega
+  // com a resposta; usar magnitude aqui era ignorar um dado mais forte que
+  // já estava disponível.
   const events = r.events ?? [];
-  let nextBigger = 0;
-  let annBigger = 0;
-  let counted = 0;
-  for (const e of events) {
-    const a = e.announcement_day;
-    const n = e.next_day;
-    if (a && n) {
-      counted++;
-      if (Math.abs(n.close_pct) > Math.abs(a.close_pct)) nextBigger++;
-      else annBigger++;
-    }
-  }
-  if (counted >= 2) {
-    if (nextBigger > annBigger) {
+  const comJanela = events.filter((e) => e.janela_reacao != null);
+  if (comJanela.length >= 2) {
+    const seguinte = comJanela.filter((e) => e.janela_reacao === "seguinte").length;
+    const anuncio = comJanela.length - seguinte;
+    const inferidos = comJanela.filter((e) => e.janela_inferida).length;
+    const ressalva = inferidos > 0
+      ? ` (${inferidos} de ${comJanela.length} sem horário confirmado pela fonte, assumido pelo padrão dominante)`
+      : "";
+    if (seguinte > anuncio) {
       notes.push(
-        `Em ${nextBigger} de ${counted} eventos com as duas janelas disponíveis, o pregão SEGUINTE ao anúncio teve a reação maior — sinal de que o resultado tende a sair depois do fechamento (AMC).`,
+        `Em ${seguinte} de ${comJanela.length} eventos, o resultado saiu depois do fechamento (AMC) — a reação é precificada no pregão SEGUINTE ao anúncio${ressalva}.`,
       );
-    } else if (annBigger > nextBigger) {
+    } else if (anuncio > seguinte) {
       notes.push(
-        `Em ${annBigger} de ${counted} eventos com as duas janelas disponíveis, o próprio dia do anúncio teve a reação maior — sinal de que o resultado tende a sair antes da abertura (BMO).`,
+        `Em ${anuncio} de ${comJanela.length} eventos, o resultado saiu antes da abertura (BMO) — a reação é precificada no PRÓPRIO dia do anúncio${ressalva}.`,
       );
     }
   }
 
   const ru = s.runup;
   if (ru && ru.esticado_n != null && ru.esticado_n > 0) {
-    const frase = `Padrão "chegou esticado": em ${ru.esticado_caiu_n} de ${ru.esticado_n} balanços em que o papel subiu ≥${fmtNum(ru.esticado_corte_pct, 0)}% no mês anterior, a reação foi de QUEDA` +
+    // A palavra QUEDA/ALTA e a contagem que a acompanha precisam descrever o
+    // MESMO subconjunto -- antes a palavra era fixa em "QUEDA" e a contagem
+    // sempre mostrava `esticado_caiu_n`, então um bucket onde a maioria SUBIU
+    // (ex.: NVDA, 0 de 1 caiu) saía como "em 0 de 1 balanços ... a reação foi
+    // de QUEDA (média +3.25%)" -- a própria frase se contradizia: 0 caíram e
+    // a média era positiva, mas o rótulo dizia queda. Deriva o rótulo da
+    // MAIORIA (caiu vs subiu) e troca a contagem exibida junto.
+    const n = ru.esticado_n;
+    const caiu = ru.esticado_caiu_n ?? 0;
+    const subiu = n - caiu;
+    const foiQueda = caiu >= subiu; // empate mantém a leitura conservadora original
+    const contagem = foiQueda ? caiu : subiu;
+    const direcao = foiQueda ? "QUEDA" : "ALTA";
+    const frase = `Padrão "chegou esticado": em ${contagem} de ${n} balanços em que o papel subiu ≥${fmtNum(ru.esticado_corte_pct, 0)}% no mês anterior, a reação foi de ${direcao}` +
       (ru.esticado_reacao_media != null ? ` (média ${fmtPct(ru.esticado_reacao_media)})` : "") + `.`;
     notes.push(frase);
   }
   if (ru && ru.descontado_n != null && ru.descontado_n > 0) {
+    // Mesma correção do bucket "esticado" acima, espelhada: o rótulo segue a
+    // maioria (subiu vs caiu), e a contagem exibida é a do lado que o rótulo
+    // descreve.
+    const n = ru.descontado_n;
+    const subiu = ru.descontado_subiu_n ?? 0;
+    const caiu = n - subiu;
+    const foiAlta = subiu >= caiu; // empate mantém a leitura conservadora original
+    const contagem = foiAlta ? subiu : caiu;
+    const direcao = foiAlta ? "ALTA" : "QUEDA";
     notes.push(
-      `Chegando descontado (mês anterior ≤ 0%): ${ru.descontado_subiu_n} de ${ru.descontado_n} reações foram de ALTA` +
+      `Chegando descontado (mês anterior ≤ 0%): ${contagem} de ${n} reações foram de ${direcao}` +
       (ru.descontado_reacao_media != null ? ` (média ${fmtPct(ru.descontado_reacao_media)})` : "") + `.`,
     );
   }
@@ -328,11 +404,7 @@ export function interpretResult(r: ReactionResult): string[] {
     }
   }
   if (ru && ru.runup_atual_pct != null && ru.estado_atual) {
-    const rotulo = ru.estado_atual === "esticado"
-      ? "ESTICADO — historicamente é o estado que precede reações negativas mesmo com resultado bom"
-      : ru.estado_atual === "descontado"
-      ? "DESCONTADO — historicamente o estado com mais espaço pra surpresa positiva"
-      : "neutro";
+    const rotulo = rotuloEstadoAtual(ru);
     if (ru.janela_contem_earnings) {
       // Sem esta ressalva a frase lê "o papel chega esticado ao balanço" logo
       // DEPOIS de um balanço — o run-up bruto aqui é a reação já ocorrida.

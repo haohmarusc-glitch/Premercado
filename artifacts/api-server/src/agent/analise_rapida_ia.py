@@ -266,7 +266,12 @@ SYSTEM = (
     "balanço JÁ ocorreu, há `pregoes_desde_earnings` pregões, e o próximo está "
     "distante. Escreva no passado ('reagiu com +X%'), NUNCA no futuro ('chega "
     "esticado ao balanço'). Use `runup_atual_ex_evento_pct`, não o "
-    "`runup_atual_pct` bruto, que inclui o próprio salto do balanço.\n\n"
+    "`runup_atual_pct` bruto, que inclui o próprio salto do balanço.\n"
+    "- `reacaoEarnings.summary.n_events` abaixo de 5: declare o número ao "
+    "citar a estatística de reação ('nos 4 eventos observados...', 'com "
+    "apenas 1 balanço na amostra...'). Sem isso R1/R2/S1/S2 e as médias soam "
+    "como se viessem de uma amostra robusta quando não vêm — a mesma regra "
+    "que a tela Reação a Earnings já aplica.\n\n"
 
     "## 5. Postura\n"
     "O valor da análise está nos CRUZAMENTOS, não em repetir a tabela: nível de "
@@ -358,7 +363,21 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
     ausencias: list[dict] = []
 
     def _faltou(chave: str, motivo: str) -> None:
-        ausencias.append({**COLETORES[chave], "motivo": motivo})
+        # `mask_sensitive_data` AQUI, no funil, e nao so' nas pontas.
+        #
+        # Segunda aparicao do MESMO vazamento (27/08/2026, WOLF): a #409
+        # mascarou `_motivo_curto` -- o caminho da EXCECAO -- mas o erro da
+        # FMP tambem chega como DICIONARIO ({"error": str(e)} montado no
+        # tools), e esse texto entrava aqui cru:
+        #
+        #     "a FMP respondeu com erro: 402 ... ?symbol=WOLF&apikey=<CHAVE>"
+        #
+        # Todo motivo passa por este funil antes de virar tela, .md ou
+        # e-mail; mascarar aqui fecha os caminhos que existem E os que ainda
+        # vao ser escritos. As pontas continuam mascarando -- defesa em
+        # camadas, nao alternativa.
+        ausencias.append({**COLETORES[chave],
+                          "motivo": mask_sensitive_data(motivo)})
 
     def _estourou() -> bool:
         """Teto proprio da camada opcional, conferido ENTRE os blocos.

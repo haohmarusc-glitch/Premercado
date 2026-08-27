@@ -286,6 +286,19 @@ _CHEGADA_AO_EVENTO = (rf"cheg\w+\s+(?:ao|no|até\s+o)\s+{_EVENTO}|"
 # (atribuição) de "a reação ocorreu em 2026-08-19" (circunstância).
 _ATRIBUI_REACAO = r"(?:reag\w+|rea[cç][ãa]o\s+(?:foi|de|veio|saiu|ficou))"
 
+# Numero atribuido a' "reacao" e colado a "dia do anuncio" -- a redacao
+# tipica do erro: "a reacao ... foi de X% no dia do anuncio". Prosa_sa e'
+# sem acento e minuscula, entao o literal fica sem acento de proposito.
+# Abaixo disso o SYSTEM pede o N declarado ao citar a estatistica de
+# reacao -- mesmo limiar do N_EVENTOS_DECLARAR da tela Reacao a Earnings.
+N_EVENTOS_DECLARAR_ANALISE = 5
+
+_REACAO_DIA_DO_ANUNCIO = re.compile(
+    r"(?:reacao[^.\n]{0,40}?foi\s+de|reagiu\s+(?:com|em)?)\s*"
+    r"([+-]?\d+(?:[.,]\d+)?)\s*%"
+    r"[^.\n]{0,20}?dia\s+d[oe]\s+anuncio",
+    re.IGNORECASE)
+
 # O nome do run-up escrito por extenso. Quando ele aparece na frase, o texto
 # está DISTINGUINDO os dois conceitos, e citar o número do run-up ali é a
 # redação que o SYSTEM pede -- não o erro que a checagem procura.
@@ -885,7 +898,7 @@ def validar_analise(texto, dados=None) -> list:
             break
 
     # ── 14. contagem do balde "chegou esticado" ─────────────────────────────
-    resumo_reacao = caminho(dados, "reaction", "summary")
+    resumo_reacao = caminho(dados, "reaction", "summary")  # reusado no check 16
     ru_balde = dic(resumo_reacao.get("runup"))
     esticado_n = num_finito(ru_balde.get("esticado_n"))
     caiu_n = num_finito(ru_balde.get("esticado_caiu_n"))
@@ -912,6 +925,75 @@ def validar_analise(texto, dados=None) -> list:
                    if n_eventos is not None else "")
                 + f". Trecho: “{frase.strip()[:120]}”.")
             break
+
+    # ── 15. sessão do anúncio citada como reação (AMC) ──────────────────────
+    #
+    # Auditoria de 27/08/2026 (WOLF): "A reação do papel a este evento foi
+    # de -7.53% no dia do anúncio, e -9.42% no dia seguinte." WOLF reporta
+    # AMC -- `janela_reacao` do evento é "seguinte", ou seja, o -7,53% de
+    # 19/08 é a sessão ANTERIOR à divulgação, não a reação. A reação de
+    # verdade é o -9,42% de 20/08, que a própria tabela marca com ◂. O
+    # texto tratou os dois números como se fossem a mesma coisa.
+    #
+    # O payload já carrega `janela_reacao` por evento -- a checagem não
+    # infere nada, só confere se o texto contradiz o que o próprio dado diz.
+    # Só olha o evento MAIS RECENTE: é dele que a seção "Earnings e
+    # volatilidade" fala ("o balanço mais recente, ocorrido há N pregões").
+    eventos_reacao = caminho(dados, "reaction").get("events")
+    if isinstance(eventos_reacao, list) and eventos_reacao:
+        evento_recente = eventos_reacao[0]
+        if (isinstance(evento_recente, dict)
+                and evento_recente.get("janela_reacao") == "seguinte"):
+            errado = num_finito(
+                dic(evento_recente.get("announcement_day")).get("close_pct"))
+            if errado is not None:
+                for frase in frases(prosa_sa):
+                    m = _REACAO_DIA_DO_ANUNCIO.search(frase)
+                    if not m:
+                        continue
+                    citado = float(m.group(1).replace(",", "."))
+                    if abs(citado - errado) > 0.05:
+                        continue  # outro número -- não é o caso coberto aqui
+                    add("ERRO", "ANALISE_REACAO_SESSAO_ERRADA",
+                        f"chama {errado:+.2f}% do dia do anúncio de "
+                        f"'reação', mas este papel reporta depois do "
+                        f"fechamento (AMC) -- a sessão que precifica o "
+                        f"resultado é a SEGUINTE, não a do anúncio. Aqui o "
+                        f"dia do anúncio é a sessão ANTERIOR à divulgação. "
+                        f"Trecho: “{frase.strip()[:120]}”.")
+                    break
+
+    # ── 16. amostra curta de earnings sem declarar o N ──────────────────────
+    #
+    # Mesma regra que a tela Reação a Earnings já aplica
+    # (LEITURA_AMOSTRA_CURTA_OMITIDA) -- aqui não existia, e o WOLF de
+    # 27/08/2026 apresentou R1/R2/S1/S2 e médias de reação com N=4 SEM
+    # nenhuma menção ao tamanho da amostra em nenhuma frase da seção.
+    #
+    # AVISO, não ERRO: é omissão de contexto, não contradição de dado --
+    # o número em si pode estar certo.
+    n_ev = num_finito(resumo_reacao.get("n_events"))
+    if n_ev is not None and n_ev < N_EVENTOS_DECLARAR_ANALISE:
+        frases_lista = list(frases(prosa_sa))
+        # Guarda equivalente ao `if not trechos: continue` da tela Reação a
+        # Earnings: se a seção nem cita a estatística de reação, não há o que
+        # declarar -- "Sem menção a earnings nesta seção." não pode cair aqui.
+        cita_estatistica = any(
+            re.search(r"\breacao\b", f) and re.search(r"\d", f)
+            for f in frases_lista)
+        declarou = cita_estatistica and any(
+            (cita_numero(f, n_ev, inteiro_ok=True)
+             and re.search(r"\b(?:evento|observa|ocasi|caso|amostra|"
+                           r"result|balan[cç]o|trimestre)", f))
+            or (n_ev == 1 and re.search(
+                r"\b(?:um\s+[úu]nico|[úu]nico|uma\s+[úu]nica|apenas\s+um)\b", f))
+            for f in frases_lista)
+        if cita_estatistica and not declarou:
+            add("AVISO", "ANALISE_AMOSTRA_CURTA_OMITIDA",
+                f"apresenta estatística de reação a earnings sem declarar "
+                f"que a amostra é de {n_ev} evento(s) — abaixo de "
+                f"{N_EVENTOS_DECLARAR_ANALISE}, o SYSTEM pede o número "
+                f"citado.")
 
     return achados
 

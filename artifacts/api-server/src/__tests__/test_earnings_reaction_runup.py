@@ -23,6 +23,7 @@ from agent.earnings_reaction_analysis import (  # noqa: E402
     RUNUP_PREGOES,
     _runup_pct,
     _runup_summary,
+    _ultimo_earnings_pos,
 )
 
 
@@ -191,3 +192,87 @@ def test_sem_earnings_conhecido_nao_quebra():
     out = _runup_summary(_df_reacoes([]), _hist_com_precos(closes), None)
     assert out["janela_contem_earnings"] is False
     assert out["estado_atual"] == "esticado"
+
+
+# ── _ultimo_earnings_pos: a posição tem que ser a da REAÇÃO, não do anúncio ──
+#
+# Auditoria de 27/08/2026, três tickers na MESMA cesta (NVDA, SMCI, ARM), todos
+# reportando AMC (after-market-close): a função só fazia `searchsorted` na
+# data do anúncio, nunca olhava `_janela_da_reacao` -- devolvia a posição do
+# pregão do ANÚNCIO, e `_runup_summary` compunha "ex-evento" removendo o
+# retorno DESSE pregão em vez do pregão seguinte (a reação de verdade). Sinal
+# visível: remover um dia NEGATIVO (o anúncio) elevava o run-up "limpo" em vez
+# de abaixá-lo -- exatamente o oposto do que "descontar a reação" deveria
+# fazer quando a reação real foi de alta forte.
+#
+# Reproduz com os números reais do NVDA: 26/08 (anúncio) fechou -1,59%, 27/08
+# (reação, AMC) fechou +8,50%. O run-up bruto de +19,72% virava "ex-evento"
+# +21,66% (removendo só o -1,59%) -- o card mostrado ao usuário. Com a data
+# certa, remover a reação (+8,50%, o dia maior) tem que DERRUBAR o número.
+
+def _hist_com_earnings_amc_no_fim(fech_anuncio: float, fech_reacao: float,
+                                   planos: float = 100.0, pre_evento: float | None = None):
+    """Histórico plano em `planos` (define a BASE do run-up, RUNUP_PREGOES
+    pregões antes do fim), sobe pra `pre_evento` na véspera do anúncio
+    (default: sem rally embutido, fica em `planos` mesmo), aplica o fator do
+    ANÚNCIO e por fim o fator da REAÇÃO no ÚLTIMO pregão do histórico -- como
+    uma empresa AMC que acabou de reportar hoje."""
+    pre_evento = planos if pre_evento is None else pre_evento
+    closes = ([planos] * (RUNUP_PREGOES + 5) + [pre_evento]
+              + [pre_evento * fech_anuncio, pre_evento * fech_anuncio * fech_reacao])
+    hist = _hist_com_precos(closes)
+    pos_anuncio = len(closes) - 2
+    return hist, pos_anuncio
+
+
+def test_ultimo_earnings_pos_desloca_para_o_pregao_seguinte_quando_amc():
+    hist, pos_anuncio = _hist_com_earnings_amc_no_fim(fech_anuncio=1.0, fech_reacao=1.0)
+    ts_amc = hist.index[pos_anuncio].replace(hour=16, minute=20)  # após o fechamento
+    pos = _ultimo_earnings_pos(hist, pd.DatetimeIndex([ts_amc]))
+    assert pos == pos_anuncio + 1  # a REAÇÃO, não o anúncio
+
+
+def test_ultimo_earnings_pos_fica_no_proprio_pregao_quando_bmo():
+    hist, pos_anuncio = _hist_com_earnings_amc_no_fim(fech_anuncio=1.0, fech_reacao=1.0)
+    ts_bmo = hist.index[pos_anuncio].replace(hour=7, minute=0)  # antes da abertura
+    pos = _ultimo_earnings_pos(hist, pd.DatetimeIndex([ts_bmo]))
+    assert pos == pos_anuncio  # o próprio pregão já reage
+
+
+def test_ultimo_earnings_pos_amc_sem_pregao_de_reacao_ainda_e_ignorado():
+    """A reação AMC ainda não aconteceu (o anúncio é o ÚLTIMO pregão do
+    histórico) -- não dá pra apontar pra um pregão que não existe, e contar
+    o anúncio no lugar reintroduziria o bug."""
+    closes = [100.0] * (RUNUP_PREGOES + 5) + [100.0]
+    hist = _hist_com_precos(closes)
+    pos_anuncio = len(closes) - 1
+    ts_amc = hist.index[pos_anuncio].replace(hour=16, minute=20)
+    assert _ultimo_earnings_pos(hist, pd.DatetimeIndex([ts_amc])) is None
+
+
+def test_ex_evento_amc_remove_a_reacao_nao_o_anuncio_numeros_reais_nvda():
+    """Números reais do NVDA (27/08/2026): anúncio -1,59%, reação +8,50%,
+    run-up bruto +19,72%. Descontando a data ERRADA (o anúncio, negativo) o
+    "ex-evento" subia pra +21,66% -- o card publicado. Descontando a sessão
+    CERTA (a reação, positiva e maior) ele tem que CAIR bem abaixo do bruto."""
+    # Nível na véspera do anúncio ajustado pra o run-up BRUTO (base=100 a
+    # RUNUP_PREGOES pregões atrás) fechar em +19,72%, mantendo os fatores do
+    # anúncio (-1,59%) e da reação (+8,50%) exatamente os reais.
+    pre_evento = 119.72 / (0.9841 * 1.0850)
+    hist, pos_anuncio = _hist_com_earnings_amc_no_fim(
+        fech_anuncio=0.9841, fech_reacao=1.0850, pre_evento=pre_evento)
+    ts_amc = hist.index[pos_anuncio].replace(hour=16, minute=20)
+
+    pos_errado = pos_anuncio          # o bug: posição do anúncio
+    pos_certo = _ultimo_earnings_pos(hist, pd.DatetimeIndex([ts_amc]))
+    assert pos_certo == pos_anuncio + 1
+
+    bruto = _runup_summary(_df_reacoes([]), hist, pos_certo)["runup_atual_pct"]
+    assert bruto == pytest.approx(19.72, abs=0.05)
+
+    ex_evento_bug = _runup_summary(_df_reacoes([]), hist, pos_errado)["runup_atual_ex_evento_pct"]
+    ex_evento_certo = _runup_summary(_df_reacoes([]), hist, pos_certo)["runup_atual_ex_evento_pct"]
+
+    assert ex_evento_bug == pytest.approx(21.66, abs=0.05)  # reproduz o card com bug
+    assert ex_evento_certo < bruto  # remover a reação (positiva) TEM que baixar o número
+    assert ex_evento_certo == pytest.approx(10.34, abs=0.05)  # a conta correta

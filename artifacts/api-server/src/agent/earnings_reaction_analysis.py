@@ -441,12 +441,38 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
 
 def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
     """Posição em `hist` do pregão de reação do earnings mais RECENTE.
-    None quando nenhum earnings passado casa com um pregão do histórico."""
+    None quando nenhum earnings passado casa com um pregão do histórico.
+
+    ARMADILHA (visto em produção, auditoria de 27/08/2026 -- NVDA, SMCI, ARM
+    simultaneamente): esta função só fazia `searchsorted` na DATA do anúncio,
+    sem olhar `_janela_da_reacao` -- ou seja, devolvia a posição do pregão do
+    ANÚNCIO mesmo para reportadores AMC, cuja reação de verdade é o pregão
+    SEGUINTE (mesmo bug de seleção de sessão que motivou `_janela_da_reacao`
+    em primeiro lugar, só que reintroduzido aqui, num segundo lugar que
+    também precisa da resposta). O docstring já prometia "pregão de reação"
+    -- a implementação nunca cumpriu.
+
+    Efeito em cascata: `_runup_summary` usa esta posição pra compor o
+    "run-up ex-evento" removendo APENAS o retorno desse pregão da janela de
+    21 pregões. Com a posição errada, ela removia o pregão do ANÚNCIO (a
+    sessão ANTERIOR à notícia, que pode ter ido em qualquer direção) e
+    deixava a reação de verdade -- tipicamente o movimento maior -- inteira
+    dentro do run-up "limpo". NVDA: run-up bruto +19,72%, "ex-evento"
+    +21,66% (removeu o -1,59% do dia do anúncio; a reação real do dia
+    seguinte foi +8,50%). O sinal era visível a olho: remover UM dia
+    positivo (a reação) deveria DERRUBAR o run-up ex-evento, não elevá-lo.
+    """
     posicoes = []
     for ts in earnings_index:
         pos = hist.index.searchsorted(ts.tz_localize(None).normalize())
-        if 0 < pos < len(hist.index):
-            posicoes.append(int(pos))
+        if not (0 < pos < len(hist.index)):
+            continue
+        janela, _inferido = _janela_da_reacao(ts)
+        if janela == "seguinte":
+            pos += 1
+            if pos >= len(hist.index):
+                continue  # reação AMC ainda não aconteceu -- sem pregão pra apontar
+        posicoes.append(int(pos))
     return max(posicoes) if posicoes else None
 
 
