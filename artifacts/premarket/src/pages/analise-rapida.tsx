@@ -35,8 +35,14 @@ interface TrendItem {
     // Ver a nota em trend-card.tsx: manchete de outro papel descartada, e
     // manchete com ressalva, precisam APARECER. Foi contando notícia da AMD
     // como sentimento da ARM que esta tela recomendou "aguardar".
+    positivas?: number;
+    negativas?: number;
     ambiguas?: number;
     descartadas?: number;
+    // Denominador do score. Sem ele o rótulo não distingue "2 a 1" de
+    // "8 a 1" -- ver `minimoParaRotular` em get_trend.py.
+    classificadas?: number;
+    minimoParaRotular?: number;
     destaques?: { title: string; tone: string }[];
   };
   confluence?: string;
@@ -569,8 +575,25 @@ export default function AnaliseRapidaPage() {
               </div>
               {trend.news?.destaques && trend.news.destaques.length > 0 && (
                 <div>
+                  {/* O PLACAR, não só o rótulo. MRVL (27/08/2026) mostrou
+                      "Notícias (positivo)" com três das quatro manchetes
+                      exibidas falando de queda: o rótulo vinha de 2 a 1, com
+                      três mistas fora do denominador e as duas positivas nem
+                      entre os destaques. O backend já devolvia essa contagem
+                      "VISIVEL de proposito" (get_trend.py) e o trend-card já
+                      a mostrava; esta tela declarava `ambiguas` no tipo e
+                      nunca renderizava. Sem o placar, o leitor não tem como
+                      auditar o rótulo contra as manchetes que ele vê. */}
                   <div className="text-[10px] font-mono text-muted-foreground uppercase mb-1.5">
-                    Notícias ({trend.news.label ?? "—"})
+                    Notícias ({trend.news.label ?? "—"}
+                    {trend.news.positivas != null && trend.news.negativas != null
+                      ? ` · ${trend.news.positivas}+/${trend.news.negativas}-${
+                          trend.news.ambiguas ? `/${trend.news.ambiguas}~` : ""}`
+                      : ""}
+                    {trend.news.classificadas != null && trend.news.minimoParaRotular != null
+                     && trend.news.classificadas < trend.news.minimoParaRotular
+                      ? ` · amostra ${trend.news.classificadas}`
+                      : ""})
                   </div>
                   <ul className="space-y-1">
                     {trend.news.destaques.map((d, i) => (

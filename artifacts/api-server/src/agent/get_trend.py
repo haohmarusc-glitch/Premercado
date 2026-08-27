@@ -105,6 +105,19 @@ NEGATIVE = [
     # -- lista de palavra-chave cresce sem fim, e cada entrada nova e' uma
     # chance de virar o rotulo do lado errado.
     "overshadow", "overshadows",
+    # MRVL, 27/08/2026. "Marvell Shares SLIDE After Hours" saiu como MISTO por
+    # empate 0-0: nenhuma das duas listas conhecia o verbo. Nao e' categoria
+    # nova -- e' buraco numa que ja' existe: fall/drop/sink/slump/tumble/plunge
+    # ja' estao aqui, e slide/slip sao o mesmo movimento de preco. Fechar a
+    # lacuna de uma familia representada e' diferente de inventar uma familia,
+    # que e' o crescimento contra o qual o comentario acima adverte.
+    #
+    # O efeito nao foi so' de rotulo dessa manchete: com ela em MISTO, o
+    # denominador do score ficou em 3 (2 positivas x 1 negativa) e a tela
+    # publicou "alta forte CONFIRMADA por fluxo de noticias positivo" com
+    # tres das quatro manchetes exibidas falando de queda. Reconhecida, o
+    # placar vira 2x2 e o rotulo cai para "misto".
+    "slide", "slides", "slip", "slips", "slipped",
 ]
 
 # Casamento por PALAVRA INTEIRA, não por substring.
