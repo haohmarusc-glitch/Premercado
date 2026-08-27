@@ -10,11 +10,14 @@ Pra cada earnings passado, calcula:
   - range intradiário (high-low vs fechamento do pregão anterior)
   - volume vs média do período
 
-O yfinance não informa de forma confiável se o resultado foi divulgado antes
-da abertura (BMO -- reage no PRÓPRIO pregão) ou depois do fechamento (AMC --
-reage no pregão SEGUINTE). Em vez de adivinhar, o script reporta as DUAS
-janelas por evento ("dia do anúncio" e "dia seguinte") -- na prática, a que
-tiver o gap/volume nitidamente maior costuma ser a reação real.
+O horário de divulgação (antes da abertura/BMO -- reage no PRÓPRIO pregão --
+ou depois do fechamento/AMC -- reage no pregão SEGUINTE) decide qual sessão é
+"a reação" (ver `_janela_da_reacao`). O script reporta as DUAS janelas por
+evento ("dia do anúncio" e "dia seguinte") mesmo assim, para quem ler o
+relatório poder conferir -- mas a que conta pras estatísticas agregadas é a
+que o horário aponta, nunca a de maior gap/volume: essa era a heurística
+antiga, abandonada por selecionar a sessão pelo próprio resultado que ela
+deveria prever.
 
 Uso:
     python3 -m agent.earnings_reaction_analysis
@@ -23,6 +26,8 @@ Uso:
 """
 import argparse
 import json
+from datetime import datetime, time as _dt_time
+from zoneinfo import ZoneInfo
 
 # bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
 # jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
@@ -127,10 +132,56 @@ def _janela_da_reacao(earnings_ts) -> tuple:
     return "seguinte", True                      # meio do pregão: não dá pra afirmar
 
 
-def _session_move(hist: pd.DataFrame, pos: int, prev_close: float) -> dict | None:
+# Pregão regular da bolsa americana, em horário de Nova York -- `zoneinfo`
+# (não um offset fixo) porque, ao contrário da Coreia (ver `_sessao_ainda_
+# aberta` em macro_risk_snapshot.py), os EUA observam horário de verão.
+_NY_TZ = ZoneInfo("America/New_York")
+_ABERTURA_NY = _dt_time(9, 30)
+_FECHAMENTO_NY = _dt_time(16, 0)
+# Folga depois do fechamento pro dado assentar na fonte -- mesma margem e
+# mesmo motivo da versão coreana.
+_MARGEM_APOS_FECHAMENTO_H = 0.5
+
+
+def _sessao_de_hoje_ainda_em_curso(data_da_barra, agora_ny: datetime | None = None) -> bool:
+    """A barra apontada é a sessão de HOJE, com o pregão ainda podendo estar
+    em curso?
+
+    Mesma armadilha que `_sessao_ainda_aberta` existe para evitar em
+    macro_risk_snapshot.py (Coreia, 19/08/2026) -- só que aqui, sem
+    equivalente, até a auditoria de 27/08/2026 pegar a NVDA: o balanço saiu
+    AMC em 26/08, e a barra de 27/08 (a reação) já tinha `Close` -- só que
+    era o preço CORRENTE, seguindo o pregão em tempo real, não o fechamento.
+    `sem_barra_incompleta` não protege disso: ela só descarta barra com
+    `Close` vazio, e a barra em curso tem `Close`, só que provisório.
+
+    Tratar essa barra como reação definitiva contaminava `close_pct_mean`,
+    o threshold, os buckets esticado/descontado e a correlação run-up×reação
+    com um número que ainda ia mudar o resto do pregão -- e mudava o rótulo
+    ("historicamente precede quedas") conforme a hora em que alguém rodasse
+    a análise, exatamente o estrago que a versão coreana documenta.
+
+    Não existe versão pronta pra bolsa americana no repo: a de
+    macro_risk_snapshot.py só cobre KRX/KOSDAQ, com offset fixo (Coreia não
+    tem horário de verão). Nova York tem, por isso aqui precisa de fuso de
+    verdade em vez de um offset."""
+    agora = agora_ny or datetime.now(_NY_TZ)
+    if data_da_barra != agora.date():
+        return False
+    hora_local = agora.hour + agora.minute / 60
+    return hora_local < (_FECHAMENTO_NY.hour + _MARGEM_APOS_FECHAMENTO_H)
+
+
+def _session_move(hist: pd.DataFrame, pos: int, prev_close: float,
+                   agora_ny: datetime | None = None) -> dict | None:
     """Métricas de um único pregão (índice `pos` em `hist`) relativas ao
-    fechamento anterior `prev_close`. None se `pos` estiver fora do range."""
+    fechamento anterior `prev_close`. None se `pos` estiver fora do range OU
+    se a barra apontada for a sessão de hoje ainda em curso (ver
+    `_sessao_de_hoje_ainda_em_curso`) -- um pregão que ainda pode terminar
+    diferente não pode virar reação definitiva."""
     if pos < 0 or pos >= len(hist.index):
+        return None
+    if _sessao_de_hoje_ainda_em_curso(hist.index[pos].date(), agora_ny):
         return None
     day = hist.iloc[pos]
     if prev_close in (None, 0) or pd.isna(prev_close):
@@ -185,7 +236,8 @@ def _acum_benchmark(bench: pd.Series | None, data_base, data: pd.Timestamp) -> f
 
 def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
                 dias: int = DIAS_TRAJETORIA,
-                bench: pd.Series | None = None) -> list[dict]:
+                bench: pd.Series | None = None,
+                agora_ny: datetime | None = None) -> list[dict]:
     """Os `dias` pregões seguintes ao balanço, cada um com dois números.
 
     `acum_pct` é sempre contra o fechamento da VÉSPERA do balanço — é o que
@@ -202,6 +254,12 @@ def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
         p = pos + i
         if p >= len(hist.index):
             break  # earnings recente: a trajetória ainda não completou
+        if _sessao_de_hoje_ainda_em_curso(hist.index[p].date(), agora_ny):
+            # A sessão de hoje ainda está em curso -- mesmo tratamento do
+            # break acima: não há pregão FECHADO aqui pra contar, e nada
+            # depois dele existe ainda de qualquer forma (hist não passa de
+            # hoje). Ver `_sessao_de_hoje_ainda_em_curso`.
+            break
         close = float(hist["Close"].iloc[p])
         close_ant = float(hist["Close"].iloc[p - 1])
         if pd.isna(close) or pd.isna(close_ant) or not close_ant:
@@ -439,7 +497,8 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
     return saida
 
 
-def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
+def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index,
+                         agora_ny: datetime | None = None) -> int | None:
     """Posição em `hist` do pregão de reação do earnings mais RECENTE.
     None quando nenhum earnings passado casa com um pregão do histórico.
 
@@ -461,6 +520,15 @@ def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
     +21,66% (removeu o -1,59% do dia do anúncio; a reação real do dia
     seguinte foi +8,50%). O sinal era visível a olho: remover UM dia
     positivo (a reação) deveria DERRUBAR o run-up ex-evento, não elevá-lo.
+
+    ARMADILHA 2 (auditoria seguinte, mesmo dia): mesmo com a sessão certa,
+    se ela for HOJE e o pregão ainda estiver em curso, o `Close` que
+    `_ultimo_earnings_pos` aponta é provisório -- `_runup_summary` compõe o
+    "ex-evento" a partir dele como se fosse definitivo, e o número muda a
+    sessão inteira conforme a hora (mesma classe de bug que
+    `_sessao_ainda_aberta` existe pra evitar em macro_risk_snapshot.py, pra
+    Coreia). Nesse caso o pregão fica de fora e a função recua pro earnings
+    anterior já fechado -- ver `_sessao_de_hoje_ainda_em_curso`.
     """
     posicoes = []
     for ts in earnings_index:
@@ -472,6 +540,8 @@ def _ultimo_earnings_pos(hist: pd.DataFrame, earnings_index) -> int | None:
             pos += 1
             if pos >= len(hist.index):
                 continue  # reação AMC ainda não aconteceu -- sem pregão pra apontar
+        if _sessao_de_hoje_ainda_em_curso(hist.index[pos].date(), agora_ny):
+            continue  # reação de hoje, pregão ainda em curso -- Close provisório
         posicoes.append(int(pos))
     return max(posicoes) if posicoes else None
 

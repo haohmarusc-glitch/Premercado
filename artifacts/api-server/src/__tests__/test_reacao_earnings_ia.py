@@ -223,6 +223,16 @@ def test_o_system_proibe_previsao_a_partir_de_bucket():
     assert "abaixo de 6" in mod.SYSTEM
 
 
+def test_o_system_probe_vies_direcional_abaixo_do_corte_do_card():
+    """Auditoria de 27/08/2026: 'AVGO ... close_pct_mean positivo de 0.99%,
+    indicando que tende a manter ou ampliar ganhos' -- o card do próprio
+    AVGO chama 0,99% de 'sem viés direcional claro'. O corte (1pp) tem que
+    estar no SYSTEM, não só no validador -- senão o modelo nunca teve
+    chance de acertar sozinho."""
+    assert "abaixo de 1" in mod.SYSTEM
+    assert "sem viés direcional claro" in mod.SYSTEM
+
+
 # ── correlações do radar no payload ─────────────────────────────────────────
 #
 # A seção "Quem se move junto" nasceu manca: só havia estatística POR PAPEL, e

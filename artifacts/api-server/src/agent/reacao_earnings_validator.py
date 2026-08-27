@@ -124,6 +124,24 @@ _ANAFORA_DE_PAR = r"\b(?:os\s+dois|as\s+duas|ambos|ambas|os\s+pares?)\b"
 # Abaixo disso o SYSTEM manda declarar o n ao citar o papel.
 N_EVENTOS_DECLARAR = 5
 
+# Mesmo corte que o CARD desta tela usa pra decidir "viés claro" x "sem viés"
+# (`earnings-reaction.tsx::interpretResult`, `Math.abs(close_pct_mean) >= 1`).
+# Duplicado de propósito -- os dois lados precisam concordar, não importar um
+# do outro (Python/TS), então o comentário é o que mantém a costura visível.
+LIMIAR_VIES_CLARO_PP = 1.0
+
+# "tende a manter/ampliar ganhos", "viés positivo/negativo", "tendência de
+# alta/queda", "inclinação de alta/baixa" -- as formas que a auditoria de
+# 27/08/2026 viu a leitura usar pra declarar direção a partir de um número
+# que o próprio card classifica como "sem viés claro". Prosa já chega sem
+# acento (ver `_trechos_do_ticker`), por isso os literais também.
+_ATRIBUI_VIES_DIRECIONAL = re.compile(
+    r"tend\w*\s+a\s+(?:manter|ampliar|sustentar|continuar)|"
+    r"vies\s+(?:positivo|negativo|de\s+alta|de\s+baixa)|"
+    r"tendencia\s+(?:de\s+)?(?:alta|queda|baixa)|"
+    r"inclinacao\s+(?:de\s+)?(?:alta|baixa)",
+    re.IGNORECASE)
+
 _ESTADOS = ("esticado", "descontado")
 
 # O rotulo so' CONTRADIZ o dado quando a frase o ATRIBUI ao papel. Duas frases
@@ -412,6 +430,33 @@ def validar_leitura(texto, resultados, correlacoes=None) -> list:
                 f"cita {tk} sem declarar que a amostra é de {n} evento(s) — o "
                 f"SYSTEM pede o número abaixo de {N_EVENTOS_DECLARAR}.",
                 ticker=tk)
+
+    # ── 7. viés direcional atribuído a um close_pct_mean que não sustenta ───
+    #
+    # Auditoria de 27/08/2026 (segunda execução, cesta NVDA/SMCI/AVGO/SKHY/
+    # ARM): a leitura disse "AVGO ... apresenta um close_pct_mean positivo de
+    # 0.99%, indicando que tende a manter ou ampliar ganhos." O CARD do
+    # próprio AVGO, gerado sem LLM a partir do mesmo número, diz "Sem viés
+    # direcional claro: a média de fechamento (+0.99%) é próxima de zero" --
+    # a leitura contradisse o dado que ela mesma citou.
+    #
+    # O corte é o MESMO que o card usa (`earnings-reaction.tsx::interpretResult`,
+    # `Math.abs(close_pct_mean) >= 1`): abaixo de 1pp o card já chama de "sem
+    # viés claro", e a leitura não pode declarar viés/tendência onde o dado
+    # nem passa no próprio corte que o define.
+    for tk, r in por_ticker.items():
+        media = num_finito(caminho(r, "summary").get("close_pct_mean"))
+        if media is None or abs(media) >= LIMIAR_VIES_CLARO_PP:
+            continue
+        for frase in _trechos_do_ticker(prosa, tk):
+            if _ATRIBUI_VIES_DIRECIONAL.search(frase):
+                add("ERRO", "LEITURA_VIES_CONTRADIZ_CARD",
+                    f"atribui viés/tendência direcional a {tk} com "
+                    f"close_pct_mean de {media:+.2f}pp — abaixo de "
+                    f"{LIMIAR_VIES_CLARO_PP:.0f}pp, o próprio card desta tela "
+                    f"classifica como 'sem viés direcional claro'. "
+                    f"Trecho: “{frase.strip()[:120]}”.", ticker=tk)
+                break
 
     return achados
 
