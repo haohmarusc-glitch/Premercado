@@ -299,6 +299,13 @@ _REACAO_DIA_DO_ANUNCIO = re.compile(
     r"[^.\n]{0,20}?dia\s+d[oe]\s+anuncio",
     re.IGNORECASE)
 
+# Conecta dois números como se fossem a mesma coisa/fase -- é a palavra que
+# faz "-1,23% ... -1,49% observado agora" virar comparação, e não duas
+# menções soltas do check 17 (pré-reação x média histórica do balde).
+_COMPARA_AO_ATUAL = (r"pr[óo]xim[oa]\s+(?:a|ao|d[ao]|d[eo])|similar\s+a|"
+                     r"parecid[oa]\s+(?:a|com)|compat[íi]vel\s+com|"
+                     r"em\s+linha\s+com|perto\s+d[eo]|na\s+mesma\s+ordem")
+
 # O nome do run-up escrito por extenso. Quando ele aparece na frase, o texto
 # está DISTINGUINDO os dois conceitos, e citar o número do run-up ali é a
 # redação que o SYSTEM pede -- não o erro que a checagem procura.
@@ -994,6 +1001,51 @@ def validar_analise(texto, dados=None) -> list:
                 f"que a amostra é de {n_ev} evento(s) — abaixo de "
                 f"{N_EVENTOS_DECLARAR_ANALISE}, o SYSTEM pede o número "
                 f"citado.")
+
+    # ── 17. número pré-reação comparado à média histórica da reação ─────────
+    #
+    # Auditoria de 27/08/2026 (MRVL): "o padrão esticado teve reação média
+    # de -1,23%, próxima ao -1,49% observado agora." O -1,49% é o
+    # fechamento do DIA DO ANÚNCIO -- MRVL reporta AMC, a reação de verdade
+    # (D+1) ainda não aconteceu (a própria tabela mostra "— ◂" nesse
+    # evento). A frase compara um número PRÉ-reação com a média histórica
+    # de reações JÁ CONFIRMADAS como se fossem a mesma fase do preço --
+    # mesmo o texto dizendo, duas frases antes, que "falta o pregão que
+    # historicamente carrega a maior parte da reação".
+    #
+    # Só dispara quando TRÊS coisas colidem na MESMA frase: o número da
+    # média do balde (esticado/descontado), o número pré-reação, e uma
+    # palavra que os conecta como equivalentes -- três condições
+    # independentes, o risco de coincidência é baixo.
+    if isinstance(eventos_reacao, list) and eventos_reacao:
+        evento_pre_reacao = eventos_reacao[0]
+        if (isinstance(evento_pre_reacao, dict)
+                and evento_pre_reacao.get("janela_reacao") == "seguinte"
+                and dic(evento_pre_reacao.get("next_day")).get("close_pct") is None):
+            pre_reacao = num_finito(
+                dic(evento_pre_reacao.get("announcement_day")).get("close_pct"))
+            estado_atual = ru_balde.get("estado_atual")
+            media_balde = num_finito(
+                ru_balde.get("esticado_reacao_media") if estado_atual == "esticado"
+                else ru_balde.get("descontado_reacao_media") if estado_atual == "descontado"
+                else None)
+            if pre_reacao is not None and media_balde is not None:
+                for frase in frases(prosa_sa):
+                    if not (cita_numero(frase, media_balde)
+                            and cita_numero(frase, pre_reacao)
+                            and re.search(_COMPARA_AO_ATUAL, frase)):
+                        continue
+                    if afirmacao_negada(frase, _COMPARA_AO_ATUAL):
+                        continue
+                    add("ERRO", "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA",
+                        f"compara {pre_reacao:+.2f}% (fechamento do DIA DO "
+                        f"ANÚNCIO, pré-reação -- este papel reporta AMC e a "
+                        f"reação de verdade, D+1, ainda não aconteceu) com "
+                        f"a média histórica de reações CONFIRMADAS "
+                        f"({media_balde:+.2f}%), como se fossem a mesma "
+                        f"fase do preço. "
+                        f"Trecho: “{frase.strip()[:120]}”.")
+                    break
 
     return achados
 

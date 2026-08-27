@@ -1846,3 +1846,124 @@ def test_sem_earnings_na_secao_a_checagem_se_cala():
     achados = validar_analise(_texto_completo(
         "Sem menção a earnings nesta seção."), _N4)
     assert "ANALISE_AMOSTRA_CURTA_OMITIDA" not in _codigos(achados)
+
+
+# ── 17. número pré-reação comparado à média histórica da reação ────────────
+#
+# MRVL, 27/08/2026: "o padrão esticado teve reação média de -1,23%, próxima
+# ao -1,49% observado agora." -1,49% é o fechamento do DIA DO ANÚNCIO --
+# MRVL reporta AMC, a reação de verdade (D+1) ainda não aconteceu (a
+# própria tabela mostra "— ◂" nesse evento). A frase compara um número
+# PRÉ-reação com a média histórica de reações JÁ CONFIRMADAS.
+
+_EVENTO_AMC_PENDENTE_ESTICADO = {"reaction": {
+    "summary": {"n_events": 7, "runup": {
+        "estado_atual": "esticado", "esticado_reacao_media": -1.23}},
+    "events": [{"janela_reacao": "seguinte",
+               "announcement_day": {"close_pct": -1.49}, "next_day": None}],
+}}
+
+_EVENTO_AMC_PENDENTE_DESCONTADO = {"reaction": {
+    "summary": {"n_events": 7, "runup": {
+        "estado_atual": "descontado", "descontado_reacao_media": 4.5}},
+    "events": [{"janela_reacao": "seguinte",
+               "announcement_day": {"close_pct": 4.6}, "next_day": None}],
+}}
+
+
+def test_mrvl_real_e_erro():
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, próxima ao -1,49% "
+        "observado agora."), _EVENTO_AMC_PENDENTE_ESTICADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" in _codigos(achados)
+
+
+def test_bucket_descontado_tambem_cai():
+    achados = validar_analise(_texto_completo(
+        "O padrão descontado teve reação média de +4,50%, similar a +4,60% "
+        "observado agora."), _EVENTO_AMC_PENDENTE_DESCONTADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" in _codigos(achados)
+
+
+def test_sem_palavra_de_comparacao_nao_cai():
+    """Os dois números aparecem, mas nada os conecta como equivalentes --
+    duas menções soltas não são o erro que esta checagem cobre."""
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%. O pregão do "
+        "anúncio fechou em -1,49%."), _EVENTO_AMC_PENDENTE_ESTICADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_so_o_numero_do_balde_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, um valor pequeno."),
+        _EVENTO_AMC_PENDENTE_ESTICADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_so_o_numero_pre_reacao_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "O pregão do anúncio fechou em -1,49%, próximo da abertura."),
+        _EVENTO_AMC_PENDENTE_ESTICADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_bmo_com_reacao_ja_disponivel_nao_cai():
+    """Reportador BMO: o dia do anúncio JÁ é a reação, não existe conceito
+    de 'pré-reação' aqui -- e o `next_day` disponível já tira o gatilho de
+    reação pendente."""
+    dados = {"reaction": {
+        "summary": {"n_events": 7, "runup": {
+            "estado_atual": "esticado", "esticado_reacao_media": -1.23}},
+        "events": [{"janela_reacao": "anuncio",
+                   "announcement_day": {"close_pct": -1.49},
+                   "next_day": {"close_pct": 2.0}}],
+    }}
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, próxima ao -1,49% "
+        "observado agora."), dados)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_amc_com_reacao_ja_disponivel_nao_cai():
+    """A reação (D+1) já existe -- não há mais número pré-reação para
+    conflitar com o balde."""
+    dados = {"reaction": {
+        "summary": {"n_events": 7, "runup": {
+            "estado_atual": "esticado", "esticado_reacao_media": -1.23}},
+        "events": [{"janela_reacao": "seguinte",
+                   "announcement_day": {"close_pct": -1.49},
+                   "next_day": {"close_pct": -9.42}}],
+    }}
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, próxima ao -1,49% "
+        "observado agora."), dados)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_estado_neutro_nao_cai():
+    dados = {"reaction": {
+        "summary": {"n_events": 7, "runup": {
+            "estado_atual": "neutro", "esticado_reacao_media": -1.23}},
+        "events": [{"janela_reacao": "seguinte",
+                   "announcement_day": {"close_pct": -1.49}, "next_day": None}],
+    }}
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, próxima ao -1,49% "
+        "observado agora."), dados)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_pre_reacao_sem_eventos_no_payload_a_checagem_se_cala():
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, próxima ao -1,49% "
+        "observado agora."), {})
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+def test_a_comparacao_negada_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "O padrão esticado teve reação média de -1,23%, mas isso não é "
+        "próximo ao -1,49% observado agora, que ainda é só o pregão do "
+        "anúncio."), _EVENTO_AMC_PENDENTE_ESTICADO)
+    assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
