@@ -126,11 +126,32 @@ def test_nenhuma_copia_de_atr_migrou_para_suavizacao_de_wilder():
     com o mesmo nome, que foi exatamente o bug do RSI.
 
     Migrar para Wilder é uma decisão legítima; só não pode ser feita numa
-    cópia só. Se for feita nas quatro, atualize este teste junto."""
+    cópia só. Se for feita nas quatro, atualize este teste junto.
+
+    ## A exceção nomeada (26/08/2026)
+
+    O ADX de Wilder EXIGE o true range suavizado por Wilder -- é a definição
+    do indicador, não uma quinta cópia do ATR. Em tools.py essa série se
+    chama `atr_w`, é interna ao cálculo do ADX e nunca sai publicada como
+    "atr". A linha `atr_w = true_range.ewm(...)` é permitida; qualquer OUTRO
+    uso de ewm sobre o true range continua caindo, e o próprio arquivo que
+    usa a exceção tem de continuar publicando o atr_14 por média simples --
+    as duas garantias abaixo, juntas, é que seguram o nome."""
     culpados = []
     for arquivo in sorted(_AGENT_DIR.rglob("*.py")):
         texto = arquivo.read_text(encoding="utf-8")
-        if "true_range.ewm(" in texto or "tr.ewm(" in texto:
+        for linha in texto.splitlines():
+            if "true_range.ewm(" not in linha and "tr.ewm(" not in linha:
+                continue
+            if linha.strip().startswith("#"):
+                continue
+            if "atr_w = " in linha or "atr_w=" in linha:
+                # a exceção do ADX -- mas então o ATR publicado deste arquivo
+                # TEM de continuar vindo de média simples
+                assert "true_range.rolling(14).mean()" in texto, (
+                    f"{arquivo.name}: usa a exceção atr_w do ADX mas o "
+                    f"atr_14 publicado deixou de ser média simples")
+                continue
             culpados.append(str(arquivo.relative_to(_AGENT_DIR)))
     assert not culpados, (
         "ATR com suavização de Wilder em: " + ", ".join(culpados)
