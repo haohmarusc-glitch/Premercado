@@ -353,6 +353,53 @@ def validate_snapshot(snapshot: dict[str, Any]) -> ValidationReport:
                 f"opostas -- cite a direção junto do sinal.",
                 ticker=tk, signal=True)
 
+    # 10) tendência com FORÇA e DIREÇÃO, não só posição.
+    #
+    # P2 da auditoria de 26/08/2026: o texto chamava de "tendência" qualquer
+    # posição relativa a média. Posição + inclinação + estrutura + ADX é o
+    # quadro inteiro: "acima da MM50" com a média caindo, estrutura LH/LL e
+    # ADX 13 é lateral vestido de alta.
+    for tk, tec in technicals.items():
+        partes = []
+        if tec.get("sma50_inclinacao"):
+            partes.append(f"MM50 {tec['sma50_inclinacao']}")
+        if tec.get("sma20_inclinacao"):
+            partes.append(f"MM20 {tec['sma20_inclinacao']}")
+        if tec.get("estrutura"):
+            partes.append(f"estrutura {tec['estrutura']}")
+        adx = tec.get("adx_14")
+        if adx is not None:
+            forca = ("muito fraca" if adx < 15 else "fraca" if adx < 20
+                     else "surgindo" if adx < 25 else "relevante" if adx < 40
+                     else "muito forte")
+            di = ""
+            if tec.get("plus_di") is not None and tec.get("minus_di") is not None:
+                lado = "+DI>-DI" if tec["plus_di"] > tec["minus_di"] else "-DI>+DI"
+                di = f", {lado}"
+            partes.append(
+                f"ADX {adx:.0f} ({forca}"
+                + (f", {tec['adx_direcao']}" if tec.get("adx_direcao") else "")
+                + f"{di})")
+        if not partes:
+            continue
+        rep.add("INFO", "ESTRUTURA_FIXADA",
+                f"{tk}: " + "; ".join(partes) + ". Tendência é posição + "
+                f"inclinação + estrutura + força -- não chame de tendência o "
+                f"que o ADX diz que é lateral.", ticker=tk, signal=True)
+
+    # 11) pares da carteira que são quase o mesmo trade.
+    #
+    # MANTER dois papéis a 0,8 de correlação é dobrar a aposta sem dizer. O
+    # corte (0,70) é o mesmo CORR_MESMO_TRADE do reacao_earnings_validator.
+    for par in snapshot.get("correlacoes_carteira") or []:
+        if not isinstance(par, dict):
+            continue
+        rep.add("INFO", "CORRELACAO_ALTA",
+                f"{par.get('a')} e {par.get('b')} têm correlação medida de "
+                f"{par.get('corr')} -- na prática o mesmo trade. Decisões "
+                f"iguais nos dois somam o MESMO risco, não diversificam; se "
+                f"citar os dois, diga isso.", signal=True)
+
     return rep
 
 

@@ -982,6 +982,46 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
         atr_14 = round(float(atr14), 2) if not pd.isna(atr14) else None
         atr_pct = round(float(atr14) / price * 100, 2) if not pd.isna(atr14) and price else None
 
+        # ADX 14 de Wilder + DI -- "existe tendencia ou so' direcao aparente?"
+        #
+        # Auditoria de 26/08/2026: o veredito chamava de "tendencia" qualquer
+        # posicao relativa a media ("acima da MM50 = alta"), sem nada medindo
+        # a FORCA dela. Preco acima da MM50 com ADX 13 e' mercado lateral;
+        # com ADX 31 subindo e' tendencia de verdade. ADX nao da' direcao --
+        # +DI/-DI dao -- entao os tres saem juntos.
+        #
+        # Suavizacao de Wilder (ewm alpha=1/14), a MESMA do RSI acima e pela
+        # mesma razao: rolling(14).mean() e' outra variante com o mesmo nome,
+        # e a licao NBIS ja' custou uma tela com dois numeros para um
+        # indicador so'.
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+        # `replace(inf, nan)` explicito: atr_w zerado (papel sem range) e a
+        # soma dos DI zerada dividem por zero, e inf dentro do ewm contamina
+        # a media inteira dali em diante.
+        atr_w = true_range.ewm(alpha=1 / 14, min_periods=14).mean()
+        plus_di_s = (100 * plus_dm.ewm(alpha=1 / 14, min_periods=14).mean()
+                     / atr_w).replace([float("inf"), -float("inf")], None)
+        minus_di_s = (100 * minus_dm.ewm(alpha=1 / 14, min_periods=14).mean()
+                      / atr_w).replace([float("inf"), -float("inf")], None)
+        dx = (100 * (plus_di_s - minus_di_s).abs()
+              / (plus_di_s + minus_di_s)).replace(
+                  [float("inf"), -float("inf")], None)
+        adx_s = dx.ewm(alpha=1 / 14, min_periods=14).mean()
+        adx_14 = (round(float(adx_s.iloc[-1]), 2)
+                  if len(adx_s) and not pd.isna(adx_s.iloc[-1]) else None)
+        plus_di = (round(float(plus_di_s.iloc[-1]), 2)
+                   if len(plus_di_s) and not pd.isna(plus_di_s.iloc[-1]) else None)
+        minus_di = (round(float(minus_di_s.iloc[-1]), 2)
+                    if len(minus_di_s) and not pd.isna(minus_di_s.iloc[-1]) else None)
+        adx_direcao = None
+        if adx_14 is not None and len(adx_s) >= 6 and not pd.isna(adx_s.iloc[-6]):
+            adx_direcao = ("subindo" if adx_14 > float(adx_s.iloc[-6])
+                           else "caindo" if adx_14 < float(adx_s.iloc[-6])
+                           else "estavel")
+
         # Bandas de RSI calibradas pela volatilidade real do ativo (ATR%) em
         # vez do 30/70 padrão pra todo mundo: NVDA/SMCI/ARM (ATR% alto) ficam
         # "esticados" por muito mais tempo que big techs estáveis (GOOGL/MSFT)
@@ -1050,6 +1090,32 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
 
         sma50 = _safe(close.rolling(50).mean())
         sma200 = _safe(close.rolling(200).mean()) if len(close) >= 200 else None
+
+        # Inclinacao das medias: POSICAO relativa a media nao diz se ela esta
+        # virando. "Acima da MM50" com a MM50 caindo e "acima da MM50" com
+        # ela subindo sao quadros opostos, e o veredito de 26/08/2026 so'
+        # tinha a posicao. Cinco pregoes, mesmo delta do histograma do MACD.
+        def _inclinacao(serie):
+            if len(serie) < 6 or pd.isna(serie.iloc[-1]) or pd.isna(serie.iloc[-6]):
+                return None
+            atual, antes = float(serie.iloc[-1]), float(serie.iloc[-6])
+            return ("subindo" if atual > antes
+                    else "caindo" if atual < antes else "estavel")
+
+        sma20_inclinacao = _inclinacao(sma20)
+        sma50_inclinacao = _inclinacao(close.rolling(50).mean())
+
+        # Estrutura de precos (HH/HL vs LH/LL) -- a MESMA funcao do painel
+        # Tendencia, importada de get_trend em vez de copiada: a licao do
+        # test_rvol_abertura vale aqui tambem (duas copias "iguais" quebram
+        # juntas ou divergem caladas). Import tardio porque get_trend importa
+        # pesado e este modulo roda em caminhos que nao precisam dele.
+        estrutura = None
+        try:
+            from .get_trend import price_structure
+            estrutura = price_structure(close)
+        except Exception:
+            pass  # sem estrutura o resto dos indicadores continua valendo
 
         def _pct_diff(a, b):
             return round((a - b) / b * 100, 2) if a and b else None
@@ -1148,6 +1214,13 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                 ("alta" if price > sma200 else "baixa") if sma200 else None
             ),
             "volume_ratio_5d_vs_20d": vol_ratio,
+            "adx_14": adx_14,
+            "plus_di": plus_di,
+            "minus_di": minus_di,
+            "adx_direcao": adx_direcao,
+            "sma20_inclinacao": sma20_inclinacao,
+            "sma50_inclinacao": sma50_inclinacao,
+            "estrutura": estrutura,
             "atr_14": atr_14,
             "atr_pct": atr_pct,
             "rvol": rvol,

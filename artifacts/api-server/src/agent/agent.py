@@ -1601,6 +1601,16 @@ def _build_veredito_snapshot(tickers: list[str]) -> dict:
                 "macd_hist": macd.get("histogram"),
                 "macd_direcao": macd.get("histogram_direcao"),
                 "bollinger_pct_b": (ti.get("bollinger") or {}).get("pct_b"),
+                # P2 (26/08/2026): posicao sem FORCA nem DIRECAO da media era
+                # metade do quadro -- "acima da MM50" com ADX 13 e a media
+                # caindo nao e' a mesma tendencia que com ADX 31 subindo.
+                "adx_14": ti.get("adx_14"),
+                "plus_di": ti.get("plus_di"),
+                "minus_di": ti.get("minus_di"),
+                "adx_direcao": ti.get("adx_direcao"),
+                "sma20_inclinacao": ti.get("sma20_inclinacao"),
+                "sma50_inclinacao": ti.get("sma50_inclinacao"),
+                "estrutura": ti.get("estrutura"),
             }
 
     earnings: dict = {}
@@ -1751,6 +1761,30 @@ def _plano_de_saida_do_snapshot(tickers: list[str]) -> dict | None:
         return None
 
 
+def _correlacoes_da_carteira(tickers: list[str],
+                             minimo: float = 0.70) -> list[dict]:
+    """Pares da carteira com correlacao medida >= minimo, decrescente.
+
+    O corte e' o mesmo CORR_MESMO_TRADE do reacao_earnings_validator: acima
+    dele o SYSTEM ja' ensina que os dois papeis sao "na pratica o mesmo
+    trade". Silencioso quando o overlay nao cobre o par -- correlacao
+    desconhecida nao e' correlacao zero, e inventar 0 seria pior que calar.
+    """
+    try:
+        from .radar_ia_2026 import correlacao
+    except Exception:
+        return []
+    pares = []
+    unicos = sorted({tk.upper() for tk in tickers})
+    for i, a in enumerate(unicos):
+        for b in unicos[i + 1:]:
+            c = correlacao(a, b)
+            if c is not None and c >= minimo:
+                pares.append({"a": a, "b": b, "corr": round(float(c), 2)})
+    pares.sort(key=lambda p: -p["corr"])
+    return pares
+
+
 def _reacao_do_snapshot(tickers: list[str], earnings: dict,
                         as_of: str) -> dict | None:
     """Estatística de reação a earnings, SÓ para ticker com balanço iminente.
@@ -1839,6 +1873,12 @@ def run_veredito(progress_callback=None) -> str:
                                  snapshot["as_of"])
     if reacao:
         snapshot["reacao_earnings"] = reacao
+    # Correlacao intra-carteira: dois papeis a 0,8 sao quase o mesmo risco, e
+    # um veredito que manda MANTER os dois esta dobrando a aposta sem dizer.
+    # Vem do overlay do radar (radar_ia_2026.correlacao), sem rede.
+    pares = _correlacoes_da_carteira(tickers)
+    if pares:
+        snapshot["correlacoes_carteira"] = pares
     vrep = validate_snapshot(snapshot)
     if vrep.issues:
         print(f"[veredito_validator] snapshot issues:\n{vrep.summary()}", file=sys.stderr, flush=True)

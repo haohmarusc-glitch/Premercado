@@ -173,3 +173,60 @@ def test_nivel_numerico_e_extraido_do_texto_do_item(monkeypatch):
     assert plano["ADI"][0]["nivel"] == 390.0
     # sem número, sem nível — e sem estourar
     assert plano["ARM"][0]["nivel"] is None
+
+
+# ═══ P2 — força e direção da tendência, e o risco redundante ═══════════════
+
+def test_estrutura_fixada_junta_inclinacao_estrutura_e_adx():
+    tec = {"NVDA": {"rsi": 46.3, "rsi_date": "2026-08-26",
+                    "pct_above_sma50": 0.92, "sma50_inclinacao": "caindo",
+                    "sma20_inclinacao": "caindo", "estrutura": "alta",
+                    "adx_14": 13.0, "plus_di": 18.0, "minus_di": 22.0,
+                    "adx_direcao": "caindo"}}
+    rep = validate_snapshot(_snap(technicals=tec))
+    msg = _sinais(rep).get("ESTRUTURA_FIXADA", "")
+    assert "MM50 caindo" in msg and "estrutura alta" in msg
+    # ADX 13 = "muito fraca": o quadro que desmonta "alta forte" de posição
+    assert "ADX 13 (muito fraca" in msg and "-DI>+DI" in msg
+
+
+@pytest.mark.parametrize("adx,rotulo", [
+    (13.0, "muito fraca"), (17.0, "fraca"), (22.0, "surgindo"),
+    (31.0, "relevante"), (45.0, "muito forte"),
+])
+def test_a_escala_do_adx(adx, rotulo):
+    tec = {"NVDA": {"rsi": 50.0, "rsi_date": "2026-08-26",
+                    "pct_above_sma50": 1.0, "adx_14": adx}}
+    rep = validate_snapshot(_snap(technicals=tec))
+    assert rotulo in _sinais(rep).get("ESTRUTURA_FIXADA", "")
+
+
+def test_sem_dado_novo_nao_ha_sinal_de_estrutura():
+    tec = {"NVDA": {"rsi": 50.0, "rsi_date": "2026-08-26",
+                    "pct_above_sma50": 1.0}}
+    rep = validate_snapshot(_snap(technicals=tec))
+    assert "ESTRUTURA_FIXADA" not in _sinais(rep)
+
+
+def test_correlacao_alta_vira_sinal():
+    rep = validate_snapshot(_snap(
+        correlacoes_carteira=[{"a": "ARM", "b": "MRVL", "corr": 0.82}]))
+    msg = _sinais(rep).get("CORRELACAO_ALTA", "")
+    assert "ARM" in msg and "MRVL" in msg and "0.82" in msg
+    assert "mesmo trade" in msg
+
+
+def test_sem_par_acima_do_corte_nao_ha_sinal():
+    """Hoje o par mais alto da carteira real é 0,56 — abaixo do corte, e
+    silêncio é o certo: correlação moderada não é 'o mesmo trade'."""
+    rep = validate_snapshot(_snap())
+    assert "CORRELACAO_ALTA" not in _sinais(rep)
+
+
+def test_correlacao_desconhecida_nao_vira_zero(monkeypatch):
+    """O overlay não cobre o par → o par simplesmente não entra. Inventar 0
+    seria pior que calar."""
+    from agent import agent as gerador
+    import agent.radar_ia_2026 as radar
+    monkeypatch.setattr(radar, "correlacao", lambda a, b: None)
+    assert gerador._correlacoes_da_carteira(["AAA", "BBB"]) == []
