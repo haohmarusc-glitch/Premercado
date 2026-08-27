@@ -286,13 +286,35 @@ export function interpretResult(r: ReactionResult): string[] {
 
   const ru = s.runup;
   if (ru && ru.esticado_n != null && ru.esticado_n > 0) {
-    const frase = `Padrão "chegou esticado": em ${ru.esticado_caiu_n} de ${ru.esticado_n} balanços em que o papel subiu ≥${fmtNum(ru.esticado_corte_pct, 0)}% no mês anterior, a reação foi de QUEDA` +
+    // A palavra QUEDA/ALTA e a contagem que a acompanha precisam descrever o
+    // MESMO subconjunto -- antes a palavra era fixa em "QUEDA" e a contagem
+    // sempre mostrava `esticado_caiu_n`, então um bucket onde a maioria SUBIU
+    // (ex.: NVDA, 0 de 1 caiu) saía como "em 0 de 1 balanços ... a reação foi
+    // de QUEDA (média +3.25%)" -- a própria frase se contradizia: 0 caíram e
+    // a média era positiva, mas o rótulo dizia queda. Deriva o rótulo da
+    // MAIORIA (caiu vs subiu) e troca a contagem exibida junto.
+    const n = ru.esticado_n;
+    const caiu = ru.esticado_caiu_n ?? 0;
+    const subiu = n - caiu;
+    const foiQueda = caiu >= subiu; // empate mantém a leitura conservadora original
+    const contagem = foiQueda ? caiu : subiu;
+    const direcao = foiQueda ? "QUEDA" : "ALTA";
+    const frase = `Padrão "chegou esticado": em ${contagem} de ${n} balanços em que o papel subiu ≥${fmtNum(ru.esticado_corte_pct, 0)}% no mês anterior, a reação foi de ${direcao}` +
       (ru.esticado_reacao_media != null ? ` (média ${fmtPct(ru.esticado_reacao_media)})` : "") + `.`;
     notes.push(frase);
   }
   if (ru && ru.descontado_n != null && ru.descontado_n > 0) {
+    // Mesma correção do bucket "esticado" acima, espelhada: o rótulo segue a
+    // maioria (subiu vs caiu), e a contagem exibida é a do lado que o rótulo
+    // descreve.
+    const n = ru.descontado_n;
+    const subiu = ru.descontado_subiu_n ?? 0;
+    const caiu = n - subiu;
+    const foiAlta = subiu >= caiu; // empate mantém a leitura conservadora original
+    const contagem = foiAlta ? subiu : caiu;
+    const direcao = foiAlta ? "ALTA" : "QUEDA";
     notes.push(
-      `Chegando descontado (mês anterior ≤ 0%): ${ru.descontado_subiu_n} de ${ru.descontado_n} reações foram de ALTA` +
+      `Chegando descontado (mês anterior ≤ 0%): ${contagem} de ${n} reações foram de ${direcao}` +
       (ru.descontado_reacao_media != null ? ` (média ${fmtPct(ru.descontado_reacao_media)})` : "") + `.`,
     );
   }
