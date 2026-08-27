@@ -24,13 +24,13 @@ except ImportError:
 
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
-    from agent.news_sources import fala_do_papel
+    from agent.nomes_de_empresas import fala_do_papel
     from agent.ciclo_volatilidade import _earnings_proximo
     from agent.http_retry import SESSION
     from agent import market_data_provider
 except ImportError:
     from security import sanitize_ticker, friendly_error
-    from news_sources import fala_do_papel
+    from nomes_de_empresas import fala_do_papel
     from ciclo_volatilidade import _earnings_proximo
     from http_retry import SESSION
     import market_data_provider
