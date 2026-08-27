@@ -266,7 +266,12 @@ SYSTEM = (
     "balanço JÁ ocorreu, há `pregoes_desde_earnings` pregões, e o próximo está "
     "distante. Escreva no passado ('reagiu com +X%'), NUNCA no futuro ('chega "
     "esticado ao balanço'). Use `runup_atual_ex_evento_pct`, não o "
-    "`runup_atual_pct` bruto, que inclui o próprio salto do balanço.\n\n"
+    "`runup_atual_pct` bruto, que inclui o próprio salto do balanço.\n"
+    "- `reacaoEarnings.summary.n_events` abaixo de 5: declare o número ao "
+    "citar a estatística de reação ('nos 4 eventos observados...', 'com "
+    "apenas 1 balanço na amostra...'). Sem isso R1/R2/S1/S2 e as médias soam "
+    "como se viessem de uma amostra robusta quando não vêm — a mesma regra "
+    "que a tela Reação a Earnings já aplica.\n\n"
 
     "## 5. Postura\n"
     "O valor da análise está nos CRUZAMENTOS, não em repetir a tabela: nível de "

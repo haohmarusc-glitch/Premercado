@@ -1724,3 +1724,125 @@ def test_frase_sem_esticado_nao_e_conferida():
         validar_analise(_texto_completo(
             "Em 3 dos 7 eventos o gap de abertura foi positivo."),
             _BALDE_ESTICADO))
+
+
+# ── sessão do anúncio citada como reação (AMC) ──────────────────────────────
+#
+# WOLF, 27/08/2026: "A reação do papel a este evento foi de -7.53% no dia do
+# anúncio, e -9.42% no dia seguinte." WOLF reporta AMC -- `janela_reacao` do
+# evento é "seguinte", ou seja, o -7,53% de 19/08 é a sessão ANTERIOR à
+# divulgação, não a reação. A reação de verdade é o -9,42% do dia seguinte,
+# que a própria tabela marca com ◂.
+
+_EVENTO_AMC = {"reaction": {"events": [{
+    "janela_reacao": "seguinte",
+    "announcement_day": {"close_pct": -7.53},
+    "next_day": {"close_pct": -9.42},
+}]}}
+
+_EVENTO_BMO = {"reaction": {"events": [{
+    "janela_reacao": "anuncio",
+    "announcement_day": {"close_pct": -7.53},
+    "next_day": {"close_pct": -9.42},
+}]}}
+
+
+def test_sessao_do_anuncio_chamada_de_reacao_e_erro():
+    """A frase real, verbatim."""
+    achados = validar_analise(_texto_completo(
+        "A reação do papel a este evento foi de -7.53% no dia do anúncio, "
+        "e -9.42% no dia seguinte."), _EVENTO_AMC)
+    assert "ANALISE_REACAO_SESSAO_ERRADA" in _codigos(achados)
+
+
+def test_a_mensagem_explica_amc():
+    msg = next(a["mensagem"] for a in validar_analise(_texto_completo(
+        "A reação do papel a este evento foi de -7.53% no dia do anúncio."),
+        _EVENTO_AMC)
+        if a["codigo"] == "ANALISE_REACAO_SESSAO_ERRADA")
+    assert "AMC" in msg or "fechamento" in msg
+
+
+@pytest.mark.parametrize("frase", [
+    # a reação atribuída ao número CERTO -- o do dia seguinte
+    "A reação do papel a este evento foi de -9.42% no dia seguinte; o "
+    "-7.53% do dia do anúncio é anterior à divulgação.",
+    # o número errado aparece, mas sem ser chamado de "reação"
+    "WOLF caiu 7,53% no dia do anúncio (sessão anterior à divulgação AMC) "
+    "e reagiu com -9,42% no pregão seguinte.",
+    # nem menciona reação
+    "WOLF fechou -7,53% no dia do anúncio.",
+])
+def test_frases_corretas_ou_neutras_nao_caem(frase):
+    assert "ANALISE_REACAO_SESSAO_ERRADA" not in _codigos(
+        validar_analise(_texto_completo(frase), _EVENTO_AMC))
+
+
+def test_empresa_que_reporta_bmo_nao_e_conferida():
+    """`janela_reacao == "anuncio"`: para quem divulga ANTES da abertura, o
+    dia do anúncio É a reação -- não há erro possível aqui."""
+    achados = validar_analise(_texto_completo(
+        "A reação do papel a este evento foi de -7.53% no dia do anúncio."),
+        _EVENTO_BMO)
+    assert "ANALISE_REACAO_SESSAO_ERRADA" not in _codigos(achados)
+
+
+def test_sem_eventos_no_payload_a_checagem_se_cala():
+    achados = validar_analise(_texto_completo(
+        "A reação do papel a este evento foi de -7.53% no dia do anúncio."),
+        {})
+    assert "ANALISE_REACAO_SESSAO_ERRADA" not in _codigos(achados)
+
+
+def test_numero_diferente_do_anunciado_nao_cai():
+    """O texto cita OUTRO percentual perto de 'dia do anúncio' -- não é o
+    caso que esta checagem cobre (seria alucinação de outro tipo)."""
+    achados = validar_analise(_texto_completo(
+        "A reação do papel a este evento foi de -12.00% no dia do anúncio."),
+        _EVENTO_AMC)
+    assert "ANALISE_REACAO_SESSAO_ERRADA" not in _codigos(achados)
+
+
+# ── 16. amostra curta de earnings sem declarar o N ──────────────────────────
+#
+# WOLF, 27/08/2026: R1/R2/S1/S2 e a reação média citados com N=4 sem nenhuma
+# menção ao tamanho da amostra -- mesma regra que a tela Reação a Earnings já
+# aplica (LEITURA_AMOSTRA_CURTA_OMITIDA), portada aqui pela primeira vez.
+
+_N4 = {"reaction": {"summary": {"n_events": 4}}}
+_N1 = {"reaction": {"summary": {"n_events": 1}}}
+_N8 = {"reaction": {"summary": {"n_events": 8}}}
+
+
+def test_amostra_de_4_sem_declarar_e_aviso():
+    achados = validar_analise(_texto_completo(
+        "A reação média de earnings foi de -4,94%."), _N4)
+    assert "ANALISE_AMOSTRA_CURTA_OMITIDA" in _codigos(achados)
+    achado = next(a for a in achados
+                  if a["codigo"] == "ANALISE_AMOSTRA_CURTA_OMITIDA")
+    assert achado["nivel"] == "AVISO"
+
+
+def test_amostra_de_4_declarada_no_texto_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "Nos 4 eventos observados, a reação média foi de -4,94%."), _N4)
+    assert "ANALISE_AMOSTRA_CURTA_OMITIDA" not in _codigos(achados)
+
+
+def test_amostra_de_1_declarada_com_unico_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "Com apenas um único balanço na amostra, a reação foi de -2,60%."),
+        _N1)
+    assert "ANALISE_AMOSTRA_CURTA_OMITIDA" not in _codigos(achados)
+
+
+def test_amostra_grande_nao_precisa_declarar():
+    achados = validar_analise(_texto_completo(
+        "A reação média de earnings foi de -4,94%."), _N8)
+    assert "ANALISE_AMOSTRA_CURTA_OMITIDA" not in _codigos(achados)
+
+
+def test_sem_earnings_na_secao_a_checagem_se_cala():
+    achados = validar_analise(_texto_completo(
+        "Sem menção a earnings nesta seção."), _N4)
+    assert "ANALISE_AMOSTRA_CURTA_OMITIDA" not in _codigos(achados)
