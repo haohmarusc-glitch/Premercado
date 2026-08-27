@@ -143,13 +143,29 @@ _ESTADOS = ("esticado", "descontado")
 # de proposito: e' a forma com que o proprio card descreve o balde histórico
 # ("Padrão 'chegou esticado': em 0 de 1 balanços..."), e o modelo repete essa
 # frase. Perder "ARM chega esticado ao balanço" e' um falso negativo barato.
+# Presente do indicativo, SOMENTE. "estava/estavam" saiu da lista em
+# 26/08/2026, depois de derrubar um texto correto duas vezes na mesma tela:
+#
+#     "no único caso em que NVDA estava esticado, a reação média foi de alta"
+#     "nos 3 eventos em que o papel estava esticado, a reação média foi de
+#      queda de 9.67%"
+#
+# As duas frases descrevem o balde HISTÓRICO em pretérito -- e o mesmo texto
+# declarava o estado de hoje certo ("NVDA e AVGO estão em estado 'neutro'").
+# A checagem compara contra `estado_atual`, o dado DO DIA; uma cópula no
+# passado nunca afirma o presente, então ela não tem o que contradizer.
+#
+# As fronteiras \b são a segunda metade do mesmo conserto: sem elas,
+# `est[áa]` casa DENTRO de "estava" (est-a-va) e o pretérito voltava pela
+# porta dos fundos. `continuam?\b` exclui "continuava" pelo mesmo mecanismo.
 _ATRIBUI_ESTADO = (
-    r"est[áa]|est[ãa]o|estava|estavam|"
-    r"continua|continuam|permanece|permanecem|segue|seguem|"
-    r"encontra-se|encontram-se|fica|ficam|aparece|aparecem|"
+    r"\best[áa]\b|\best[ãa]o\b|"
+    r"\bcontinuam?\b|\bpermanecem?\b|\bseguem?\b|"
+    r"\bencontram?-se\b|\bse\s+encontram?\b|\bficam?\b|\baparecem?\b|"
     r"classificad[oa]s?\s+como|categorizad[oa]s?\s+como|"
     r"considerad[oa]s?\s+como|marcad[oa]s?\s+como|"
-    r"na\s+categoria(?:\s+de)?|no\s+estado(?:\s+de)?|estado(?:\s+atual)?\s+de|"
+    r"na\s+categoria(?:\s+de)?|(?:no|em)\s+estado(?:\s+de)?|"
+    r"estado(?:\s+atual)?\s+de|"
     r"[\u2192>]"
 )
 

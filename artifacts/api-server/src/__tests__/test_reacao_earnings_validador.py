@@ -606,3 +606,60 @@ def test_as_duas_ordens_do_adjetivo_recebem_o_mesmo_veredito():
     depois = "NVDA tem forte correlação positiva entre run-up e reação."
     assert (("LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(validar_leitura(antes, dados)))
             == ("LEITURA_CORRELACAO_SEM_SUPORTE" in _codigos(validar_leitura(depois, dados))))
+
+
+# ═══ auditoria de 27/08/2026 — pretérito não afirma o presente ══════════════
+#
+# A tela voltou com DOIS [ERRO] LEITURA_ESTADO_CONTRADITO num texto que, de
+# novo, acertava os quatro estados. Desta vez o buraco era do próprio gate da
+# PR #407: "estava/estavam" na lista de atribuidores, e `est[áa]` sem
+# fronteira casando DENTRO de "estava". A checagem compara contra
+# `estado_atual` — cópula no passado nunca afirma o presente.
+
+def test_o_bucket_em_preterito_nao_e_o_estado_de_hoje():
+    """As duas frases da tela, verbatim."""
+    for frase, tkr in [
+        ("No entanto, no único caso em que NVDA estava esticado, a reação "
+         "média foi de alta de 3.25%.", "NVDA"),
+        ("Para AVGO, nos 3 eventos em que o papel estava esticado, a reação "
+         "média foi de queda de 9.67%, e no único caso descontado, subiu "
+         "8.64%.", "AVGO"),
+    ]:
+        achados = validar_leitura(frase, [_ticker(tkr, estado="neutro")])
+        assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados), frase
+
+
+def test_o_texto_inteiro_da_segunda_auditoria_passa():
+    texto = (
+        "No único caso em que NVDA estava esticado, a reação média foi de "
+        "alta de 3.25%. Para AVGO, nos 3 eventos em que o papel estava "
+        "esticado, a reação média foi de queda de 9.67%. Atualmente, SMCI e "
+        "ARM se encontram em estado \"esticado\". NVDA e AVGO estão em "
+        "estado \"neutro\".")
+    achados = validar_leitura(texto, [
+        _ticker("NVDA", estado="neutro"), _ticker("AVGO", estado="neutro"),
+        _ticker("SMCI", estado="esticado"), _ticker("ARM", estado="esticado")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    # a fronteira: "está" não pode casar dentro de "estava"
+    "NVDA estava esticado na semana passada.",
+    # nem "continua" dentro de "continuava"
+    "NVDA continuava esticado no trimestre passado.",
+])
+def test_a_fronteira_segura_o_preterito(frase):
+    achados = validar_leitura(frase, [_ticker("NVDA", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" not in _codigos(achados)
+
+
+@pytest.mark.parametrize("frase", [
+    # o presente continua caindo — o gate não pode virar mordaça
+    "NVDA se encontra em estado esticado.",
+    "NVDA está em estado esticado.",
+    "AVGO segue esticado.",
+])
+def test_o_presente_continua_caindo(frase):
+    achados = validar_leitura(frase, [_ticker("NVDA", estado="neutro"),
+                                      _ticker("AVGO", estado="neutro")])
+    assert "LEITURA_ESTADO_CONTRADITO" in _codigos(achados), frase
