@@ -130,3 +130,41 @@ def test_falha_de_leitura_mascara():
 
     saida = _falha_de_leitura("o Plano de Saída", _HTTPError(URL_DO_INCIDENTE))
     assert CHAVE not in saida["error"]
+
+
+# ═══ 27/08/2026 — o MESMO vazamento, pelo caminho do dicionário ═════════════
+#
+# A #409 mascarou `_motivo_curto` (o caminho da EXCEÇÃO). Mas o erro da FMP
+# também chega como DICIONÁRIO -- get_fundamentals_valuation captura a
+# exceção e devolve {"error": str(e)} -- e a Análise Rápida de WOLF publicou
+# de novo, um dia depois:
+#
+#     a FMP respondeu com erro: 402 Client Error: Payment Required for url:
+#     https://financialmodelingprep.com/stable/...?symbol=WOLF&apikey=<CHAVE>
+#
+# A lição: mascarar nas PONTAS deixa um caminho novo nascer sem máscara.
+# O funil (_faltou, por onde TODO motivo passa) agora mascara também.
+
+def test_o_motivo_da_ausencia_sai_mascarado_venha_de_onde_vier(monkeypatch):
+    """O caminho REAL do incidente: o yfinance falha (bloco de alvos vira
+    ausência), a FMP devolve o erro como DICIONÁRIO com a URL dentro, e as
+    manchetes vêm vazias. Nenhum motivo pode carregar a chave."""
+    from agent import analise_rapida_ia as ar
+
+    monkeypatch.setenv("FMP_API_KEY", CHAVE)
+    monkeypatch.setattr(ar.tools, "get_fundamentals_valuation",
+                        lambda tk: {"ticker": tk, "error": URL_DO_INCIDENTE,
+                                    "configured": True})
+    monkeypatch.setattr(ar.tools, "get_news",
+                        lambda tks, max_items=None: {tk: [] for tk in tks})
+
+    class _SemRede:
+        def __init__(self, *_a, **_k):
+            raise RuntimeError(f"falha com {CHAVE} no meio")
+
+    monkeypatch.setattr(ar.yf, "Ticker", _SemRede)
+
+    _, _, ausencias = ar._buscar_fundamento("WOLF")
+    assert ausencias, "o cenário deveria produzir ausências"
+    for a in ausencias:
+        assert CHAVE not in str(a.get("motivo", "")), a
