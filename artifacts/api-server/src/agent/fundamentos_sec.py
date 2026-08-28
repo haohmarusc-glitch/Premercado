@@ -319,20 +319,42 @@ def _instantaneo(fatos: list[dict], quando: _dt.date | None = None) -> tuple[flo
 
 
 def _fatos(dados: dict, conceito: str) -> tuple[list[dict], str]:
-    """Fatos do primeiro tag disponível para o conceito, e qual tag foi usado.
+    """Fatos do tag MAIS ATUAL para o conceito, e qual tag foi usado.
 
-    A ordem de `TAGS` é preferência, não alfabética: emissor troca de tag
-    entre exercícios, e travar num nome só devolveria "indisponível" para
-    metade da cesta.
+    A ordem de `TAGS` é preferência, mas RECÊNCIA vence preferência -- e essa
+    ordem importa muito mais do que parecia.
+
+    Visto no modo sombra (NVDA, 28/08/2026), primeira execução contra dado
+    real: a versão anterior devolvia o PRIMEIRO tag com qualquer dado, e para
+    a NVDA isso era `RevenueFromContractWithCustomerExcludingAssessedTax`,
+    que ela abandonou depois do FY2020. A receita TTM saiu como US$ 10,9 bi
+    (correta... para o exercício encerrado em janeiro de 2020, seis anos
+    antes), enquanto o lucro veio dos trimestres atuais. A margem líquida
+    publicada foi 1766%.
+
+    Nenhum teste de fixture pegaria isto: a aritmética estava certa, os dois
+    TTM estavam certos cada um no seu período, e o defeito só existe quando a
+    fonte real tem um tag descontinuado com histórico parado. É o que o modo
+    sombra existe para achar.
+
+    Empate no fim mais recente volta para a ordem de preferência.
     """
     facts = ((dados.get("facts") or {}).get("us-gaap") or {})
-    for tag in TAGS[conceito]:
+    candidatos: list[tuple[str, int, list[dict], str]] = []
+    for posicao, tag in enumerate(TAGS[conceito]):
         unidades = (facts.get(tag) or {}).get("units") or {}
         for unidade in ("USD", "shares"):
-            if unidades.get(unidade):
-                return list(unidades[unidade]), tag
-    raise SemDado(f"nenhum tag conhecido para '{conceito}' "
-                  f"(tentados: {', '.join(TAGS[conceito])})")
+            lista = unidades.get(unidade)
+            if not lista:
+                continue
+            fim = max((str(f.get("end") or "") for f in lista), default="")
+            candidatos.append((fim, -posicao, list(lista), tag))
+            break
+    if not candidatos:
+        raise SemDado(f"nenhum tag conhecido para '{conceito}' "
+                      f"(tentados: {', '.join(TAGS[conceito])})")
+    _, _, lista, tag = max(candidatos, key=lambda c: (c[0], c[1]))
+    return lista, tag
 
 
 def _acoes_em_circulacao(dados: dict) -> tuple[float, dict]:
@@ -376,6 +398,43 @@ def emissor_estrangeiro(dados: dict) -> str | None:
                 if str(f.get("form") or "") in FORMULARIOS_ESTRANGEIROS:
                     return (f"emissor arquiva {f['form']} (foreign private "
                             "issuer) — fora do escopo até existir etapa de IFRS")
+    return None
+
+
+def _janela_incompativel(*provs) -> str | None:
+    """Motivo pelo qual estes TTM NÃO podem ser combinados, ou None.
+
+    A trava que faltava. Dividir dois TTM de janelas diferentes é a forma mais
+    fácil de produzir um número plausível e absurdo ao mesmo tempo, e ela não
+    depende de nenhum tag estar errado: basta um conceito ter histórico mais
+    curto que o outro para a razão comparar eras distintas.
+
+    Foi assim que a NVDA publicou margem de 1766% no modo sombra (lucro dos
+    trimestres atuais sobre receita do exercício encerrado em jan/2020). A
+    causa imediata era a escolha de tag (ver `_fatos`), mas a razão só virou
+    NÚMERO porque nada conferia se os dois períodos eram o mesmo -- e essa
+    segunda falha sobreviveria à correção da primeira.
+
+    Tolerância de poucos dias porque o rótulo de um mesmo trimestre fiscal
+    pode diferir por um dia entre conceitos; semanas ou anos, não.
+    """
+    periodos = [p.get("periodo") for p in provs if isinstance(p, dict)]
+    periodos = [p for p in periodos if p]
+    if len(periodos) < 2:
+        return None
+    partidas = []
+    for p in periodos:
+        try:
+            ini, fim = str(p).split("..")
+            partidas.append((_dia(ini), _dia(fim)))
+        except Exception:  # noqa: BLE001 — rótulo estranho é incompatível
+            return f"período ilegível ({p})"
+    base = partidas[0]
+    for outro, rotulo in zip(partidas[1:], periodos[1:]):
+        if abs((outro[0] - base[0]).days) > 5 or abs((outro[1] - base[1]).days) > 5:
+            return (f"janelas diferentes ({periodos[0]} vs {rotulo}) — "
+                    "combinar TTM de períodos distintos compara eras, não "
+                    "grandezas")
     return None
 
 
@@ -480,8 +539,11 @@ def multiplos(dados: dict, preco: float | None) -> dict:
     operacional, prov_op, err_op = _tenta(ttm, "operacional")
     da, prov_da, err_da = _tenta(ttm, "dep_amort")
     ebitda = None
-    if operacional is not None and da is not None:
+    desalinho_ebitda = _janela_incompativel(prov_op, prov_da)
+    if operacional is not None and da is not None and not desalinho_ebitda:
         ebitda = operacional + da
+    if desalinho_ebitda:
+        err_da = desalinho_ebitda
 
     caixa, prov_caixa, err_caixa = _tenta(instante, "caixa")
     dc, _, _ = _tenta(instante, "divida_curta")
@@ -511,7 +573,10 @@ def multiplos(dados: dict, preco: float | None) -> dict:
 
     cfo, prov_cfo, err_cfo = _tenta(ttm, "caixa_operacional")
     capex, prov_capex, err_capex = _tenta(ttm, "capex")
-    if cfo is not None and capex is not None and cap:
+    desalinho_fcf = _janela_incompativel(prov_cfo, prov_capex)
+    if desalinho_fcf:
+        err_capex = desalinho_fcf
+    if cfo is not None and capex is not None and cap and not desalinho_fcf:
         # capex vem POSITIVO no XBRL (é um pagamento); FCF subtrai.
         fcf = cfo - abs(capex)
         m["fcf_yield"] = _metrica(fcf / cap, {
@@ -524,13 +589,17 @@ def multiplos(dados: dict, preco: float | None) -> dict:
         m["fcf_yield"] = _metrica(
             None, {}, motivo=err_cfo or err_capex or "sem capitalização")
 
+    # A trava que faltava quando a NVDA publicou 1766%: os dois TTM têm que
+    # cobrir a MESMA janela, senão a razão compara eras, não grandezas.
+    desalinho_margem = _janela_incompativel(prov_luc, prov_rec)
     m["margem_liquida"] = (_metrica(lucro / receita, {
         "formula": "lucro_liquido_TTM / receita_TTM",
         "lucro_liquido_TTM": lucro, "receita_TTM": receita,
-        "de": prov_rec,
+        "de": prov_rec, "janela_do_lucro": (prov_luc or {}).get("periodo"),
         "tags": [tags_usadas.get("lucro_liquido"), tags_usadas.get("receita")],
-    }) if lucro is not None and receita else _metrica(
-        None, {}, motivo=err_luc or err_rec or "receita TTM zero"))
+    }) if lucro is not None and receita and not desalinho_margem
+        else _metrica(None, {}, motivo=(
+            desalinho_margem or err_luc or err_rec or "receita TTM zero")))
 
     # Crescimento: TTM contra os 4 trimestres ANTERIORES (8 no total).
     crescimento, prov_cres, err_cres = _tenta(_crescimento_ttm, dados)
@@ -618,5 +687,22 @@ if __name__ == "__main__":  # pragma: no cover
         from . import json_seguro
 
     alvos = sys.argv[1:] or ["MRVL", "NVDA", "AOSL"]
+
+    def _preco(ticker: str) -> float | None:
+        """Preço atual só para o modo sombra exercitar P/L, P/VP e FCF yield.
+
+        Sem ele a primeira execução saiu com três métricas em "sem
+        capitalização" -- não dava para conferir justamente as que dependem
+        de preço. Falha vira None: preço ausente já tem tratamento.
+        """
+        try:
+            import yfinance as yf
+            return float(getattr(yf.Ticker(ticker).fast_info, "last_price", None))
+        except Exception as e:  # noqa: BLE001
+            print(f"[fundamentos_sec] preço de {ticker}: {e}",
+                  file=sys.stderr, flush=True)
+            return None
+
     print(json_seguro.dumps(
-        {t: para_ticker(t) for t in alvos}, ensure_ascii=False, indent=2))
+        {t: para_ticker(t, _preco(t)) for t in alvos},
+        ensure_ascii=False, indent=2))
