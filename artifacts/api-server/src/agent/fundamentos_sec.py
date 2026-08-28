@@ -84,6 +84,33 @@ COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 # Arquivamento de foreign private issuer. Ver armadilha 7 no cabeçalho.
 FORMULARIOS_ESTRANGEIROS = frozenset({"20-F", "40-F", "6-K"})
 
+# Formulários que valem como FONTE de número. Só demonstração financeira
+# periódica e suas emendas.
+#
+# Visto no modo sombra (MRVL e NVDA, 28/08/2026): o trimestre encerrado em
+# janeiro veio de um `DEF 14A` -- a procuração de assembleia. Ela entrou
+# porque `_mais_recente()` desempata por `filed`, e a procuração é arquivada
+# DEPOIS do 10-K do mesmo período. Desde a regra de "pay versus performance"
+# da SEC, essas procurações trazem `NetIncomeLoss` etiquetado em XBRL, então
+# o fato existe lá e vencia o 10-K por ser mais recente.
+#
+# O número pode até coincidir, e nos dois casos parecia plausível -- é
+# exatamente por isso que precisa de trava: a tabela de PvP não é a
+# demonstração auditada, não há garantia de mesmo escopo, e "coincidiu nas
+# duas empresas que eu olhei" não é garantia nenhuma.
+FORMULARIOS_ACEITOS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A"})
+
+
+def _de_formulario_aceito(fatos: Iterable[dict]) -> list[dict]:
+    """Descarta fato que não veio de demonstração periódica.
+
+    Filtra no FUNIL (`_fatos`), não em cada métrica: são oito métricas e uma
+    dúzia de conceitos, e um filtro por chamador dependeria de quem escreve a
+    nona lembrar de repetir -- mesmo motivo de `sem_barra_incompleta` viver na
+    fonte em market_data_provider.py.
+    """
+    return [f for f in fatos if str(f.get("form") or "") in FORMULARIOS_ACEITOS]
+
 # Duração, em dias, que faz um fato ser tratado como trimestre ou como ano.
 # Trimestre "de 90 dias" varia com o calendário fiscal (13 semanas dão 91;
 # ano fiscal de 52/53 semanas empurra mais), então a janela é generosa. O que
@@ -344,11 +371,11 @@ def _fatos(dados: dict, conceito: str) -> tuple[list[dict], str]:
     for posicao, tag in enumerate(TAGS[conceito]):
         unidades = (facts.get(tag) or {}).get("units") or {}
         for unidade in ("USD", "shares"):
-            lista = unidades.get(unidade)
+            lista = _de_formulario_aceito(unidades.get(unidade) or [])
             if not lista:
                 continue
             fim = max((str(f.get("end") or "") for f in lista), default="")
-            candidatos.append((fim, -posicao, list(lista), tag))
+            candidatos.append((fim, -posicao, lista, tag))
             break
     if not candidatos:
         raise SemDado(f"nenhum tag conhecido para '{conceito}' "
@@ -366,9 +393,12 @@ def _acoes_em_circulacao(dados: dict) -> tuple[float, dict]:
     """
     dei = ((dados.get("facts") or {}).get("dei") or {})
     unidades = (dei.get("EntityCommonStockSharesOutstanding") or {}).get("units") or {}
-    fatos = unidades.get("shares") or []
+    # Mesmo filtro de formulário do funil: a capa de uma procuração também
+    # traz contagem de ações, e ela não é a fonte que queremos.
+    fatos = _de_formulario_aceito(unidades.get("shares") or [])
     if not fatos:
-        raise SemDado("dei:EntityCommonStockSharesOutstanding ausente")
+        raise SemDado("dei:EntityCommonStockSharesOutstanding ausente "
+                      "em 10-K/10-Q")
     # Aqui o fato tem `end` (data da capa) e normalmente não tem `start`.
     fato = _mais_recente(sorted(fatos, key=lambda f: str(f.get("end") or "")) [-3:])
     assert fato is not None
@@ -548,7 +578,19 @@ def multiplos(dados: dict, preco: float | None) -> dict:
     caixa, prov_caixa, err_caixa = _tenta(instante, "caixa")
     dc, _, _ = _tenta(instante, "divida_curta")
     dl, prov_dl, err_dl = _tenta(instante, "divida_longa")
-    divida = (dc or 0.0) + (dl or 0.0) if (dc is not None or dl is not None) else None
+    # `LongTermDebt` é o SALDO TOTAL, já incluindo a parcela circulante;
+    # `LongTermDebtNoncurrent` é só a parte não circulante. Somar a curta ao
+    # primeiro contaria a parcela circulante duas vezes -- e uma dívida
+    # inflada não estoura nada, só encarece o EV e o EV/EBITDA em silêncio.
+    # Qual dos dois foi usado só se sabe pelo tag escolhido, então a conta
+    # depende dele.
+    divida_e_total = tags_usadas.get("divida_longa") == "LongTermDebt"
+    if dl is not None and divida_e_total:
+        divida = dl
+    elif dc is not None or dl is not None:
+        divida = (dc or 0.0) + (dl or 0.0)
+    else:
+        divida = None
     divida_liquida = (divida - caixa) if (divida is not None and caixa is not None) else None
 
     ev = (cap + divida - caixa) if (cap and divida is not None and caixa is not None) else None
