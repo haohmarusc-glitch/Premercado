@@ -335,16 +335,24 @@ _COMPARA_AO_ATUAL = (r"pr[óo]xim[oa]\s+(?:a|ao|d[ao]|d[eo])|similar\s+a|"
                      r"parecid[oa]\s+(?:a|com)|compat[íi]vel\s+com|"
                      r"em\s+linha\s+com|perto\s+d[eo]|na\s+mesma\s+ordem")
 
-# "a reação média ... no dia do anúncio" -- rotula a ESTATÍSTICA AGREGADA
-# (close_pct_mean/gap_pct_mean) como se pertencesse à sessão do anúncio.
-# Para AMC essas médias vêm da sessão SEGUINTE (a própria tabela marca com
-# ◂); o número costuma estar certo, o QUANDO é que está errado. Duas ordens
-# de palavra porque o modelo escreve as duas ("a reação média ... no dia do
-# anúncio" e "no dia do anúncio, a reação média ...").
-_REACAO_MEDIA_E_ANUNCIO = (
-    r"rea[cç][ãa]o\s+m[ée]dia[^.\n]{0,40}?dia\s+d[oe]\s+anuncio"
-    r"|dia\s+d[oe]\s+anuncio[^.\n]{0,40}?rea[cç][ãa]o\s+m[ée]dia"
-)
+# O NÚMERO junto de "dia do anúncio" -- não a frase "reação média" junto do
+# número. Duas rodadas do MESMO ticker (MRVL, 27/08/2026) escreveram a mesma
+# confusão com fraseados bem diferentes:
+#
+#   "a reação média no dia do anúncio foi de +1.22% no fechamento"      (3ª)
+#   "um fechamento diário médio de +1,22% no dia do anúncio"            (4ª)
+#
+# Na 4ª, "reação média" e "dia do anúncio" ficam a ~85 caracteres um do
+# outro -- fora de qualquer janela que não vire risco de falso positivo em
+# frase longa. Ancorar no NÚMERO (perto de "dia do anúncio", nas duas
+# ordens) e CONFERIR CONTRA O DADO (`close_pct_mean`/`gap_pct_mean`) resolve
+# os dois fraseados sem depender de distância de frase: só cai quando o
+# número citado é o mesmo que o payload guarda como média agregada.
+_NUMERO_JUNTO_DO_ANUNCIO = re.compile(
+    r"([+-]?\d+(?:[.,]\d+)?)\s*%[^.\n]{0,25}?dia\s+d[oe]\s+anuncio"
+    r"|dia\s+d[oe]\s+anuncio\w*[^.\n]{0,25}?(?:foi\s+de\s+)?"
+    r"([+-]?\d+(?:[.,]\d+)?)\s*%",
+    re.IGNORECASE)
 
 # O nome do run-up escrito por extenso. Quando ele aparece na frase, o texto
 # está DISTINGUINDO os dois conceitos, e citar o número do run-up ali é a
@@ -458,6 +466,19 @@ _AFIRMA_SIGNIFICANCIA = (
 _PAR_CONTADO = re.compile(
     r"(\d+)\s+d(?:e|os|as)\s+(\d+)\s+"
     r"(?:eventos?|balan[çc]os?|casos?|resultados?|trimestres?)",
+    re.IGNORECASE)
+
+# "N eventos onde o papel chegou esticado" -- variante SEM razão do mesmo
+# erro que _PAR_CONTADO cobre (que exige o par "X de Y"). MRVL, 27/08/2026
+# (4ª rodada): "em 6 eventos onde o papel chegou esticado" -- o real
+# esticado_n era 2; o modelo citou `n_com_runup` (a amostra total da
+# correlação) como se fosse a contagem do balde esticado. Duas ordens de
+# palavra: número antes de "eventos" ou depois de "esticado".
+_CONTAGEM_ESTICADO_SOLTA = re.compile(
+    r"(\d+)\s+(?:dos\s+)?eventos?[^.\n]{0,25}?(?:o\s+papel\s+)?"
+    r"(?:cheg\w+|esteve|ficou)\s+esticad\w*"
+    r"|(?:o\s+papel\s+)?(?:cheg\w+|esteve|ficou)\s+esticad\w*[^.\n]{0,25}?"
+    r"em\s+(\d+)\s+(?:dos\s+)?eventos?",
     re.IGNORECASE)
 
 
@@ -1102,30 +1123,66 @@ def validar_analise(texto, dados=None) -> list:
 
     # ── 18. reação média atribuída ao "dia do anúncio" (AMC) ────────────────
     #
-    # MRVL, 27/08/2026: "a reação média no dia do anúncio foi de +1.22% no
-    # fechamento, com um gap médio de abertura de -0.29%." Os dois números
-    # batem com `close_pct_mean`/`gap_pct_mean` -- mas para um papel AMC
-    # essas médias vêm da sessão SEGUINTE (a própria tabela marca com ◂),
-    # não do dia do anúncio. Diferente do check 15 (que pega um número
-    # ISOLADO chamado de reação): aqui a ESTATÍSTICA AGREGADA inteira leva
-    # o rótulo errado -- o número costuma estar certo, o QUANDO é que não
-    # está.
+    # MRVL, 27/08/2026: "um fechamento diário médio de +1,22% no dia do
+    # anúncio". O número bate com `close_pct_mean` -- mas para um papel AMC
+    # essa média vem da sessão SEGUINTE (a própria tabela marca com ◂), não
+    # do dia do anúncio. Diferente do check 15 (que pega um número de um
+    # EVENTO ISOLADO chamado de reação): aqui é a ESTATÍSTICA AGREGADA que
+    # leva o rótulo errado, e a conferência é contra o dado -- não contra
+    # distância de frase, que dois fraseados reais do MESMO ticker já
+    # mostraram não ser confiável (ver o comentário do regex).
     if isinstance(eventos_reacao, list) and eventos_reacao:
         evento_amc = eventos_reacao[0]
         if isinstance(evento_amc, dict) and evento_amc.get("janela_reacao") == "seguinte":
-            for frase in frases(prosa_sa):
-                if not re.search(_REACAO_MEDIA_E_ANUNCIO, frase):
-                    continue
-                if afirmacao_negada(frase, _REACAO_MEDIA_E_ANUNCIO):
-                    continue
-                add("ERRO", "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO",
-                    f"chama a estatística de reação média de 'no dia do "
-                    f"anúncio', mas este papel reporta depois do "
-                    f"fechamento (AMC) -- a sessão que precifica o "
-                    f"resultado é a SEGUINTE, e é dela que vêm as médias "
-                    f"de fechamento/gap desta seção. "
-                    f"Trecho: “{frase.strip()[:120]}”.")
-                break
+            alvos_media = [v for v in (
+                num_finito(resumo_reacao.get("close_pct_mean")),
+                num_finito(resumo_reacao.get("gap_pct_mean")),
+            ) if v is not None]
+            if alvos_media:
+                achou = False
+                for frase in frases(prosa_sa):
+                    for m in _NUMERO_JUNTO_DO_ANUNCIO.finditer(frase):
+                        texto_num = m.group(1) or m.group(2)
+                        citado = float(texto_num.replace(",", "."))
+                        if not any(abs(citado - v) <= 0.05 for v in alvos_media):
+                            continue
+                        if afirmacao_negada(frase, r"dia\s+d[oe]\s+anuncio"):
+                            continue
+                        add("ERRO", "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO",
+                            f"cita {citado:+.2f}% (a média agregada de "
+                            f"fechamento/gap da reação) junto de 'dia do "
+                            f"anúncio', mas este papel reporta depois do "
+                            f"fechamento (AMC) -- a sessão que precifica o "
+                            f"resultado é a SEGUINTE, e é dela que vêm as "
+                            f"médias desta seção. "
+                            f"Trecho: “{frase.strip()[:120]}”.")
+                        achou = True
+                        break
+                    if achou:
+                        break
+
+    # ── 19. contagem do balde "esticado" citada solta, sem o par X de Y ─────
+    #
+    # MRVL, 27/08/2026 (4ª rodada): "em 6 eventos onde o papel chegou
+    # esticado, a reação média pós-earnings foi de -1,23%." O real
+    # esticado_n é 2 -- o modelo citou `n_com_runup` (6, a amostra TOTAL da
+    # correlação run-up × reação) como se fosse a contagem de eventos
+    # esticados. Mesma família do check 14, redação diferente: lá o erro é
+    # um PAR "X de Y" trocado; aqui é uma contagem SOLTA (só um número), que
+    # `_PAR_CONTADO` não captura por não ter "de".
+    if esticado_n is not None:
+        for frase in frases(prosa_sa):
+            m = _CONTAGEM_ESTICADO_SOLTA.search(frase)
+            if not m:
+                continue
+            citado = int(m.group(1) or m.group(2))
+            if citado == int(esticado_n):
+                continue
+            add("ERRO", "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA",
+                f"diz que o papel chegou esticado em {citado} evento(s), "
+                f"mas o dado diz {int(esticado_n)}. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
 
     return achados
 

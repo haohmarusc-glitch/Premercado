@@ -2056,21 +2056,56 @@ def test_a_comparacao_negada_nao_cai():
 
 # ── 18. reação média atribuída ao "dia do anúncio" (AMC) ────────────────────
 #
-# MRVL, 27/08/2026: "a reação média no dia do anúncio foi de +1.22% no
-# fechamento, com um gap médio de abertura de -0.29%." O número bate com
-# `close_pct_mean`, mas para um papel AMC essa média vem da sessão SEGUINTE
-# (a tabela marca com ◂), não do dia do anúncio.
+# MRVL, 27/08/2026, DUAS rodadas do mesmo ticker com fraseados bem
+# diferentes:
+#
+#   "a reação média no dia do anúncio foi de +1.22% no fechamento"   (3ª)
+#   "um fechamento diário médio de +1,22% no dia do anúncio"         (4ª)
+#
+# Na 4ª, "reação média" e "dia do anúncio" ficam a ~85 caracteres um do
+# outro -- por isso a checagem ancora no NÚMERO perto de "dia do anúncio" e
+# confere contra `close_pct_mean`/`gap_pct_mean`, não em distância de frase.
+
+_EVENTO_AMC_COM_MEDIA = {"reaction": {
+    "summary": {"close_pct_mean": 1.22, "gap_pct_mean": -0.29},
+    "events": [{"janela_reacao": "seguinte",
+               "announcement_day": {"close_pct": -7.53},
+               "next_day": {"close_pct": -9.42}}],
+}}
+_EVENTO_BMO_COM_MEDIA = {"reaction": {
+    "summary": {"close_pct_mean": 1.22, "gap_pct_mean": -0.29},
+    "events": [{"janela_reacao": "anuncio",
+               "announcement_day": {"close_pct": -7.53},
+               "next_day": {"close_pct": -9.42}}],
+}}
+
 
 def test_reacao_media_no_dia_do_anuncio_e_erro_amc():
+    """A frase real da 3ª rodada."""
     achados = validar_analise(_texto_completo(
         "Historicamente, a reação média no dia do anúncio foi de +1.22% no "
-        "fechamento, com um gap médio de abertura de -0.29%."), _EVENTO_AMC)
+        "fechamento, com um gap médio de abertura de -0.29%."),
+        _EVENTO_AMC_COM_MEDIA)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" in _codigos(achados)
+
+
+def test_reacao_media_e_dia_do_anuncio_longe_na_frase_tambem_cai():
+    """A frase real da 4ª rodada -- "reação média" e "dia do anúncio"
+    separados por ~85 caracteres, fora de qualquer janela de distância
+    razoável. Só cai porque o NÚMERO (+1,22%) está perto de "dia do
+    anúncio" e bate com `close_pct_mean`."""
+    achados = validar_analise(_texto_completo(
+        "Com base em 7 eventos de earnings, a reação média do papel "
+        "resultou num gap de -0,29% e um fechamento diário médio de "
+        "+1,22% no dia do anúncio, com uma volatilidade absoluta média de "
+        "13,78%."), _EVENTO_AMC_COM_MEDIA)
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" in _codigos(achados)
 
 
 def test_ordem_invertida_da_frase_tambem_cai():
     achados = validar_analise(_texto_completo(
-        "No dia do anúncio, a reação média foi de -2%."), _EVENTO_AMC)
+        "No dia do anúncio, a reação média foi de +1.22%."),
+        _EVENTO_AMC_COM_MEDIA)
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" in _codigos(achados)
 
 
@@ -2079,24 +2114,23 @@ def test_bmo_nao_cai_no_check_18():
     há erro possível."""
     achados = validar_analise(_texto_completo(
         "Historicamente, a reação média no dia do anúncio foi de +1.22% no "
-        "fechamento."), _EVENTO_BMO)
+        "fechamento."), _EVENTO_BMO_COM_MEDIA)
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
 
 
 def test_rotulo_correto_sessao_seguinte_nao_cai():
     achados = validar_analise(_texto_completo(
         "Historicamente, a reação média na sessão seguinte foi de +1.22% "
-        "no fechamento."), _EVENTO_AMC)
+        "no fechamento."), _EVENTO_AMC_COM_MEDIA)
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
 
 
-def test_frases_separadas_nao_conflitam_check_18():
-    """"No dia do anúncio o papel fechou em X" e "a reação média foi de Y"
-    em frases DIFERENTES não são a mesma afirmação -- diferente de dizer
-    que a reação média ocorreu no dia do anúncio."""
+def test_numero_diferente_do_agregado_nao_cai():
+    """Outro número perto de "dia do anúncio" -- não é o caso que esta
+    checagem cobre (não é a estatística agregada sendo mal rotulada)."""
     achados = validar_analise(_texto_completo(
-        "No dia do anúncio o papel fechou em -1,49%. Já a reação média "
-        "(sessão seguinte) foi de +1.22%."), _EVENTO_AMC)
+        "No dia do anúncio o papel fechou em -1,49%."),
+        _EVENTO_AMC_COM_MEDIA)
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
 
 
@@ -2104,3 +2138,67 @@ def test_reacao_media_sem_eventos_no_payload_se_cala():
     achados = validar_analise(_texto_completo(
         "A reação média no dia do anúncio foi de +1.22%."), {})
     assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
+
+
+def test_reacao_media_sem_summary_no_payload_se_cala():
+    """Evento AMC presente, mas sem `summary` -- não há média agregada pra
+    conferir contra nada."""
+    sem_summary = {"reaction": {"events": [{"janela_reacao": "seguinte"}]}}
+    achados = validar_analise(_texto_completo(
+        "A reação média no dia do anúncio foi de +1.22%."), sem_summary)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
+
+
+# ── 19. contagem do balde "esticado" citada solta, sem o par X de Y ────────
+#
+# MRVL, 27/08/2026 (4ª rodada): "em 6 eventos onde o papel chegou esticado,
+# a reação média pós-earnings foi de -1,23%." O real esticado_n era 2; o
+# modelo citou n_com_runup (6, a amostra TOTAL da correlação) como se fosse
+# a contagem do balde esticado. `_PAR_CONTADO` (check 14) não captura isso
+# porque não há "de Y" na frase -- é um número solto.
+
+_ESTICADO_2 = {"reaction": {"summary": {"runup": {
+    "esticado_n": 2, "esticado_caiu_n": 1}}}}
+
+
+def test_contagem_solta_errada_e_erro():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, em 6 eventos onde o papel chegou esticado, a "
+        "reação média pós-earnings foi de -1,23%."), _ESTICADO_2)
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" in _codigos(achados)
+
+
+def test_contagem_solta_correta_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, em 2 eventos onde o papel chegou esticado, a "
+        "reação média pós-earnings foi de -1,23%."), _ESTICADO_2)
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" not in _codigos(achados)
+
+
+def test_ordem_invertida_da_contagem_solta_tambem_cai():
+    achados = validar_analise(_texto_completo(
+        "O papel chegou esticado em 6 eventos, com reação média de -1,23%."),
+        _ESTICADO_2)
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" in _codigos(achados)
+
+
+def test_frase_com_par_x_de_y_nao_conflita_com_o_check_19():
+    """"X de Y" é o padrão do check 14 -- essa frase não tem número solto
+    perto de "eventos", então o check 19 fica de fora e o 14 já cobre."""
+    achados = validar_analise(_texto_completo(
+        "Nos 1 de 2 eventos esticados, o papel caiu."), _ESTICADO_2)
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" not in _codigos(achados)
+
+
+def test_numero_de_eventos_sem_mencionar_esticado_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "Com base em 7 eventos de earnings, a reação média foi de +1,22%."),
+        _ESTICADO_2)
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" not in _codigos(achados)
+
+
+def test_sem_esticado_n_no_payload_a_checagem_se_cala():
+    achados = validar_analise(_texto_completo(
+        "Em 6 eventos onde o papel chegou esticado, a reação foi negativa."),
+        {})
+    assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" not in _codigos(achados)
