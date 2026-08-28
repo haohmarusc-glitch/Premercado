@@ -846,3 +846,96 @@ def test_composto_carrega_o_valor_de_cada_parcela():
     assert [(c["tag"], c["valor"]) for c in partes] == [
         ("Depreciation", 12), ("AmortizationOfIntangibleAssets", 8)]
     assert sum(c["valor"] for c in partes) == 20
+
+
+# ═══ "Só anual" é veredito, não lacuna de tag ═══════════════════════════════
+#
+# Quarta rodada do modo sombra, com o dado real da MRVL:
+#
+#   DepreciationAndAmortization       6 fatos, TODOS anuais  -> 0 trimestres
+#   Depreciation                     15 fatos, TODOS anuais  -> 0 trimestres
+#   AmortizationOfIntangibleAssets   65 fatos               -> 25 trimestres
+#
+# Falta METADE do D&A em base trimestral. O composto que a rodada anterior
+# criou NÃO resolve este caso -- somar a depreciação anual (exercício até
+# 31/01) com a amortização TTM (ago-ago) seria a armadilha de janelas.
+#
+# O conceito é irreconstituível em TTM ali, e a mensagem tem que dizer isso
+# em vez de continuar listando tags: cada sugestão custa uma rodada de
+# investigação a quem for ler.
+
+
+def _mrvl_real():
+    """O formato que o diagnóstico encontrou na MRVL."""
+    dados = _emissor()
+    for anual in ("DepreciationDepletionAndAmortization", "Depreciation"):
+        dados["facts"]["us-gaap"][anual] = {"units": {"USD": [
+            _f("2024-02-04", "2025-02-01", 177_000_000, form="10-K"),
+            _f("2025-02-02", "2026-01-31", 221_700_000, form="10-K"),
+        ]}}
+    dados["facts"]["us-gaap"]["AmortizationOfIntangibleAssets"] = {
+        "units": {"USD": _quatro_trimestres([225_000_000] * 4)}}
+    return dados
+
+
+def test_so_anual_reconhece_o_conceito_irreconstituivel():
+    from agent.fundamentos_sec import so_anual
+    anuais = [_f("2024-02-04", "2025-02-01", 177, form="10-K"),
+              _f("2025-02-02", "2026-01-31", 221, form="10-K")]
+    assert so_anual(anuais) is True
+
+
+def test_so_anual_e_falso_quando_ha_trimestre():
+    from agent.fundamentos_sec import so_anual
+    assert so_anual(_quatro_trimestres([10] * 4)) is False
+
+
+def test_so_anual_e_falso_quando_o_acumulado_rende_trimestre():
+    """Série YTD tem fato de 12 meses, mas rende trimestre por diferença --
+    não é o caso 'só anual'."""
+    from agent.fundamentos_sec import so_anual
+    assert so_anual([
+        _f("2025-01-01", "2025-03-31", 100),
+        _f("2025-01-01", "2025-06-30", 300),
+        _f("2025-01-01", "2025-09-30", 600),
+        _f("2025-01-01", "2025-12-31", 1000),
+    ]) is False
+
+
+def test_so_anual_e_falso_sem_fato_nenhum():
+    from agent.fundamentos_sec import so_anual
+    assert so_anual([]) is False
+
+
+def test_a_mensagem_nomeia_os_tags_que_so_saem_anuais():
+    """Tag ausente se resolve acrescentando um nome à lista; "só anual" não se
+    resolve com nome nenhum. A mensagem tem que separar os dois casos."""
+    motivo = multiplos(_mrvl_real(), preco=20.0)["metricas"]["ev_ebitda"]["indisponivel"]
+    assert "apenas em base ANUAL" in motivo
+    assert "Depreciation" in motivo
+    assert "compararia janelas diferentes" in motivo
+
+
+def test_a_pista_continua_junto_do_veredito_anual():
+    """As duas informações juntas é que explicam a MRVL: a depreciação só sai
+    no 10-K E a amortização tem trimestre. Suprimir a lista de pistas aqui
+    escondia a metade que existe -- pego por um teste anterior."""
+    motivo = multiplos(_mrvl_real(), preco=20.0)["metricas"]["ev_ebitda"]["indisponivel"]
+    assert "fora da lista" in motivo
+    assert "AmortizationOfIntangibleAssets" in motivo
+
+
+def test_o_composto_nao_salva_quando_falta_a_metade_trimestral():
+    """A hipótese da rodada anterior, refutada pelo dado real: com
+    `Depreciation` só anual, somar não é opção."""
+    m = multiplos(_mrvl_real(), preco=20.0)["metricas"]
+    assert m["ev_ebitda"]["valor"] is None
+    assert m["divida_liquida_ebitda"]["valor"] is None
+
+
+def test_o_resto_do_emissor_continua_saindo():
+    """D&A irreconstituível não pode contaminar as outras seis métricas."""
+    m = multiplos(_mrvl_real(), preco=20.0)["metricas"]
+    assert m["pl"]["valor"] == 20.0
+    assert m["margem_liquida"]["valor"] == pytest.approx(0.1, abs=1e-6)
+    assert m["roe"]["valor"] == 0.2
