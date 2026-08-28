@@ -1299,6 +1299,39 @@ def test_sem_faixa_no_payload_nao_inventa_achado():
         _texto_completo("Está 58,51% abaixo da máxima de 52 semanas."), sem))
 
 
+# ── MRVL, 27/08/2026 (2ª rodada): "distante" e "sua" escaparam do padrão ────
+#
+# A 1ª rodada do MESMO ticker, mesmo número trocado (36,62%), tinha caído com
+# "abaixo da máxima". A 2ª rodada disse a mesma coisa errada com "distante de
+# sua máxima" e passou batido -- a checagem tinha que dizer o MESMO erro
+# duas vezes com fraseados diferentes, e só dizia com um deles.
+
+_MRVL = {
+    "precoAtual": {"valor": 241.45},
+    "snapshot": {"price": 241.45, "yearLow": 61.44, "yearHigh": 329.88,
+                 "sma50": 229.99, "sma200": 147.97},
+}
+
+
+def test_distante_de_sua_tambem_cai():
+    achados = validar_analise(_texto_completo(
+        "O preço atual de US$ 241.45 posiciona o MRVL 36.62% distante de "
+        "sua máxima de 52 semanas, que é de US$ 329.88."), _MRVL)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_DISTANCIA_DA_FAIXA")
+    assert "-26.81%" in msg
+
+
+@pytest.mark.parametrize("frase", [
+    "O preço está 26,81% distante da máxima de 52 semanas (US$ 329,88).",
+    "O preço está 26,81% distante de sua máxima de 52 semanas.",
+    "O preço está 26,81% distante da própria máxima de 52 semanas.",
+])
+def test_distante_com_a_conta_certa_nao_cai(frase):
+    assert "ANALISE_DISTANCIA_DA_FAIXA" not in _codigos(
+        validar_analise(_texto_completo(frase), _MRVL))
+
+
 # ── o texto NEGA dado que recebeu ──────────────────────────────────────────
 #
 # Incidente real (AMD, 26/08/2026), publicado com a caixa vazia. A linha de
@@ -2019,3 +2052,55 @@ def test_a_comparacao_negada_nao_cai():
         "próximo ao -1,49% observado agora, que ainda é só o pregão do "
         "anúncio."), _EVENTO_AMC_PENDENTE_ESTICADO)
     assert "ANALISE_PRE_REACAO_COMO_REACAO_HISTORICA" not in _codigos(achados)
+
+
+# ── 18. reação média atribuída ao "dia do anúncio" (AMC) ────────────────────
+#
+# MRVL, 27/08/2026: "a reação média no dia do anúncio foi de +1.22% no
+# fechamento, com um gap médio de abertura de -0.29%." O número bate com
+# `close_pct_mean`, mas para um papel AMC essa média vem da sessão SEGUINTE
+# (a tabela marca com ◂), não do dia do anúncio.
+
+def test_reacao_media_no_dia_do_anuncio_e_erro_amc():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, a reação média no dia do anúncio foi de +1.22% no "
+        "fechamento, com um gap médio de abertura de -0.29%."), _EVENTO_AMC)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" in _codigos(achados)
+
+
+def test_ordem_invertida_da_frase_tambem_cai():
+    achados = validar_analise(_texto_completo(
+        "No dia do anúncio, a reação média foi de -2%."), _EVENTO_AMC)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" in _codigos(achados)
+
+
+def test_bmo_nao_cai_no_check_18():
+    """Para quem reporta BMO, o dia do anúncio É a sessão de reação -- não
+    há erro possível."""
+    achados = validar_analise(_texto_completo(
+        "Historicamente, a reação média no dia do anúncio foi de +1.22% no "
+        "fechamento."), _EVENTO_BMO)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
+
+
+def test_rotulo_correto_sessao_seguinte_nao_cai():
+    achados = validar_analise(_texto_completo(
+        "Historicamente, a reação média na sessão seguinte foi de +1.22% "
+        "no fechamento."), _EVENTO_AMC)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
+
+
+def test_frases_separadas_nao_conflitam_check_18():
+    """"No dia do anúncio o papel fechou em X" e "a reação média foi de Y"
+    em frases DIFERENTES não são a mesma afirmação -- diferente de dizer
+    que a reação média ocorreu no dia do anúncio."""
+    achados = validar_analise(_texto_completo(
+        "No dia do anúncio o papel fechou em -1,49%. Já a reação média "
+        "(sessão seguinte) foi de +1.22%."), _EVENTO_AMC)
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
+
+
+def test_reacao_media_sem_eventos_no_payload_se_cala():
+    achados = validar_analise(_texto_completo(
+        "A reação média no dia do anúncio foi de +1.22%."), {})
+    assert "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO" not in _codigos(achados)
