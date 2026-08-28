@@ -10,6 +10,7 @@ import { claimSeedAccountBootstrap } from "./lib/claim-seed-account";
 import { shouldRunBackgroundCheckers } from "./lib/background-checkers";
 import { iniciarRelatoPython } from "./lib/python-spawn";
 import { iniciarVigiaDosCheckers } from "./lib/checker-watchdog";
+import { armarDesligamentoGracioso } from "./lib/graceful-shutdown";
 
 const rawPort = process.env["PORT"];
 
@@ -22,7 +23,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, async (err) => {
+const server = app.listen(port, async (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -50,3 +51,9 @@ app.listen(port, async (err) => {
     iniciarVigiaDosCheckers();
   }
 });
+
+// FORA do callback do listen, de propósito: `app.listen()` devolve o servidor
+// na hora, e o callback só roda depois de ensureSchema()/bootstrap. Armar lá
+// dentro deixaria o boot inteiro -- o trecho mais lento -- sem handler, que é
+// justamente quando um deploy encavalado manda o SIGTERM.
+armarDesligamentoGracioso(server);
