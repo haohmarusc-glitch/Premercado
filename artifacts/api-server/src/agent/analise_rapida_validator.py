@@ -335,6 +335,17 @@ _COMPARA_AO_ATUAL = (r"pr[óo]xim[oa]\s+(?:a|ao|d[ao]|d[eo])|similar\s+a|"
                      r"parecid[oa]\s+(?:a|com)|compat[íi]vel\s+com|"
                      r"em\s+linha\s+com|perto\s+d[eo]|na\s+mesma\s+ordem")
 
+# "a reação média ... no dia do anúncio" -- rotula a ESTATÍSTICA AGREGADA
+# (close_pct_mean/gap_pct_mean) como se pertencesse à sessão do anúncio.
+# Para AMC essas médias vêm da sessão SEGUINTE (a própria tabela marca com
+# ◂); o número costuma estar certo, o QUANDO é que está errado. Duas ordens
+# de palavra porque o modelo escreve as duas ("a reação média ... no dia do
+# anúncio" e "no dia do anúncio, a reação média ...").
+_REACAO_MEDIA_E_ANUNCIO = (
+    r"rea[cç][ãa]o\s+m[ée]dia[^.\n]{0,40}?dia\s+d[oe]\s+anuncio"
+    r"|dia\s+d[oe]\s+anuncio[^.\n]{0,40}?rea[cç][ãa]o\s+m[ée]dia"
+)
+
 # O nome do run-up escrito por extenso. Quando ele aparece na frase, o texto
 # está DISTINGUINDO os dois conceitos, e citar o número do run-up ali é a
 # redação que o SYSTEM pede -- não o erro que a checagem procura.
@@ -1089,6 +1100,33 @@ def validar_analise(texto, dados=None) -> list:
                         f"Trecho: “{frase.strip()[:120]}”.")
                     break
 
+    # ── 18. reação média atribuída ao "dia do anúncio" (AMC) ────────────────
+    #
+    # MRVL, 27/08/2026: "a reação média no dia do anúncio foi de +1.22% no
+    # fechamento, com um gap médio de abertura de -0.29%." Os dois números
+    # batem com `close_pct_mean`/`gap_pct_mean` -- mas para um papel AMC
+    # essas médias vêm da sessão SEGUINTE (a própria tabela marca com ◂),
+    # não do dia do anúncio. Diferente do check 15 (que pega um número
+    # ISOLADO chamado de reação): aqui a ESTATÍSTICA AGREGADA inteira leva
+    # o rótulo errado -- o número costuma estar certo, o QUANDO é que não
+    # está.
+    if isinstance(eventos_reacao, list) and eventos_reacao:
+        evento_amc = eventos_reacao[0]
+        if isinstance(evento_amc, dict) and evento_amc.get("janela_reacao") == "seguinte":
+            for frase in frases(prosa_sa):
+                if not re.search(_REACAO_MEDIA_E_ANUNCIO, frase):
+                    continue
+                if afirmacao_negada(frase, _REACAO_MEDIA_E_ANUNCIO):
+                    continue
+                add("ERRO", "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO",
+                    f"chama a estatística de reação média de 'no dia do "
+                    f"anúncio', mas este papel reporta depois do "
+                    f"fechamento (AMC) -- a sessão que precifica o "
+                    f"resultado é a SEGUINTE, e é dela que vêm as médias "
+                    f"de fechamento/gap desta seção. "
+                    f"Trecho: “{frase.strip()[:120]}”.")
+                break
+
     return achados
 
 
@@ -1112,8 +1150,15 @@ def _bate_a_magnitude(citado: float, preco: float, nivel: float) -> bool:
 # dado, e apontar contra o `yearHigh` seria acusar o texto de dizer o que ele
 # nao disse.
 _DISTANCIA_DA_FAIXA = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*%\s*(?:acima|abaixo|d[eo]|da)\s+"
-    r"(?:d[ao]s?\s+)?(m[áa]xima|m[íi]nima|topo|fundo)"
+    # MRVL, 27/08/2026 (2ª rodada): "36.62% DISTANTE de sua máxima" escapou
+    # -- "distante" faltava na alternativa, e "sua" entre a preposição e o
+    # substantivo quebrava o casamento mesmo com "distante" adicionado. O
+    # ERRO era o MESMO número (36,62%, base trocada) que a 1ª rodada já
+    # tinha pego com "abaixo da máxima" -- a checagem escapou só porque a
+    # 2ª rodada disse a MESMA coisa com outras palavras.
+    r"(\d+(?:[.,]\d+)?)\s*%\s*(?:acima|abaixo|distante)?\s*(?:d[eo]|da)\s+"
+    r"(?:d[ao]s?\s+|sua\s+|pr[óo]pria\s+|sua\s+pr[óo]pria\s+)?"
+    r"(m[áa]xima|m[íi]nima|topo|fundo)"
     r"(?!\s+(?:do\s+dia|di[áa]ri\w+|intrad\w+|da\s+sess[ãa]o))",
     re.IGNORECASE)
 
