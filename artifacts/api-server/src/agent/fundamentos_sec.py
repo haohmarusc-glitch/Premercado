@@ -168,6 +168,48 @@ TAGS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Palavras que identificam um tag como "da mesma família" de um conceito.
+# Servem só para o DIAGNÓSTICO: quando um conceito sai indisponível, a
+# mensagem lista os tags parecidos que existem no payload e não estão em
+# `TAGS`, para a próxima lacuna de cobertura se resolver com uma leitura em
+# vez de um round-trip de investigação.
+#
+# Motivada pela MRVL (28/08/2026): o D&A saiu "0 trimestre(s) utilizável(is)"
+# e a mensagem não dizia nem qual tag foi usado nem o que mais havia -- para
+# descobrir era preciso rodar um script à parte contra a SEC.
+PISTAS: dict[str, tuple[str, ...]] = {
+    "receita": ("Revenue", "Sales"),
+    "lucro_liquido": ("NetIncome", "ProfitLoss"),
+    "operacional": ("OperatingIncome",),
+    "dep_amort": ("Depreciation", "Amortization"),
+    "caixa_operacional": ("OperatingActivities",),
+    "capex": ("PaymentsToAcquire",),
+    "patrimonio": ("StockholdersEquity",),
+    "caixa": ("Cash",),
+    "divida_curta": ("Debt",),
+    "divida_longa": ("Debt",),
+}
+
+
+def _tags_parecidos(dados: dict, conceito: str) -> list[str]:
+    """Tags da mesma família presentes no payload e fora de `TAGS`."""
+    facts = ((dados.get("facts") or {}).get("us-gaap") or {})
+    pistas = PISTAS.get(conceito, ())
+    conhecidos = set(TAGS.get(conceito, ()))
+    achados = [t for t in facts
+               if t not in conhecidos and any(p in t for p in pistas)]
+    return sorted(achados)[:8]
+
+
+def _com_pistas(motivo: str, dados: dict, conceito: str) -> str:
+    """Anexa ao motivo os tags parecidos disponíveis, quando houver."""
+    outros = _tags_parecidos(dados, conceito)
+    if not outros:
+        return motivo
+    return (f"{motivo} · tags parecidos presentes e fora da lista: "
+            f"{', '.join(outros)}")
+
+
 class SemDado(Exception):
     """Conceito ausente ou não confiável. Vira `indisponivel` com motivo --
     nunca um número estimado."""
@@ -311,7 +353,56 @@ def _ttm(fatos: list[dict]) -> tuple[float, dict]:
             for t in janela
         ],
     }
+
+    # Conferência contra o número ANUAL publicado, quando a janela do TTM
+    # coincide com um exercício.
+    #
+    # É o único ponto onde a nossa aritmética pode ser checada contra um valor
+    # que a empresa publicou pronto -- e ele importa mais justamente onde o
+    # risco é maior: o fluxo de caixa do 10-Q é SEMPRE acumulado, nunca
+    # trimestre isolado, então quase todo trimestre de CFO e capex sai de uma
+    # subtração nossa. Na AOSL, 3 dos 4 vieram assim, e o CFO somou -16,3 mi
+    # -- caixa operacional negativo no ano é possível, mas é exatamente o tipo
+    # de número que ninguém consegue distinguir de erro de diferenciação.
+    #
+    # Só dispara quando existe o anual do MESMO período: um TTM que atravessa
+    # dois exercícios (o caso comum fora do 4o trimestre) não tem contra o que
+    # conferir, e aí o silêncio é a resposta certa.
+    anual = _anual_equivalente(fatos, janela[0]["start"], janela[-1]["end"])
+    if anual is not None:
+        publicado = float(anual["val"])
+        folga = max(abs(publicado) * 0.001, 1.0)
+        if abs(total - publicado) > folga:
+            raise SemDado(
+                f"a soma dos 4 trimestres ({total:,.0f}) não bate com o anual "
+                f"publicado para o mesmo período ({publicado:,.0f}, "
+                f"{anual.get('form')} {anual.get('accn')}) — a diferenciação "
+                f"do acumulado saiu errada em algum trimestre")
+        proveniencia["conferido_contra_anual"] = {
+            "valor": publicado, "form": anual.get("form"),
+            "accn": anual.get("accn"), "filed": anual.get("filed"),
+        }
     return total, proveniencia
+
+
+def _anual_equivalente(fatos: list[dict], inicio: str, fim: str) -> dict | None:
+    """O fato anual publicado que cobre exatamente esta janela, se existir.
+
+    Tolerância de poucos dias nas duas pontas: o primeiro trimestre da janela
+    pode ter `start` derivado do fim do anterior, o que desloca a data em um
+    dia sem mudar o período de fato.
+    """
+    alvo_ini, alvo_fim = _dia(inicio), _dia(fim)
+    candidatos = []
+    for chave, fato in _por_periodo(fatos).items():
+        if abs((_dia(chave[0]) - alvo_ini).days) > 5:
+            continue
+        if abs((_dia(chave[1]) - alvo_fim).days) > 5:
+            continue
+        if _duracao(chave) < TRIMESTRE_MAX_DIAS * 2:
+            continue  # é um dos trimestres da própria janela, não o anual
+        candidatos.append(fato)
+    return _mais_recente(candidatos) if candidatos else None
 
 
 def _instantaneo(fatos: list[dict], quando: _dt.date | None = None) -> tuple[float, dict]:
@@ -499,15 +590,24 @@ def multiplos(dados: dict, preco: float | None) -> dict:
     saida: dict[str, Any] = {"suportado": True, "metricas": {}}
     tags_usadas: dict[str, str] = {}
 
+    # Toda falha sai NOMEANDO o tag usado e listando os parecidos que ficaram
+    # de fora -- ver `PISTAS`. Sem isso, "0 trimestre(s) utilizável(is)" manda
+    # quem lê descobrir sozinho, contra a SEC, qual conceito faltou.
     def ttm(conceito):
         fatos, tag = _fatos(dados, conceito)
         tags_usadas[conceito] = tag
-        return _ttm(fatos)
+        try:
+            return _ttm(fatos)
+        except SemDado as e:
+            raise SemDado(_com_pistas(f"{e} (tag `{tag}`)", dados, conceito))
 
     def instante(conceito, quando=None):
         fatos, tag = _fatos(dados, conceito)
         tags_usadas[conceito] = tag
-        return _instantaneo(fatos, quando)
+        try:
+            return _instantaneo(fatos, quando)
+        except SemDado as e:
+            raise SemDado(_com_pistas(f"{e} (tag `{tag}`)", dados, conceito))
 
     receita, prov_rec, err_rec = _tenta(ttm, "receita")
     lucro, prov_luc, err_luc = _tenta(ttm, "lucro_liquido")

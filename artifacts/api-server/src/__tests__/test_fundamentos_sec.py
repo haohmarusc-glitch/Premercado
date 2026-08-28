@@ -636,3 +636,113 @@ def test_noncurrent_mais_curta_continua_somando():
     r = multiplos(_com_divida("LongTermDebtNoncurrent", 150.0, curta=40.0),
                   preco=20.0)
     assert r["metricas"]["ev_ebitda"]["proveniencia"]["ev"] == 2140
+
+
+# ═══ Conferência contra o anual publicado ═══════════════════════════════════
+#
+# O único ponto onde a nossa aritmética pode ser checada contra um número que
+# a empresa publicou pronto. Importa mais justamente onde o risco é maior: o
+# fluxo de caixa do 10-Q é SEMPRE acumulado, então quase todo trimestre de CFO
+# e capex sai de uma subtração nossa. Na AOSL (28/08/2026) foram 3 dos 4, e o
+# CFO somou -16,3 mi -- caixa operacional negativo no ano é possível, mas é
+# exatamente o tipo de número que ninguém distingue de erro de diferenciação.
+
+
+def _serie_ytd_com_anual(q1, q2, q3, q4, anual, ano=2025):
+    """YTD como o fluxo de caixa publica, mais o anual do 10-K."""
+    return [
+        _f(f"{ano}-01-01", f"{ano}-03-31", q1),
+        _f(f"{ano}-01-01", f"{ano}-06-30", q1 + q2),
+        _f(f"{ano}-01-01", f"{ano}-09-30", q1 + q2 + q3),
+        _f(f"{ano}-01-01", f"{ano}-12-31", anual, form="10-K"),
+    ]
+
+
+def test_ttm_confere_com_o_anual_e_registra_a_conferencia():
+    fatos = _serie_ytd_com_anual(10, 20, 30, 40, anual=100)
+    total, prov = _ttm(fatos)
+    assert total == 100
+    assert prov["conferido_contra_anual"]["valor"] == 100
+    assert prov["conferido_contra_anual"]["form"] == "10-K"
+
+
+def test_soma_que_nao_bate_com_o_anual_vira_indisponivel():
+    """Se a diferenciação errar em algum trimestre, a soma diverge do anual --
+    e o certo é não publicar número, não escolher um dos dois."""
+    fatos = [
+        _f("2025-01-01", "2025-03-31", 10),
+        _f("2025-04-01", "2025-06-30", 20),
+        _f("2025-07-01", "2025-09-30", 30),
+        _f("2025-10-01", "2025-12-31", 40),
+        # Anual do 10-K diz 999, mas os trimestres somam 100.
+        _f("2025-01-01", "2025-12-31", 999, form="10-K"),
+    ]
+    with pytest.raises(SemDado, match="não bate com o anual"):
+        _ttm(fatos)
+
+
+def test_diferenca_de_arredondamento_nao_reprova():
+    """Trimestres publicados INDEPENDENTEMENTE do anual (numa série YTD o Q4
+    sai do próprio anual e os dois batem por construção). Centavo de
+    arredondamento entre as duas fontes não pode derrubar a métrica."""
+    fatos = _quatro_trimestres([25, 25, 25, 25]) + [
+        _f("2025-01-01", "2025-12-31", 100.05, form="10-K")]
+    total, prov = _ttm(fatos)
+    assert total == 100
+    assert prov["conferido_contra_anual"]["valor"] == 100.05
+
+
+def test_ttm_sem_anual_correspondente_nao_tem_o_que_conferir():
+    """Só existe conferência quando a empresa publicou o anual daquele mesmo
+    período. Sem ele, o silêncio é a resposta certa, não um erro."""
+    fatos = _quatro_trimestres([10, 20, 30, 40], ano=2025) + \
+        _quatro_trimestres([50, 60, 70, 80], ano=2026)
+    total, prov = _ttm(fatos)
+    assert total == 260, "os quatro trimestres de 2026"
+    assert "conferido_contra_anual" not in prov
+
+
+def test_o_anual_nao_e_confundido_com_um_dos_trimestres():
+    """A janela do TTM começa e termina nos trimestres; o fato de 3 meses que
+    coincide com uma ponta não pode ser lido como 'o anual'."""
+    fatos = _quatro_trimestres([25, 25, 25, 25])
+    total, prov = _ttm(fatos)
+    assert total == 100
+    assert "conferido_contra_anual" not in prov
+
+
+# ── mensagem de indisponível que se diagnostica sozinha ─────────────────────
+
+
+def test_indisponivel_nomeia_o_tag_usado_e_os_parecidos():
+    """MRVL, 28/08/2026: o D&A saiu '0 trimestre(s) utilizável(is)' sem dizer
+    qual tag foi usado nem o que mais havia -- descobrir exigia um script à
+    parte contra a SEC."""
+    dados = _emissor()
+    # O tag conhecido existe, mas só com o exercício inteiro: nenhum trimestre.
+    dados["facts"]["us-gaap"]["DepreciationDepletionAndAmortization"] = {
+        "units": {"USD": [_f("2025-01-01", "2025-12-31", 20)]}}
+    # E há um parecido fora da lista, que é a pista que faltava.
+    dados["facts"]["us-gaap"]["AmortizationOfIntangibleAssets"] = {
+        "units": {"USD": _quatro_trimestres([5] * 4)}}
+    motivo = multiplos(dados, preco=20.0)["metricas"]["ev_ebitda"]["indisponivel"]
+    assert "DepreciationDepletionAndAmortization" in motivo
+    assert "AmortizationOfIntangibleAssets" in motivo
+    assert "fora da lista" in motivo
+
+
+def test_sem_parecido_a_mensagem_nao_inventa_pista():
+    dados = _emissor()
+    del dados["facts"]["us-gaap"]["DepreciationDepletionAndAmortization"]
+    motivo = multiplos(dados, preco=20.0)["metricas"]["ev_ebitda"]["indisponivel"]
+    assert "fora da lista" not in motivo
+
+
+def test_pista_ignora_tag_que_ja_esta_na_lista():
+    from agent.fundamentos_sec import _tags_parecidos
+    dados = {"facts": {"us-gaap": {
+        "DepreciationDepletionAndAmortization": {},   # já é conhecido
+        "AmortizationOfIntangibleAssets": {},         # pista de verdade
+        "Revenues": {},                               # outra família
+    }}}
+    assert _tags_parecidos(dados, "dep_amort") == ["AmortizationOfIntangibleAssets"]
