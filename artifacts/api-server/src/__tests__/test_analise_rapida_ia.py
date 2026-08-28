@@ -300,8 +300,11 @@ def test_fundamento_entra_no_prompt_e_nas_fontes(monkeypatch):
     assert "alvosAnalistas" in prompt and "119" in prompt
     assert "valuation" in prompt and "130" in prompt
     assert "Intel fecha acordo" in prompt
+    # O rótulo diz o que ENTROU, não a lista do que costuma entrar: os
+    # múltiplos vêm da SEC e o DCF da FMP, e cada metade pode faltar sozinha.
+    # Creditar tudo à FMP seria atribuição falsa em dose dupla.
     assert out["fontes"] == [
-        "alvos de analistas (yfinance)", "valuation/DCF (FMP)", "notícias do feed",
+        "alvos de analistas (yfinance)", "valuation: DCF (FMP)", "notícias do feed",
     ]
 
 
@@ -327,7 +330,7 @@ def test_valuation_com_erro_nao_entra(monkeypatch):
     monkeypatch.setattr(ia.tools, "get_fundamentals_valuation",
                         lambda t: {"configured": True, "error": "403 Client Error"})
     out = ia.analisar(_dados())
-    assert "valuation/DCF (FMP)" not in out["fontes"]
+    assert not any(f.startswith("valuation") for f in out["fontes"])
 
 
 def test_compactar_limita_manchetes_a_seis():
@@ -482,7 +485,19 @@ def test_nenhuma_regra_se_perdeu_na_consolidacao(descricao, marca):
 
 # Teto com folga sobre o tamanho atual: aperta o suficiente para uma regra nova
 # exigir consolidar outra, sem brigar por ajuste de redação.
-TETO_DO_SYSTEM_CHARS = 5200
+#
+# 28/08/2026: 5200 -> 5550. O que comprou os 323 chars não foi mais uma regra
+# de redação: os múltiplos deixaram a FMP e passaram a ser calculados dos
+# arquivamentos da SEC, o que trouxe quatro campos novos e uma armadilha de
+# UNIDADE -- `roe_pct_ttm: 91.84` lido como 0,92% erra por cem e não estoura
+# nada. Duas frases entraram na seção 4 (a lista de campos cujo nome engana,
+# que é onde elas pertencem) e meia linha na 3.
+#
+# O que NÃO foi feito, de propósito: comprimir regra alheia para abrir espaço.
+# Cada uma delas veio de um incidente que este teste não conhece, e encurtar
+# a redação de uma regra sem o contexto que a produziu é o jeito silencioso de
+# lhe tirar os dentes. Abrir espaço assim seria pior do que subir o teto.
+TETO_DO_SYSTEM_CHARS = 5550
 
 
 def test_o_prompt_nao_volta_a_inchar():
@@ -582,18 +597,26 @@ def test_camada_completa_nao_registra_ausencia(monkeypatch):
 
 
 def test_fmp_sem_chave_diz_isso_e_aponta_a_funcao(monkeypatch):
-    """O caso do SNDK: a FMP não está configurada. Antes isso saía como
-    silêncio; agora sai como motivo com endereço."""
+    """O caso do SNDK: nenhuma fonte de valuation respondeu. Antes isso saía
+    como silêncio; agora sai como motivo com endereço.
+
+    O motivo vem PRONTO da ferramenta, que é quem sabe qual das duas metades
+    falhou. Adivinhar aqui produzia "a FMP não está configurada" -- frase que
+    depois da troca de fonte estaria errada em quase todo caso, porque os
+    múltiplos não pedem chave nenhuma."""
     _f, fontes, ausencias = _fundamento_com(
         monkeypatch,
         info={"targetMeanPrice": 120.0, "regularMarketPrice": 100.0},
-        valuation={"configured": False},
+        valuation={"configured": True,
+                   "indisponivel": "CIK desconhecido para SNDK · "
+                                   "FMP_API_KEY não configurada"},
         noticias={"SNDK": [{"title": "manchete"}]},
     )
-    assert "valuation/DCF (FMP)" not in fontes
+    assert not any(f.startswith("valuation") for f in fontes)
     faltou = [a for a in ausencias if a["bloco"] == "valuation/DCF"]
     assert len(faltou) == 1
-    assert "chave de API" in faltou[0]["motivo"]
+    assert "CIK desconhecido" in faltou[0]["motivo"]
+    assert "FMP_API_KEY" in faltou[0]["motivo"]
     assert faltou[0]["funcao"] == "get_fundamentals_valuation"
 
 
@@ -612,8 +635,9 @@ def test_fonte_fora_do_ar_vira_ausencia_com_motivo_nao_excecao(monkeypatch):
 
 
 def test_cobertura_ausente_e_chave_ausente_nao_dizem_a_mesma_coisa(monkeypatch):
-    """Distinção que importa na hora de investigar: 'a FMP não cobre este
-    papel' não pede a mesma ação que 'a FMP não está configurada'."""
+    """Distinção que importa na hora de investigar: 'não há cobertura deste
+    papel' não pede a mesma ação que 'falta a chave'. Um painel vazio SEM
+    campo `indisponivel` é o caso em que nem a ferramenta soube dizer."""
     _f, _fo, ausencias = _fundamento_com(
         monkeypatch, info={}, valuation={"configured": True}, noticias={})
     motivo = next(a["motivo"] for a in ausencias if a["bloco"] == "valuation/DCF")

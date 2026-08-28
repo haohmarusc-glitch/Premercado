@@ -795,6 +795,11 @@ def multiplos(dados: dict, preco: float | None) -> dict:
             medio = (patrimonio + pat_antes) / 2
             m["roe"] = _metrica(lucro / medio, {
                 "formula": "lucro_liquido_TTM / patrimonio_MEDIO",
+                # A janela do NUMERADOR. Sem ela a proveniência do ROE só
+                # trazia a data do balanço, e um instante anunciado como
+                # período de uma métrica TTM é exatamente o tipo de meia
+                # verdade que a proveniência existe para não deixar passar.
+                "periodo": (prov_luc or {}).get("periodo"),
                 "patrimonio_atual": patrimonio, "patrimonio_ha_um_ano": pat_antes,
                 "de": prov_pat, "anterior_de": prov_antes,
                 "tags": [tags_usadas.get("lucro_liquido"), tags_usadas.get("patrimonio")],
@@ -849,6 +854,9 @@ def multiplos(dados: dict, preco: float | None) -> dict:
 
     m["divida_liquida_ebitda"] = (_metrica(divida_liquida / ebitda, {
         "formula": "(divida_total - caixa) / EBITDA_TTM",
+        # Mesma razão do ROE: dívida e caixa são instantes, o EBITDA é TTM, e
+        # a janela do denominador é a que data a métrica.
+        "periodo": (prov_op or {}).get("periodo"),
         "divida_liquida": divida_liquida, "ebitda_TTM": ebitda,
         "caixa_de": prov_caixa,
     }) if divida_liquida is not None and ebitda else _metrica(
@@ -905,10 +913,85 @@ def _crescimento_ttm(dados: dict) -> tuple[float, dict]:
     return atual / anterior - 1.0, {
         "formula": "receita_TTM / receita_TTM_ha_um_ano - 1",
         "receita_TTM": atual, "receita_TTM_anterior": anterior,
+        # O arquivamento do último trimestre da janela atual: é ele que data
+        # o número. Sem isto o crescimento era a única das oito métricas a
+        # sair sem formulário nem accession -- conferível só de palavra.
+        "arquivamento": {"form": tris[-1].get("form"),
+                         "accn": tris[-1].get("accn"),
+                         "filed": tris[-1].get("filed")},
         "periodo_atual": f"{tris[-4]['start']}..{tris[-1]['end']}",
         "periodo_anterior": f"{tris[-8]['start']}..{tris[-5]['end']}",
         "tags": [tag],
     }
+
+
+# ── Proveniência em uma linha ─────────────────────────────────────────────────
+#
+# A proveniência completa é aninhada e grande: cada métrica carrega até quatro
+# trimestres, cada um com form/accn/filed, mais o instantâneo do balanço e a
+# conferência contra o anual. Isso é o que se quer para CONFERIR um número
+# contra o arquivamento -- e é demais para caber num prompt junto de outras
+# oito métricas.
+#
+# `fonte_curta` condensa sem perder o que a restrição pede: período, formulário,
+# accession, data do arquivamento e tags. O arquivamento escolhido é o MAIS
+# RECENTE que a métrica tocou -- é ele que responde "de quando é este número".
+def _arquivamentos(no: Any, achados: list[dict]) -> None:
+    """Coleta todo {form, accn, filed} em qualquer profundidade."""
+    if isinstance(no, dict):
+        if no.get("accn") and no.get("filed"):
+            achados.append(no)
+        for v in no.values():
+            _arquivamentos(v, achados)
+    elif isinstance(no, (list, tuple)):
+        for v in no:
+            _arquivamentos(v, achados)
+
+
+def _periodo_de(prov: dict) -> str | None:
+    """`periodo` do TTM, ou `data` do instantâneo, onde quer que esteja."""
+    for chave in ("periodo", "periodo_atual", "data"):
+        if prov.get(chave):
+            return str(prov[chave])
+    for v in prov.values():
+        if isinstance(v, dict):
+            achado = _periodo_de(v)
+            if achado:
+                return achado
+    return None
+
+
+def fonte_curta(metrica: dict) -> str | None:
+    """Uma linha com a origem do número, ou None se a métrica não tem valor.
+
+    Existe porque a restrição de proveniência não vale nada se o número chega
+    ao relatório e a origem fica só no JSON de depuração: quem lê a análise
+    precisa poder pedir o 10-Q certo sem abrir o repositório.
+    """
+    prov = metrica.get("proveniencia")
+    if not isinstance(prov, dict) or metrica.get("valor") is None:
+        return None
+    achados: list[dict] = []
+    _arquivamentos(prov, achados)
+    partes: list[str] = []
+    if achados:
+        # O mais recente entre os que a métrica tocou: um TTM cruza quatro
+        # arquivamentos, e é o último que data o número.
+        ultimo = max(achados, key=lambda f: (str(f.get("filed") or ""),
+                                             str(f.get("accn") or "")))
+        partes.append(f"{ultimo.get('form') or '?'} accn {ultimo.get('accn')}"
+                      f" arquivado em {ultimo.get('filed')}")
+    periodo = _periodo_de(prov)
+    if periodo:
+        # Intervalo tem ".."; instantâneo é uma data só. Chamar o balanço do
+        # P/VP de "período" contradiria, na mesma linha, o que a métrica faz
+        # -- patrimônio é estoque, e não se soma ao longo do tempo.
+        partes.append((f"período {periodo}" if ".." in periodo
+                       else f"posição em {periodo}"))
+    tags = [t for t in (prov.get("tags") or []) if t]
+    if tags:
+        partes.append("tags " + ", ".join(dict.fromkeys(tags)))
+    return " · ".join(partes) or None
 
 
 @cached("companyfacts:{0}", ttl=86400)

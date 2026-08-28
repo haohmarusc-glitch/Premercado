@@ -147,23 +147,33 @@ class TestEarningsTranscript:
 
 
 class TestFundamentalsValuation:
-    def test_returns_not_configured_without_api_key(self, monkeypatch):
+    """Aqui fica só a metade que ainda é da FMP -- o DCF. Os oito múltiplos
+    saíram para a SEC em 28/08/2026 e têm arquivo próprio
+    (`test_valuation_ativado.py`), que exercita o cálculo de verdade em vez
+    de um payload da FMP. Estes testes isolam a SEC de propósito: o que
+    respondem é "o DCF continua funcionando sozinho"."""
+
+    @pytest.fixture(autouse=True)
+    def _sem_sec(self, monkeypatch):
+        from agent import fundamentos_sec
+        monkeypatch.setattr(fundamentos_sec, "para_ticker",
+                            lambda t, preco=None: {"ticker": t, "erro": "SEC fora"})
+
+    def test_sem_chave_da_fmp_o_dcf_fica_indisponivel_com_motivo(self, monkeypatch):
+        # `configured` era "a FMP tem chave"; hoje só o DCF depende dela, e
+        # devolver configured=false faria a tela descartar múltiplos prontos.
         monkeypatch.delenv("FMP_API_KEY", raising=False)
         result = tools.get_fundamentals_valuation("NVDA")
-        assert result["configured"] is False
+        assert result["configured"] is True
+        assert result["dcf_fair_value"] is None
+        assert "FMP_API_KEY" in result["dcf_indisponivel"]
 
     def test_computes_implied_upside(self, monkeypatch):
         monkeypatch.setenv("FMP_API_KEY", "test-key")
         dcf_payload = [{"symbol": "NVDA", "dcf": 220.0, "Stock Price": 200.0}]
-        metrics_payload = [{"peRatioTTM": 45.2, "pbRatioTTM": 30.1, "roeTTM": 0.9, "evToEbitdaTTM": 40.0}]
-
-        def fake_get(url, params=None, timeout=None):
-            if "discounted-cash-flow" in url:
-                return _FakeResponse(dcf_payload)
-            return _FakeResponse(metrics_payload)
 
         with mock.patch.object(tools, "SESSION") as mreq:
-            mreq.get.side_effect = fake_get
+            mreq.get.return_value = _FakeResponse(dcf_payload)
             result = tools.get_fundamentals_valuation("NVDA")
         assert result["configured"] is True
         assert result["dcf_fair_value"] == 220.0
@@ -174,15 +184,12 @@ class TestFundamentalsValuation:
         # "dcf", e sem "Stock Price"; o preço precisa cair pro yfinance.
         monkeypatch.setenv("FMP_API_KEY", "test-key")
         dcf_payload = {"symbol": "NVDA", "equityValuePerShare": 220.0}
-        metrics_payload = {"peRatio": 45.2, "pbRatio": 30.1}
         calls = []
 
         def fake_get(url, params=None, timeout=None):
             calls.append(url)
             assert "/stable/" in url
-            if "discounted-cash-flow" in url:
-                return _FakeResponse(dcf_payload)
-            return _FakeResponse(metrics_payload)
+            return _FakeResponse(dcf_payload)
 
         fake_fast_info = type("FastInfo", (), {"last_price": 200.0})()
         fake_ticker = type("Ticker", (), {"fast_info": fake_fast_info})()
@@ -194,9 +201,11 @@ class TestFundamentalsValuation:
         assert result["dcf_fair_value"] == 220.0
         assert result["current_price"] == 200.0
         assert result["dcf_implied_upside_pct"] == 10.0
-        assert result["pe_ratio_ttm"] == 45.2
-        assert result["dcf_implied_upside_pct"] == 10.0
-        assert result["pe_ratio_ttm"] == 45.2
+        # Uma chamada só: `key-metrics-ttm` respondia 402 (o plano da conta
+        # não o cobre), e continuar chamando gastaria cota para receber uma
+        # recusa. Os múltiplos não passam mais por aqui.
+        assert len(calls) == 1, calls
+        assert "discounted-cash-flow" in calls[0]
 
 
 class TestInsiderTrades:
