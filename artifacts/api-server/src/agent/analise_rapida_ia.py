@@ -471,8 +471,22 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
             # FMP, e a frase estaria errada em quase todo caso.
             _faltou("valuation", val["indisponivel"])
         else:
+            # `multiplos_fontes` fica FORA daqui. É o mapa de accession por
+            # métrica -- 1.262 chars de proveniência que nesta tela não têm
+            # leitor nenhum: `analisar()` devolve markdown, usage, fontes e
+            # avisos, e o `_fundamento` inteiro nunca chega à página. Ele
+            # servia só para ocupar o prompt, e ocupava tanto que empurrava a
+            # camada fundamental para fora do teto de 14 mil chars -- foi
+            # assim que a NVDA saiu dizendo que não tinha valuation enquanto a
+            # linha de fontes anunciava que tinha.
+            #
+            # A proveniência continua inteira em `get_fundamentals_valuation`,
+            # que é a superfície onde o agente pode citar o 10-Q. `fonte` (no
+            # singular) fica: são 65 chars dizendo que os números saíram de
+            # arquivamento da SEC, o que o texto pode querer mencionar.
             limpo = {k: v for k, v in val.items()
-                     if k not in ("configured", "ticker") and v is not None}
+                     if k not in ("configured", "ticker", "multiplos_fontes")
+                     and v is not None}
             if limpo:
                 fundamento["valuation"] = limpo
                 fontes.append(_rotulo_da_valuation(val))
@@ -620,8 +634,21 @@ def _niveis_ordenados(dados: dict, preco: float | None) -> list[dict] | None:
     return sorted(niveis, key=lambda n: n["valor"], reverse=True)
 
 
-def _compactar(dados: dict) -> str:
-    """JSON dos painéis com manchetes sanitizadas e teto de tamanho."""
+# Quem cai primeiro quando o payload não cabe. A ordem é escolhida, não
+# herdada da ordem do dicionário: `reacaoEarnings` é o maior bloco e tem tela
+# própria ("use a tela Reação a Earnings"), então perdê-lo tem para onde
+# apontar; `fundamento` vai por último porque é o único que não se recalcula
+# de dados locais -- ele custa três chamadas de rede para voltar.
+_ORDEM_DE_SACRIFICIO = ("reacaoEarnings", "niveisOrdenados", "niveis",
+                        "tecnica", "tendencia", "fundamento")
+
+
+def _compactar(dados: dict) -> tuple:
+    """(JSON dos painéis, blocos que não couberam).
+
+    Manchetes sanitizadas e teto de tamanho. O teto corta por BLOCO INTEIRO,
+    nunca por caractere: meio JSON não é JSON.
+    """
     trend = dados.get("trend") or None
     if isinstance(trend, dict) and isinstance(trend.get("news"), dict):
         destaques = trend["news"].get("destaques") or []
@@ -648,7 +675,44 @@ def _compactar(dados: dict) -> str:
         "fundamento": dados.get("_fundamento") or None,
     }
     texto = json.dumps(payload, ensure_ascii=False)
-    return texto[:MAX_DADOS_CHARS]
+    if len(texto) <= MAX_DADOS_CHARS:
+        return texto, []
+
+    # Cortar por CARACTERE entrega ao modelo um JSON que não fecha -- e come
+    # sempre a última chave do dicionário, que era `fundamento`. Duas coisas
+    # ruins de uma vez, e as duas caladas:
+    #
+    #   1. o modelo recebe um payload inválido e tem que adivinhar o resto;
+    #   2. a camada que custou REDE para coletar (yfinance, SEC, feed) é
+    #      justamente a que cai, e cai por acidente de ordenação -- ninguém
+    #      escolheu que ela fosse a mais descartável.
+    #
+    # Incidente real (NVDA, 28/08/2026): a análise saiu dizendo "os dados de
+    # fundamento e valuation não estavam disponíveis" enquanto a linha de
+    # fontes da MESMA tela anunciava que os três blocos vieram. O modelo
+    # estava certo sobre o que RECEBEU; o validador, que lê o dicionário
+    # inteiro, o reprovou por negar dado presente. Os dois liam coisas
+    # diferentes, e o texto pagou.
+    #
+    # Agora o corte é por BLOCO, em ordem declarada, e sai dito: `reacaoEarnings`
+    # primeiro porque é o maior e tem tela própria dedicada a ele; `fundamento`
+    # por último porque é o único que não se recalcula, se re-busca.
+    omitidos = []
+    for chave in _ORDEM_DE_SACRIFICIO:
+        if not payload.get(chave):
+            continue
+        payload[chave] = None
+        omitidos.append(chave)
+        # `_blocosOmitidos` vai no payload para o modelo saber a diferença
+        # entre "não veio" e "não coube" -- sem isso ele só pode inventar ou
+        # negar, e negar foi o que aconteceu.
+        payload["_blocosOmitidos"] = omitidos
+        texto = json.dumps(payload, ensure_ascii=False)
+        if len(texto) <= MAX_DADOS_CHARS:
+            return texto, omitidos
+    # Nem o mínimo coube: aí sim a fatia, para não estourar o teto. Chegar
+    # aqui é sintoma de teto pequeno demais, não de payload gordo.
+    return texto[:MAX_DADOS_CHARS], omitidos
 
 
 def _mensagens(conteudo: str, correcao: str = "") -> list:
@@ -711,7 +775,17 @@ def analisar(dados: dict) -> dict:
     # por dentro, e o Node matou o processo aos 150s com stdoutParcial=0 -- sem
     # análise e sem erro legível.
     client.definir_orcamento(_INICIO + _ORCAMENTO_TOTAL_S, _LLM_TIMEOUT_S)
-    conteudo = f"Dados calculados para {ticker}:\n\n{_compactar(dados)}"
+    compacto, omitidos = _compactar(dados)
+    if omitidos:
+        # O validador julga contra `dados`, o modelo escreve a partir do
+        # payload. Quando os dois divergem, quem apanha é o texto -- então a
+        # divergência viaja junto, e o validador para de cobrar bloco que o
+        # modelo nunca recebeu.
+        dados = {**dados, "_blocosOmitidos": omitidos}
+        print(f"[analise_rapida_ia] payload nao coube em {MAX_DADOS_CHARS} "
+              f"chars; blocos omitidos: {', '.join(omitidos)}",
+              file=sys.stderr, flush=True)
+    conteudo = f"Dados calculados para {ticker}:\n\n{compacto}"
 
     # Modelo fraco da cadeia devolvendo TOCO (resposta de uma linha) é falha
     # conhecida — playbook §4. Antes isso virava erro na tela e o usuário

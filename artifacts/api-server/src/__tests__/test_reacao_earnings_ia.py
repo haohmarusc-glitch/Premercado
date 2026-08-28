@@ -286,3 +286,21 @@ def test_as_correlacoes_entram_antes_da_chamada():
     i_corr = next(i for i, l in enumerate(codigo) if "_correlacoes_da_cesta(" in l and "def " not in l)
     i_create = next(i for i, l in enumerate(codigo) if "client.create(" in l)
     assert i_corr < i_create
+
+
+def test_cesta_que_nao_cabe_perde_ticker_inteiro_e_diz_quantos():
+    """O docstring de `_compactar` já nomeava o risco -- "comparação
+    silenciosamente incompleta é pior que comparação menor" -- mas a última
+    linha fatiava por caractere e fazia exatamente isso, além de entregar um
+    JSON que não fecha.
+
+    Mesmo defeito que o `_compactar` da análise rápida tinha, achado no dia em
+    que ele comeu a camada fundamental da NVDA."""
+    gigante = [_resultado(f"T{i}") for i in range(400)]
+    texto = mod._compactar(gigante)
+    assert len(texto) <= mod.MAX_DADOS_CHARS
+    dados = json.loads(texto)  # não pode ser meio JSON
+    assert dados[-1]["_tickersOmitidos"] > 0
+    # Cada item que sobrou é um ticker INTEIRO, não um pedaço.
+    assert all("ticker" in d for d in dados[:-1])
+    assert len(dados) - 1 + dados[-1]["_tickersOmitidos"] == 400

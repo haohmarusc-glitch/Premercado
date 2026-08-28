@@ -87,7 +87,7 @@ def test_sem_nenhum_preco_devolve_none():
 
 
 def test_preco_canonico_entra_no_payload_do_prompt():
-    texto = _compactar(_payload(niveis=269.87, trend=277.68))
+    texto, _omitidos = _compactar(_payload(niveis=269.87, trend=277.68))
     payload = json.loads(texto)
     assert payload["precoAtual"]["valor"] == pytest.approx(269.87)
     assert payload["precoAtual"]["fonte"] == "niveis"

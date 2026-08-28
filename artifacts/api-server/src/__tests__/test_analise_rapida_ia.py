@@ -337,7 +337,7 @@ def test_compactar_limita_manchetes_a_seis():
     dados = _dados(trend={"news": {"destaques": [
         {"title": f"m{i}", "tone": "neutro"} for i in range(12)
     ]}})
-    texto = ia._compactar(dados)
+    texto, _omitidos = ia._compactar(dados)
     assert texto.count('"title"') == 6
 
 
@@ -699,3 +699,87 @@ def test_camada_completa_nao_manda_chave_vazia_pra_tela(monkeypatch):
     monkeypatch.setattr(ia, "_buscar_fundamento", lambda _t: ({}, ["x"], []))
 
     assert "ausencias" not in ia.analisar(_dados())
+
+
+# ═══ 28/08/2026 — NVDA: a análise negou a camada que a tela anunciava ═══════
+#
+# A tela mostrava, na mesma página:
+#
+#   linha de fontes: "alvos de analistas (yfinance), valuation: múltiplos TTM
+#                     (SEC/XBRL) + DCF (FMP), notícias do feed"
+#   prosa:           "os dados de fundamento e valuation, incluindo alvos de
+#                     analistas e múltiplos de mercado, não estavam
+#                     disponíveis para este ativo"
+#   validador:       [ERRO] ANALISE_NEGA_DADO_PRESENTE
+#
+# Três afirmações contraditórias, e nenhuma mentindo. `_compactar` fatiava o
+# JSON por CARACTERE, e `fundamento` era a última chave do dicionário: a
+# camada caía inteira, calada, e o que sobrava nem era JSON válido. O modelo
+# escreveu a verdade sobre o que recebeu; o validador, que lê o dicionário
+# coletado, o reprovou.
+#
+# O gatilho foi meu: a ativação dos múltiplos da SEC pôs 1.262 chars de
+# accession por métrica no payload -- proveniência que nesta tela não tem
+# leitor nenhum, porque `analisar()` devolve markdown, e o `_fundamento`
+# nunca chega à página.
+
+def _payload_grande(**extra):
+    """Payload que estoura o teto, com a camada fundamental no fim."""
+    return _dados(
+        reaction={"eventos": [{"data": f"2026-0{i%9+1}-01", "runup": i,
+                               "gap": i, "fech": i, "d1": i,
+                               "ruido": "x" * 400} for i in range(40)]},
+        **extra)
+
+
+def test_payload_que_nao_cabe_continua_json_valido(monkeypatch):
+    """Meio JSON não é JSON. A fatia por caractere entregava ao modelo um
+    objeto que não fecha, e ele tinha que adivinhar o resto."""
+    texto, omitidos = ia._compactar(_payload_grande())
+    assert len(texto) <= ia.MAX_DADOS_CHARS
+    json.loads(texto), "o payload cortado tem que continuar analisável"
+    assert omitidos, "o cenário deveria ter estourado o teto"
+
+
+def test_a_camada_fundamental_nao_e_a_primeira_a_cair():
+    """Ela caía por acidente de ordenação -- era a última chave do dict, não
+    a mais descartável. É a única que não se recalcula de dado local: voltar
+    com ela custa três chamadas de rede."""
+    dados = _payload_grande()
+    dados["_fundamento"] = {"valuation": {"pe_ratio_ttm": 27.18},
+                            "alvosAnalistas": {"alvoMedio": 250.0}}
+    texto, omitidos = ia._compactar(dados)
+    assert "fundamento" not in omitidos, omitidos
+    assert "reacaoEarnings" in omitidos, "o maior bloco cai primeiro"
+    assert "27.18" in texto
+
+
+def test_bloco_que_nao_coube_sai_dito_no_payload():
+    """Sem isto o modelo só pode inventar ou negar -- e negar foi o que ele
+    fez. `_blocosOmitidos` é a diferença entre "não veio" e "não coube"."""
+    texto, omitidos = ia._compactar(_payload_grande())
+    assert json.loads(texto)["_blocosOmitidos"] == omitidos
+
+
+def test_payload_que_cabe_nao_omite_nada():
+    texto, omitidos = ia._compactar(_dados())
+    assert omitidos == []
+    assert "_blocosOmitidos" not in json.loads(texto)
+
+
+def test_o_mapa_de_accession_nao_entra_no_prompt(monkeypatch):
+    """1.262 chars de proveniência por métrica, num teto de 14 mil, para uma
+    tela que nunca os mostra. Eram eles que empurravam a camada fundamental
+    para fora -- a proveniência segue inteira em get_fundamentals_valuation,
+    que é onde o agente pode citar o 10-Q."""
+    _mock(monkeypatch)
+    monkeypatch.setattr(ia.tools, "get_fundamentals_valuation", lambda t: {
+        "configured": True, "pe_ratio_ttm": 27.18,
+        "multiplos_fonte": "SEC XBRL (companyfacts)",
+        "multiplos_fontes": {"pe_ratio_ttm": "10-Q accn 0001045810-26-000075"},
+    })
+    fundamento, _fontes, _aus = ia._buscar_fundamento("NVDA")
+    val = fundamento["valuation"]
+    assert val["pe_ratio_ttm"] == 27.18
+    assert "multiplos_fonte" in val, "a fonte no singular fica: são 65 chars"
+    assert "multiplos_fontes" not in val

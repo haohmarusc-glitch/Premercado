@@ -222,7 +222,28 @@ def _compactar(resultados: list) -> str:
         if r.get("stale"):
             item["stale"] = True
         enxuto.append(item)
-    return json.dumps(enxuto, ensure_ascii=False)[:MAX_DADOS_CHARS]
+
+    texto = json.dumps(enxuto, ensure_ascii=False)
+    if len(texto) <= MAX_DADOS_CHARS:
+        return texto
+    # O docstring acima já nomeava este risco -- tirar `events` normalmente
+    # basta, mas quando não basta a fatia por caractere fazia exatamente o que
+    # ele diz que não pode: deixava os últimos tickers de fora sem avisar. E
+    # pior do que o silêncio, entregava um JSON que não fecha.
+    #
+    # Mesmo defeito que o `_compactar` da análise rápida tinha, achado no dia
+    # em que ele comeu a camada fundamental da NVDA. Corrigir só onde doeu
+    # deixaria o irmão esperando a vez.
+    while enxuto:
+        enxuto.pop()
+        # O aviso vai DENTRO do payload: comparação incompleta que se anuncia
+        # é comparação menor; a que se cala é comparação errada.
+        texto = json.dumps(
+            enxuto + [{"_tickersOmitidos": len(resultados) - len(enxuto)}],
+            ensure_ascii=False)
+        if len(texto) <= MAX_DADOS_CHARS:
+            return texto
+    return texto[:MAX_DADOS_CHARS]
 
 
 def _mensagens(conteudo: str, correcao: str = "") -> list:
