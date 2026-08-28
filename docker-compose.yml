@@ -35,6 +35,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Folga para o dreno de `lib/graceful-shutdown.ts` terminar antes do
+    # SIGKILL. MAIOR que o DRENO_MAX_MS de lá (25s), senão o Docker mataria o
+    # dreno no meio e o desligamento gracioso não entregaria nada -- há teste
+    # fixando que os dois não divergem. O padrão do Docker são 10s, curtos
+    # demais para um turno de chat.
+    stop_grace_period: 40s
     depends_on:
       db:
         # `service_healthy`, não `service_started`: o ensureSchema() roda no
