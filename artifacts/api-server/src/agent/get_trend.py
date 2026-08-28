@@ -25,13 +25,21 @@ except ImportError:
 try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
     from agent.security import sanitize_ticker, friendly_error
     from agent.nomes_de_empresas import fala_do_papel
-    from agent.ciclo_volatilidade import _earnings_proximo
+    from agent.ciclo_volatilidade import _earnings_proximo, _SEM_EARNINGS
+    from agent.earnings_reaction_analysis import (
+        _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
+    )
+    from agent import earnings_dates as _earnings_dates
     from agent.http_retry import SESSION
     from agent import market_data_provider
 except ImportError:
     from security import sanitize_ticker, friendly_error
     from nomes_de_empresas import fala_do_papel
-    from ciclo_volatilidade import _earnings_proximo
+    from ciclo_volatilidade import _earnings_proximo, _SEM_EARNINGS
+    from earnings_reaction_analysis import (
+        _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
+    )
+    import earnings_dates as _earnings_dates
     from http_retry import SESSION
     import market_data_provider
 
@@ -223,7 +231,65 @@ MINIMO_PARA_ROTULAR = 3
 EARNINGS_VETO_DIAS = 2
 
 
-def balanco_que_veta(sinal: str, ticker: str) -> dict | None:
+def _reacao_do_ultimo_balanco_pendente(ticker: str, hist) -> dict | None:
+    """O balanço mais recente já divulgado ainda não teve sua sessão de
+    reação fechada?
+
+    `_earnings_proximo` só enxerga o calendário FUTURO do yfinance -- que
+    vira de trimestre assim que a empresa reporta. No exato momento em que a
+    proteção mais importa (o resultado saiu, mas o mercado ainda não
+    precificou a reação), o calendário já esqueceu do balanço.
+
+    Visto em produção (MRVL, 28/08/2026): balanço AMC em 27/08, a reação é o
+    pregão de 28/08 e ainda não tinha fechado -- e o sinal saiu "compra" sem
+    menção ao balanço, porque `_earnings_proximo` já apontava para o
+    trimestre seguinte (meses à frente, fora de EARNINGS_VETO_DIAS).
+
+    A sessão da reação vem da MESMA regra de `_janela_da_reacao`
+    (earnings_reaction_analysis.py): BMO reage no PRÓPRIO pregão do anúncio,
+    AMC reage no pregão SEGUINTE. `hist` -- já carregado por `for_ticker`
+    para os indicadores técnicos -- faz as vezes de calendário de pregões,
+    sem precisar de biblioteca de feriados: o primeiro pregão da série
+    depois do dia do anúncio já É o próximo pregão real.
+    """
+    if hist is None or hist.empty:
+        return None
+    t = ticker.upper()
+    if t.startswith("^") or t in _SEM_EARNINGS:
+        return None
+    try:
+        earnings, _fonte, _erro = _earnings_dates.buscar(
+            t, lambda: yf.Ticker(t).get_earnings_dates(limit=6), limit=6)
+        if earnings is None or earnings.empty:
+            return None
+        agora_ny = datetime.datetime.now(_NY_TZ)
+        agora = pd.Timestamp.now(tz=earnings.index.tz) if earnings.index.tz \
+            else pd.Timestamp.now()
+        passados = earnings[earnings.index < agora]
+        if passados.empty:
+            return None
+        ts = passados.index.max()
+        janela, _inferida = _janela_da_reacao(ts)
+        data_evento = ts.date()
+
+        if janela == "anuncio":
+            sessao_pendente = data_evento
+        else:
+            posteriores = [d for d in hist.index if d.date() > data_evento]
+            if not posteriores:
+                # balanço tão recente que o próprio pregão seguinte ainda não
+                # apareceu na série -- claramente pendente.
+                return {"data": str(data_evento), "tipo": "reacao_pendente"}
+            sessao_pendente = min(posteriores).date()
+
+        if _sessao_de_hoje_ainda_em_curso(sessao_pendente, agora_ny):
+            return {"data": str(data_evento), "tipo": "reacao_pendente"}
+        return None
+    except Exception:  # noqa: BLE001 — calendário indisponível não pode derrubar o sinal
+        return None
+
+
+def balanco_que_veta(sinal: str, ticker: str, hist=None) -> dict | None:
     """O balanço que veta este sinal direcional, ou None.
 
     A consulta ao calendário só acontece quando HÁ sinal para vetar: sem essa
@@ -236,7 +302,7 @@ def balanco_que_veta(sinal: str, ticker: str) -> dict | None:
     if proximo and proximo.get("dias") is not None \
             and proximo["dias"] <= EARNINGS_VETO_DIAS:
         return proximo
-    return None
+    return _reacao_do_ultimo_balanco_pendente(ticker, hist)
 
 
 def news_sentiment(ticker: str, max_items: int = 8) -> dict:
@@ -534,14 +600,19 @@ def for_ticker(ticker: str) -> dict:
             sinal, sinal_motivo = "aguardar", ("divergência técnico × notícias" if tech_dir != 0 and news_dir != 0 and tech_dir != news_dir else "sinais insuficientes")
 
         # ── Veto de balanço ──────────────────────────────────────────────────
-        balanco = balanco_que_veta(sinal, ticker)
+        balanco = balanco_que_veta(sinal, ticker, hist)
         if balanco:
             tecnico_dizia = sinal
             sinal = "aguardar"
-            sinal_motivo = (
-                f"balanço em {balanco['dias']} pregão(ões) ({balanco['data']}) "
-                f"— a reação ainda não ocorreu; o técnico sozinho dizia "
-                f"{tecnico_dizia}")
+            if balanco.get("tipo") == "reacao_pendente":
+                sinal_motivo = (
+                    f"balanço de {balanco['data']} ainda não teve a reação "
+                    f"precificada — o técnico sozinho dizia {tecnico_dizia}")
+            else:
+                sinal_motivo = (
+                    f"balanço em {balanco['dias']} pregão(ões) ({balanco['data']}) "
+                    f"— a reação ainda não ocorreu; o técnico sozinho dizia "
+                    f"{tecnico_dizia}")
 
         saida = {
             "ticker": ticker,
