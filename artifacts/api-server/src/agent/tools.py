@@ -15,6 +15,7 @@ from . import brt
 from .sentimento import (faixa as _faixa_sentimento,
                          interpretar as _interpretar_sentimento)
 from . import config
+from . import fundamentos_sec
 from . import get_alt_data as _alt_data
 from . import market_alerts as _ma
 from . import news_sources as _news_sources
@@ -2105,82 +2106,184 @@ def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
         return {"configured": True, "error": str(e)}
 
 
-@cached("fundamentals_valuation:{0}", ttl=21600)
-def get_fundamentals_valuation(ticker: str) -> dict:
-    """Valuation fundamentalista via Financial Modeling Prep -- tier grátis
-    de 250 requisições/dia. DCF (valor justo estimado) + múltiplos TTM
-    (P/L, P/VP, ROE, EV/EBITDA) -- nenhuma ferramenta do agente hoje calcula
-    valor justo ou compara múltiplos de valuation, só técnicos/opções/
-    sentimento. Complementa análises de longo prazo (o agente já cobre bem
-    timing de curto prazo via técnicos, mas não "está caro ou barato?").
+# Nome no painel <- chave do fundamentos_sec <- escala.
+#
+# O sufixo `_pct` não é enfeite: `roe_ttm: 0.9184` é um número que qualquer
+# leitor -- humano ou modelo -- escreve como "ROE de 0,92%", errando por cem
+# vezes. O repo já usa `dcf_implied_upside_pct` para percentual, então o nome
+# carrega a unidade e a ambiguidade não chega ao texto. Os quatro primeiros
+# são razões puras e ficam como estão.
+_MULTIPLOS_DA_SEC = (
+    ("pe_ratio_ttm", "pl", 1),
+    ("pb_ratio_ttm", "pvp", 1),
+    ("ev_to_ebitda_ttm", "ev_ebitda", 1),
+    ("net_debt_to_ebitda_ttm", "divida_liquida_ebitda", 1),
+    ("roe_pct_ttm", "roe", 100),
+    ("net_margin_pct_ttm", "margem_liquida", 100),
+    ("revenue_growth_pct_ttm", "crescimento_receita", 100),
+    ("fcf_yield_pct_ttm", "fcf_yield", 100),
+)
 
-    Usa a API "stable" da FMP (/stable/..., query params) -- a legada
-    (/api/v3/discounted-cash-flow/{ticker}) foi descontinuada pra contas
-    novas em 31/08/2025 (só quem já era assinante antes disso ainda
-    acessa, confirmado em produção via o log de erro da FMP). O preço
-    atual, se a FMP não devolver, cai pro yfinance (já é dependência do
-    projeto, sem custo extra) pra garantir que o upside % sempre calcula."""
-    try:
-        ticker = sanitize_ticker(ticker)
-    except ValueError as e:
-        return {"ticker": ticker, "error": str(e)}
+
+def _dcf_da_fmp(ticker: str) -> tuple:
+    """(valor_justo, preço da FMP, motivo da ausência) — só o DCF.
+
+    O DCF é o ÚNICO item deste painel que continua na FMP. Valor justo exige
+    WACC, que exige beta, prêmio de risco e custo de dívida: suposição
+    empilhada em suposição, e uma superfície grande para produzir exatamente
+    o que este repo passa o tempo caçando -- um número plausível e errado.
+    Ficou para decisão separada (ver o cabeçalho de fundamentos_sec.py).
+    """
     api_key = os.environ.get("FMP_API_KEY", "").strip()
     if not api_key:
-        return {
-            "configured": False,
-            "message": "FMP_API_KEY não configurada — cadastre-se em financialmodelingprep.com (tier grátis, 250 req/dia) para ativar.",
-        }
+        return None, None, ("FMP_API_KEY não configurada — só o DCF depende "
+                            "dela; os múltiplos vêm da SEC e não pedem chave")
     try:
-        dcf_resp = SESSION.get(
+        r = SESSION.get(
             "https://financialmodelingprep.com/stable/discounted-cash-flow",
             params={"symbol": ticker, "apikey": api_key},
             timeout=15,
         )
-        dcf_resp.raise_for_status()
-        dcf_body = dcf_resp.json() or []
-        dcf = (dcf_body[0] if dcf_body else {}) if isinstance(dcf_body, list) else dcf_body
+        r.raise_for_status()
+        corpo = r.json() or []
+        dcf = (corpo[0] if corpo else {}) if isinstance(corpo, list) else corpo
+        # Nomes de campo variaram entre a API legada e a stable.
+        valor = dcf.get("dcf") if dcf.get("dcf") is not None else dcf.get("equityValuePerShare")
+        preco = dcf.get("Stock Price") or dcf.get("stockPrice") or dcf.get("price")
+        if valor is None:
+            return None, preco, f"a FMP não devolveu valor justo para {ticker}"
+        return valor, preco, None
+    except Exception as e:
+        # Corpo da resposta traz o motivo real da FMP (402 = o plano da conta
+        # não cobre o endpoint, e não que ele tenha sido descontinuado);
+        # str(e) sozinho só traz "402 Client Error".
+        body = getattr(getattr(e, "response", None), "text", "")[:500]
+        print(f"[tools] DCF da FMP({ticker}): {type(e).__name__}: {e} | body={body}",
+              file=sys.stderr)
+        # Mascarado NA ORIGEM, não só no funil de ausências: este motivo agora
+        # viaja dentro do payload do modelo (`dcf_indisponivel`), um caminho
+        # que o `_faltou` do analise_rapida_ia não cobre. Foi assim que a
+        # chave da FMP vazou duas vezes -- mascarar na ponta deixa o caminho
+        # novo nascer sem máscara.
+        return None, None, mask_sensitive_data(f"a FMP respondeu com erro: {e}")
 
-        metrics_resp = SESSION.get(
-            "https://financialmodelingprep.com/stable/key-metrics-ttm",
-            params={"symbol": ticker, "apikey": api_key},
-            timeout=15,
-        )
-        metrics_resp.raise_for_status()
-        metrics_body = metrics_resp.json() or []
-        metrics = (metrics_body[0] if metrics_body else {}) if isinstance(metrics_body, list) else metrics_body
 
-        # Nomes de campo variaram entre a API legada e a stable -- tenta as
-        # duas variantes conhecidas antes de desistir.
-        dcf_value = dcf.get("dcf") if dcf.get("dcf") is not None else dcf.get("equityValuePerShare")
-        stock_price = dcf.get("Stock Price") or dcf.get("stockPrice") or dcf.get("price")
-        if stock_price is None:
-            try:
-                stock_price = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
-            except Exception:
-                stock_price = None
-        upside_pct = (
+@cached("fundamentals_valuation:{0}", ttl=21600)
+def get_fundamentals_valuation(ticker: str) -> dict:
+    """Valuation fundamentalista: múltiplos TTM calculados dos arquivamentos
+    da SEC + valor justo (DCF) da Financial Modeling Prep.
+
+    As duas metades têm fontes independentes, de propósito:
+
+    - **Múltiplos** (P/L, P/VP, ROE, EV/EBITDA, dívida líquida/EBITDA, margem,
+      crescimento de receita, FCF yield) saem do `companyfacts` da SEC, que é
+      o XBRL do próprio arquivamento -- a mesma fonte que o auditor assinou.
+      Não precisa de chave, não tem cota diária e não depende de provedor
+      nenhum continuar cobrindo o papel. Cada número vem com a proveniência
+      (período, formulário, accession, data do arquivamento e tags XBRL) em
+      `multiplos_fontes`, e o que não deu para calcular vem em
+      `multiplos_indisponiveis` COM O MOTIVO -- nunca estimado.
+    - **DCF** continua na FMP, e só ele.
+
+    Vieram da FMP até 28/08/2026, quando ela passou a responder 402 nos
+    endpoints de múltiplos: a chave é válida, o plano da conta é que não os
+    cobre (ver `_FMP_RECUSAS` em news_sources.py). Trocar de provedor pago
+    moveria a dependência de lugar; calcular dos números publicados a elimina.
+
+    Falha de um lado não derruba o outro: SEC fora do ar ainda devolve DCF, e
+    FMP sem chave ainda devolve os oito múltiplos.
+    """
+    try:
+        ticker = sanitize_ticker(ticker)
+    except ValueError as e:
+        return {"ticker": ticker, "error": str(e)}
+
+    dcf_value, preco_fmp, motivo_dcf = _dcf_da_fmp(ticker)
+
+    # UM preço para tudo. O upside do DCF é medido contra ele e o P/L é
+    # calculado com ele: se o painel mostrasse um preço e os múltiplos
+    # usassem outro, refazer a conta seria impossível -- e preço divergente
+    # entre painéis já custou uma análise inteira neste repo (o detector de
+    # divergência em analise_rapida_ia.py nasceu daquele dia).
+    stock_price = preco_fmp
+    if stock_price is None:
+        try:
+            stock_price = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
+        except Exception as e:  # noqa: BLE001
+            print(f"[tools] preço de {ticker} para valuation: {e}", file=sys.stderr)
+            stock_price = None
+
+    saida = {
+        "configured": True,
+        "ticker": ticker,
+        "current_price": stock_price,
+        "dcf_fair_value": dcf_value,
+        "dcf_implied_upside_pct": (
             round((dcf_value - stock_price) / stock_price * 100, 2)
             if dcf_value is not None and stock_price not in (None, 0)
             else None
-        )
-        return {
-            "configured": True,
-            "ticker": ticker,
-            "current_price": stock_price,
-            "dcf_fair_value": dcf_value,
-            "dcf_implied_upside_pct": upside_pct,
-            "pe_ratio_ttm": metrics.get("peRatioTTM") or metrics.get("peRatio"),
-            "pb_ratio_ttm": metrics.get("pbRatioTTM") or metrics.get("pbRatio"),
-            "roe_ttm": metrics.get("roeTTM") or metrics.get("returnOnEquityTTM") or metrics.get("roe"),
-            "ev_to_ebitda_ttm": metrics.get("evToEbitdaTTM") or metrics.get("evToEBITDATTM") or metrics.get("evToEbitda"),
-        }
-    except Exception as e:
-        # Corpo da resposta (se veio de um raise_for_status) costuma trazer o
-        # motivo real da FMP (chave inválida, endpoint fora do plano grátis
-        # etc.) -- str(e) sozinho só traz "403 Client Error" sem contexto.
-        body = getattr(getattr(e, "response", None), "text", "")[:500]
-        print(f"[tools] get_fundamentals_valuation({ticker}): {type(e).__name__}: {e} | body={body}", file=sys.stderr)
-        return {"configured": True, "error": str(e)}
+        ),
+    }
+    if motivo_dcf:
+        saida["dcf_indisponivel"] = motivo_dcf
+
+    try:
+        sec = fundamentos_sec.para_ticker(ticker, stock_price)
+    except Exception as e:  # noqa: BLE001
+        print(f"[tools] múltiplos da SEC({ticker}): {type(e).__name__}: {e}",
+              file=sys.stderr)
+        sec = {"erro": mask_sensitive_data(f"{type(e).__name__}: {e}")}
+
+    motivo_mult = None
+    if sec.get("erro"):
+        motivo_mult = f"os arquivamentos da SEC não vieram: {sec['erro']}"
+    elif sec.get("suportado") is False:
+        # Foreign private issuer: reporta em IFRS, com outro conjunto de tags.
+        # Adaptar em silêncio produziria número calculado sobre outro conceito.
+        motivo_mult = sec.get("motivo") or "emissor não suportado"
+
+    obtidos, indisponiveis, fontes = [], {}, {}
+    if motivo_mult:
+        indisponiveis = {nome: motivo_mult for nome, _, _ in _MULTIPLOS_DA_SEC}
+    else:
+        # A capitalização também entra com origem: ela é preço de hoje x
+        # ações da CAPA do arquivamento, e qual arquivamento foi esse é o que
+        # separa "ações em circulação" da média ponderada diluída.
+        cap = (sec.get("market_cap") or {}).get("valor")
+        if cap is not None:
+            saida["market_cap"] = cap
+            fonte_cap = fundamentos_sec.fonte_curta(sec["market_cap"])
+            if fonte_cap:
+                fontes["market_cap"] = fonte_cap
+        for nome, chave, escala in _MULTIPLOS_DA_SEC:
+            metrica = (sec.get("metricas") or {}).get(chave) or {}
+            valor = metrica.get("valor")
+            if valor is None:
+                indisponiveis[nome] = metrica.get("indisponivel") or "sem dado"
+                continue
+            saida[nome] = round(float(valor) * escala, 4 if escala == 1 else 2)
+            obtidos.append(nome)
+            fonte = fundamentos_sec.fonte_curta(metrica)
+            if fonte:
+                fontes[nome] = fonte
+    if indisponiveis:
+        saida["multiplos_indisponiveis"] = indisponiveis
+    if obtidos:
+        saida["multiplos_fonte"] = ("SEC XBRL (companyfacts), calculado dos "
+                                    "arquivamentos periódicos")
+    # Separado de `obtidos` de propósito: a capitalização pode sair sozinha
+    # (preço x ações da capa) sem que nenhum múltiplo feche, e a origem dela
+    # não pode cair junto -- mas também não autoriza anunciar múltiplos.
+    if fontes:
+        saida["multiplos_fontes"] = fontes
+
+    # Nem DCF nem um múltiplo sequer. Quem chama precisa do MOTIVO, não de um
+    # dicionário vazio: "a FMP não tem cobertura" era a única explicação que
+    # a tela conseguia dar, e hoje ela quase sempre estaria errada.
+    if dcf_value is None and not obtidos:
+        saida["indisponivel"] = " · ".join(
+            m for m in (motivo_mult, motivo_dcf) if m) or f"sem cobertura de {ticker}"
+    return saida
 
 
 def get_insider_trades(ticker: str) -> dict:
@@ -3166,10 +3269,15 @@ TOOLS = [
     {
         "name": "get_fundamentals_valuation",
         "description": (
-            "Valuation fundamentalista via Financial Modeling Prep: valor justo estimado (DCF) e "
-            "upside implícito vs. preço atual, mais múltiplos TTM (P/L, P/VP, ROE, EV/EBITDA). "
-            "Nenhuma outra ferramenta calcula 'está caro ou barato'. Requer FMP_API_KEY (grátis, "
-            "250 req/dia); sem a chave, volta configured=false."
+            "Valuation fundamentalista. Múltiplos TTM calculados dos arquivamentos da SEC "
+            "(companyfacts/XBRL, sem chave e sem cota): P/L, P/VP, EV/EBITDA, dívida líquida/"
+            "EBITDA, ROE, margem líquida, crescimento de receita e FCF yield -- os quatro "
+            "últimos em PERCENTUAL (sufixo _pct). Mais valor justo estimado (DCF) e upside "
+            "implícito, estes ainda via Financial Modeling Prep e só eles dependem de "
+            "FMP_API_KEY. Nenhuma outra ferramenta calcula 'está caro ou barato'. O que não deu "
+            "para calcular vem em multiplos_indisponiveis COM O MOTIVO -- nunca estimado; a "
+            "origem de cada número (formulário, accession, data e tags XBRL) vem em "
+            "multiplos_fontes."
         ),
         "input_schema": {
             "type": "object",

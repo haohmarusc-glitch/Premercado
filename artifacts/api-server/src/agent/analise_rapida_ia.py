@@ -23,8 +23,10 @@ identificada:
 
   - alvos de analistas (`get_stock_data`/yfinance): consenso, alvo médio/
     alto/baixo, nº de analistas, upside implícito;
-  - valuation (`get_fundamentals_valuation`/FMP): DCF, P/L, P/VP, ROE,
-    EV/EBITDA — fail-open, sem FMP_API_KEY a seção some;
+  - valuation (`get_fundamentals_valuation`): oito múltiplos TTM
+    calculados dos arquivamentos da SEC (P/L, P/VP, EV/EBITDA, dívida
+    líquida/EBITDA, ROE, margem, crescimento de receita, FCF yield) +
+    DCF da FMP — fail-open, e as duas metades falham em separado;
   - manchetes recentes (`get_news`), sanitizadas.
 
 Cada bloco é opcional e falha em silêncio: fonte fora do ar vira ausência
@@ -250,7 +252,8 @@ SYSTEM = (
     "`dcf_implied_upside_pct` é calculado contra `valuation.current_price`, NÃO "
     "contra `precoAtual.valor`. Diferindo os dois, nomeie a base ('6,7% sobre a "
     "base de US$ 225,01 do valuation'). Apresentá-lo como distância até o preço "
-    "atual soma dois números incompatíveis.\n\n"
+    "atual soma dois números incompatíveis. Múltiplos (SEC) e DCF (FMP) faltam "
+    "em separado: só o DCF ausente não é \"valuation indisponível\".\n\n"
 
     "## 4. Campos que não significam o que o nome sugere\n"
     "- R1/R2/S1/S2 são bandas estatísticas de volatilidade (preço ± reação "
@@ -258,6 +261,10 @@ SYSTEM = (
     "'piso' ou 'zona de defesa', nem os compare com alvo de analista como se "
     "medissem a mesma coisa. Suporte e resistência de verdade só a partir de "
     "máximas/mínimas e médias móveis presentes no JSON.\n"
+    "- Sufixo `_pct` já É percentual: `roe_pct_ttm: 91.84` é 91,84%, não "
+    "0,92%. Os outros múltiplos são razões, sem unidade — não use %.\n"
+    "- `multiplos_indisponiveis` é o que NÃO existe, com o motivo escrito. "
+    "Não estime, não deduza dos outros, não descreva como se tivesse vindo.\n"
     "- `rvolSignal` igual a `indefinido_abertura`: o pregão tem menos de 30 "
     "minutos e o RVOL está inflado pelo leilão de abertura. Não conclua nada "
     "sobre força compradora ou realização a partir dele; se mencionar, diga que "
@@ -319,6 +326,23 @@ def _motivo_curto(e: Exception) -> str:
     rotulo = type(e).__name__
     return f"{rotulo}: {texto[:120]}" if texto else rotulo
 
+
+
+def _rotulo_da_valuation(val: dict) -> str:
+    """O que ENTROU de fato, não a lista do que costuma entrar.
+
+    A linha de fontes é como o leitor mede a profundidade da análise. Depois
+    que os múltiplos passaram a ser calculados dos arquivamentos da SEC,
+    escrever "valuation/DCF (FMP)" seria atribuição falsa em dose dupla:
+    credita à FMP número que ela não deu, e anuncia um DCF que pode não ter
+    vindo. Cada metade tem fonte própria, então o rótulo pergunta a cada uma.
+    """
+    partes = []
+    if val.get("multiplos_fonte"):
+        partes.append("múltiplos TTM (SEC/XBRL)")
+    if val.get("dcf_fair_value") is not None:
+        partes.append("DCF (FMP)")
+    return "valuation: " + " + ".join(partes)
 
 # Onde cada bloco da camada fundamental e' BUSCADO. Quando um deles nao vem,
 # a tela mostra o nome da funcao e o arquivo -- ate aqui a ausencia so
@@ -432,18 +456,28 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
 
     try:
         val = tools.get_fundamentals_valuation(ticker) or {}
-        if not val.get("configured"):
-            _faltou("valuation", "a FMP não está configurada (falta a chave de API)")
-        elif val.get("error"):
-            _faltou("valuation", f"a FMP respondeu com erro: {val['error']}")
+        # `error` ANTES de `configured`: ticker recusado pelo sanitizador volta
+        # como {"ticker", "error"} sem `configured`, e na ordem anterior o
+        # primeiro ramo vencia -- a tela dizia "nenhuma fonte habilitada" e o
+        # motivo real (o ticker) ficava no dicionário, sem chegar a ninguém.
+        if val.get("error"):
+            _faltou("valuation", f"a busca falhou: {val['error']}")
+        elif not val.get("configured"):
+            _faltou("valuation", "nenhuma fonte de valuation está habilitada")
+        elif val.get("indisponivel"):
+            # O motivo vem PRONTO da ferramenta, que é quem sabe qual das duas
+            # metades falhou e por quê. Adivinhar aqui era o que produzia "a
+            # FMP não tem cobertura de X" -- hoje os múltiplos nem passam pela
+            # FMP, e a frase estaria errada em quase todo caso.
+            _faltou("valuation", val["indisponivel"])
         else:
             limpo = {k: v for k, v in val.items()
                      if k not in ("configured", "ticker") and v is not None}
             if limpo:
                 fundamento["valuation"] = limpo
-                fontes.append("valuation/DCF (FMP)")
+                fontes.append(_rotulo_da_valuation(val))
             else:
-                _faltou("valuation", f"a FMP não tem cobertura de {ticker}")
+                _faltou("valuation", f"sem cobertura de {ticker}")
     except Exception as e:  # noqa: BLE001
         print(f"[analise_rapida_ia] valuation indisponível: {e}", file=sys.stderr)
         _faltou("valuation", f"a busca falhou: {_motivo_curto(e)}")

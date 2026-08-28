@@ -117,11 +117,47 @@ def test_o_system_ancora_o_upside_do_DCF():
     assert "valuation.current_price" in mod.SYSTEM
 
 
-def test_o_upside_do_DCF_e_mesmo_ancorado_no_preco_da_valuation():
+def test_o_upside_do_DCF_e_mesmo_ancorado_no_preco_da_valuation(monkeypatch):
     """A regra do SYSTEM só é verdadeira enquanto o cálculo for esse. Se um dia
     o upside passar a usar o preço canônico, a instrução vira mentira -- e
-    mentira no prompt é pior que instrução ausente."""
-    import pathlib
-    fonte = (pathlib.Path(mod.__file__).parent / "tools.py").read_text(encoding="utf-8")
-    trecho = fonte.split("dcf_implied_upside_pct", 1)[0][-600:]
-    assert "(dcf_value - stock_price) / stock_price" in trecho
+    mentira no prompt é pior que instrução ausente.
+
+    Conferido pelo COMPORTAMENTO, não pelo texto do arquivo. A versão anterior
+    lia os 600 chars antes de `dcf_implied_upside_pct` em tools.py e procurava
+    a fórmula ali; ela quebrou quando a função foi reorganizada para separar
+    DCF de múltiplos, mesmo com o cálculo intacto. Um teste que reprova por
+    ordem de linhas ensina a ignorá-lo -- e ele guarda uma afirmação do prompt.
+    """
+    from unittest import mock
+
+    from agent import config as agent_config, fundamentos_sec, tools
+
+    monkeypatch.setattr(agent_config, "CACHE_ENABLED", False)
+    monkeypatch.setenv("FMP_API_KEY", "k" * 20)
+    # A SEC fora da conta: aqui só se pergunta contra QUE preço o upside é
+    # medido, e os múltiplos não participam dessa resposta.
+    monkeypatch.setattr(fundamentos_sec, "para_ticker",
+                        lambda t, preco=None: {"ticker": t, "erro": "fora do teste"})
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self): ...
+
+        def json(self):
+            return [{"dcf": 220.0, "Stock Price": 200.0}]
+
+    # O yfinance devolveria OUTRO preço. Se o upside fosse ancorado nele, daria
+    # 120% em vez de 10% -- e a instrução do SYSTEM estaria mentindo.
+    outro = type("T", (), {"fast_info": type("F", (), {"last_price": 100.0})()})()
+    with mock.patch.object(tools, "SESSION") as sess, \
+         mock.patch.object(tools.yf, "Ticker", return_value=outro):
+        sess.get.return_value = _Resp()
+        val = tools.get_fundamentals_valuation("NVDA")
+
+    assert val["current_price"] == 200.0
+    assert val["dcf_implied_upside_pct"] == 10.0
+    esperado = round((val["dcf_fair_value"] - val["current_price"])
+                     / val["current_price"] * 100, 2)
+    assert val["dcf_implied_upside_pct"] == esperado
