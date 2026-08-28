@@ -1111,9 +1111,24 @@ def _agent_loop(
             # detecta um relatório vazio/curto demais. Um relatório real
             # cobre vários ativos em Markdown e nunca é tão curto quanto
             # isso, então usamos o tamanho como sinal.
+            #
+            # Tamanho sozinho não basta: visto em produção (28/08/2026) --
+            # um relatório de 10 ativos foi cortado ainda na seção macro/
+            # setorial (nenhum ticker chegou a ser escrito), mas o texto até
+            # ali já passava dos 800 caracteres do piso, `looks_like_report`
+            # deu True e a run terminou SEM disparar a cobrança de retry
+            # abaixo e SEM nenhum [Aviso: ...] -- o corte por limite de
+            # tokens é invisível por construção (`_avisar_truncamento`,
+            # comentário lá em cima) e nada além do stderr sabia dele. Exigir
+            # também que o turno não tenha sido cortado fecha esse buraco
+            # reaproveitando o MESMO sinal que `_avisar_truncamento` já
+            # calcula, sem inventar mecanismo novo.
             looks_like_report = (
                 require_observations is False
-                or len(final_text.strip()) >= _min_report_chars(min_observations)
+                or (
+                    len(final_text.strip()) >= _min_report_chars(min_observations)
+                    and getattr(resp, "raw_stop_reason", "") not in _MOTIVOS_DE_CORTE
+                )
             )
             # `missing <= 0` é pré-requisito: com observação faltando, pedir
             # "escreva o relatório" é o pedido errado -- o fluxo manda registrar

@@ -624,6 +624,75 @@ def test_teto_cobre_uma_observacao_por_ativo_sem_agrupar(monkeypatch):
         assert agent_module._turnos_para_cobertura() >= n + 10
 
 
+# ── Relatório final cortado por limite de tokens (não só tool_use) ───────────
+#
+# `_avisar_truncamento` já detectava resp.raw_stop_reason em _MOTIVOS_DE_CORTE,
+# mas só gritava no stderr -- o texto cortado do turno de ESCREVER O
+# RELATÓRIO passava direto pela checagem de completude, que só olhava
+# tamanho em caracteres. Visto em produção (28/08/2026): um relatório de 10
+# ativos foi cortado ainda na seção macro/setorial (zero tickers escritos),
+# mas o texto até ali já passava do piso de 800 caracteres -- looks_like_report
+# dava True, nenhuma cobrança disparava, e o relatório chegava ao usuário
+# cortado no meio de uma frase, sem nenhum [Aviso: ...].
+
+
+def _texto_cortado(t: str, motivo: str = "max_tokens") -> NormalizedResponse:
+    return NormalizedResponse(content=[TextBlock(text=t)], stop_reason="end_turn",
+                              raw_stop_reason=motivo)
+
+
+def test_relatorio_cortado_por_max_tokens_dispara_cobranca(monkeypatch):
+    """Comprido o bastante pra passar no piso de caracteres, mas cortado --
+    precisa da MESMA cobrança de relatório curto, não passar direto."""
+    longo_mas_cortado = "# Relatório\n" + ("Resumo macro e setorial. " * 60)
+    assert len(longo_mas_cortado) >= agent_module.PREFLIGHT_MIN_CHARS
+    texto, client = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto_cortado(longo_mas_cortado),
+        _texto(_RELATORIO_OK),
+    ])
+    assert "Análise detalhada" in texto
+    assert "Análise incompleta" not in texto
+    assert len(client.calls) == 3
+
+
+def test_relatorio_cortado_sem_cobranca_restante_vira_analise_incompleta(monkeypatch):
+    longo_mas_cortado = "# Relatório\n" + ("Resumo macro e setorial. " * 60)
+    texto, client = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto_cortado(longo_mas_cortado),
+        _texto_cortado(longo_mas_cortado),
+        _texto_cortado(longo_mas_cortado),
+    ])
+    assert "Análise incompleta" in texto
+    assert "curta demais" in texto
+    assert len(client.calls) == 4
+
+
+def test_reconhece_motivo_length_da_camada_openai_no_turno_final(monkeypatch):
+    """Anthropic diz "max_tokens"; a camada OpenAI-compat diz "length" -- o
+    mesmo vocabulário de _avisar_truncamento vale aqui."""
+    longo_mas_cortado = "# Relatório\n" + ("Resumo macro e setorial. " * 60)
+    texto, _ = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto_cortado(longo_mas_cortado, motivo="length"),
+        _texto(_RELATORIO_OK),
+    ])
+    assert "Análise detalhada" in texto
+
+
+def test_motivo_de_parada_normal_nao_e_confundido_com_corte(monkeypatch):
+    """raw_stop_reason fora de _MOTIVOS_DE_CORTE (ex.: "stop", de outro
+    provedor) não pode acender falso positivo -- só max_tokens/length."""
+    texto, client = _rodar(monkeypatch, [
+        _obs_call(3),
+        _texto_cortado(_RELATORIO_OK, motivo="stop"),
+    ])
+    assert "Análise detalhada" in texto
+    assert "Análise incompleta" not in texto
+    assert len(client.calls) == 2
+
+
 def test_aviso_final_com_lista_exigida_nao_mistura_contagem_com_identidade(monkeypatch):
     """Visto em produção: "apenas 11 de pelo menos 8 observações esperadas...
     Sem observação: AVGO, MRVL, SKHY." Onze é mais que oito -- quem lê não tem
