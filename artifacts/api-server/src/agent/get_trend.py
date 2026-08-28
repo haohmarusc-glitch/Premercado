@@ -126,6 +126,14 @@ NEGATIVE = [
     # tres das quatro manchetes exibidas falando de queda. Reconhecida, o
     # placar vira 2x2 e o rotulo cai para "misto".
     "slide", "slides", "slip", "slips", "slipped",
+    # AOSL, 28/08/2026 (apontado em auditoria externa). "Alpha and Omega
+    # Semiconductor (AOSL) Reports Q4 Loss, Beats Revenue Estimates" saiu
+    # 1x0 POSITIVA: "beats" pontuava, e "loss" -- o substantivo do MESMO
+    # resultado que "miss/misses" já cobre (não bater a expectativa) --
+    # não pontuava nada. Mesmo padrão do slide/slip acima: família já
+    # representada na lista, só faltava o substantivo. Reconhecida, o
+    # placar dessa manchete vira 1x1 (mista), não 1x0.
+    "loss", "losses",
 ]
 
 # Casamento por PALAVRA INTEIRA, não por substring.
@@ -206,6 +214,27 @@ def _translate_join(texts: list[str]) -> list[str]:
 # zera tudo. E' julgamento, nao teorema -- por isso esta' nomeado aqui e nao
 # enterrado numa comparacao.
 MINIMO_PARA_ROTULAR = 3
+
+
+def _amostra_insuficiente_nota(news: dict, campo: str, direcao: str) -> str:
+    """Ressalva pra quando "sem notícias contrárias/favoráveis" lê como
+    contradição do próprio placar ao lado.
+
+    `news_dir` vira 0 (o gatilho de "sem notícias X") sempre que a amostra
+    é menor que MINIMO_PARA_ROTULAR, mesmo com `positivas`/`negativas` > 0
+    -- é o mesmo motivo do `label` ficar "neutro" com 1 manchete favorável
+    sozinha (ver news_sentiment). Sem esta nota, "sinal: venda -- técnico
+    de baixa forte sem notícias favoráveis" ao lado de um placar mostrando
+    "1+/0-/2~" lê como o sistema negando um dado que ele mesmo mostrou.
+
+    Visto em produção (AOSL, 28/08/2026, apontado em auditoria externa):
+    exatamente esse caso -- 1 notícia positiva, amostra pequena demais pra
+    confirmar rótulo, frase soando como se não houvesse nenhuma."""
+    contagem = news.get(campo) or 0
+    if contagem > 0 and (news.get("classificadas") or 0) < MINIMO_PARA_ROTULAR:
+        return (f" (amostra pequena: {contagem} notícia(s) na direção "
+                f"{direcao}, ainda sem confirmar)")
+    return ""
 
 # ── Veto de balanço: sinal direcional na véspera ────────────────────────────
 #
@@ -589,11 +618,17 @@ def for_ticker(ticker: str) -> dict:
         # venda:    espelho para baixa
         # aguardar: lateral, sinais fracos ou divergência técnico × notícias
         if score >= 60 and news_dir >= 0:
-            sinal, sinal_motivo = "compra", "técnico de alta forte sem notícias contrárias"
+            sinal, sinal_motivo = (
+                "compra",
+                "técnico de alta forte sem notícias contrárias"
+                + _amostra_insuficiente_nota(news, "negativas", "contrária"))
         elif score >= 25 and news_dir > 0:
             sinal, sinal_motivo = "compra", "técnico de alta confirmado por notícias positivas"
         elif score <= -60 and news_dir <= 0:
-            sinal, sinal_motivo = "venda", "técnico de baixa forte sem notícias favoráveis"
+            sinal, sinal_motivo = (
+                "venda",
+                "técnico de baixa forte sem notícias favoráveis"
+                + _amostra_insuficiente_nota(news, "positivas", "favorável"))
         elif score <= -25 and news_dir < 0:
             sinal, sinal_motivo = "venda", "técnico de baixa confirmado por notícias negativas"
         else:

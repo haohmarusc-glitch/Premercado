@@ -274,3 +274,72 @@ def test_a_lista_nova_nao_inverte_manchete_de_alta():
                    "Marvell surges on record data center growth",
                    "Marvell upgraded to buy rating"):
         assert _classificar(titulo, "MRVL") == "positivo", titulo
+
+
+# ═══ AOSL, 28/08/2026 — "Reports Q4 Loss, Beats Revenue Estimates" ═════════
+#
+# Apontado por auditoria externa (verificado contra o código antes de agir,
+# como sempre): a manchete saiu 1x0 POSITIVA porque "beats" pontuava e
+# "loss" -- o substantivo do MESMO resultado que "miss/misses" já cobre --
+# não pontuava nada em lista nenhuma. Mesmo padrão do slide/slip: família já
+# representada (não bater a expectativa), só faltava o substantivo.
+
+AOSL_LOSS_BEATS = "Alpha and Omega Semiconductor (AOSL) Reports Q4 Loss, Beats Revenue Estimates"
+
+
+def test_loss_e_o_substantivo_de_miss():
+    """Sem o termo, a manchete empatava 0-0 antes de "beats" pontuar --
+    "loss" e "miss" descrevem o mesmo resultado (não bater expectativa)."""
+    assert _NEGATIVE_RE.search(AOSL_LOSS_BEATS.lower())
+
+
+def test_loss_e_beats_juntos_dao_misto_nao_positivo():
+    assert _classificar(AOSL_LOSS_BEATS, "AOSL") == "misto"
+
+
+def test_a_lista_nova_de_loss_nao_inverte_manchete_de_alta():
+    """Mesma guarda de sempre: termo novo não pode virar o rótulo do lado
+    errado numa manchete que só afirma alta."""
+    for titulo in ("Alpha and Omega Semiconductor (AOSL) beats and raises guidance",
+                   "Alpha and Omega Semiconductor (AOSL) surges on record margins"):
+        assert _classificar(titulo, "AOSL") == "positivo", titulo
+
+
+# ═══ AOSL, 28/08/2026 — "sem notícias favoráveis" ao lado de "1+/0-/2~" ═══
+#
+# Apontado por duas auditorias externas independentes e confirmado contra o
+# código: `news_dir` vira 0 sempre que a amostra é menor que
+# MINIMO_PARA_ROTULAR, mesmo com `positivas` > 0 -- é o mesmo motivo do
+# `label` ficar "neutro" com 1 manchete positiva sozinha. "Sinal: venda --
+# técnico de baixa forte sem notícias favoráveis" ao lado de um placar
+# mostrando "1+/0-/2~" lê como o sistema negando um dado que ele mesmo
+# mostrou. `_amostra_insuficiente_nota` acrescenta a ressalva só quando ela
+# é necessária: contagem > 0 E amostra abaixo do piso.
+
+from agent.get_trend import _amostra_insuficiente_nota  # noqa: E402
+
+
+def test_nota_aparece_com_favoravel_isolado_e_amostra_pequena():
+    news = {"positivas": 1, "negativas": 0, "classificadas": 1}
+    nota = _amostra_insuficiente_nota(news, "positivas", "favorável")
+    assert "1 notícia" in nota
+    assert "favorável" in nota
+
+
+def test_nota_se_cala_sem_contagem():
+    news = {"positivas": 0, "negativas": 0, "classificadas": 0}
+    assert _amostra_insuficiente_nota(news, "positivas", "favorável") == ""
+
+
+def test_nota_se_cala_com_amostra_suficiente():
+    """Com amostra >= MINIMO_PARA_ROTULAR o rótulo já afirma direção de
+    verdade -- "sem notícias X" deixa de ser uma simplificação enganosa."""
+    news = {"positivas": 3, "negativas": 0, "classificadas": 3}
+    assert _amostra_insuficiente_nota(news, "positivas", "favorável") == ""
+
+
+def test_nota_conta_o_campo_pedido_nao_o_outro():
+    """Pedir a nota do lado CONTRÁRIO ao sinal (ex.: negativas na venda) não
+    pode disparar por causa das positivas."""
+    news = {"positivas": 1, "negativas": 0, "classificadas": 1}
+    assert _amostra_insuficiente_nota(news, "negativas", "contrária") == ""
