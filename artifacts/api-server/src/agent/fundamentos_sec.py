@@ -189,9 +189,23 @@ TAGS: dict[str, tuple[str, ...]] = {
 #       -> amortização de custo de dívida, que vive no resultado financeiro;
 #          não é o D&A operacional que o EBITDA readiciona.
 #
-# Sobram os dois que são despesa operacional do período, e é justamente
-# assim que a MRVL publica -- separado, porque a amortização de intangível
-# das aquisições (Cavium, Inphi) é grande demais para ficar embutida.
+# Sobram os dois que são despesa operacional do período.
+#
+# CORREÇÃO, quarta rodada: este composto NÃO resolve a MRVL, ao contrário do
+# que eu supus ao criá-lo. O diagnóstico com o dado real mostrou por quê:
+#
+#   DepreciationAndAmortization       6 fatos, TODOS anuais  -> 0 trimestres
+#   Depreciation                     15 fatos, TODOS anuais  -> 0 trimestres
+#   AmortizationOfIntangibleAssets   65 fatos               -> 25 trimestres
+#
+# A MRVL publica depreciação só no 10-K. Falta METADE do D&A em base
+# trimestral, e somar a depreciação anual (exercício até 31/01) com a
+# amortização TTM (ago-ago) seria a armadilha de janelas. Lá o conceito é
+# irreconstituível em TTM e `so_anual()` passa a dizer isso com todas as
+# letras, em vez de sugerir tags que não resolvem.
+#
+# O mecanismo fica porque é correto e testado, e serve a emissor que publique
+# AS DUAS partes trimestralmente -- só não é a resposta para este caso.
 TAGS_COMPOSTOS: dict[str, tuple[tuple[str, ...], ...]] = {
     "dep_amort": (("Depreciation", "AmortizationOfIntangibleAssets"),),
 }
@@ -280,6 +294,37 @@ def _por_periodo(fatos: list[dict]) -> dict[tuple[str, str], dict]:
 
 def _duracao(chave: tuple[str, str]) -> int:
     return (_dia(chave[1]) - _dia(chave[0])).days
+
+
+def so_anual(fatos: list[dict]) -> bool:
+    """O emissor publica este conceito APENAS em base anual?
+
+    Estado distinto de "tag ausente" e de "série com buraco", e o único dos
+    três que nenhum tag alternativo resolve -- por isso vale nomear.
+
+    Visto na MRVL (28/08/2026), depois de quatro rodadas de modo sombra:
+    `DepreciationAndAmortization` (6 fatos) e `Depreciation` (15 fatos) vêm
+    os dois exclusivamente do 10-K, enquanto `AmortizationOfIntangible
+    Assets` traz 25 trimestres. Falta a METADE do D&A em base trimestral.
+
+    Somar a depreciação ANUAL (exercício até 31/01) com a amortização TTM
+    (ago-ago) seria a armadilha de janelas -- a mesma que
+    `_janela_incompativel` existe para barrar. Então o D&A da MRVL é
+    genuinamente irreconstituível em TTM, e "indisponível" é a resposta
+    certa, não uma lacuna a preencher.
+    """
+    if not fatos:
+        return False
+    tem_ano = False
+    for chave in _por_periodo(fatos):
+        dias = _duracao(chave)
+        if TRIMESTRE_MIN_DIAS <= dias <= TRIMESTRE_MAX_DIAS:
+            return False          # há trimestre publicado
+        if 350 <= dias <= 380:
+            tem_ano = True
+    # Sem trimestre direto, sobra a série acumulada -- se ela rendesse
+    # trimestre por diferença, `_trimestres_de` teria achado.
+    return tem_ano and not _trimestres_de(fatos)
 
 
 def _trimestres_de(fatos: list[dict]) -> list[dict]:
@@ -675,9 +720,27 @@ def multiplos(dados: dict, preco: float | None) -> dict:
                 "nota": ("conceito reconstituído somando os tags acima -- o "
                          "emissor publica este número partido"),
             }
-        raise SemDado(_com_pistas(
-            f"{falha_simples}" + (f" (tag `{tag}`)" if tag else ""),
-            dados, conceito))
+        # Quais candidatos o emissor publica SÓ anualmente. Nomear isso muda o
+        # que a próxima pessoa faz: tag ausente se resolve acrescentando um
+        # nome à lista, "só anual" não se resolve com nome nenhum.
+        #
+        # A lista de pistas CONTINUA junto, de propósito. A primeira versão
+        # desta mensagem a suprimia, e um teste anterior pegou: o tag escolhido
+        # ser anual não significa que não haja pista útil no payload -- na
+        # MRVL, `AmortizationOfIntangibleAssets` tem 25 trimestres enquanto a
+        # depreciação só sai no 10-K, e as duas informações juntas é que
+        # explicam por que o conceito é irreconstituível ali.
+        anuais = [p for p in (tag, *sum(TAGS_COMPOSTOS.get(conceito, ()), ()))
+                  if p and so_anual(_de_formulario_aceito(
+                      ((((dados.get("facts") or {}).get("us-gaap") or {})
+                        .get(p) or {}).get("units") or {}).get("USD") or []))]
+        motivo = f"{falha_simples}" + (f" (tag `{tag}`)" if tag else "")
+        if anuais:
+            motivo += (f" · publicados apenas em base ANUAL por este emissor: "
+                       f"{', '.join(anuais)} — sem trimestre não há TTM para "
+                       f"eles, e somar anual a componente trimestral "
+                       f"compararia janelas diferentes")
+        raise SemDado(_com_pistas(motivo, dados, conceito))
 
     def instante(conceito, quando=None):
         fatos, tag = _fatos(dados, conceito)
