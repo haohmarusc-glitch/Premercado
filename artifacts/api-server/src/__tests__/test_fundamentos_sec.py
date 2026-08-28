@@ -746,3 +746,103 @@ def test_pista_ignora_tag_que_ja_esta_na_lista():
         "Revenues": {},                               # outra família
     }}}
     assert _tags_parecidos(dados, "dep_amort") == ["AmortizationOfIntangibleAssets"]
+
+
+# ═══ Conceito publicado PARTIDO em mais de um tag (MRVL) ════════════════════
+#
+# Terceira rodada do modo sombra, 28/08/2026. O D&A da MRVL saía indisponível
+# porque `DepreciationAndAmortization` existe mas não rende trimestre nenhum.
+# A lista de pistas -- que esta mesma rodada estreou -- mostrou oito
+# candidatos, e SEIS são armadilha: acumulado de balanço
+# (Accumulated..., FiniteLived...AccumulatedAmortization) e cronograma FUTURO
+# de amortização (...NextTwelveMonths, ...AfterYearFive, ...RemainderOf
+# FiscalYear), além da amortização de custo de dívida, que é financeira.
+#
+# Sobram os dois que são despesa operacional do período, e é assim que a MRVL
+# publica: separado, porque a amortização de intangível das aquisições é
+# grande demais para ficar embutida.
+
+
+def _mrvl_dep_amort():
+    """O formato da MRVL: o tag combinado existe, mas só com o exercício
+    inteiro (nenhum trimestre), e os dois componentes vêm trimestrais."""
+    dados = _emissor()
+    dados["facts"]["us-gaap"]["DepreciationDepletionAndAmortization"] = {
+        "units": {"USD": [_f("2025-01-01", "2025-12-31", 80)]}}
+    dados["facts"]["us-gaap"]["Depreciation"] = {
+        "units": {"USD": _quatro_trimestres([3] * 4)}}
+    dados["facts"]["us-gaap"]["AmortizationOfIntangibleAssets"] = {
+        "units": {"USD": _quatro_trimestres([2] * 4)}}
+    return dados
+
+
+def test_conceito_partido_e_reconstituido_pela_soma():
+    r = multiplos(_mrvl_dep_amort(), preco=20.0)
+    prov = r["metricas"]["ev_ebitda"]["proveniencia"]
+    # D&A = 12 (Depreciation) + 8 (Amortização) = 20; EBITDA = 120 + 20 = 140.
+    assert prov["ebitda_reconstruido_de"]["dep_amort_TTM"] == 20
+    assert prov["tags"][1] == "Depreciation + AmortizationOfIntangibleAssets"
+
+
+def test_o_composto_declara_que_e_reconstituicao():
+    """Quem lê tem que saber que este número foi somado por nós."""
+    r = multiplos(_mrvl_dep_amort(), preco=20.0)
+    prov = r["metricas"]["ev_ebitda"]["proveniencia"]["dep_amort_de"]
+    assert [c["tag"] for c in prov["composto_de"]] == [
+        "Depreciation", "AmortizationOfIntangibleAssets"]
+    assert "reconstituído" in prov["nota"]
+
+
+def test_o_tag_unico_continua_ganhando_quando_funciona():
+    """O composto é remendo do buraco, não substituto do caminho normal."""
+    r = multiplos(_emissor(), preco=20.0)   # tem o tag combinado trimestral
+    prov = r["metricas"]["ev_ebitda"]["proveniencia"]
+    assert prov["tags"][1] == "DepreciationDepletionAndAmortization"
+    assert "composto_de" not in prov["dep_amort_de"]
+
+
+def test_componente_faltando_nao_vira_soma_parcial():
+    """Meia soma seria um D&A menor e plausível -- pior que indisponível."""
+    dados = _mrvl_dep_amort()
+    del dados["facts"]["us-gaap"]["AmortizationOfIntangibleAssets"]
+    m = multiplos(dados, preco=20.0)["metricas"]
+    assert m["ev_ebitda"]["valor"] is None
+
+
+def test_componentes_de_eras_diferentes_nao_somam():
+    """A mesma trava de janela vale dentro do composto: somar Depreciation de
+    2025 com Amortização de 2019 compararia eras por outra porta."""
+    dados = _mrvl_dep_amort()
+    dados["facts"]["us-gaap"]["AmortizationOfIntangibleAssets"] = {
+        "units": {"USD": _quatro_trimestres([2] * 4, ano=2019)}}
+    m = multiplos(dados, preco=20.0)["metricas"]
+    assert m["ev_ebitda"]["valor"] is None
+
+
+@pytest.mark.parametrize("armadilha", [
+    "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+    "FiniteLivedIntangibleAssetsAccumulatedAmortization",
+    "FiniteLivedIntangibleAssetsAmortizationExpenseNextTwelveMonths",
+    "FiniteLivedIntangibleAssetsAmortizationExpenseAfterYearFive",
+    "FiniteLivedIntangibleAssetsAmortizationExpenseRemainderOfFiscalYear",
+    "AmortizationOfFinancingCostsAndDiscounts",
+])
+def test_os_seis_candidatos_de_armadilha_ficam_de_fora(armadilha):
+    """Todos têm 'Depreciation' ou 'Amortization' no nome e apareceram na
+    lista de pistas da MRVL. Nenhum é despesa operacional do período: os dois
+    primeiros são acumulado de BALANÇO, os três seguintes são cronograma
+    FUTURO de nota explicativa, e o último é financeiro."""
+    from agent.fundamentos_sec import TAGS, TAGS_COMPOSTOS
+    assert armadilha not in TAGS["dep_amort"]
+    assert all(armadilha not in partes
+               for partes in TAGS_COMPOSTOS["dep_amort"])
+
+
+def test_composto_carrega_o_valor_de_cada_parcela():
+    """A soma sem as parcelas não dá para conferir -- que é o defeito que a
+    proveniência inteira existe para não ter."""
+    r = multiplos(_mrvl_dep_amort(), preco=20.0)
+    partes = r["metricas"]["ev_ebitda"]["proveniencia"]["dep_amort_de"]["composto_de"]
+    assert [(c["tag"], c["valor"]) for c in partes] == [
+        ("Depreciation", 12), ("AmortizationOfIntangibleAssets", 8)]
+    assert sum(c["valor"] for c in partes) == 20

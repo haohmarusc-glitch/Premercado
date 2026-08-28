@@ -168,6 +168,35 @@ TAGS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Conceitos que alguns emissores publicam PARTIDOS em mais de um tag, e a
+# soma que os reconstitui. Só é tentado quando nenhum tag único de `TAGS`
+# rendeu TTM -- não substitui o caminho normal, cobre o buraco dele.
+#
+# Diagnosticado na MRVL (28/08/2026), pelo modo sombra: `DepreciationAnd
+# Amortization` existe mas não rende trimestre nenhum, e a lista de pistas
+# mostrou oito candidatos. SEIS deles são armadilha, e vale registrar quais,
+# porque todos têm "Depreciation" ou "Amortization" no nome:
+#
+#   AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment
+#   FiniteLivedIntangibleAssetsAccumulatedAmortization
+#       -> ACUMULADO de balanço, não despesa do período. Somar isso daria
+#          um "D&A" de ordem de grandeza inteiramente errada.
+#   FiniteLivedIntangibleAssetsAmortizationExpenseNextTwelveMonths
+#   FiniteLivedIntangibleAssetsAmortizationExpenseAfterYearFive
+#   FiniteLivedIntangibleAssetsAmortizationExpenseRemainderOfFiscalYear
+#       -> CRONOGRAMA FUTURO divulgado em nota, não o que já correu.
+#   AmortizationOfFinancingCostsAndDiscounts
+#       -> amortização de custo de dívida, que vive no resultado financeiro;
+#          não é o D&A operacional que o EBITDA readiciona.
+#
+# Sobram os dois que são despesa operacional do período, e é justamente
+# assim que a MRVL publica -- separado, porque a amortização de intangível
+# das aquisições (Cavium, Inphi) é grande demais para ficar embutida.
+TAGS_COMPOSTOS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "dep_amort": (("Depreciation", "AmortizationOfIntangibleAssets"),),
+}
+
+
 # Palavras que identificam um tag como "da mesma família" de um conceito.
 # Servem só para o DIAGNÓSTICO: quando um conceito sai indisponível, a
 # mensagem lista os tags parecidos que existem no payload e não estão em
@@ -594,12 +623,61 @@ def multiplos(dados: dict, preco: float | None) -> dict:
     # de fora -- ver `PISTAS`. Sem isso, "0 trimestre(s) utilizável(is)" manda
     # quem lê descobrir sozinho, contra a SEC, qual conceito faltou.
     def ttm(conceito):
-        fatos, tag = _fatos(dados, conceito)
-        tags_usadas[conceito] = tag
         try:
-            return _ttm(fatos)
-        except SemDado as e:
-            raise SemDado(_com_pistas(f"{e} (tag `{tag}`)", dados, conceito))
+            fatos, tag = _fatos(dados, conceito)
+        except SemDado:
+            fatos, tag = None, None
+        # Guardado numa variável PRÓPRIA: o nome ligado por `except ... as e`
+        # é apagado ao sair do bloco, e usá-lo depois estoura UnboundLocalError
+        # -- que foi o que aconteceu na primeira versão, transformando toda
+        # mensagem de indisponível num traceback interno.
+        falha_simples = "nenhum tag conhecido"
+        if fatos is not None:
+            try:
+                tags_usadas[conceito] = tag
+                return _ttm(fatos)
+            except SemDado as e:
+                falha_simples = str(e)
+
+        # Só agora o composto: o emissor pode publicar o conceito PARTIDO em
+        # mais de um tag (ver TAGS_COMPOSTOS). Exige que TODAS as partes
+        # rendam TTM e que cubram a MESMA janela -- somar componentes de
+        # períodos distintos seria a armadilha de eras, por outra porta.
+        for partes in TAGS_COMPOSTOS.get(conceito, ()):
+            total, provs, valores, ok = 0.0, [], [], True
+            for parte in partes:
+                unidades = (((dados.get("facts") or {}).get("us-gaap") or {})
+                            .get(parte) or {}).get("units") or {}
+                lista = _de_formulario_aceito(unidades.get("USD") or [])
+                if not lista:
+                    ok = False
+                    break
+                try:
+                    v, p = _ttm(lista)
+                except SemDado:
+                    ok = False
+                    break
+                total += v
+                valores.append(v)
+                provs.append(p)
+            if not ok or _janela_incompativel(*provs):
+                continue
+            tags_usadas[conceito] = " + ".join(partes)
+            return total, {
+                **provs[0],
+                # Cada parcela com o seu valor: sem isso, o leitor vê a soma e
+                # não tem como conferir de onde ela veio -- que é o defeito
+                # que a proveniência inteira existe para não ter.
+                "composto_de": [
+                    {"tag": t, "valor": v, "periodo": p.get("periodo")}
+                    for t, v, p in zip(partes, valores, provs)
+                ],
+                "nota": ("conceito reconstituído somando os tags acima -- o "
+                         "emissor publica este número partido"),
+            }
+        raise SemDado(_com_pistas(
+            f"{falha_simples}" + (f" (tag `{tag}`)" if tag else ""),
+            dados, conceito))
 
     def instante(conceito, quando=None):
         fatos, tag = _fatos(dados, conceito)
