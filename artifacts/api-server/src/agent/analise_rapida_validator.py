@@ -689,13 +689,34 @@ def validar_analise(texto, dados=None) -> list:
         # Sobre `prosa_min` (COM acento) de propósito: sem ele "chegará"
         # (futuro, erro) e "chegara" (mais-que-perfeito, correto) viram a
         # mesma palavra, e excluir uma apagaria a outra.
-        if re.search(r"\bcheg(?!ou\b|aram\b|ado\b|ada\b|ados\b|adas\b|ava\b|"
-                     r"avam\b|ara\b|aras\b)\w*\s+esticad|"
-                     r"\bchega\w*\s+ao\s+balan[çc]o", prosa_min):
+        # Varre FRASE A FRASE, e não a prosa inteira, só para poder CITAR o
+        # trecho. O apontamento sem citação custou caro em 28/08/2026 (PDD):
+        # duas auditorias externas independentes leram este mesmo ERRO e
+        # concluíram, cada uma por conta própria, que era falso positivo --
+        # uma delas chegou a transcrever a frase que dispara ("indicando que
+        # o papel não chega esticado") enquanto afirmava que o gatilho não
+        # existia no texto. Era verdadeiro: "chega" é presente sobre um
+        # balanço que já ocorreu, e a forma correta seria "chegou".
+        #
+        # Todos os outros apontamentos deste validador já citavam trecho;
+        # este era o único que mandava o leitor procurar sozinho. Achado sem
+        # o trecho é indistinguível de regex frouxa -- e quem lê acaba
+        # descartando o certo junto com o errado.
+        _PRESENTE_NO_PASSADO = re.compile(
+            r"\bcheg(?!ou\b|aram\b|ado\b|ada\b|ados\b|adas\b|ava\b|"
+            r"avam\b|ara\b|aras\b)\w*\s+esticad|"
+            r"\bchega\w*\s+ao\s+balan[çc]o")
+        for frase in frases(prosa_min):
+            m = _PRESENTE_NO_PASSADO.search(frase)
+            if not m:
+                continue
             add("ERRO", "ANALISE_BALANCO_NO_FUTURO",
                 f"escreve no presente ou futuro sobre um balanço que JÁ ocorreu "
                 f"há {pregoes} pregão(ões) — o run-up bruto inclui o próprio "
-                f"salto do evento.")
+                f"salto do evento. No passado (“chegou esticado”) a frase "
+                f"estaria certa. Disparou em “{m.group(0).strip()}”. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
 
         # O run-up de HOJE atribuído à CHEGADA num balanço que já passou.
         #

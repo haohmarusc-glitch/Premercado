@@ -206,6 +206,49 @@ def test_balanco_ja_ocorrido_escrito_no_futuro_e_erro():
     assert "3 pregão" in achados[0]["mensagem"]
 
 
+def test_o_apontamento_cita_o_trecho_que_disparou():
+    """PDD, 28/08/2026: este ERRO saiu SEM citar trecho, e duas auditorias
+    externas independentes concluíram, cada uma por conta própria, que era
+    falso positivo. Uma delas chegou a transcrever a frase que dispara --
+    "indicando que o papel não chega esticado" -- enquanto afirmava que o
+    gatilho não existia no texto.
+
+    Era verdadeiro: "chega" é presente sobre um balanço de 4 pregões atrás.
+    Todo outro apontamento deste validador já citava trecho; este mandava o
+    leitor procurar sozinho, e achado sem trecho é indistinguível de regex
+    frouxa."""
+    frase = "O run-up ex-evento é de -0.54%, indicando que o papel não chega esticado."
+    achados = validar_analise(_texto_completo(frase), _DADOS_BALANCO)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_BALANCO_NO_FUTURO")
+    assert "Trecho:" in msg
+    assert "chega esticad" in msg          # o fragmento exato do gatilho
+    assert "nao chega esticado" in msg or "não chega esticado" in msg
+    # E diz qual seria a redação certa, senão o leitor não sabe o que mudar.
+    assert "chegou esticado" in msg
+
+
+def test_a_frase_real_do_pdd_dispara():
+    """A sentença verbatim da produção, que as duas auditorias leram como
+    inofensiva."""
+    achados = validar_analise(
+        _texto_completo("Quatro pregões se passaram desde o último balanço. "
+                        "O run-up atual, excluindo o impacto do evento, é de "
+                        "-0.54%, indicando que o papel não chega esticado."),
+        _DADOS_BALANCO)
+    assert "ANALISE_BALANCO_NO_FUTURO" in _codigos(achados)
+
+
+def test_a_mesma_frase_no_passado_nao_dispara():
+    """A correção que o apontamento pede: 'chegou' em vez de 'chega'."""
+    achados = validar_analise(
+        _texto_completo("Quatro pregões se passaram desde o último balanço. "
+                        "O run-up ex-evento é de -0.54%, indicando que o papel "
+                        "não chegou esticado."),
+        _DADOS_BALANCO)
+    assert "ANALISE_BALANCO_NO_FUTURO" not in _codigos(achados)
+
+
 def test_balanco_no_passado_passa():
     achados = validar_analise(
         _texto_completo("O papel reagiu com +34% ao balanço de três pregões atrás."),

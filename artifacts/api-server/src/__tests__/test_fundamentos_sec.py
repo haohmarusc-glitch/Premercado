@@ -518,3 +518,121 @@ def test_janela_igual_continua_passando():
         {"periodo": "2025-01-02..2025-12-31"}) is None
     assert _janela_incompativel({"periodo": "2025-01-01..2025-12-31"}) is None
     assert _janela_incompativel() is None
+
+
+# ═══ Segunda rodada do modo sombra: a procuração virou fonte ════════════════
+#
+# MRVL e NVDA, 28/08/2026. Com a receita já corrigida, a proveniência do P/L
+# mostrou um trimestre vindo de `DEF 14A` -- a procuração de assembleia, não
+# demonstração financeira:
+#
+#   MRVL  "fim": "2026-01-31", "form": "DEF 14A", "accn": "0001104659-26-060253"
+#   NVDA  "fim": "2026-01-25", "form": "DEF 14A", "accn": "0001045810-26-000036"
+#
+# Entrou porque `_mais_recente()` desempata por `filed`, e a procuração é
+# arquivada DEPOIS do 10-K do mesmo período. Desde a regra de "pay versus
+# performance" da SEC ela traz NetIncomeLoss etiquetado, então o fato existe
+# e vencia o 10-K por ser mais recente. Nos dois casos o número parecia
+# plausível -- que é justamente por que precisa de trava.
+
+
+def test_procuracao_nao_e_fonte_de_numero():
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        _f("2025-10-01", "2025-12-31", 100, form="10-K",
+           filed="2026-02-25", accn="10k-1"),
+        # Mesmo período, arquivado DEPOIS, e por isso vencia antes.
+        _f("2025-10-01", "2025-12-31", 999, form="DEF 14A",
+           filed="2026-05-12", accn="proxy-1"),
+    ]}}}}}
+    fatos, _ = _fatos(dados, "lucro_liquido")
+    assert [f["val"] for f in fatos] == [100]
+    assert all(f["form"] == "10-K" for f in fatos)
+
+
+@pytest.mark.parametrize("form", ["10-K", "10-Q", "10-K/A", "10-Q/A"])
+def test_demonstracao_periodica_e_emenda_continuam_valendo(form):
+    """A trava não pode derrubar a emenda: 10-K/A é a versão CORRIGIDA."""
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        _f("2025-10-01", "2025-12-31", 100, form=form)]}}}}}
+    assert _fatos(dados, "lucro_liquido")[0][0]["form"] == form
+
+
+@pytest.mark.parametrize("form", ["DEF 14A", "S-1", "8-K", "424B5"])
+def test_formulario_fora_da_lista_nao_entra(form):
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        _f("2025-10-01", "2025-12-31", 100, form=form)]}}}}}
+    with pytest.raises(SemDado):
+        _fatos(dados, "lucro_liquido")
+
+
+def test_a_emenda_ainda_ganha_do_original():
+    """Filtrar formulário não pode desligar a regra de reapresentação."""
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        _f("2025-01-01", "2025-03-31", 100, form="10-Q",
+           filed="2025-04-30", accn="orig"),
+        _f("2025-01-01", "2025-03-31", 88, form="10-Q/A",
+           filed="2025-09-01", accn="emenda"),
+    ]}}}}}
+    fatos, _ = _fatos(dados, "lucro_liquido")
+    from agent.fundamentos_sec import _mais_recente
+    assert _mais_recente(fatos)["val"] == 88
+
+
+def test_acoes_tambem_ignoram_a_procuracao():
+    """A capa da procuração também traz contagem de ações."""
+    dados = {"facts": {"dei": {"EntityCommonStockSharesOutstanding": {
+        "units": {"shares": [
+            _inst("2026-05-21", 874_800_000, form="10-Q",
+                  filed="2026-05-28", accn="10q"),
+            _inst("2026-05-30", 1, form="DEF 14A",
+                  filed="2026-06-01", accn="proxy"),
+        ]}}}}}
+    val, prov = _acoes_em_circulacao(dados)
+    assert val == 874_800_000 and prov["form"] == "10-Q"
+
+
+def test_recencia_do_tag_olha_so_formulario_aceito():
+    """Um tag cujo dado recente só existe em procuração não pode parecer
+    'mais atual' que o tag com 10-Q de verdade."""
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+            "units": {"USD": [_f("2026-01-01", "2026-03-31", 5,
+                                 form="DEF 14A", filed="2026-06-01")]}},
+        "Revenues": {"units": {"USD": _quatro_trimestres([100] * 4, ano=2025)}},
+    }}}
+    _, tag = _fatos(dados, "receita")
+    assert tag == "Revenues"
+
+
+# ── dívida: LongTermDebt já inclui a parcela circulante ─────────────────────
+
+
+def _com_divida(tag_longa: str, valor_longa: float, curta: float = 40.0):
+    dados = _emissor()
+    del dados["facts"]["us-gaap"]["LongTermDebtNoncurrent"]
+    dados["facts"]["us-gaap"][tag_longa] = {
+        "units": {"USD": [_inst("2025-12-31", valor_longa)]}}
+    dados["facts"]["us-gaap"]["LongTermDebtCurrent"] = {
+        "units": {"USD": [_inst("2025-12-31", curta)]}}
+    return dados
+
+
+def test_long_term_debt_e_saldo_total_e_nao_soma_a_curta():
+    """`LongTermDebt` já inclui a parcela circulante -- somar a curta contaria
+    duas vezes. Dívida inflada não estoura nada: só encarece o EV em silêncio.
+    """
+    r = multiplos(_com_divida("LongTermDebt", 150.0, curta=40.0), preco=20.0)
+    # EV = cap 2000 + dívida 150 - caixa 50 = 2100 (não 2140).
+    assert r["metricas"]["ev_ebitda"]["proveniencia"]["ev"] == 2100
+
+
+def test_noncurrent_mais_curta_continua_somando():
+    """Com o tag que é SÓ a parte não circulante, a soma é a conta certa."""
+    r = multiplos(_com_divida("LongTermDebtNoncurrent", 150.0, curta=40.0),
+                  preco=20.0)
+    assert r["metricas"]["ev_ebitda"]["proveniencia"]["ev"] == 2140
