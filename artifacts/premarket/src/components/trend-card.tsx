@@ -213,7 +213,18 @@ export function TrendCard({ symbol }: { symbol: string }) {
               value={
                 news.classificadas != null && news.minimoParaRotular != null
                 && news.classificadas < news.minimoParaRotular
-                  ? `${news.label} · amostra ${news.classificadas}`
+                  // "amostra N" foi mal lido três vezes por leitores atentos
+                  // (AOSL 28/08, duas auditorias externas; PDD no mesmo dia):
+                  // todos entenderam N como "quantas manchetes apareceram" e
+                  // acharam que contradizia o placar ao lado. N é outra coisa
+                  // -- é `positivas + negativas`, o DENOMINADOR do score, que
+                  // exclui as ambíguas de propósito. Com 0+/1-/5~ ele vale 1,
+                  // e "amostra 1" ao lado de seis manchetes parece erro.
+                  //
+                  // O número estava certo; o rótulo é que não dizia qual
+                  // pergunta ele responde. Agora diz -- e diz também por que
+                  // o rótulo ficou neutro.
+                  ? `${news.label} · ${news.classificadas} de ${news.minimoParaRotular} com tom definido`
                   : news.label
               }
               good={news.label === "neutro" || news.label === "misto" ? null : news.label === "positivo"}

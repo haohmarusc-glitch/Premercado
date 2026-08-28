@@ -592,7 +592,11 @@ export default function AnaliseRapidaPage() {
                       : ""}
                     {trend.news.classificadas != null && trend.news.minimoParaRotular != null
                      && trend.news.classificadas < trend.news.minimoParaRotular
-                      ? ` · amostra ${trend.news.classificadas}`
+                      // Ver a nota longa em trend-card.tsx: "amostra N" foi
+                      // lido como "quantas manchetes apareceram" por três
+                      // leitores atentos no mesmo dia. N é o denominador do
+                      // score (positivas + negativas), que exclui ambíguas.
+                      ? ` · ${trend.news.classificadas} de ${trend.news.minimoParaRotular} com tom definido`
                       : ""})
                   </div>
                   <ul className="space-y-1">
