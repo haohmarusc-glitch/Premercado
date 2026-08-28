@@ -429,3 +429,74 @@ def test_coleta_guarda_as_of_das_opcoes():
     collect_tool_result(snap, "get_options_data", {}, json.dumps(
         {"ticker": "NVDA", "atm_iv_pct": 44.0, "as_of": "2026-08-03"}))
     assert snap["options"]["NVDA"]["as_of"] == "2026-08-03"
+
+
+# ── direção declarada × números da própria frase ────────────────────────────
+#
+# Visto em produção (MRVL, 28/08/2026, apontado por três auditorias
+# independentes): "upside caiu de ~10% (dia do evento) para 21,9% após o
+# tombo de preço". 10 -> 21,9 é ALTA. A frase se contradiz sozinha -- não
+# precisa de dado externo pra saber que está errada, e é por isso que esta
+# checagem é de COERÊNCIA INTERNA, não de fato contra o snapshot.
+
+MRVL_UPSIDE = ("Consenso segue strong_buy (41 analistas) mas upside caiu de "
+               "~10% (dia do evento) para 21,9% após o tombo de preço.")
+
+
+def test_o_caso_mrvl_verbatim():
+    rep = lint_report(MRVL_UPSIDE, new_snapshot())
+    assert "DIRECAO_CONTRADIZ_NUMEROS" in rep.summary()
+    assert rep.has_errors
+
+
+def test_aponta_o_verbo_certo_na_mensagem():
+    rep = lint_report(MRVL_UPSIDE, new_snapshot())
+    assert "aumentou" in rep.summary()
+
+
+def test_o_espelho_tambem_cai():
+    """Verbo de alta com números que caem."""
+    rep = lint_report("a margem subiu de 40% para 22%.", new_snapshot())
+    assert "DIRECAO_CONTRADIZ_NUMEROS" in rep.summary()
+    assert "caiu" in rep.summary()
+
+
+@pytest.mark.parametrize("frase", [
+    "upside aumentou de ~10% para 21,9% após o tombo de preço.",
+    "a margem caiu de 40% para 22% no trimestre.",
+    "o RSI subiu de 35 para 56 em três pregões.",
+])
+def test_frase_coerente_nao_dispara(frase):
+    assert not lint_report(frase, new_snapshot()).has_errors
+
+
+def test_empate_nao_dispara():
+    """Sem movimento, nenhum verbo de direção se aplica -- e apontar aqui
+    seria discutir estilo, não erro."""
+    assert not lint_report("ficou de 10% para 10%.", new_snapshot()).has_errors
+
+
+def test_numeros_em_frases_diferentes_nao_disparam():
+    """A guarda que mantém o falso positivo raro: só conta quando o verbo e
+    os dois números estão na MESMA frase, presos pela construção de/para."""
+    texto = "O upside caiu bastante. De 10% no evento, o papel foi para 21,9%."
+    assert not lint_report(texto, new_snapshot()).has_errors
+
+
+def test_verbo_sem_a_construcao_de_para_nao_dispara():
+    """"caiu 8,64%" é uma afirmação simples, sem dois números pra contradizer."""
+    assert not lint_report("MRVL caiu 8,64% no pré-mercado.", new_snapshot()).has_errors
+
+
+def test_negativos_sao_comparados_como_numero():
+    """-5 -> -2 é ALTA (menos negativo), não queda."""
+    rep = lint_report("o resultado caiu de -5% para -2%.", new_snapshot())
+    assert "DIRECAO_CONTRADIZ_NUMEROS" in rep.summary()
+
+
+def test_a_checagem_nao_precisa_de_ticker_nem_snapshot():
+    """A frase se contradiz sozinha, então vale no contexto macro também --
+    que não tem seção de ativo nem entra no snapshot."""
+    texto = "O juro de 10 anos recuou de 4,20% para 4,68% na semana."
+    rep = lint_report(texto, new_snapshot())
+    assert "DIRECAO_CONTRADIZ_NUMEROS" in rep.summary()

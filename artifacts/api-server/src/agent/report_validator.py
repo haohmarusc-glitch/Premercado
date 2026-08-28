@@ -86,6 +86,30 @@ SHORT_ALTO_PCT = 15.0
 # Severidades. "info" aparece no texto do achado mas não entra na conta da cor.
 CRITICO, ATIVO, INFO = "critico", "ativo", "info"
 
+# Direção declarada em prosa contra os DOIS números que a própria frase cita.
+#
+# Visto em produção (MRVL, 28/08/2026, apontado por três auditorias
+# independentes): "upside caiu de ~10% (dia do evento) para 21,9% após o
+# tombo de preço". 10 -> 21,9 é ALTA, e o texto diz "caiu" -- a frase se
+# contradiz sozinha, sem precisar de nenhum dado externo pra saber.
+#
+# Não é uma checagem de fato contra o payload como as outras deste arquivo:
+# é de COERÊNCIA INTERNA, e por isso vale mesmo pra número que o snapshot
+# não cobre. O custo de errar é baixo dos dois lados (só pede reescrita da
+# frase), mas as guardas mantêm o falso positivo raro:
+#   • exige a construção explícita "de X para Y" (ou "de X a Y"), que é onde
+#     a direção fica travada pelos próprios números;
+#   • exige os dois números na MESMA frase que o verbo;
+#   • ignora empate (X == Y), onde nenhum verbo de direção se aplica.
+_VERBO_SOBE = r"(?:subiu|sobe|aumentou|aumenta|cresceu|cresce|avan[çc]ou)"
+_VERBO_CAI = r"(?:caiu|cai|recuou|recua|diminuiu|diminui|encolheu|baixou)"
+_DIRECAO_DE_PARA = re.compile(
+    r"\b(?P<verbo>" + _VERBO_SOBE + r"|" + _VERBO_CAI + r")\b"
+    r"[^.;\n]{0,40}?\bde\b\s*~?\s*(?P<x>-?\d+(?:[.,]\d+)?)\s*%?"
+    r"[^.;\n]{0,40}?\b(?:para|a)\b\s*~?\s*(?P<y>-?\d+(?:[.,]\d+)?)\s*%?",
+    re.IGNORECASE,
+)
+
 VERDE = "🟢"
 AMARELO = "🟡"
 VERMELHO = "🔴"
@@ -374,7 +398,40 @@ def lint_report(texto: str, snap: dict[str, Any]) -> ValidationReport:
                 ticker=ticker,
             )
 
+    _checar_direcao_contra_numeros(texto, rep)
     return rep
+
+
+def _checar_direcao_contra_numeros(texto: str, rep: ValidationReport) -> None:
+    """Verbo de direção contradito pelos dois números da própria frase.
+
+    Ver `_DIRECAO_DE_PARA` para o caso real e as guardas de falso positivo.
+    Roda sobre o texto inteiro, não por seção: a frase se contradiz sozinha,
+    então não precisa de ticker nem de snapshot para ser avaliada -- e o
+    contexto macro, que não tem seção de ativo, também pode carregá-la.
+    """
+    for m in _DIRECAO_DE_PARA.finditer(texto):
+        try:
+            x = float(m.group("x").replace(",", "."))
+            y = float(m.group("y").replace(",", "."))
+        except ValueError:
+            continue
+        if x == y:
+            continue
+        verbo = m.group("verbo").lower()
+        subiu_de_fato = y > x
+        disse_que_subiu = bool(re.fullmatch(_VERBO_SOBE, verbo, re.IGNORECASE))
+        if subiu_de_fato == disse_que_subiu:
+            continue
+        certo = "aumentou" if subiu_de_fato else "caiu"
+        rep.add(
+            "ERROR",
+            "DIRECAO_CONTRADIZ_NUMEROS",
+            f"diz \"{verbo}\" mas cita {m.group('x')} → {m.group('y')}, que é o "
+            f"movimento oposto — a frase se contradiz sozinha. Use "
+            f"\"{certo}\". Trecho: “{m.group(0).strip()[:120]}”.",
+        )
+        break
 
 
 def correction_prompt(rep: ValidationReport) -> str:
