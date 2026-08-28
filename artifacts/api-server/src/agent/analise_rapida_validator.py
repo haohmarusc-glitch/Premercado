@@ -234,10 +234,39 @@ _NEGA_DISPONIBILIDADE = (
     r"n[aã]o\s+(?:est\w+|foi|foram|h[aá]|existe\w*|disp\w+|constam?)"
     # `obt\w+` e nao `obtid\w+`: "nao foi possivel OBTER" e' a forma mais
     # comum, e o particpio sozinho deixava o infinitivo de fora.
-    r"[^.]{0,40}?(?:dispon[íi]ve\w+|acess[íi]ve\w+|obt\w+|encontrad\w+)"
+    # Os participios acompanham os verbos de entrega do bloco abaixo: a forma
+    # "nao FORAM FORNECIDOS" e' auxiliar + participio e nao casa no ramo de
+    # verbo direto ("nao forneceu"). Faltando aqui, "nao foram fornecidos"
+    # escapava -- foi assim que a 2a rodada do MRVL passou.
+    r"[^.]{0,40}?(?:dispon[íi]ve\w+|acess[íi]ve\w+|obt\w+|encontrad\w+"
+    r"|forneci\w+|apresentad\w+|disponibilizad\w+|inclu[íi]d\w+|trazid\w+)"
     r"|indispon[íi]ve\w+"
-    r"|n[aã]o\s+(?:vie\w+|veio|chegou|chegaram|retorn\w+)"
+    # MRVL, 27/08/2026: "o JSON nao TROUXE camada fundamental" e "os alvos
+    # ... nao foram FORNECIDOS" escaparam nas DUAS rodadas do mesmo ticker,
+    # com `alvosAnalistas` no payload. O verbo de entrega faltava no
+    # vocabulario: "veio/chegou/retornou" estavam, "trouxe/forneceu/
+    # apresentou/disponibilizou" nao -- e negar dado presente com um verbo
+    # sinonimo e' o mesmo defeito que a checagem existe para pegar.
+    r"|n[aã]o\s+(?:vie\w+|veio|chegou|chegaram|retorn\w+|trouxe|trouxeram|"
+    r"forne\w+|apresent\w+|disponibiliz\w+|inclu[ií]\w*|contempl\w+)"
     r"|sem\s+(?:dados|informa[cç][õo]es)\s+(?:de\s+)?(?:fundament\w+|valuation)")
+
+# Qual BLOCO a frase esta' negando. Sem isto a checagem so' pergunta "a frase
+# fala de fundamento?", e uma frase CORRETA sobre o bloco ausente ("a FMP nao
+# forneceu o DCF") viraria ERRO so' porque OUTRO bloco veio. O vocabulario de
+# verbos acima aumenta o alcance da checagem, entao a precisao tem que subir
+# junto -- ampliar o gatilho sem estreitar o alvo troca um falso negativo por
+# um falso positivo.
+_TERMOS_DO_BLOCO = {
+    "alvosAnalistas": r"alvos?\s+d\w+\s+analist\w+|pre[cç]o[- ]alvo|consenso",
+    "valuation": r"valuation|\bdcf\b|fluxo\s+de\s+caixa|m[uú]ltiplos?|p/l\b|p/vp\b",
+    "manchetes": r"manchete\w*|not[íi]cia\w*",
+}
+
+# Negacao GENERICA da camada, sem nomear bloco ("a camada fundamental nao
+# veio"). E' o caso do incidente AMD, e continua valendo quando QUALQUER
+# bloco esta' presente.
+_FUNDAMENTO_GENERICO = r"fundament\w+|avalia[cç][aã]o"
 
 # O SUJEITO da negacao tem que ser a camada fundamental. Sem isto, "o RSI nao
 # estava disponivel" -- frase sobre outro dado -- viraria apontamento.
@@ -476,15 +505,28 @@ def validar_analise(texto, dados=None) -> list:
     fundamento = dic(caminho(dados, "_fundamento"))
     presentes = [rotulo for chave, rotulo in _BLOCOS_FUNDAMENTAIS
                  if fundamento.get(chave)]
+    chaves_presentes = [chave for chave, _ in _BLOCOS_FUNDAMENTAIS
+                        if fundamento.get(chave)]
     if presentes:
         for frase in frases(prosa_sa):
             if not re.search(_NEGA_DISPONIBILIDADE, frase):
                 continue
             if not re.search(_FALA_DO_FUNDAMENTO, frase):
                 continue
+            # A frase nega a camada em geral, ou nomeia um bloco que VEIO?
+            # Frase que só nomeia bloco ausente ("a FMP não forneceu o DCF")
+            # está certa e não pode virar ERRO por causa de outro bloco.
+            nega_generico = bool(re.search(_FUNDAMENTO_GENERICO, frase))
+            nomeados = [c for c, termos in _TERMOS_DO_BLOCO.items()
+                        if re.search(termos, frase)]
+            presentes_na_frase = [c for c in nomeados if c in chaves_presentes]
+            if not nega_generico and not presentes_na_frase:
+                continue
+            citados = ([r for c, r in _BLOCOS_FUNDAMENTAIS if c in presentes_na_frase]
+                       or presentes)
             add("ERRO", "ANALISE_NEGA_DADO_PRESENTE",
                 f"diz que a camada fundamental não veio, mas o payload traz "
-                f"{', '.join(presentes)} — quem lê isso para de procurar um "
+                f"{', '.join(citados)} — quem lê isso para de procurar um "
                 f"dado que está na mão. "
                 f"Trecho: “{frase.strip()[:120]}”.")
             break

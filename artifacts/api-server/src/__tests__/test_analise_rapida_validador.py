@@ -1386,6 +1386,58 @@ def test_uma_camada_presente_ja_basta():
         validar_analise(_texto_completo(_FRASE_AMD), so_alvos))
 
 
+# ── MRVL, 27/08/2026: o verbo de entrega que faltava no vocabulário ────────
+#
+# A prosa negou a camada fundamental com `alvosAnalistas` NO PAYLOAD, em duas
+# rodadas seguidas do mesmo ticker, e a checagem não pegou nenhuma das duas:
+# "veio/chegou/retornou" estavam no vocabulário, "trouxe/forneceu/apresentou"
+# não. Uma auditoria externa leu o sintoma ao contrário -- achou que o dado
+# estava faltando sem ser reportado -- mas apontou para o lugar certo.
+
+_SO_ALVOS = {"precoAtual": {"valor": 241.45}, "snapshot": {"price": 241.45},
+             "_fundamento": {"alvosAnalistas": {"alvoMedio": 300.0,
+                                                "consenso": "Buy"}}}
+
+
+@pytest.mark.parametrize("frase", [
+    # a 2a rodada do MRVL, verbatim: auxiliar + particípio
+    "Dados explícitos de valuation, como alvos de analistas e avaliação por "
+    "fluxo de caixa descontado (DCF), não foram fornecidos neste relatório.",
+    # a 1a rodada do MRVL, verbatim: verbo direto
+    "O JSON não trouxe camada fundamental para este ticker — sem alvos de "
+    "analistas, múltiplos ou DCF disponíveis.",
+    # as outras formas do mesmo verbo de entrega
+    "O consenso de analistas não foi apresentado nesta rodada.",
+    "Os alvos de analistas não foram disponibilizados.",
+])
+def test_verbo_de_entrega_tambem_nega_a_camada(frase):
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _SO_ALVOS))
+
+
+@pytest.mark.parametrize("frase", [
+    # O bloco NEGADO é o que de fato faltou (valuation), e o que veio (alvos)
+    # nem é citado. Antes esta frase CORRETA viraria ERRO, porque a checagem
+    # só perguntava "fala de fundamento?" -- ampliar o gatilho sem estreitar
+    # o alvo trocaria um falso negativo por um falso positivo.
+    "A FMP não forneceu o DCF, então sigo só com técnica.",
+    "O valuation não foi fornecido nesta rodada.",
+    "Os múltiplos não vieram da fonte.",
+])
+def test_negar_so_o_bloco_ausente_continua_correto(frase):
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _SO_ALVOS))
+
+
+def test_a_mensagem_nomeia_o_bloco_que_a_frase_negou():
+    """Com só um bloco citado, a mensagem aponta ELE -- não a lista inteira
+    do payload, que mandaria o leitor procurar no lugar errado."""
+    msg = next(a["mensagem"] for a in validar_analise(_texto_completo(
+        "Os alvos de analistas não foram fornecidos."), _SO_ALVOS)
+        if a["codigo"] == "ANALISE_NEGA_DADO_PRESENTE")
+    assert "alvos de analistas" in msg
+
+
 def test_blocos_espelham_os_coletores():
     """As chaves aqui e em `analise_rapida_ia.COLETORES` descrevem os MESMOS
     três blocos. Divergir faria a checagem ignorar em silêncio um bloco que a

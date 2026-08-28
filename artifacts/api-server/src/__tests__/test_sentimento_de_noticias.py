@@ -196,3 +196,81 @@ def test_sem_manchete_classificada_e_neutro():
 def test_o_piso_esta_nomeado_e_nao_enterrado():
     """É julgamento, não teorema — tem que dar para achar e discutir."""
     assert isinstance(MINIMO_PARA_ROTULAR, int) and MINIMO_PARA_ROTULAR >= 2
+
+
+# ═══ MRVL, 27/08/2026 — "positivo" com três manchetes de queda na tela ═════
+#
+# A Análise Rápida publicou "Notícias (positivo)" e "alta forte CONFIRMADA por
+# fluxo de notícias positivo" com estas quatro manchetes em destaque:
+#
+#     Earnings live updates: Marvell stock falls despite strong earnings...
+#     Jackson Hole Symposium kicks off, Marvell & dollar stores report earnings
+#     Marvell Stock Sinks as Big Expectations Outweigh Solid Earnings
+#     Marvell Shares Slide After Hours
+#
+# Três falam explicitamente de queda. O rótulo saiu positivo porque "slide"
+# não estava em lista nenhuma: a manchete empatou 0-0 e virou MISTO, fora do
+# denominador. Sobrou 2 positivas (que nem aparecem nos destaques, porque
+# `destaques = scored[:4]` é ordem do feed) contra 1 negativa -> score 0,33.
+#
+# A própria prosa da IA se contradizia duas vezes no mesmo relatório:
+# "confirmada por um fluxo de notícias positivo" e, dois parágrafos abaixo,
+# "Manchetes recentes foram mistas a negativas".
+
+MRVL_FALLS = ("Earnings live updates: Marvell stock falls despite strong "
+              "earnings and guidance")
+MRVL_JACKSON = ("Jackson Hole Symposium kicks off, Marvell & dollar stores "
+                "report earnings: What to Watch")
+MRVL_SINKS = "Marvell Stock Sinks as Big Expectations Outweigh Solid Earnings"
+MRVL_SLIDE = "Marvell Shares Slide After Hours"
+
+
+def test_slide_e_queda_e_nao_empate():
+    """O termo que faltava. Sem ele a manchete empatava 0-0 e saía MISTO --
+    o mesmo 'apagar notícia em silêncio' que o comentário do casamento por
+    palavra inteira já descrevia."""
+    assert _NEGATIVE_RE.search(MRVL_SLIDE.lower())
+    assert _classificar(MRVL_SLIDE, "MRVL") == "negativo"
+
+
+@pytest.mark.parametrize("titulo", [
+    "Marvell Shares Slide After Hours",
+    "MRVL Stock Slips After-Hours on Margin Outlook",
+    "Marvell slipped 6% in extended trading",
+])
+def test_a_familia_de_queda_esta_completa(titulo):
+    """slide/slip são o MESMO movimento de preço que fall/drop/sink/slump,
+    que já estavam na lista. Fechar a lacuna de uma família representada não
+    é o crescimento de lista contra o qual o código adverte."""
+    assert _NEGATIVE_RE.search(titulo.lower())
+
+
+def test_as_quatro_manchetes_de_mrvl_nao_dao_positivo():
+    tons = [_classificar(t, "MRVL")
+            for t in (MRVL_FALLS, MRVL_JACKSON, MRVL_SINKS, MRVL_SLIDE)]
+    # "falls despite strong" tem ressalva; a do Jackson Hole não pontua nada.
+    assert tons == ["misto", "misto", "negativo", "negativo"]
+    assert tons.count("positivo") == 0
+
+
+def test_o_rotulo_do_dia_deixa_de_ser_positivo():
+    """O placar real da tela: as 2 positivas que o feed trouxe (e que nem
+    apareceram nos destaques) contra as negativas das manchetes exibidas.
+    Antes: 2x1 -> score 0,33 -> "positivo". Depois: 2x2 -> 0,0 -> "misto"."""
+    tons = [_classificar(t, "MRVL")
+            for t in (MRVL_FALLS, MRVL_JACKSON, MRVL_SINKS, MRVL_SLIDE)]
+    negativas = tons.count("negativo")
+    assert _rotulo(2, negativas) == "misto"
+    # e é o "misto" que faz a confluência dizer "sem confirmação nem
+    # divergência" em vez de "CONFIRMADA por fluxo de notícias positivo".
+    assert _rotulo(2, 1) == "positivo", "o placar antigo, para contraste"
+
+
+def test_a_lista_nova_nao_inverte_manchete_de_alta():
+    """O risco que o comentário do código nomeia: cada termo novo é uma
+    chance de virar o rótulo do lado errado. Manchete afirmativa de alta
+    continua positiva."""
+    for titulo in ("Marvell beats and raises guidance",
+                   "Marvell surges on record data center growth",
+                   "Marvell upgraded to buy rating"):
+        assert _classificar(titulo, "MRVL") == "positivo", titulo
