@@ -416,3 +416,105 @@ def test_ano_fiscal_irregular_em_serie_acumulada():
     ]
     assert [t["val"] for t in _trimestres_de(fatos)] == [100, 110, 120, 130]
     assert _ttm(fatos)[0] == 460
+
+
+# ═══ O que o MODO SOMBRA achou e a fixture não acharia ══════════════════════
+#
+# Primeira execução contra dado real (NVDA, 28/08/2026): margem líquida de
+# 1766%. Lucro TTM de US$ 192,9 bi sobre receita TTM de US$ 10,9 bi -- o lucro
+# dos trimestres atuais, a receita do exercício encerrado em JANEIRO DE 2020.
+#
+# Duas falhas independentes, e a segunda sobreviveria à correção da primeira:
+#
+#   1. `_fatos` devolvia o PRIMEIRO tag com qualquer dado. Na NVDA isso era
+#      RevenueFromContractWithCustomerExcludingAssessedTax, abandonado depois
+#      do FY2020 -- preferência estava ganhando de recência.
+#   2. Nada conferia se dois TTM combinados cobriam a MESMA janela. Mesmo com
+#      o tag certo, um conceito com histórico mais curto faria a razão
+#      comparar eras.
+
+
+def _tag_parada_e_tag_atual():
+    """A situação da NVDA: um tag descontinuado com histórico velho e um tag
+    corrente com o histórico de verdade."""
+    return {"facts": {"us-gaap": {
+        # Descontinuado em 2020 -- primeiro na ordem de preferência.
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+            "units": {"USD": _quatro_trimestres([10, 10, 10, 10], ano=2019)}},
+        # Corrente, mas depois na ordem de preferência.
+        "Revenues": {"units": {"USD": _quatro_trimestres([500, 500, 500, 500])}},
+    }}}
+
+
+def test_tag_descontinuado_perde_para_o_atual():
+    from agent.fundamentos_sec import _fatos
+    fatos, tag = _fatos(_tag_parada_e_tag_atual(), "receita")
+    assert tag == "Revenues", (
+        "recência tem que vencer preferência -- foi assim que a receita da "
+        "NVDA saiu com seis anos de atraso")
+    assert _ttm(fatos)[0] == 2000
+
+
+def test_preferencia_ainda_vale_quando_os_dois_estao_atuais():
+    """A correção não pode virar 'ignore a ordem': com os dois tags no mesmo
+    período, a preferência continua decidindo."""
+    from agent.fundamentos_sec import _fatos
+    dados = {"facts": {"us-gaap": {
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+            "units": {"USD": _quatro_trimestres([500, 500, 500, 500])}},
+        "Revenues": {"units": {"USD": _quatro_trimestres([400, 400, 400, 400])}},
+    }}}
+    _, tag = _fatos(dados, "receita")
+    assert tag == "RevenueFromContractWithCustomerExcludingAssessedTax"
+
+
+def test_a_margem_absurda_da_nvda_nao_sai_mais():
+    """O caso inteiro, ponta a ponta: lucro atual, receita velha no tag
+    descontinuado. Antes: 1766%. Agora: a receita certa é encontrada."""
+    dados = _tag_parada_e_tag_atual()
+    dados["facts"]["us-gaap"]["NetIncomeLoss"] = {
+        "units": {"USD": _quatro_trimestres([50, 50, 50, 50])}}
+    m = multiplos(dados, preco=None)["metricas"]
+    # 200 de lucro sobre 2000 de receita = 10%, não 200/40 = 500%.
+    assert m["margem_liquida"]["valor"] == pytest.approx(0.1, abs=1e-6)
+
+
+def test_ttm_de_janelas_diferentes_nao_vira_razao():
+    """A segunda trava, sozinha: mesmo sem tag descontinuado, dois conceitos
+    com históricos de eras distintas não podem ser divididos."""
+    dados = {"facts": {"us-gaap": {
+        "Revenues": {"units": {"USD": _quatro_trimestres([100] * 4, ano=2019)}},
+        "NetIncomeLoss": {"units": {"USD": _quatro_trimestres([50] * 4, ano=2025)}},
+    }}}
+    m = multiplos(dados, preco=None)["metricas"]
+    assert m["margem_liquida"]["valor"] is None
+    assert "janelas diferentes" in m["margem_liquida"]["indisponivel"]
+
+
+def test_ebitda_nao_soma_operacional_e_d_e_a_de_eras_diferentes():
+    dados = _emissor()
+    dados["facts"]["us-gaap"]["DepreciationDepletionAndAmortization"] = {
+        "units": {"USD": _quatro_trimestres([5] * 4, ano=2019)}}
+    m = multiplos(dados, preco=20.0)["metricas"]
+    assert m["ev_ebitda"]["valor"] is None
+    assert "janelas diferentes" in m["ev_ebitda"]["indisponivel"]
+
+
+def test_fcf_nao_subtrai_capex_de_outra_era():
+    dados = _emissor()
+    dados["facts"]["us-gaap"]["PaymentsToAcquirePropertyPlantAndEquipment"] = {
+        "units": {"USD": _quatro_trimestres([10] * 4, ano=2019)}}
+    m = multiplos(dados, preco=20.0)["metricas"]
+    assert m["fcf_yield"]["valor"] is None
+    assert "janelas diferentes" in m["fcf_yield"]["indisponivel"]
+
+
+def test_janela_igual_continua_passando():
+    """A trava não pode reprovar o caso bom -- inclusive com um dia de folga
+    entre rótulos do mesmo trimestre fiscal."""
+    from agent.fundamentos_sec import _janela_incompativel
+    assert _janela_incompativel(
+        {"periodo": "2025-01-01..2025-12-31"},
+        {"periodo": "2025-01-02..2025-12-31"}) is None
+    assert _janela_incompativel({"periodo": "2025-01-01..2025-12-31"}) is None
+    assert _janela_incompativel() is None
