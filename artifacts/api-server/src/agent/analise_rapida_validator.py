@@ -534,7 +534,27 @@ def validar_analise(texto, dados=None) -> list:
     # camada que veio: sem valuation nem alvos, diga em uma linha que a
     # fundamental não estava disponível e siga"). A frase é legítima --
     # quando é verdade. Esta checagem é o que separa os dois casos.
-    fundamento = dic(caminho(dados, "_fundamento"))
+    # Coletado NÃO é o mesmo que enviado. Quando o payload não cabe no teto,
+    # `_compactar` omite blocos inteiros e registra quais em `_blocosOmitidos`
+    # -- e um bloco omitido nunca chegou ao modelo. Cobrar dele um dado que
+    # ficou de fora do prompt é reprovar o texto por dizer a verdade, que foi
+    # exatamente o que aconteceu com a NVDA em 28/08/2026: a linha de fontes
+    # anunciava a camada fundamental, o modelo dizia que ela não veio, e os
+    # dois estavam certos sobre entradas diferentes.
+    #
+    # Esta checagem existe para pegar o modelo negando dado que RECEBEU. Sem o
+    # recorte, ela vira o contrário: um detector que só dispara quando o
+    # sistema já falhou antes, culpando quem não errou.
+    # `isinstance` e não `set(...)` direto: `dados` chega de fora e já veio
+    # malformado antes -- um `_blocosOmitidos` string viraria um conjunto de
+    # letras, e "f" nunca casaria com "fundamento".
+    # `dic(dados).get(...)` e não `caminho(...)`: `caminho` coage TODO nível
+    # por `dic()`, então uma lista no topo voltava `{}` -- silenciosamente,
+    # deixando a checagem exatamente como estava antes do recorte.
+    _omitidos = dic(dados).get("_blocosOmitidos")
+    omitidos = set(_omitidos) if isinstance(_omitidos, (list, tuple, set)) else set()
+    fundamento = ({} if "fundamento" in omitidos
+                  else dic(caminho(dados, "_fundamento")))
     presentes = [rotulo for chave, rotulo in _BLOCOS_FUNDAMENTAIS
                  if fundamento.get(chave)]
     chaves_presentes = [chave for chave, _ in _BLOCOS_FUNDAMENTAIS

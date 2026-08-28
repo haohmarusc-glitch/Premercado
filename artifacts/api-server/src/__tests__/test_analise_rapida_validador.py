@@ -2245,3 +2245,51 @@ def test_sem_esticado_n_no_payload_a_checagem_se_cala():
         "Em 6 eventos onde o papel chegou esticado, a reação foi negativa."),
         {})
     assert "ANALISE_BUCKET_ESTICADO_CONTAGEM_SOLTA" not in _codigos(achados)
+
+
+# ═══ 28/08/2026 — NVDA: coletado não é o mesmo que enviado ═════════════════
+#
+# A tela mostrava, na mesma página, a linha de fontes anunciando "valuation:
+# múltiplos TTM (SEC/XBRL) + DCF (FMP)" e a prosa dizendo que os dados de
+# fundamento não estavam disponíveis. O validador acusou o modelo.
+#
+# Ninguém mentiu. `_compactar` corta o payload quando ele não cabe em 14 mil
+# chars, e a camada fundamental era a última chave do dicionário: o modelo
+# nunca a recebeu. Esta checagem existe para pegar o modelo negando dado que
+# RECEBEU -- sem o recorte por `_blocosOmitidos` ela vira o contrário, um
+# detector que só dispara depois de o sistema já ter falhado, culpando quem
+# disse a verdade.
+
+_FRASE_NVDA = ("Os dados de fundamento e valuation, incluindo alvos de "
+               "analistas e múltiplos de mercado, não estavam disponíveis "
+               "para este ativo na análise atual.")
+
+
+def test_bloco_omitido_do_prompt_nao_e_dado_presente():
+    dados = {**_COM_FUNDAMENTO, "_blocosOmitidos": ["reacaoEarnings", "fundamento"]}
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA), dados))
+
+
+def test_omitir_outro_bloco_nao_absolve_a_negacao_do_fundamento():
+    """O recorte é do bloco NOMEADO, não uma anistia geral: cortar a reação a
+    earnings não faz o modelo deixar de ter recebido o valuation."""
+    dados = {**_COM_FUNDAMENTO, "_blocosOmitidos": ["reacaoEarnings"]}
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA), dados))
+
+
+def test_a_frase_da_nvda_cai_quando_o_payload_foi_inteiro():
+    """Sem omissão, é o caso do AMD de novo: o dado chegou e o texto o negou."""
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA), _COM_FUNDAMENTO))
+
+
+@pytest.mark.parametrize("valor", ["fundamento", 42, None, {"fundamento": 1}])
+def test_blocos_omitidos_malformado_nao_derruba_nem_absolve(valor):
+    """`dados` vem de fora e já chegou torto antes. Uma string viraria conjunto
+    de LETRAS, e "f" nunca casaria com "fundamento" -- mas o dia em que casar
+    por acidente, a checagem some sem ninguém notar."""
+    dados = {**_COM_FUNDAMENTO, "_blocosOmitidos": valor}
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA), dados))
