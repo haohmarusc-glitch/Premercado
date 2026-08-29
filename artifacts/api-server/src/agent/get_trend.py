@@ -652,6 +652,9 @@ def for_ticker(ticker: str) -> dict:
         saida = {
             "ticker": ticker,
             "price": round(price, 2),
+            # Até que sessão este painel alcança. Ver `_DEFASAGEM_*` em
+            # analise_rapida_ia.py para o incidente que pediu o campo.
+            "dadosAte": str(close.index[-1].date()),
             "trend": trend,
             "score": score,
             "components": comp,

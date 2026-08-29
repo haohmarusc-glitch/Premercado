@@ -41,6 +41,7 @@ Input (stdin JSON):
 Output (stdout JSON):
   {"markdown": "...", "usage": {...}}  ou  {"error": "..."}
 """
+import datetime as _dt
 import json
 import os
 import re
@@ -525,6 +526,70 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
 _DIVERGENCIA_PRECO_PCT = 1.0
 
 
+# Quantas sessões de atraso um painel pode ter antes de virar apontamento.
+# 0 = qualquer discordância conta: painéis do mesmo retrato têm que alcançar a
+# mesma sessão, e um dia de diferença já é o incidente inteiro.
+_DEFASAGEM_MAX_SESSOES = 0
+
+
+def _defasagem_entre_paineis(dados: dict) -> dict | None:
+    """Até que sessão cada painel alcança, e o quanto eles discordam.
+
+    Por que existe, quando `divergenciaPct` já compara preços: aquele é um
+    PROXY, e só dispara quando o preço se moveu o bastante. Num pregão parado,
+    um painel de ontem passa completamente mudo -- mesmo defeito, zero sinal.
+
+    Incidente real (MRVL, 29/08/2026): a Técnica trazia US$ 241,45 com
+    "-1,49% no dia", número idêntico à linha `2026-08-27` da tabela de
+    earnings -- ou seja, a barra do dia do ANÚNCIO. Os Níveis traziam US$
+    216,62. As bandas R1/R2/S1/S2, que são projeções do preço, saíram
+    ancoradas em 241,45 sob um cabeçalho que exibia 216,62. O `divergenciaPct`
+    pegou (11,46%) porque o papel tinha caído dez por cento; se o balanço
+    tivesse sido morno, nada teria avisado.
+
+    A causa não é cache do servidor (histórico 10 min, trend 30 min): é a tela
+    mandando `{trend, technicals, snapshot, reaction}` do que tem em memória.
+    Cada painel é um hook próprio, com fetch próprio -- e até aqui nenhum
+    deles dizia de quando era.
+    """
+    painel = [
+        ("tendencia", (dados.get("trend") or {}).get("dadosAte")),
+        ("tecnica", (dados.get("technicals") or {}).get("dadosAte")),
+        ("niveis", (dados.get("snapshot") or {}).get("dadosAte")),
+        ("reacaoEarnings", (((dados.get("reaction") or {}).get("summary") or {})
+                            .get("dados_ate"))),
+    ]
+    datas = {nome: str(d) for nome, d in painel if d}
+    if len(datas) < 2:
+        return None
+    mais_nova, mais_velha = max(datas.values()), min(datas.values())
+    if mais_nova == mais_velha:
+        return None
+    try:
+        atraso = (_dt.date.fromisoformat(mais_nova)
+                  - _dt.date.fromisoformat(mais_velha)).days
+    except ValueError:
+        return None  # data torta não vira apontamento, vira silêncio
+    if atraso <= _DEFASAGEM_MAX_SESSOES:
+        return None
+    return {
+        "porPainel": datas,
+        "maisNova": mais_nova,
+        "maisVelha": mais_velha,
+        "diasDeAtraso": atraso,
+        # A nota se explica no ponto de uso -- mesma técnica do `_NAO_COUBE`,
+        # e pelo mesmo motivo: o teto do SYSTEM não tem folga.
+        "_aviso": (
+            "estes painéis NÃO são do mesmo retrato: o dado de cada um alcança "
+            "uma sessão diferente. Indicadores, bandas e preços calculados "
+            "sobre a sessão mais VELHA não podem ser comparados com os da mais "
+            "nova, e conclusões que dependam disso (relação com VWAP, "
+            "distância de médias, se um balanço já foi precificado) estão "
+            "medindo mundos diferentes. Diga isso em uma linha, nomeando as "
+            "duas datas, antes de qualquer leitura técnica."),
+    }
+
+
 def _preco_canonico(dados: dict) -> dict | None:
     """UM preço para o texto inteiro citar, com as divergências expostas.
 
@@ -692,6 +757,9 @@ def _compactar(dados: dict) -> tuple:
         # Primeiro campo de propósito: é o preço que o texto inteiro deve
         # citar, e vir no topo ajuda o modelo a ancorar nele.
         "precoAtual": preco_canonico,
+        # Antes de qualquer painel: se eles não são do mesmo retrato, isso muda
+        # o que TODOS os outros campos significam.
+        "defasagemEntrePaineis": _defasagem_entre_paineis(dados),
         "niveisOrdenados": _niveis_ordenados(dados, (preco_canonico or {}).get("valor")),
         "tendencia": trend,
         "tecnica": dados.get("technicals") or None,

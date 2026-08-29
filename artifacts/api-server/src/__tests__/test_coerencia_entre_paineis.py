@@ -30,7 +30,8 @@ if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
 from agent import tools  # noqa: E402
-from agent.analise_rapida_ia import _compactar, _preco_canonico  # noqa: E402
+from agent.analise_rapida_ia import (  # noqa: E402
+    _compactar, _defasagem_entre_paineis, _preco_canonico)
 
 
 # ── 1. Preço canônico ───────────────────────────────────────────────────────
@@ -172,3 +173,97 @@ def test_as_duas_copias_de_rvol_signal_concordam():
     assert 'return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"' in fonte
     # E que ela é de fato usada, não só definida.
     assert "rvol_signal = _rvol_signal(rvol, fraction_elapsed)" in fonte
+
+
+# ═══ 29/08/2026 — MRVL: painéis do mesmo retrato, sessões diferentes ═══════
+#
+# A Técnica trazia US$ 241,45 com "-1,49% no dia" -- número idêntico à linha
+# `2026-08-27` da tabela de earnings, ou seja, a barra do dia do ANÚNCIO. Os
+# Níveis traziam US$ 216,62. As bandas R1/R2/S1/S2, que são projeções do
+# preço, saíram ancoradas em 241,45 (241,45 × 1,1378 = 274,72 = o R1 exibido)
+# sob um cabeçalho que exibia 216,62.
+#
+# O `divergenciaPct` PEGOU: 11,46%, e a prosa abriu o segundo parágrafo
+# nomeando os dois preços. Mas ele é um PROXY -- só dispara quando o preço se
+# moveu. Se o balanço tivesse sido morno, o mesmo defeito passaria mudo.
+#
+# A causa não é cache do servidor (histórico 10 min, trend 30 min): é a tela
+# mandando `{trend, technicals, snapshot, reaction}` do que tem em memória,
+# cada painel de um hook próprio, nenhum dizendo de quando era.
+
+def _retrato(tendencia=None, tecnica=None, niveis=None, reacao=None):
+    return {
+        "ticker": "MRVL", "benchmark": "SMH",
+        "trend": {"price": 241.45, "dadosAte": tendencia} if tendencia else None,
+        "technicals": {"price": 241.45, "dadosAte": tecnica} if tecnica else None,
+        "snapshot": {"price": 216.62, "dadosAte": niveis, "aoVivo": True} if niveis else None,
+        "reaction": {"summary": {"current_price": 241.45, "dados_ate": reacao}} if reacao else None,
+    }
+
+
+def test_paineis_de_sessoes_diferentes_viram_apontamento():
+    """O retrato do MRVL: três painéis na barra de 27/08, os níveis ao vivo."""
+    d = _defasagem_entre_paineis(
+        _retrato("2026-08-27", "2026-08-27", "2026-08-29", "2026-08-27"))
+    assert d is not None
+    assert d["maisVelha"] == "2026-08-27"
+    assert d["maisNova"] == "2026-08-29"
+    assert d["diasDeAtraso"] == 2
+    assert d["porPainel"]["tecnica"] == "2026-08-27"
+    assert d["porPainel"]["niveis"] == "2026-08-29"
+
+
+def test_o_aviso_diz_o_que_NAO_escrever():
+    """Marcador que só constata a diferença vira decoração. Este nomeia as
+    conclusões que ficam inválidas -- VWAP, distância de médias, balanço
+    precificado -- porque são exatamente as que a tela do MRVL publicou."""
+    d = _defasagem_entre_paineis(
+        _retrato("2026-08-27", "2026-08-27", "2026-08-29", "2026-08-27"))
+    aviso = d["_aviso"]
+    assert "vwap" in aviso.lower()
+    assert "precificado" in aviso
+    assert "nomeando as duas datas" in aviso
+
+
+def test_mesmo_retrato_nao_vira_apontamento():
+    assert _defasagem_entre_paineis(
+        _retrato("2026-08-29", "2026-08-29", "2026-08-29", "2026-08-29")) is None
+
+
+def test_pega_mesmo_com_o_preco_parado():
+    """A razão de existir, ao lado do `divergenciaPct`: aquele é um proxy e só
+    dispara quando o preço se moveu. Aqui os quatro painéis marcam o MESMO
+    preço -- e a defasagem continua sendo apontada."""
+    d = _retrato("2026-08-27", "2026-08-27", "2026-08-29", "2026-08-27")
+    for bloco in ("trend", "technicals", "snapshot"):
+        d[bloco]["price"] = 216.62
+    d["reaction"]["summary"]["current_price"] = 216.62
+    assert _preco_canonico(d).get("divergenciaPct") is None, "preço parado"
+    assert _defasagem_entre_paineis(d) is not None, "e mesmo assim aponta"
+
+
+def test_um_painel_so_nao_tem_com_que_comparar():
+    assert _defasagem_entre_paineis(_retrato(tecnica="2026-08-27")) is None
+
+
+def test_painel_sem_dadosAte_nao_derruba_a_checagem():
+    """Painel velho, de antes do campo existir, não pode virar exceção nem
+    silenciar os que declaram."""
+    d = _retrato("2026-08-27", None, "2026-08-29", None)
+    assert _defasagem_entre_paineis(d)["diasDeAtraso"] == 2
+
+
+def test_data_malformada_vira_silencio_e_nao_traceback():
+    assert _defasagem_entre_paineis(
+        _retrato("ontem", "2026-08-27", "2026-08-29", None)) is None
+
+
+def test_a_defasagem_entra_no_payload_do_prompt():
+    """Antes dos painéis, de propósito: se eles não são do mesmo retrato, isso
+    muda o que TODOS os outros campos significam."""
+    texto, _omitidos = _compactar(
+        _retrato("2026-08-27", "2026-08-27", "2026-08-29", "2026-08-27"))
+    payload = json.loads(texto)
+    assert payload["defasagemEntrePaineis"]["diasDeAtraso"] == 2
+    chaves = list(payload)
+    assert chaves.index("defasagemEntrePaineis") < chaves.index("tendencia")

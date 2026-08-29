@@ -602,7 +602,9 @@ export default function AnaliseRapidaPage() {
                       // lido como "quantas manchetes apareceram" por três
                       // leitores atentos no mesmo dia. N é o denominador do
                       // score (positivas + negativas), que exclui ambíguas.
-                      ? ` · ${trend.news.classificadas} de ${trend.news.minimoParaRotular} com tom definido`
+                      // Ver trend-card.tsx: "N de M" foi mal lido quatro
+                      // vezes porque "de" promete denominador, e M é piso.
+                      ? ` · só ${trend.news.classificadas} com tom definido, mínimo ${trend.news.minimoParaRotular} para rotular`
                       : ""})
                   </div>
                   <ul className="space-y-1">
