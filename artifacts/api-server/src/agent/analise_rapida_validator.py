@@ -362,9 +362,15 @@ _COMPARA_AO_ATUAL = (r"pr[óo]xim[oa]\s+(?:a|ao|d[ao]|d[eo])|similar\s+a|"
 # ordens) e CONFERIR CONTRA O DADO (`close_pct_mean`/`gap_pct_mean`) resolve
 # os dois fraseados sem depender de distância de frase: só cai quando o
 # número citado é o mesmo que o payload guarda como média agregada.
+# "dia do ANÚNCIO" era literal. NVDA, 29/08/2026, escreveu a mesma confusão
+# com outro substantivo -- "no fechamento do dia do BALANÇO" -- e passou sem
+# apontamento. O conceito é um só, e o arquivo já tem o conjunto de sinônimos
+# dele em `_EVENTO`: usar o literal era estreitar o alvo sem motivo.
 _NUMERO_JUNTO_DO_ANUNCIO = re.compile(
-    r"([+-]?\d+(?:[.,]\d+)?)\s*%[^.\n]{0,25}?dia\s+d[oe]\s+anuncio"
-    r"|dia\s+d[oe]\s+anuncio\w*[^.\n]{0,25}?(?:foi\s+de\s+)?"
+    # `d[oea]` e não `d[oe]`: "divulgação" é feminino, e "no dia DA
+    # divulgação" ficava de fora de um padrão que só conhecia "do"/"de".
+    r"([+-]?\d+(?:[.,]\d+)?)\s*%[^.\n]{0,25}?dia\s+d[oea]\s+" + _EVENTO
+    + r"|dia\s+d[oea]\s+" + _EVENTO + r"\w*[^.\n]{0,25}?(?:foi\s+de\s+)?"
     r"([+-]?\d+(?:[.,]\d+)?)\s*%",
     re.IGNORECASE)
 
@@ -1218,35 +1224,50 @@ def validar_analise(texto, dados=None) -> list:
     # leva o rótulo errado, e a conferência é contra o dado -- não contra
     # distância de frase, que dois fraseados reais do MESMO ticker já
     # mostraram não ser confiável (ver o comentário do regex).
-    if isinstance(eventos_reacao, list) and eventos_reacao:
-        evento_amc = eventos_reacao[0]
-        if isinstance(evento_amc, dict) and evento_amc.get("janela_reacao") == "seguinte":
-            alvos_media = [v for v in (
-                num_finito(resumo_reacao.get("close_pct_mean")),
-                num_finito(resumo_reacao.get("gap_pct_mean")),
-            ) if v is not None]
-            if alvos_media:
-                achou = False
-                for frase in frases(prosa_sa):
-                    for m in _NUMERO_JUNTO_DO_ANUNCIO.finditer(frase):
-                        texto_num = m.group(1) or m.group(2)
-                        citado = float(texto_num.replace(",", "."))
-                        if not any(abs(citado - v) <= 0.05 for v in alvos_media):
-                            continue
-                        if afirmacao_negada(frase, r"dia\s+d[oe]\s+anuncio"):
-                            continue
-                        add("ERRO", "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO",
-                            f"cita {citado:+.2f}% (a média agregada de "
-                            f"fechamento/gap da reação) junto de 'dia do "
-                            f"anúncio', mas este papel reporta depois do "
-                            f"fechamento (AMC) -- a sessão que precifica o "
-                            f"resultado é a SEGUINTE, e é dela que vêm as "
-                            f"médias desta seção. "
-                            f"Trecho: “{frase.strip()[:120]}”.")
-                        achou = True
-                        break
-                    if achou:
-                        break
+    # A janela vem do SUMMARY, não mais do primeiro evento. `events` não
+    # sobrevive ao enxugamento do payload (ver `_ENXUGADORES`), e uma checagem
+    # que só funciona quando o bloco veio inteiro falha exatamente na rodada
+    # em que o modelo tinha menos contexto -- que é quando ela mais importa.
+    janela_resumo = resumo_reacao.get("janela_reacao")
+    if janela_resumo is None and isinstance(eventos_reacao, list) and eventos_reacao:
+        primeiro = eventos_reacao[0]
+        janela_resumo = (primeiro.get("janela_reacao")
+                         if isinstance(primeiro, dict) else None)
+    if janela_resumo in ("seguinte", "mista"):
+        alvos_media = [v for v in (
+            num_finito(resumo_reacao.get("close_pct_mean")),
+            num_finito(resumo_reacao.get("gap_pct_mean")),
+        ) if v is not None]
+        if alvos_media:
+            achou = False
+            for frase in frases(prosa_sa):
+                for m in _NUMERO_JUNTO_DO_ANUNCIO.finditer(frase):
+                    texto_num = m.group(1) or m.group(2)
+                    citado = float(texto_num.replace(",", "."))
+                    # Comparação em MÓDULO. A NVDA escreveu "caiu 0,89%":
+                    # a direção estava no VERBO, não no sinal, e
+                    # `abs(0.89 - (-0.89))` dava 1,78 -- passava longe da
+                    # tolerância mesmo sendo exatamente o número do
+                    # payload. E citar +0,89% onde o dado é -0,89% também
+                    # é erro, então o módulo não afrouxa o alvo: amplia
+                    # para um segundo jeito de errar a mesma coisa.
+                    if not any(abs(abs(citado) - abs(v)) <= 0.05
+                               for v in alvos_media):
+                        continue
+                    if afirmacao_negada(frase, r"dia\s+d[oea]\s+" + _EVENTO):
+                        continue
+                    add("ERRO", "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO",
+                        f"cita {citado:+.2f}% (a média agregada de "
+                        f"fechamento/gap da reação) junto de 'dia do "
+                        f"anúncio', mas este papel reporta depois do "
+                        f"fechamento (AMC) -- a sessão que precifica o "
+                        f"resultado é a SEGUINTE, e é dela que vêm as "
+                        f"médias desta seção. "
+                        f"Trecho: “{frase.strip()[:120]}”.")
+                    achou = True
+                    break
+                if achou:
+                    break
 
     # ── 19. contagem do balde "esticado" citada solta, sem o par X de Y ─────
     #

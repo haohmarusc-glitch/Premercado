@@ -2366,3 +2366,90 @@ def test_bloco_omitido_do_prompt_nao_e_negacao_indevida(frase):
 def test_frase_que_nao_nega_a_reacao_passa(frase):
     assert "ANALISE_NEGA_REACAO_PRESENTE" not in _codigos(
         validar_analise(_texto_completo(frase), _COM_REACAO))
+
+
+# ═══ 29/08/2026 — NVDA: a média da reação virou "dia do balanço" ═══════════
+#
+# O check 18 nasceu do MRVL e conhecia exatamente este erro. Não disparou por
+# duas razões, e as duas ensinam a mesma coisa -- gatilho estreito demais:
+#
+#   1. VOCABULÁRIO. O padrão exigia o literal "dia do ANÚNCIO". A NVDA
+#      escreveu "no fechamento do dia do BALANÇO". Mesmo conceito, outro
+#      substantivo -- e o arquivo já tinha o conjunto de sinônimos em
+#      `_EVENTO`, usado por meia dúzia de outras checagens.
+#
+#   2. SINAL. A prosa escreveu "caiu 0,89%": a direção estava no VERBO, não no
+#      número. `abs(0.89 - (-0.89))` dá 1,78 e passava longe da tolerância de
+#      0,05, mesmo sendo exatamente o valor do payload.
+#
+# O estrago: -0,89% é a média da sessão SEGUINTE (as oito linhas da tabela
+# vêm marcadas com ◂). A média do dia do anúncio é +0,79% -- sinal oposto.
+# Quem lê conclui que a NVDA cai no dia do balanço; historicamente ela SUBIU
+# no dia do anúncio e caiu no dia seguinte.
+
+_COD_18 = "ANALISE_REACAO_MEDIA_ATRIBUIDA_AO_ANUNCIO"
+
+_AMC = {"reaction": {"summary": {"janela_reacao": "seguinte", "n_events": 8,
+                                 "close_pct_mean": -0.89, "gap_pct_mean": 0.31}}}
+_BMO = {"reaction": {"summary": {"janela_reacao": "anuncio", "n_events": 8,
+                                 "close_pct_mean": -0.89, "gap_pct_mean": 0.31}}}
+
+_FRASE_NVDA_MEDIA = (
+    "A NVDA teve seus earnings divulgados há 1 pregão, e a reação histórica "
+    "em 8 eventos mostra que o preço, em média, caiu 0,89% no fechamento do "
+    "dia do balanço.")
+
+
+@pytest.mark.parametrize("frase", [
+    _FRASE_NVDA_MEDIA,
+    # Os sinônimos que o literal deixava passar.
+    "A reação média foi de -0,89% no dia do resultado.",
+    "No dia da divulgação, o fechamento médio foi de -0,89%.",
+    "O papel recuou 0,89% em média no dia do evento.",
+    # E o fraseado original do MRVL continua caindo.
+    "Um fechamento diário médio de -0,89% no dia do anúncio.",
+])
+def test_media_da_reacao_colada_ao_dia_do_evento_e_erro(frase):
+    achados = validar_analise(_texto_completo(frase), _AMC)
+    assert _COD_18 in _codigos(achados), frase
+
+
+def test_direcao_no_verbo_conta_como_sinal():
+    """"caiu 0,89%" é -0,89%. Comparar com sinal fazia a checagem passar longe
+    do número que ela existe para reconhecer."""
+    assert _COD_18 in _codigos(
+        validar_analise(_texto_completo("O preço caiu 0,89% no dia do balanço."), _AMC))
+    # E o inverso também é erro: citar +0,89% onde o dado é -0,89%.
+    assert _COD_18 in _codigos(
+        validar_analise(_texto_completo("O preço subiu 0,89% no dia do balanço."), _AMC))
+
+
+def test_papel_bmo_pode_atribuir_ao_dia_do_balanco():
+    """Quem divulga ANTES da abertura reage no próprio dia. A frase é certa, e
+    a checagem existe para separar os dois casos."""
+    assert _COD_18 not in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA_MEDIA), _BMO))
+
+
+def test_a_janela_vem_do_summary_e_nao_dos_eventos():
+    """`events` não sobrevive ao enxugamento do payload. Uma checagem que só
+    funciona com o bloco inteiro falha exatamente na rodada em que o modelo
+    tinha menos contexto -- que é quando ela mais importa."""
+    sem_eventos = {"reaction": {"summary": dict(_AMC["reaction"]["summary"])}}
+    assert "events" not in sem_eventos["reaction"]
+    assert _COD_18 in _codigos(
+        validar_analise(_texto_completo(_FRASE_NVDA_MEDIA), sem_eventos))
+
+
+@pytest.mark.parametrize("frase", [
+    # Número que não é o do payload.
+    "O papel caiu 3,40% no dia do balanço.",
+    # Negado.
+    "Não foi no dia do balanço que o papel caiu 0,89%.",
+    # Atribuição CERTA: nomeia a sessão seguinte.
+    "A reação média foi de -0,89% na sessão seguinte ao anúncio.",
+    # Fala do evento sem citar a média.
+    "O balanço foi divulgado há 1 pregão.",
+])
+def test_frase_que_nao_erra_a_atribuicao_passa(frase):
+    assert _COD_18 not in _codigos(validar_analise(_texto_completo(frase), _AMC))
