@@ -216,6 +216,32 @@ def _translate_join(texts: list[str]) -> list[str]:
 MINIMO_PARA_ROTULAR = 3
 
 
+def _sem_contrarias(news: dict, campo: str, singular: str, plural: str) -> str:
+    """"sem notícias X" só quando REALMENTE não há nenhuma.
+
+    A frase base era fixa, e a ressalva vinha depois entre parênteses -- o que
+    produzia uma sentença que se contradiz dentro de si mesma:
+
+        "sem notícias contrárias (amostra pequena: 1 notícia(s) na direção
+         contrária, ainda sem confirmar)"
+
+    Um auditor externo leu isso no MRVL (29/08) como contradição do painel, e
+    tinha razão sobre a frase, ainda que a ressalva já trouxesse o número: a
+    primeira metade nega o que a segunda admite. Quem lê só o começo sai com a
+    informação errada.
+
+    Agora a frase base muda de forma conforme o placar: zero contrárias diz
+    "sem"; alguma contrária abaixo do mínimo diz "nenhuma CONFIRMADA", que é o
+    que o sistema de fato sabe.
+    """
+    # As duas formas vêm EXPLÍCITAS. Derivar o plural com "%ss" produziu
+    # "favorávels": em português, palavra terminada em -l faz -eis, e uma
+    # regra ingênua acerta "contrárias" e erra "favoráveis" -- exatamente o
+    # tipo de esperteza que passa no caso que a gente testou e falha no outro.
+    return ("sem notícias %s" % plural if not (news.get(campo) or 0)
+            else "nenhuma notícia %s confirmada" % singular)
+
+
 def _amostra_insuficiente_nota(news: dict, campo: str, direcao: str) -> str:
     """Ressalva pra quando "sem notícias contrárias/favoráveis" lê como
     contradição do próprio placar ao lado.
@@ -620,14 +646,16 @@ def for_ticker(ticker: str) -> dict:
         if score >= 60 and news_dir >= 0:
             sinal, sinal_motivo = (
                 "compra",
-                "técnico de alta forte sem notícias contrárias"
+                "técnico de alta forte "
+                + _sem_contrarias(news, "negativas", "contrária", "contrárias")
                 + _amostra_insuficiente_nota(news, "negativas", "contrária"))
         elif score >= 25 and news_dir > 0:
             sinal, sinal_motivo = "compra", "técnico de alta confirmado por notícias positivas"
         elif score <= -60 and news_dir <= 0:
             sinal, sinal_motivo = (
                 "venda",
-                "técnico de baixa forte sem notícias favoráveis"
+                "técnico de baixa forte "
+                + _sem_contrarias(news, "positivas", "favorável", "favoráveis")
                 + _amostra_insuficiente_nota(news, "positivas", "favorável"))
         elif score <= -25 and news_dir < 0:
             sinal, sinal_motivo = "venda", "técnico de baixa confirmado por notícias negativas"

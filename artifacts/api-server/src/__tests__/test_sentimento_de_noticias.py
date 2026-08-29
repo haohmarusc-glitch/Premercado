@@ -343,3 +343,39 @@ def test_nota_conta_o_campo_pedido_nao_o_outro():
     pode disparar por causa das positivas."""
     news = {"positivas": 1, "negativas": 0, "classificadas": 1}
     assert _amostra_insuficiente_nota(news, "negativas", "contrária") == ""
+
+
+# ═══ 29/08/2026 — MRVL: a frase negava o que o parêntese ao lado admitia ═══
+#
+#     "técnico de alta forte sem notícias contrárias (amostra pequena:
+#      1 notícia(s) na direção contrária, ainda sem confirmar)"
+#
+# Um auditor externo leu isso como contradição do painel. A ressalva já
+# trazia o número -- mas a primeira metade da sentença NEGA o que a segunda
+# admite, e quem lê só o começo sai com a informação errada.
+#
+# A frase base agora muda de forma conforme o placar.
+
+def test_zero_contrarias_diz_sem():
+    from agent.get_trend import _sem_contrarias
+    assert _sem_contrarias({"negativas": 0}, "negativas",
+                           "contrária", "contrárias") == "sem notícias contrárias"
+
+
+def test_alguma_contraria_diz_nenhuma_CONFIRMADA():
+    """O que o sistema de fato sabe: existe uma, ela só não confirma nada."""
+    from agent.get_trend import _sem_contrarias
+    frase = _sem_contrarias({"negativas": 1}, "negativas", "contrária", "contrárias")
+    assert frase == "nenhuma notícia contrária confirmada"
+    assert not frase.startswith("sem "), "não pode negar o que existe"
+
+
+def test_o_plural_de_favoravel_e_favoraveis():
+    """`"%ss" % direcao` produzia "favorávels". Em português, palavra em -l faz
+    -eis, e a regra ingênua acerta "contrárias" e erra "favoráveis" -- o tipo
+    de esperteza que passa no caso testado e falha no outro."""
+    from agent.get_trend import _sem_contrarias
+    assert _sem_contrarias({"positivas": 0}, "positivas",
+                           "favorável", "favoráveis") == "sem notícias favoráveis"
+    assert _sem_contrarias({"positivas": 2}, "positivas",
+                           "favorável", "favoráveis") == "nenhuma notícia favorável confirmada"
