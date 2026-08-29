@@ -2115,7 +2115,12 @@ def get_earnings_transcript(ticker: str, max_chars: int = 6000) -> dict:
 # são razões puras e ficam como estão.
 _MULTIPLOS_DA_SEC = (
     ("pe_ratio_ttm", "pl", 1),
-    ("pb_ratio_ttm", "pvp", 1),
+    # `pb_ratio`, sem `_ttm`. Patrimônio é ESTOQUE: vem do balanço mais
+    # recente, sem soma de trimestre nenhuma (armadilha 4 do fundamentos_sec,
+    # cuja proveniência já dizia "estoque, não TTM"). O cálculo sempre esteve
+    # certo; o nome é que contradizia a métrica -- e saiu na tela do MRVL como
+    # "P/B TTM de 10,25", contando ao leitor uma coisa que o número não é.
+    ("pb_ratio", "pvp", 1),
     ("ev_to_ebitda_ttm", "ev_ebitda", 1),
     ("net_debt_to_ebitda_ttm", "divida_liquida_ebitda", 1),
     ("roe_pct_ttm", "roe", 100),
