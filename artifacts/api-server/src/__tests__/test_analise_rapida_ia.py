@@ -783,3 +783,66 @@ def test_o_mapa_de_accession_nao_entra_no_prompt(monkeypatch):
     assert val["pe_ratio_ttm"] == 27.18
     assert "multiplos_fonte" in val, "a fonte no singular fica: são 65 chars"
     assert "multiplos_fontes" not in val
+
+
+# ═══ 29/08/2026 — NVDA de novo: bloco descartado virou "dado não existe" ═══
+#
+# O conserto anterior trocou a fatia por caractere por descarte de bloco
+# inteiro, e a NVDA saiu dizendo
+#
+#   "Não há dados de reação a balanços (reacaoEarnings) disponíveis para
+#    análise no momento."
+#
+# com o painel de 8 eventos, bandas R1/R2/S1/S2 e correlação 0,71 impresso
+# logo abaixo, na MESMA tela. Trocar uma perda silenciosa por uma perda
+# declarada mas igualmente errada não é conserto.
+#
+# Duas coisas faltavam: enxugar antes de descartar, e um bloco descartado que
+# se explique em vez de virar `None`.
+
+def _reacao_pesada(n=8):
+    """Formato real: `summary` pequeno, `events` com trajetória dia a dia."""
+    return {"ticker": "NVDA",
+            "summary": {"n_events": n, "r1": 226.30, "s1": 208.80,
+                        "runup": {"corr": 0.71}},
+            "events": [{"data": f"2026-0{i%9+1}-26",
+                        "traj": [{"d": d, "c": 100 + d, "v": 9e6}
+                                 for d in range(-30, 31)]} for i in range(n)]}
+
+
+def test_enxuga_a_trajetoria_antes_de_descartar_o_bloco():
+    """A prosa usa o `summary` -- n_events, bandas, correlação, run-up. O que
+    pesa é a trajetória dia a dia de cada evento, que ela nunca cita."""
+    dados = _dados(reaction=_reacao_pesada())
+    dados["technicals"] = {"rsi": 52.34, "enche": "z" * 3000}
+    texto, omitidos = ia._compactar(dados)
+    payload = json.loads(texto)
+    assert omitidos == [], "enxugar tinha que bastar"
+    r = payload["reacaoEarnings"]
+    assert r["summary"]["n_events"] == 8
+    assert r["summary"]["r1"] == 226.30
+    assert r["summary"]["runup"]["corr"] == 0.71
+    assert "events" not in r, "a trajetória é que sai, não o resumo"
+
+
+def test_payload_que_cabe_mantem_a_trajetoria():
+    """Enxugar é remédio, não rotina: quem cabe inteiro entra inteiro."""
+    texto, omitidos = ia._compactar(_dados(reaction=_reacao_pesada(n=1)))
+    assert omitidos == []
+    assert "events" in json.loads(texto)["reacaoEarnings"]
+
+
+def test_bloco_descartado_se_explica_em_vez_de_sumir():
+    """`None` e "não coube" são a mesma coisa para o JSON e coisas opostas
+    para quem escreve: com `None` o modelo conclui que o dado não existe, e o
+    texto nega o que a tela mostra."""
+    dados = _dados(reaction=_reacao_pesada())
+    dados["technicals"] = {"rsi": 52.34, "enche": "z" * 40000}
+    texto, omitidos = ia._compactar(dados)
+    assert "reacaoEarnings" in omitidos
+    marcador = json.loads(texto)["reacaoEarnings"]["_naoCoube"]
+    # O marcador tem que dizer as três coisas: que existe, onde está, e o que
+    # NÃO escrever. Sem a terceira, ele vira decoração.
+    assert "existe" in marcador
+    assert "tela" in marcador
+    assert "indispon" in marcador

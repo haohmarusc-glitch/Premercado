@@ -274,6 +274,20 @@ _FALA_DO_FUNDAMENTO = (
     r"fundament\w+|valuation|avalia[cç][aã]o|alvos?\s+d\w+\s+analist\w+"
     r"|pre[cç]o[- ]alvo|consenso|m[uú]ltiplos?|\bdcf\b|p/l\b|p/vp\b")
 
+# O SUJEITO tem que ser a reação a balanços -- "não há dados de volume" não
+# pode virar apontamento sobre earnings.
+_FALA_DA_REACAO = (r"rea[cç][ãa]o\s+a\s+(?:balan[çc]o|earning|resultado)"
+                   r"|reacaoearnings|hist[óo]rico\s+p[óo]s[- ]balan[çc]o"
+                   r"|dados\s+de\s+earnings")
+
+# Duas formas de negar, as duas vistas na MESMA análise da NVDA: a verbal
+# ("não há dados de reação a balanços") e a nominal ("a ausência de dados de
+# reação a earnings"). `_NEGA_DISPONIBILIDADE` só pega a primeira, porque é
+# construído em cima de verbo.
+_NEGA_A_REACAO = (r"n[aã]o\s+(?:h[aá]|existe\w*|est\w+|foi|foram|constam?)"
+                  r"|indispon[íi]ve\w*|aus[êe]ncia\s+d\w+\s+dado"
+                  r"|sem\s+dados?\s+d\w+")
+
 _FALA_DA_FAIXA = r"faixa|52\s*semanas|intervalo\s+anual|amplitude\s+anual|range"
 
 # "chegou ao evento com um run-up de X%" -- `runup_atual_ex_evento_pct` é o
@@ -580,6 +594,38 @@ def validar_analise(texto, dados=None) -> list:
                 f"diz que a camada fundamental não veio, mas o payload traz "
                 f"{', '.join(citados)} — quem lê isso para de procurar um "
                 f"dado que está na mão. "
+                f"Trecho: “{frase.strip()[:120]}”.")
+            break
+
+    # ── 0c. o texto NEGA a reação a earnings que o painel mostra ────────────
+    #
+    # Mesma falha do 0b, num bloco que ele nunca cobriu: `_BLOCOS_FUNDAMENTAIS`
+    # só vigia alvos, valuation e manchetes.
+    #
+    # Incidente real (NVDA, 29/08/2026): a prosa dizia "não há dados de reação
+    # a balanços disponíveis para análise no momento" e "a ausência de dados de
+    # reação a earnings impede uma análise completa", enquanto o painel logo
+    # abaixo, na MESMA tela, trazia 8 eventos, bandas R1/R2/S1/S2 e correlação
+    # de 0,71. A causa foi o payload não caber e o bloco ser descartado -- mas
+    # a checagem não pode depender de conhecer a causa: qualquer caminho que
+    # faça o texto negar este painel produz o mesmo estrago para quem lê.
+    #
+    # A negação vem em duas formas, e as duas apareceram na mesma análise:
+    # verbal ("não há dados de X") e nominal ("a ausência de dados de X"). A
+    # segunda não casa com `_NEGA_DISPONIBILIDADE`, que é todo construído em
+    # cima de verbo -- por isso o padrão daqui é próprio, e não uma ampliação
+    # do de lá: mexer no compartilhado alargaria também o alvo do 0b.
+    n_eventos = num_finito(caminho(dados, "reaction", "summary").get("n_events"))
+    if n_eventos and n_eventos > 0 and "reacaoEarnings" not in omitidos:
+        for frase in frases(prosa_sa):
+            if not re.search(_FALA_DA_REACAO, frase):
+                continue
+            if not re.search(_NEGA_A_REACAO, frase):
+                continue
+            add("ERRO", "ANALISE_NEGA_REACAO_PRESENTE",
+                f"diz que não há dados de reação a earnings, mas o payload "
+                f"traz {int(n_eventos)} evento(s) com bandas e correlação — "
+                f"e o painel Níveis & Reações os mostra na mesma tela. "
                 f"Trecho: “{frase.strip()[:120]}”.")
             break
 

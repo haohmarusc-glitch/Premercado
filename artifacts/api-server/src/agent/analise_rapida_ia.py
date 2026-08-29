@@ -634,13 +634,38 @@ def _niveis_ordenados(dados: dict, preco: float | None) -> list[dict] | None:
     return sorted(niveis, key=lambda n: n["valor"], reverse=True)
 
 
-# Quem cai primeiro quando o payload não cabe. A ordem é escolhida, não
-# herdada da ordem do dicionário: `reacaoEarnings` é o maior bloco e tem tela
-# própria ("use a tela Reação a Earnings"), então perdê-lo tem para onde
-# apontar; `fundamento` vai por último porque é o único que não se recalcula
-# de dados locais -- ele custa três chamadas de rede para voltar.
+# ENXUGAR vem antes de DESCARTAR. Bloco menor é melhor que bloco ausente.
+#
+# A primeira versão desta lógica descartava `reacaoEarnings` inteiro, e a NVDA
+# saiu dizendo "não há dados de reação a balanços disponíveis" com o painel de
+# 8 eventos, bandas e correlação impresso logo abaixo, na mesma tela. Trocar
+# uma perda silenciosa (a fatia por caractere) por uma perda declarada mas
+# igualmente errada não é conserto.
+#
+# O que pesa nesse bloco é a trajetória dia a dia de cada evento, que a prosa
+# nunca cita; o `summary` -- n_events, bandas R1/R2/S1/S2, médias, correlação,
+# run-up -- é pequeno e é tudo que ela usa. O irmão `reacao_earnings_ia` já
+# tinha chegado a essa mesma conclusão para a cesta ("cada ticker traz ~8
+# eventos com trajetória dia a dia").
+_ENXUGADORES = {
+    "reacaoEarnings": lambda b: {k: v for k, v in b.items() if k != "events"},
+}
+
+# Quem cai quando nem enxugar resolve. A ordem é escolhida, não herdada da
+# ordem do dicionário: `fundamento` vai por último porque é o único que não se
+# recalcula de dados locais -- custa três chamadas de rede para voltar.
 _ORDEM_DE_SACRIFICIO = ("reacaoEarnings", "niveisOrdenados", "niveis",
                         "tecnica", "tendencia", "fundamento")
+
+# O bloco descartado NÃO vira `None`. Um campo ausente e um campo que não
+# coube são a mesma coisa para o JSON e coisas opostas para quem escreve: com
+# `None`, o modelo conclui "o dado não existe" e o texto nega o que a tela
+# mostra. O marcador se explica no ponto de uso, sem custar linha de SYSTEM.
+_NAO_COUBE = {"_naoCoube": (
+    "este bloco existe e foi calculado, mas não coube no limite de tamanho "
+    "deste prompt. Os números estão na tela, ao lado do texto. NÃO escreva "
+    "que estão indisponíveis ou que não existem -- diga que ficaram fora "
+    "desta análise por limite de tamanho, ou não os mencione.")}
 
 
 def _compactar(dados: dict) -> tuple:
@@ -697,11 +722,22 @@ def _compactar(dados: dict) -> tuple:
     # Agora o corte é por BLOCO, em ordem declarada, e sai dito: `reacaoEarnings`
     # primeiro porque é o maior e tem tela própria dedicada a ele; `fundamento`
     # por último porque é o único que não se recalcula, se re-busca.
+    # 1. Enxugar. Quase sempre basta: a trajetória dos 8 eventos da NVDA
+    #    sozinha passa de 3 mil chars, e a prosa não cita nenhum deles.
+    for chave, enxugar in _ENXUGADORES.items():
+        if not isinstance(payload.get(chave), dict):
+            continue
+        payload[chave] = enxugar(payload[chave])
+        texto = json.dumps(payload, ensure_ascii=False)
+        if len(texto) <= MAX_DADOS_CHARS:
+            return texto, []
+
+    # 2. Só então descartar bloco inteiro.
     omitidos = []
     for chave in _ORDEM_DE_SACRIFICIO:
         if not payload.get(chave):
             continue
-        payload[chave] = None
+        payload[chave] = dict(_NAO_COUBE)
         omitidos.append(chave)
         # `_blocosOmitidos` vai no payload para o modelo saber a diferença
         # entre "não veio" e "não coube" -- sem isso ele só pode inventar ou
