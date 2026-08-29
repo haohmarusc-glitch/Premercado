@@ -284,6 +284,31 @@ def _trajetoria(hist: pd.DataFrame, pos: int, prev_close: float,
     return saida
 
 
+def janela_do_resumo(reaction_moves: list[dict]) -> tuple[str, dict]:
+    """De qual sessão vêm as médias, e em que proporção.
+
+    Separado de `analyze_ticker` para poder ser testado sem o yfinance: a
+    função inteira depende de rede, e este é justamente o pedaço em que um
+    erro não estoura nada -- só troca o significado de todos os números da
+    seção.
+
+    "mista" é um terceiro estado real, não um empate mal resolvido: empresa
+    que mudou de BMO para AMC no meio da série tem médias que misturam as
+    duas sessões, e dizer "seguinte" ali seria falso para parte dos eventos.
+    """
+    contagem = {"anuncio": 0, "seguinte": 0}
+    for m in reaction_moves:
+        chave = m.get("_janela")
+        if chave in contagem:
+            contagem[chave] += 1
+    if contagem["anuncio"] and contagem["seguinte"]:
+        return "mista", contagem
+    # Sem nenhum dos dois (lista vazia), "seguinte" é a resposta conservadora:
+    # é a suposição que `_janela_da_reacao` faz quando falta horário, e a que
+    # dispara a nota de aviso em vez de silenciá-la.
+    return ("anuncio" if contagem["anuncio"] else "seguinte"), contagem
+
+
 def _trajetoria_resumo(events: list[dict]) -> dict | None:
     """Média do acumulado em cada horizonte, sobre os eventos que têm o dia.
 
@@ -436,16 +461,36 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
             continue
         escolhido = dict(pedida)
         escolhido["runup_pct"] = e["runup_pct"]
+        # Prefixo `_`: serve para contar a janela logo abaixo e não vira
+        # coluna do DataFrame das estatísticas.
+        escolhido["_janela"] = e["janela_reacao"]
         reaction_moves.append(escolhido)
         inferidos += 1 if e["janela_inferida"] else 0
 
     if not reaction_moves:
         return {"ticker": ticker, "error": "sem janelas válidas de reação nos eventos encontrados"}
 
+    # De QUAL sessão vêm as médias abaixo. Vivia só por evento, dentro de
+    # `events` -- e quem consome só o `summary` (o prompt da Análise Rápida,
+    # depois que o bloco passou a ser enxugado para caber) recebia
+    # `close_pct_mean` sem nada dizendo a que sessão ele pertence.
+    #
+    # NVDA, 29/08/2026: a prosa escreveu "o preço, em média, caiu 0,89% no
+    # fechamento do dia do balanço". O -0,89% é a média da sessão SEGUINTE (a
+    # tabela marca as oito com ◂); a média do dia do anúncio é +0,79% -- sinal
+    # oposto. Não foi capricho do modelo: o campo que responde à pergunta não
+    # estava lá.
+    #
+    # Contado sobre os MESMOS eventos que entram nas médias, não sobre todos:
+    # evento sem sessão pedida fica fora das duas coisas.
+    janela, contagem = janela_do_resumo(reaction_moves)
+
     df = pd.DataFrame(reaction_moves)
     volume_ratio = df["volume"] / avg_volume if avg_volume else None
     summary = {
         "n_events": len(df),
+        "janela_reacao": janela,
+        "janela_reacao_n": contagem,
         # Quantos eventos a fonte devolveu repetidos (e foram descartados) e
         # quantos dependeram da suposição AMC por não trazerem horário: os dois
         # números existem para o leitor saber onde a série é mais frouxa.
@@ -481,6 +526,14 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
     summary["r2_price"] = round(current_price * (1 + extreme_frac), 2)
     summary["s1_price"] = round(current_price * (1 - avg_frac), 2)
     summary["s2_price"] = round(current_price * (1 - extreme_frac), 2)
+
+    if janela != "anuncio":
+        summary["janela_reacao_nota"] = (
+            "as médias desta seção (close_pct_mean, gap_pct_mean, e as bandas "
+            "R1/R2/S1/S2 derivadas delas) vêm da sessão SEGUINTE ao anúncio, "
+            "porque este emissor divulga depois do fechamento. NÃO as atribua "
+            "ao 'dia do balanço' nem ao 'dia do anúncio' -- naquela sessão o "
+            "resultado ainda não tinha sido precificado.")
 
     summary["runup"] = _runup_summary(df, hist, _ultimo_earnings_pos(hist, past_earnings.index))
     trajetoria = _trajetoria_resumo(events)

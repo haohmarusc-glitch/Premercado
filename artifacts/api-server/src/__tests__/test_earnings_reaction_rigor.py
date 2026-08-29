@@ -33,6 +33,7 @@ from agent.earnings_reaction_analysis import (
     _correlacao_com_incerteza,
     _janela_da_reacao,
     aplicar_holm,
+    janela_do_resumo,
 )
 
 
@@ -218,3 +219,56 @@ def test_a_selecao_por_magnitude_nao_esta_mais_no_codigo():
     codigo = "\n".join(l for l in fonte.splitlines()
                        if not l.strip().startswith("#"))
     assert 'key=lambda m: abs(m["close_pct"])' not in codigo
+
+
+# ═══ 29/08/2026 — o summary não dizia de qual sessão vinham as médias ══════
+#
+# `janela_reacao` vivia só por evento, dentro de `events`. Quando o payload da
+# Análise Rápida passou a ser enxugado para caber no teto (`_ENXUGADORES`),
+# `events` deixou de viajar -- e o prompt recebia `close_pct_mean: -0.89` sem
+# nada dizendo a que sessão aquele número pertence.
+#
+# NVDA, mesma data: a prosa escreveu "o preço, em média, caiu 0,89% no
+# fechamento do dia do balanço". O -0,89% é a média da sessão SEGUINTE (as
+# oito linhas da tabela vêm marcadas com ◂); a média do dia do anúncio é
+# +0,79% -- sinal oposto. Não foi capricho do modelo: o campo que responde à
+# pergunta não estava lá.
+#
+# Enxugar um bloco é seguro enquanto não se leva junto o que dá sentido ao
+# que ficou.
+
+def _mov(janela):
+    return {"_janela": janela, "close_pct": 1.0}
+
+
+def test_todos_amc_a_janela_e_a_sessao_seguinte():
+    janela, n = janela_do_resumo([_mov("seguinte")] * 8)
+    assert janela == "seguinte"
+    assert n == {"anuncio": 0, "seguinte": 8}
+
+
+def test_todos_bmo_a_janela_e_o_proprio_dia():
+    janela, n = janela_do_resumo([_mov("anuncio")] * 8)
+    assert janela == "anuncio"
+    assert n == {"anuncio": 8, "seguinte": 0}
+
+
+def test_serie_mista_nao_escolhe_um_lado():
+    """Empresa que mudou de BMO para AMC no meio da série tem médias que
+    misturam as duas sessões. Dizer "seguinte" ali seria falso para parte dos
+    eventos, e o rótulo existe para o leitor saber que a série não é uniforme."""
+    janela, n = janela_do_resumo([_mov("seguinte")] * 5 + [_mov("anuncio")] * 3)
+    assert janela == "mista"
+    assert n == {"anuncio": 3, "seguinte": 5}
+
+
+def test_a_contagem_ignora_valor_desconhecido_sem_estourar():
+    janela, n = janela_do_resumo([_mov("seguinte"), {"_janela": None}, {}])
+    assert janela == "seguinte"
+    assert n == {"anuncio": 0, "seguinte": 1}
+
+
+def test_lista_vazia_assume_a_sessao_seguinte():
+    """Mesma suposição de `_janela_da_reacao` quando falta horário -- e é a
+    que DISPARA a nota de aviso em vez de silenciá-la."""
+    assert janela_do_resumo([])[0] == "seguinte"
