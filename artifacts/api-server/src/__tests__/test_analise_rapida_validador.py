@@ -2293,3 +2293,76 @@ def test_blocos_omitidos_malformado_nao_derruba_nem_absolve(valor):
     dados = {**_COM_FUNDAMENTO, "_blocosOmitidos": valor}
     assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
         validar_analise(_texto_completo(_FRASE_NVDA), dados))
+
+
+# ═══ 29/08/2026 — NVDA: a prosa negou o painel de reação impresso ao lado ══
+#
+# `ANALISE_NEGA_DADO_PRESENTE` vigia alvos, valuation e manchetes. O bloco de
+# reação a earnings nunca esteve na lista -- e foi ele que o texto negou:
+#
+#   "Não há dados de reação a balanços (reacaoEarnings) disponíveis para
+#    análise no momento."
+#   "...a ausência de dados de reação a earnings impede uma análise completa
+#    de seu histórico pós-balanço."
+#
+# enquanto o painel Níveis & Reações, na MESMA tela, trazia 8 eventos, bandas
+# R1/R2/S1/S2 e correlação de 0,71.
+#
+# A causa foi o payload não caber. A checagem não pode depender disso:
+# qualquer caminho que faça o texto negar este painel produz o mesmo estrago
+# para quem lê.
+
+_COM_REACAO = {"reaction": {"summary": {"n_events": 8, "r1": 226.30}}}
+_SEM_REACAO = {"reaction": {"summary": {"n_events": 0}}}
+
+_NEGACOES_DA_NVDA = [
+    # Verbal -- a forma que `_NEGA_DISPONIBILIDADE` já conhecia.
+    'Não há dados de reação a balanços ("reacaoEarnings") disponíveis para '
+    "análise no momento.",
+    # NOMINAL -- "a ausência de dados de". Não casa com o padrão do 0b, que é
+    # todo construído em cima de verbo, e apareceu na MESMA análise.
+    "A volatilidade é moderada e o momentum do setor é forte, mas a ausência "
+    "de dados de reação a earnings impede uma análise completa de seu "
+    "histórico pós-balanço.",
+]
+
+
+@pytest.mark.parametrize("frase", _NEGACOES_DA_NVDA)
+def test_negar_a_reacao_que_veio_e_erro(frase):
+    achados = validar_analise(_texto_completo(frase), _COM_REACAO)
+    assert "ANALISE_NEGA_REACAO_PRESENTE" in _codigos(achados)
+    msg = next(a["mensagem"] for a in achados
+               if a["codigo"] == "ANALISE_NEGA_REACAO_PRESENTE")
+    assert "8 evento" in msg, "a mensagem tem que dizer QUANTOS estavam na mão"
+
+
+@pytest.mark.parametrize("frase", _NEGACOES_DA_NVDA)
+def test_a_mesma_frase_passa_quando_nao_ha_evento(frase):
+    """Papel recém-listado não tem histórico de balanço. Dizer isso é correto,
+    e a checagem existe para separar os dois casos, não para proibir a frase."""
+    assert "ANALISE_NEGA_REACAO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _SEM_REACAO))
+
+
+@pytest.mark.parametrize("frase", _NEGACOES_DA_NVDA)
+def test_bloco_omitido_do_prompt_nao_e_negacao_indevida(frase):
+    """Se o bloco não coube, o modelo não o recebeu -- cobrar dele um dado que
+    ficou fora do prompt é reprovar o texto por dizer a verdade."""
+    dados = {**_COM_REACAO, "_blocosOmitidos": ["reacaoEarnings"]}
+    assert "ANALISE_NEGA_REACAO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), dados))
+
+
+@pytest.mark.parametrize("frase", [
+    # Negação sobre OUTRO dado: o sujeito não é a reação a balanços.
+    "Não há dados de volume intradiário para esta sessão.",
+    "O RSI não estava disponível no painel técnico.",
+    # Fala da reação SEM negar nada.
+    "A reação a balanços mostra 8 eventos com viés negativo.",
+    "O histórico pós-balanço aponta fechamento médio de -0,89%.",
+    # Ausência de OUTRA coisa.
+    "A ausência de dados de opções limita a leitura de fluxo.",
+])
+def test_frase_que_nao_nega_a_reacao_passa(frase):
+    assert "ANALISE_NEGA_REACAO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _COM_REACAO))
