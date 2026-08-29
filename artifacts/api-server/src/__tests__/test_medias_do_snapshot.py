@@ -43,7 +43,7 @@ def test_media_sai_da_serie_e_bate_com_o_rolling(monkeypatch):
     df = _serie()
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
                         lambda *a, **k: _Resultado(df))
-    m50, m200, origem = gts._medias_moveis("SNDK")
+    m50, m200, origem, _ate = gts._medias_moveis("SNDK")
     assert origem == "serie"
     # Exatamente o que `get_technicals` calcularia sobre as mesmas barras.
     assert m50 == round(float(df["Close"].rolling(50).mean().iloc[-1]), 2)
@@ -58,10 +58,10 @@ def test_a_janela_maior_nao_muda_a_mm50(monkeypatch):
     curta = longa.iloc[-126:]          # ~6 meses de pregões
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
                         lambda *a, **k: _Resultado(longa))
-    m50_longa, _, _ = gts._medias_moveis("SNDK")
+    m50_longa, _, _, _ = gts._medias_moveis("SNDK")
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
                         lambda *a, **k: _Resultado(curta))
-    m50_curta, m200_curta, _ = gts._medias_moveis("SNDK")
+    m50_curta, m200_curta, _, _ = gts._medias_moveis("SNDK")
     assert m50_longa == m50_curta
     assert m200_curta is None, "6mo não tem 200 barras -- é por isso que a MM200 some do Técnica"
 
@@ -74,7 +74,7 @@ def test_barra_do_dia_sem_close_nao_contamina(monkeypatch):
     df.loc[pd.Timestamp("2026-01-01")] = {"Close": np.nan}
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
                         lambda *a, **k: _Resultado(df))
-    m50, _, origem = gts._medias_moveis("SNDK")
+    m50, _, origem, _ate = gts._medias_moveis("SNDK")
     assert origem == "serie" and m50 == limpo
 
 
@@ -105,7 +105,7 @@ def test_serie_fora_do_ar_cai_no_yahoo_marcado(monkeypatch, capsys):
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
                         lambda *a, **k: _Resultado(None, ok=False, source="sem_rede"))
     monkeypatch.setattr(gts.yf, "Ticker", lambda t: _fast_info())
-    m50, m200, origem = gts._medias_moveis("SNDK")
+    m50, m200, origem, _ate = gts._medias_moveis("SNDK")
     assert (m50, m200) == (1636.42, 952.03)
     assert origem == "yahoo", "recusar o dado trocaria 0,8% de imprecisão por um traço"
     assert "medias do fast_info" in capsys.readouterr().err
@@ -123,4 +123,52 @@ def test_as_duas_fontes_fora_do_ar_nao_estouram(monkeypatch):
         raise RuntimeError("sem rede")
     monkeypatch.setattr(gts.market_data_provider, "get_daily_history", _explode)
     monkeypatch.setattr(gts.yf, "Ticker", _explode)
-    assert gts._medias_moveis("SNDK") == (None, None, "indisponivel")
+    assert gts._medias_moveis("SNDK") == (None, None, "indisponivel", None)
+
+
+# ═══ 29/08/2026 — sábado virou "sessão", e o detector apontou atraso falso ══
+#
+# O `dadosAte` do snapshot nasceu (28/08) carimbando `datetime.now(NY).date()`.
+# Num SÁBADO isso deu "2026-08-29" -- uma data sem pregão nenhum. O painel
+# Técnica dizia "2026-08-28" (a sexta, sua última barra real), e
+# `_defasagem_entre_paineis` apontou um dia de atraso que NÃO existia: os dois
+# painéis estavam na mesma sessão, um deles só se datava pelo calendário.
+#
+# Relógio não sabe de fim de semana nem de feriado. A série sabe, porque ela
+# só tem barra onde houve pregão. Regra única para os quatro painéis:
+# `dadosAte` é a última barra FECHADA que aquele painel usou.
+
+def _serie_ate(fim: str, n: int = 60):
+    """Série de `n` pregões terminando em `fim` -- só dias úteis, como o
+    mercado."""
+    idx = pd.bdate_range(end=fim, periods=n)
+    return pd.DataFrame({"Close": [100.0 + i for i in range(n)]}, index=idx)
+
+
+def test_dados_ate_vem_da_ultima_barra_e_nao_do_relogio(monkeypatch):
+    """A série termina na SEXTA (28/08). Não importa que hoje seja sábado."""
+    monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
+                        lambda *a, **k: _Resultado(_serie_ate("2026-08-28")))
+    _m50, _m200, origem, ate = gts._medias_moveis("SNDK")
+    assert origem == "serie"
+    assert ate == "2026-08-28"
+
+
+def test_sabado_nao_vira_sessao():
+    """O carimbo de relógio dava "2026-08-29" -- sábado, sem pregão nenhum. A
+    série não tem essa barra porque ela não existe."""
+    import datetime
+    assert datetime.date.fromisoformat("2026-08-29").weekday() == 5, "é sábado"
+    assert "2026-08-29" not in [str(d.date()) for d in _serie_ate("2026-08-28").index]
+
+
+def test_sem_serie_o_painel_nao_declara_sessao(monkeypatch):
+    """Caindo no fast_info não há barra. Melhor não declarar do que declarar
+    uma data que não veio de dado nenhum -- o detector simplesmente não conta
+    este painel."""
+    monkeypatch.setattr(gts.market_data_provider, "get_daily_history",
+                        lambda *a, **k: _Resultado(None, ok=False, source="x"))
+    monkeypatch.setattr(gts.yf, "Ticker", lambda t: _fast_info())
+    _m50, _m200, origem, ate = gts._medias_moveis("SNDK")
+    assert origem == "yahoo"
+    assert ate is None

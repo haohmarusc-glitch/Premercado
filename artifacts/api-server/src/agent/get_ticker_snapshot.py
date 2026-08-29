@@ -24,10 +24,6 @@ import sys
 
 import yfinance as yf
 
-import datetime as _dt
-from zoneinfo import ZoneInfo
-
-_NY_TZ = ZoneInfo("America/New_York")
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
 # duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
 # (imports planos) e como membro do pacote agent.
@@ -68,7 +64,7 @@ _PERIODO_MEDIAS = "2y"
 
 
 def _medias_moveis(ticker: str) -> tuple:
-    """(sma50, sma200, origem) calculadas da MESMA série que o painel Técnica.
+    """(sma50, sma200, origem, ultima_barra) da MESMA série que o painel Técnica.
 
     Incidente real (SNDK, 26/08/2026, terceira ocorrência): o painel Técnica
     mostrava MM50 US$ 1624,02 e o painel Níveis US$ 1636,42, para o mesmo
@@ -118,7 +114,7 @@ def _medias_moveis(ticker: str) -> tuple:
             if len(close) >= 50:
                 m50 = _num(close.rolling(50).mean().iloc[-1])
                 m200 = _num(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else None
-                return m50, m200, "serie"
+                return m50, m200, "serie", str(close.index[-1].date())
             motivo = f"serie com {len(close)} pregao(oes), minimo 50"
         else:
             motivo = f"serie indisponivel ({resultado.source})"
@@ -127,23 +123,33 @@ def _medias_moveis(ticker: str) -> tuple:
 
     print(f"[get_ticker_snapshot] {ticker}: medias do fast_info -- {motivo}",
           file=sys.stderr, flush=True)
+    # Sem série não há barra: `dadosAte` fica ausente, e o detector de
+    # defasagem simplesmente não conta este painel. Melhor não declarar do que
+    # declarar uma data que não veio de dado nenhum.
     try:
         fi = yf.Ticker(ticker).fast_info
         return (_num(fi.fifty_day_average), _num(fi.two_hundred_day_average),
-                "yahoo")
+                "yahoo", None)
     except Exception as e:  # noqa: BLE001
         print(f"[get_ticker_snapshot] {ticker}: fast_info tambem falhou: {e}",
               file=sys.stderr, flush=True)
-        return None, None, "indisponivel"
+        return None, None, "indisponivel", None
 
 
 def snapshot(ticker: str, benchmark: str) -> dict:
-    # Este painel é AO VIVO (`fast_info.last_price`), não sai de barra
-    # fechada. `dadosAte` aqui é a sessão de HOJE em Nova York, e é isso que o
-    # torna comparável com os painéis de barra: se a técnica alcança 27/08 e
-    # este alcança 29/08, os dois estão medindo mundos diferentes.
-    out = {"ticker": ticker, "benchmark": benchmark,
-           "dadosAte": str(_dt.datetime.now(_NY_TZ).date()), "aoVivo": True}
+    # `aoVivo` porque o PREÇO é `fast_info.last_price`. Mas `dadosAte` sai da
+    # série, logo abaixo -- não do relógio.
+    #
+    # A primeira versão (28/08) carimbava `datetime.now(NY).date()`, e num
+    # SÁBADO isso dava "2026-08-29": uma data sem pregão nenhum. O painel
+    # Técnica dizia "2026-08-28" (a sexta, última barra real), e o detector
+    # de defasagem apontava um dia de atraso que não existia -- os dois
+    # painéis estavam na MESMA sessão.
+    #
+    # Relógio não sabe de feriado nem de fim de semana; a série sabe, porque
+    # ela só tem barra onde houve pregão. Regra única para os quatro painéis:
+    # `dadosAte` é a última barra FECHADA que aquele painel usou.
+    out = {"ticker": ticker, "benchmark": benchmark, "aoVivo": True}
 
     try:
         fi = yf.Ticker(ticker).fast_info
@@ -155,7 +161,9 @@ def snapshot(ticker: str, benchmark: str) -> dict:
     except Exception as e:  # noqa: BLE001 — qualquer falha vira erro parcial
         out["quoteError"] = str(e) or e.__class__.__name__
 
-    sma50, sma200, origem = _medias_moveis(ticker)
+    sma50, sma200, origem, ultima_barra = _medias_moveis(ticker)
+    if ultima_barra:
+        out["dadosAte"] = ultima_barra
     out["sma50"] = sma50
     out["sma200"] = sma200
     # A ORIGEM viaja junto: com ela a tela pode dizer que aquele número veio
