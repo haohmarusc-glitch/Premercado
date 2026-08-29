@@ -141,6 +141,12 @@ interface ReactionResult {
       runup_atual_pct?: number;
       estado_atual?: string;
       corr_runup_reacao?: number | null;
+      // O `n` da correlação. O backend calcula `corr_n`, `corr_ic95`,
+      // `corr_p_valor` e `corr_nota` desde o incidente da correlação de 0,85;
+      // a interface local declarava só o coeficiente, então a tela não tinha
+      // como mostrar o denominador nem se quisesse. Contrato mais estreito
+      // que o payload apaga informação em silêncio.
+      corr_n?: number;
       esticado_n?: number;
       esticado_caiu_n?: number;
       esticado_reacao_media?: number | null;
@@ -596,7 +602,9 @@ export default function AnaliseRapidaPage() {
                       // lido como "quantas manchetes apareceram" por três
                       // leitores atentos no mesmo dia. N é o denominador do
                       // score (positivas + negativas), que exclui ambíguas.
-                      ? ` · ${trend.news.classificadas} de ${trend.news.minimoParaRotular} com tom definido`
+                      // Ver trend-card.tsx: "N de M" foi mal lido quatro
+                      // vezes porque "de" promete denominador, e M é piso.
+                      ? ` · só ${trend.news.classificadas} com tom definido, mínimo ${trend.news.minimoParaRotular} para rotular`
                       : ""})
                   </div>
                   <ul className="space-y-1">
@@ -708,7 +716,17 @@ export default function AnaliseRapidaPage() {
                     Run-up atual: {fmtPct(reaction.summary.runup.runup_atual_pct)} →{" "}
                     <span className="text-foreground font-bold uppercase">{reaction.summary.runup.estado_atual}</span>
                     {reaction.summary.runup.corr_runup_reacao != null &&
-                      ` · correlação run-up × reação ${reaction.summary.runup.corr_runup_reacao.toFixed(2)}`}
+                      ` · correlação run-up × reação ${reaction.summary.runup.corr_runup_reacao.toFixed(2)}` +
+                      // O `n` ao lado, sempre. O payload calcula `corr_n`,
+                      // `corr_ic95` e `corr_p_valor`; a tela mostrava só o
+                      // coeficiente, e correlação sem o número de pares é
+                      // indistinguível de uma robusta. No MRVL saiu "0.45"
+                      // sobre SEIS pares -- dois dos oito eventos não têm par
+                      // completo (o mais antigo não tem run-up, o mais recente
+                      // ainda não tem reação).
+                      (reaction.summary.runup.corr_n != null
+                        ? ` · n=${reaction.summary.runup.corr_n}`
+                        : "")}
                     {reaction.summary.runup.janela_contem_earnings && (
                       <span className="block text-amber-400/80">
                         ⚠ balanço há {reaction.summary.runup.pregoes_desde_earnings} pregão(ões), dentro da janela — o run-up bruto inclui a reação

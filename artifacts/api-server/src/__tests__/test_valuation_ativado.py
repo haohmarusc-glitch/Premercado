@@ -90,7 +90,7 @@ def test_oito_metricas_com_os_nomes_do_painel(monkeypatch):
     assert val["configured"] is True
     assert val["market_cap"] == 2000
     assert val["pe_ratio_ttm"] == 20.0
-    assert val["pb_ratio_ttm"] == pytest.approx(3.3333, abs=1e-3)
+    assert val["pb_ratio"] == pytest.approx(3.3333, abs=1e-3)
     assert val["ev_to_ebitda_ttm"] == pytest.approx(15.0, abs=1e-4)
     assert val["net_debt_to_ebitda_ttm"] == pytest.approx(0.7143, abs=1e-3)
     # O emissor da fixture tem 4 trimestres; crescimento pede 8. Que ele seja
@@ -136,7 +136,7 @@ def test_cada_multiplo_publicado_diz_de_onde_veio(monkeypatch):
     """
     val, _ = _montar(monkeypatch, dcf=[{"dcf": 22.0, "Stock Price": 20.0}])
     fontes = val["multiplos_fontes"]
-    assert set(fontes) >= {"pe_ratio_ttm", "pb_ratio_ttm", "roe_pct_ttm"}
+    assert set(fontes) >= {"pe_ratio_ttm", "pb_ratio", "roe_pct_ttm"}
     linha = fontes["pe_ratio_ttm"]
     assert "10-Q" in linha or "10-K" in linha
     assert "accn" in linha and "arquivado em" in linha
@@ -344,7 +344,21 @@ def test_instantaneo_nao_e_chamado_de_periodo(monkeypatch):
     se soma). Chamar essa data de "período" contradiria, na mesma linha, o que
     a métrica faz."""
     val, _ = _montar(monkeypatch, dcf=[{"dcf": 22.0, "Stock Price": 20.0}])
-    assert "posição em 2025-12-31" in val["multiplos_fontes"]["pb_ratio_ttm"]
-    assert "período" not in val["multiplos_fontes"]["pb_ratio_ttm"]
+    assert "posição em 2025-12-31" in val["multiplos_fontes"]["pb_ratio"]
+    assert "período" not in val["multiplos_fontes"]["pb_ratio"]
     # E o contrário segue valendo: TTM continua sendo período.
     assert "período 2025-01-01..2025-12-31" in val["multiplos_fontes"]["pe_ratio_ttm"]
+
+
+def test_o_pvp_nao_se_chama_ttm(monkeypatch):
+    """Patrimônio é ESTOQUE -- vem do balanço mais recente, sem soma de
+    trimestre nenhuma. O cálculo sempre esteve certo (armadilha 4), mas o campo
+    se chamava `pb_ratio_ttm` e saiu na tela do MRVL como "P/B TTM de 10,25",
+    contando ao leitor uma coisa que o número não é.
+
+    A proveniência já denunciava a contradição sozinha: dizia "posição em
+    <data>", não "período <a..b>", ao lado de um nome que prometia TTM."""
+    val, _ = _montar(monkeypatch, dcf=[{"dcf": 22.0, "Stock Price": 20.0}])
+    assert "pb_ratio" in val
+    assert "pb_ratio_ttm" not in val
+    assert "posição em" in val["multiplos_fontes"]["pb_ratio"]

@@ -180,6 +180,9 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         return {
             "ticker": ticker,
             "price": round(price, 2),
+            # Até que sessão este painel alcança -- ver `_DEFASAGEM_*` em
+            # analise_rapida_ia.py.
+            "dadosAte": str(close.index[-1].date()),
             "changePct": change_pct,
             "rsi": rsi,
             "rsiSignal": "sobrecomprado" if rsi > 70 else "sobrevendido" if rsi < 30 else "neutro",

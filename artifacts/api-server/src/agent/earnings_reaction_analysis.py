@@ -522,6 +522,10 @@ def analyze_ticker(ticker: str, lookback_events: int = 8,
     avg_frac = summary["close_pct_abs_mean"] / 100
     extreme_frac = summary["suggested_threshold_pct"] / 100
     summary["current_price"] = round(current_price, 2)
+    # De qual sessão saiu o `current_price` -- e, por tabela, as bandas
+    # R1/R2/S1/S2, que são projeções dele. No MRVL de 29/08 elas estavam
+    # ancoradas na barra de 27/08 sob um cabeçalho que exibia outro preço.
+    summary["dados_ate"] = str(hist.index[-1].date())
     summary["r1_price"] = round(current_price * (1 + avg_frac), 2)
     summary["r2_price"] = round(current_price * (1 + extreme_frac), 2)
     summary["s1_price"] = round(current_price * (1 - avg_frac), 2)

@@ -23,6 +23,11 @@ import json
 import sys
 
 import yfinance as yf
+
+import datetime as _dt
+from zoneinfo import ZoneInfo
+
+_NY_TZ = ZoneInfo("America/New_York")
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
 # duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
 # (imports planos) e como membro do pacote agent.
@@ -133,7 +138,12 @@ def _medias_moveis(ticker: str) -> tuple:
 
 
 def snapshot(ticker: str, benchmark: str) -> dict:
-    out = {"ticker": ticker, "benchmark": benchmark}
+    # Este painel é AO VIVO (`fast_info.last_price`), não sai de barra
+    # fechada. `dadosAte` aqui é a sessão de HOJE em Nova York, e é isso que o
+    # torna comparável com os painéis de barra: se a técnica alcança 27/08 e
+    # este alcança 29/08, os dois estão medindo mundos diferentes.
+    out = {"ticker": ticker, "benchmark": benchmark,
+           "dadosAte": str(_dt.datetime.now(_NY_TZ).date()), "aoVivo": True}
 
     try:
         fi = yf.Ticker(ticker).fast_info

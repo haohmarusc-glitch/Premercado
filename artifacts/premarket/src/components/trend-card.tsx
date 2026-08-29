@@ -224,7 +224,20 @@ export function TrendCard({ symbol }: { symbol: string }) {
                   // O número estava certo; o rótulo é que não dizia qual
                   // pergunta ele responde. Agora diz -- e diz também por que
                   // o rótulo ficou neutro.
-                  ? `${news.label} · ${news.classificadas} de ${news.minimoParaRotular} com tom definido`
+                  // TERCEIRA redação. "amostra N" foi mal lido três vezes;
+                  // "N de M com tom definido" foi mal lido de novo, agora por
+                  // um auditor externo no MRVL (29/08) -- ele somou 0+/1-/5~,
+                  // achou seis manchetes, leu "1 de 3" como fração delas e
+                  // reportou como inconsistência.
+                  //
+                  // O defeito da forma "N de M": "de" anuncia denominador, e
+                  // M não é denominador de nada -- é um PISO. Enquanto os
+                  // dois números aparecerem ligados por "de", o leitor vai
+                  // procurar a razão entre eles.
+                  //
+                  // Agora eles vêm separados por papel: "só N" diz escassez,
+                  // "mínimo M para rotular" diz limiar e para que serve.
+                  ? `${news.label} · só ${news.classificadas} com tom definido, mínimo ${news.minimoParaRotular} para rotular`
                   : news.label
               }
               good={news.label === "neutro" || news.label === "misto" ? null : news.label === "positivo"}
