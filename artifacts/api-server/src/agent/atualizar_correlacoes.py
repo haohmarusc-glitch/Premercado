@@ -53,8 +53,8 @@ import sys
 from datetime import timedelta
 
 import pandas as pd
-import yfinance as yf
 
+from agent import market_data_provider
 from agent.brt import today_brt
 from agent.radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
                                  HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
@@ -97,28 +97,28 @@ def baixar_fechamentos(tickers: list[str], meses: int = MESES_DEFAULT) -> pd.Dat
     auto_adjust=True: split/dividendo cria um degrau artificial na série que
     vira co-movimento falso no dia do evento (mesma razão pela qual o resto
     do agente usa série ajustada pra retorno)."""
-    dados = yf.download(
-        tickers,
-        period=f"{meses}mo",
-        interval="1d",
-        auto_adjust=True,
-        progress=False,
-        group_by="column",
-        threads=True,
+    # Pelo provider, e não por um yf.download próprio. O que se ganha não é
+    # só cache e fallback: é a MESMA série que o risk_manager.correlation usa.
+    # As duas contas são idênticas (pct_change + Pearson, 6 meses, ajustado),
+    # então a única coisa que podia separar os números que a tela mostra era a
+    # fonte -- e separava, porque um lado filtrava a barra do dia corrente e o
+    # outro não. Duas contas para o mesmo nome é o §2b do playbook, e aqui a
+    # de baixo alimenta o validador do Veredito via radar_ia_2026.correlacao.
+    #
+    # permitir_externa=False pelo mesmo motivo do get_scenario_params: a série
+    # é ajustada, e o degrau de um split vindo de outra fonte viraria
+    # co-movimento falso -- exatamente o artefato que o auto_adjust evita.
+    lote = market_data_provider.get_daily_closes_batch(
+        tickers, f"{meses}mo", auto_adjust=True, permitir_externa=False
     )
-    if dados is None or dados.empty:
+    for aviso in lote.warnings:
+        print(f"[atualizar_correlacoes] {aviso}", file=sys.stderr)
+    if lote.degradadas:
+        print(f"[atualizar_correlacoes] séries degradadas: {lote.degradadas}",
+              file=sys.stderr)
+    if not lote.ok:
         return pd.DataFrame()
-    # Um ticker só devolve colunas simples; vários devolvem MultiIndex.
-    if isinstance(dados.columns, pd.MultiIndex):
-        if "Close" not in dados.columns.get_level_values(0):
-            return pd.DataFrame()
-        fech = dados["Close"]
-    else:
-        if "Close" not in dados.columns:
-            return pd.DataFrame()
-        fech = dados[["Close"]]
-        fech.columns = tickers[:1]
-    return fech.dropna(axis=1, how="all")
+    return lote.closes.dropna(axis=1, how="all")
 
 
 def correlacoes_de(fechamentos: pd.DataFrame,

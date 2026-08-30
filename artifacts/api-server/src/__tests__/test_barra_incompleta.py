@@ -204,10 +204,23 @@ def test_market_alerts_filtra_no_helper_central():
 
 
 def test_confluence_filtra_juros_e_petroleo():
-    """Os dois vetos macro leem iloc[-1] de série crua de 5d/1mo. Com NaN, o
-    veto sumia em silêncio -- o pior modo de falha para um freio."""
+    """Os dois vetos macro leem iloc[-1] de série de 5d/1mo. Com NaN, o veto
+    sumia em silêncio -- o pior modo de falha para um freio.
+
+    A garantia não mudou; mudou de lugar. Os dois blocos chamavam
+    `sem_barra_incompleta` à mão sobre um `yf.Ticker().history()` cru; desde
+    30/08/2026 pedem ao provider, cuja FACHADA filtra qualquer caminho (e de
+    quebra traz cache e disjuntor, que ticker macro precisa: ele é buscado em
+    toda avaliação de confluência, de todo ticker).
+
+    Por isso o teste passou a exigir a origem, e não a chamada do filtro --
+    exigir a chamada literal aqui obrigaria a filtrar DUAS vezes só para o
+    teste continuar verde."""
     fonte = _fonte("confluence_engine.py")
-    assert fonte.count("sem_barra_incompleta(") >= 2
+    assert "get_daily_history(YIELD_TICKER" in fonte
+    assert "get_daily_history(OIL_TICKER" in fonte
+    assert "yf.Ticker(YIELD_TICKER)" not in fonte
+    assert "yf.Ticker(OIL_TICKER)" not in fonte
 
 
 def test_agent_filtra_o_candle_diario():

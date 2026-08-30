@@ -390,15 +390,38 @@ def get_daily_closes_batch(
             data = None
         if data is not None and not data.empty:
             provider_health.record_success("yfinance")
-            closes = data["Close"] if "Close" in data else data
-            if not hasattr(closes, "columns"):
-                closes = closes.to_frame(name=limpos[0])
-            fontes = {t: "yfinance" for t in limpos if t in closes.columns}
-            for t in fontes:
+            brutos = data["Close"] if "Close" in data else data
+            if not hasattr(brutos, "columns"):
+                brutos = brutos.to_frame(name=limpos[0])
+            colunas: dict[str, pd.Series] = {}
+            fontes = {}
+            for t in limpos:
+                if t not in brutos.columns:
+                    continue
+                # A MESMA higiene da cadeia por ticker, e não uma parecida: lá
+                # embaixo o `get_daily_history` filtra a barra incompleta na
+                # fachada e o laço tira o tz do índice. Sem repetir aqui, ESTA
+                # função devolvia semânticas diferentes conforme o Yahoo
+                # estivesse de pé ou não -- a mesma chamada, com e sem a barra
+                # do dia corrente, e com e sem tz. Ver o teste que compara os
+                # dois caminhos linha a linha.
+                serie = brutos[t].dropna()
+                if serie.empty:
+                    continue
+                if serie.index.tz is not None:
+                    serie.index = serie.index.tz_localize(None)
+                colunas[t] = serie
+                fontes[t] = "yfinance"
                 recorte = _extrair_ohlcv_por_ticker(data, t)
                 if recorte is not None:
-                    hist_cache.guardar(t, period, recorte, auto_adjust=auto_adjust)
-            return BatchClosesResult(closes=closes, fontes=fontes)
+                    hist_cache.guardar(t, period, sem_barra_incompleta(recorte),
+                                       auto_adjust=auto_adjust)
+            if colunas:
+                return BatchClosesResult(closes=pd.DataFrame(colunas), fontes=fontes)
+            # Lote respondeu, mas nenhuma coluna sobreviveu à limpeza (tudo
+            # NaN). Antes isso virava `ok=True` sobre um frame só de NaN; cair
+            # na cadeia por ticker ao menos tenta o cache.
+            warnings.append("lote veio sem fechamento utilizável — caindo para a cadeia por ticker")
         provider_health.record_failure("yfinance")
         warnings.append("yf.download em lote falhou — caindo para a cadeia por ticker")
     else:
