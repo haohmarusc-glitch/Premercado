@@ -16,14 +16,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Import de PACOTE (conftest.py já põe src/ no sys.path). NÃO inserir
-# src/agent/ no path: existe um agent.py DENTRO de agent/, então com o
-# diretório no path o nome `agent` passa a resolver pro módulo em vez do
-# pacote -- e qualquer teste que faça `from agent.x import ...` depois deste
-# quebra. Isso já passou despercebido porque a suíte inteira só falhava em
-# certas ordens de coleta (outro arquivo importava agent.* antes e deixava o
-# pacote certo em sys.modules).
+# Import de PACOTE (conftest.py já põe src/ no sys.path). Não inserir
+# src/agent/ no path: a colisão específica que fazia isso quebrar acabou em
+# 30/08/2026 (o `agent.py` dentro de `agent/` virou `llm_runtime.py`), mas a
+# regra fica -- com o diretório no path, qualquer módulo lá dentro homônimo
+# de um pacote volta a resolver errado, e o sintoma só aparece em certas
+# ordens de coleta.
 from agent import atualizar_correlacoes as ac
+from agent import hist_cache
+from agent import market_data_provider as mdp
+from agent import provider_health
 
 _AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "agent")
 
@@ -97,29 +99,53 @@ def test_chaves_sempre_ordenadas():
     assert list(pares) == [("AAA", "ZZZ")]
 
 
-# ── baixar_fechamentos (yf.download mockado) ──────────────────────────────
+# ── baixar_fechamentos (agora pelo provider) ──────────────────────────────
+#
+# O mock desceu um nível de propósito: era `ac.yf.download`, e passou a ser o
+# yfinance DE DENTRO do provider. Assim estes testes continuam cobrindo o que
+# cobriam (MultiIndex, vazio, coluna toda NaN) e passam a exercitar o caminho
+# real -- inclusive o fallback por ticker, que é o que a função ganhou.
+#
+# Por que a migração: esta conta e a de risk_manager.correlation são a MESMA
+# (pct_change + Pearson, 6 meses, ajustado). Com fontes diferentes, a única
+# coisa que podia separar os dois números na tela era de onde a série vinha.
 
-def test_baixar_fechamentos_extrai_close_do_multiindex(monkeypatch):
+@pytest.fixture
+def _provider_isolado(tmp_path, monkeypatch):
+    """Sem disco e sem rede: o disjuntor num arquivo temporário, o cache mudo
+    e a cadeia por ticker sem saída -- assim o teste mede o caminho do lote,
+    não o que o cache guardou de outro teste."""
+    monkeypatch.setattr(provider_health, "_PATH", str(tmp_path / "health.json"))
+    monkeypatch.setattr(hist_cache, "guardar", lambda *a, **k: None)
+    monkeypatch.setattr(hist_cache, "carregar", lambda *a, **k: None)
+    monkeypatch.setattr(mdp, "_yf_history_with_retry", lambda *a, **k: None)
+    yield
+
+
+def test_baixar_fechamentos_extrai_close_do_multiindex(monkeypatch, _provider_isolado):
     idx = pd.date_range(end=pd.Timestamp("2026-08-14"), periods=5, freq="B")
     cols = pd.MultiIndex.from_product([["Close", "Volume"], ["MU", "NVDA"]])
     dados = pd.DataFrame(1.0, index=idx, columns=cols)
-    monkeypatch.setattr(ac.yf, "download", lambda *a, **k: dados)
+    monkeypatch.setattr(mdp.yf, "download", lambda *a, **k: dados)
     fech = ac.baixar_fechamentos(["MU", "NVDA"])
     assert list(fech.columns) == ["MU", "NVDA"]
 
 
-def test_baixar_fechamentos_vazio_nao_explode(monkeypatch):
-    monkeypatch.setattr(ac.yf, "download", lambda *a, **k: pd.DataFrame())
+def test_baixar_fechamentos_vazio_nao_explode(monkeypatch, _provider_isolado):
+    """Lote vazio E cadeia por ticker sem saída: devolve DataFrame vazio, não
+    explode. Antes o `if dados.empty` do próprio módulo cuidava disso; agora
+    quem cuida é o `lote.ok`, e o resultado para o chamador é o mesmo."""
+    monkeypatch.setattr(mdp.yf, "download", lambda *a, **k: pd.DataFrame())
     assert ac.baixar_fechamentos(["MU"]).empty
 
 
-def test_baixar_fechamentos_descarta_coluna_toda_nan(monkeypatch):
+def test_baixar_fechamentos_descarta_coluna_toda_nan(monkeypatch, _provider_isolado):
     idx = pd.date_range(end=pd.Timestamp("2026-08-14"), periods=5, freq="B")
     cols = pd.MultiIndex.from_product([["Close"], ["MU", "DELISTADA"]])
     dados = pd.DataFrame({("Close", "MU"): [1.0] * 5,
                           ("Close", "DELISTADA"): [float("nan")] * 5}, index=idx)
     dados.columns = cols
-    monkeypatch.setattr(ac.yf, "download", lambda *a, **k: dados)
+    monkeypatch.setattr(mdp.yf, "download", lambda *a, **k: dados)
     assert list(ac.baixar_fechamentos(["MU", "DELISTADA"]).columns) == ["MU"]
 
 

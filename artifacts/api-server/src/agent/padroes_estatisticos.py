@@ -39,8 +39,8 @@ import sys
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
+from agent import market_data_provider
 from agent import json_seguro
 from agent.security import sanitize_ticker
 
@@ -311,9 +311,17 @@ def montar_relatorio(ticker: str, ret: pd.Series, eventos: dict,
 # ── coleta (rede) ────────────────────────────────────────────────────────────
 
 def _historico(simbolo: str, anos: int) -> pd.Series | None:
-    df = yf.Ticker(simbolo).history(period=f"{anos}y", interval="1d", auto_adjust=True)
-    if df is None or df.empty:
+    # Pelo provider: cache, disjuntor e a mesma limpeza de barra sem Close que
+    # o resto do agente recebe. Este módulo lê ANOS de série para achar padrão
+    # estatístico -- é o consumidor que mais sofre com uma ida ao Yahoo negada.
+    res = market_data_provider.get_daily_history(
+        simbolo, f"{anos}y", auto_adjust=True, permitir_externa=False
+    )
+    for aviso in res.warnings:
+        print(f"[padroes_estatisticos] {simbolo}: {aviso}", file=sys.stderr)
+    if not res.ok:
         return None
+    df = res.df
     if hasattr(df.columns, "levels"):
         df.columns = df.columns.get_level_values(0)
     s = df["Close"].dropna()

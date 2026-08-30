@@ -4,7 +4,7 @@ Input (stdin JSON):  {}  (no params needed)
 Output (stdout JSON): {"fearGreed": {...}, "sectors": [{name, ticker, changePct}, ...]}
 """
 import sys, json
-import yfinance as yf
+from agent import market_data_provider
 from agent.security import friendly_error
 
 from agent.http_retry import SESSION
@@ -65,11 +65,16 @@ def fear_greed() -> dict:
 def sectors() -> list:
     out = []
     tickers = [t for _, t in SECTOR_ETFS]
-    try:
-        data = yf.download(tickers, period="5d", interval="1d", progress=False, auto_adjust=True)
-        closes = data["Close"] if "Close" in data else data
-    except Exception:
-        closes = None
+    # Pelo provider: o caminho feliz continua sendo UM yf.download, e numa
+    # queda do Yahoo cada ETF desce a cadeia individual e vem do cache em vez
+    # de o painel inteiro ficar vazio. permitir_externa=False porque a série é
+    # ajustada -- mesma razão do get_scenario_params.
+    lote = market_data_provider.get_daily_closes_batch(
+        tickers, "5d", auto_adjust=True, permitir_externa=False
+    )
+    for aviso in lote.warnings:
+        print(f"[get_macro] setores: {aviso}", file=sys.stderr)
+    closes = lote.closes if lote.ok else None
 
     for name, tk in SECTOR_ETFS:
         change = None

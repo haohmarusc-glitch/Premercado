@@ -457,13 +457,15 @@ def macro_risk_signals() -> dict:
     em market_alerts.py pro sinal completo de 3 componentes usado pelo loop
     do agente). Fail-open: qualquer falha de rede conta como sinal inativo,
     nunca derruba a avaliação principal do símbolo."""
-    import yfinance as yf
     active: list[str] = []
     try:
-        # 5d cru: a barra de hoje pode vir sem Close e é a última -- o
-        # iloc[-1] abaixo pegaria NaN e o veto macro sumiria em silêncio.
-        df_y = market_data_provider.sem_barra_incompleta(
-            yf.Ticker(YIELD_TICKER).history(period="5d"))
+        # Pelo provider: a limpeza da barra sem Close (que este bloco fazia à
+        # mão, e que ainda vale -- o iloc[-1] pegaria NaN e o veto macro
+        # sumiria em silêncio) vem de graça na fachada, e junto vêm cache e
+        # disjuntor. Ticker macro é o que mais apanha de rate limit: ele é
+        # pedido em toda avaliação de confluência, de todo ticker.
+        res_y = market_data_provider.get_daily_history(YIELD_TICKER, "5d")
+        df_y = res_y.df if res_y.ok else None
         if df_y is not None and not df_y.empty:
             y = float(df_y["Close"].iloc[-1])
             if y > 20:
@@ -473,8 +475,8 @@ def macro_risk_signals() -> dict:
     except Exception:
         pass
     try:
-        df_o = market_data_provider.sem_barra_incompleta(
-            yf.Ticker(OIL_TICKER).history(period="1mo"))
+        res_o = market_data_provider.get_daily_history(OIL_TICKER, "1mo")
+        df_o = res_o.df if res_o.ok else None
         if df_o is not None and len(df_o) >= OIL_SHOCK_LOOKBACK_DAYS + 1:
             then = float(df_o["Close"].iloc[-1 - OIL_SHOCK_LOOKBACK_DAYS])
             now = float(df_o["Close"].iloc[-1])
