@@ -691,7 +691,7 @@ if __name__ == "__main__":
         print(f"{tk:<7}{r['trimestre']:<8}{(r.get('moeda') or '?'):<6}"
               f"{_bi(r['caixa']):>11}{_bi(r['dividaLiquida']):>11}"
               f"{_bi(r['fcfTrimestral']):>10}{folego:>12}  {','.join(marcas):<12}")
-    print(f"\n(valores em bilhões da moeda de cada balanço -- não some entre moedas)")
+    print("\n(valores em bilhões da moeda de cada balanço -- não some entre moedas)")
     if algum_aviso:
         print("quebra = salto grande de dívida ou de ações num trimestre; a "
               "comparação a/a não vale")

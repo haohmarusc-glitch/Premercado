@@ -41,7 +41,6 @@ Rodar (dentro do container, do diretório do agente):
 
 Sai 0 se passou em todos os casos, 1 se falhou em algum.
 """
-import json
 import os
 import re
 import sys

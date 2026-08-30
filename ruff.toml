@@ -1,0 +1,40 @@
+# Lint do Python. O que este arquivo escolhe NÃO ficar checando é tão
+# deliberado quanto o que ele checa.
+#
+# Rodar o ruff com o padrão neste repositório devolve 189 achados. Sete são
+# defeito; o resto briga com decisão que já foi tomada de propósito, e uma
+# checagem que reprova código correto ensina todo mundo a ignorá-la. Foi por
+# isso que o CI ficou três meses sem lint nenhum: a primeira tentativa teria
+# gritado 182 vezes sem motivo.
+line-length = 100
+target-version = "py312"
+
+[lint]
+# `F` (pyflakes) é o conjunto que pega COISA QUEBRADA: import morto, variável
+# atribuída e nunca lida, redefinição que apaga a anterior, f-string sem
+# placeholder. Nenhuma delas é gosto -- todas são código que não faz o que
+# parece fazer.
+#
+# `E722` (bare except) entra pelo mesmo critério: `except:` engole
+# KeyboardInterrupt e SystemExit junto, e este repo depende de o processo
+# morrer quando o Node manda SIGTERM.
+select = ["F", "E722", "E713", "E714"]
+
+# O que fica FORA, e por quê:
+#
+#   E741  variável de nome ambíguo (`l`, `I`, `O`) -- 72 achados, quase todos
+#         `l` de "linha" em código que lê arquivo. Renomear não deixa nada
+#         mais correto.
+#   E402  import fora do topo -- 50 achados, e este repo usa import tardio DE
+#         PROPÓSITO: `tools.py` importa yfinance e pandas, e módulos que só
+#         fazem aritmética não podem pagar esse custo no import. Os testes
+#         também precisam de `sys.path.insert` antes de importar.
+#   E401  vários imports na mesma linha -- estético.
+#   E501  linha longa -- as tabelas de dado e as URLs de fonte estouram, e
+#         quebrá-las piora a leitura.
+ignore = []
+
+[lint.per-file-ignores]
+# Teste pode ter import que só existe para o efeito colateral, e variável
+# nomeada para documentar o que se está descartando.
+"**/__tests__/*.py" = ["F401", "F841"]

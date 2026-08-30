@@ -1,4 +1,4 @@
-import sys, json
+import sys
 
 # Mede quanto do tempo do processo é interpretador+import (ver
 # startup_probe.py). Importado dos dois jeitos pelo mesmo motivo do
@@ -59,6 +59,11 @@ for t in tickers:
         if prev_close is None:
             prev_close = getattr(fi, "previous_close", None)
         result[t] = {"price": price, "previousClose": prev_close}
-    except:
+    # `except Exception`, não `except:`. O bare except engole
+    # KeyboardInterrupt e SystemExit junto -- e este script roda como
+    # subprocesso que o Node encerra com SIGTERM. Num laço por ticker, ele
+    # pegaria o sinal, gravaria "sem preço" e seguiria para o próximo, em vez
+    # de sair. Ver #103: fechar o parcial no SIGTERM em vez de perder a run.
+    except Exception:
         result[t] = {"price": None, "previousClose": None}
 print(json_seguro.dumps(result))

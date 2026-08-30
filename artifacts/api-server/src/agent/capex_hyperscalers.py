@@ -43,7 +43,7 @@ import json
 import os
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 try:
     import json_seguro

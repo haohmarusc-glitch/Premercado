@@ -1,4 +1,4 @@
-import sys, json
+import sys
 
 # Mede quanto do tempo do processo é interpretador+import (ver
 # startup_probe.py). Importado dos dois jeitos pelo mesmo motivo do
@@ -80,7 +80,7 @@ def get_earnings(tickers):
                 "epsEstimate": info.get("epsForward"),
                 "sector": info.get("sector"),
             })
-        except Exception as e:
+        except Exception:
             result.append({"ticker": t, "name": t, "earningsDate": None, "epsEstimate": None})
     return result
 
