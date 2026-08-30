@@ -25,7 +25,7 @@ from .startup_probe import boot as _probe_boot, imports_prontos as _probe_import
 
 _probe_boot()
 
-from . import agent as a
+from . import llm_runtime as a
 from . import config
 from . import consensus_report
 from .provider import get_run_usage
@@ -54,7 +54,7 @@ def emit_iv() -> None:
 
     Sem custo extra: o dado veio do get_options_data que o relatório já chamou.
     O runner.ts persiste em iv_history, que é o que vai permitir IV Rank daqui
-    a ~60 pregões (ver agent.py::get_last_iv_snapshot)."""
+    a ~60 pregões (ver llm_runtime.py::get_last_iv_snapshot)."""
     try:
         iv = a.get_last_iv_snapshot()
         if iv:

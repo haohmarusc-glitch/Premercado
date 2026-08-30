@@ -1,7 +1,7 @@
 """
 Testes de brt.py — helpers de data/hora em horário de Brasília, extraídos de
 agent.py para que tools.py também possa usá-los (tools.py não pode importar
-agent.py: agent.py importa tools.py, seria circular).
+llm_runtime.py: llm_runtime.py importa tools.py, seria circular).
 
 O bug original está documentado em test_agent_brt_time.py: `date.today()` cru
 devolve o fuso do processo (UTC no container), então entre 21h e 23h59 BRT o
@@ -17,7 +17,7 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_brt_help
 
 import datetime
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 from agent import brt
 
 
@@ -51,7 +51,7 @@ def test_days_until_earnings_nao_perde_um_dia_perto_da_meia_noite():
 
 
 def test_agent_mantem_a_fachada_dos_helpers_antigos():
-    """agent.py expõe os nomes privados de antes -- ~10 usos no módulo e o
+    """llm_runtime.py expõe os nomes privados de antes -- ~10 usos no módulo e o
     test_agent_brt_time.py dependem deles."""
     now_utc = datetime.datetime(2026, 7, 31, 0, 30, 0)
     assert agent_module._today_brt_str(now_utc) == "30/07/2026"

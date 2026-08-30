@@ -1,6 +1,6 @@
 """
 report_validator.py — enforcement mecânico da rubrica de rótulo do relatório
-diário (agent.py::_system_stable_full, seção "RÓTULO POR ATIVO").
+diário (llm_runtime.py::_system_stable_full, seção "RÓTULO POR ATIVO").
 
 Por que existe: o Veredito do Dia tem validador desde que citou preço/RSI
 defasado em produção (veredito_validator.py), mas o RELATÓRIO DIÁRIO só tinha
@@ -11,7 +11,7 @@ ARM 🟢 caindo 0,8% com RSI 32, e SKHY 🟢 caindo 3,5% com IV 137%.
 A rubrica no prompt define quatro gates que proíbem 🟢. Prompt sozinho é
 pedido, não garantia — aqui os mesmos gates viram checagem determinística
 sobre o texto gerado, com um retry de correção (mesma mecânica do
-lint_veredito, ver agent.py::run_veredito).
+lint_veredito, ver llm_runtime.py::run_veredito).
 
 Duas fases, espelhando o veredito:
 

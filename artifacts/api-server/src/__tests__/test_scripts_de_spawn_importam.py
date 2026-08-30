@@ -116,3 +116,22 @@ def test_todo_script_spawnado_importa_como_modulo():
         f"'{(r.stdout.strip().splitlines() or ['nenhum'])[-1]}'.\n"
         f"stderr:\n{r.stderr[-1500:]}"
     )
+
+
+def test_nenhum_modulo_faz_sombra_ao_pacote():
+    """Não pode existir `agent/<nome-do-pacote>.py`.
+
+    Existiu até 30/08/2026: um `agent.py` dentro de `agent/`. Quando algo
+    punha `src/agent/` no sys.path -- spawn por caminho, ou um teste
+    importando módulo solto -- o nome `agent` passava a resolver para o
+    MÓDULO em vez do pacote, e todo `from agent.x import y` seguinte
+    estourava com "attempted relative import with no known parent package".
+
+    Custou três incidentes distintos: as três fontes do macro_risk em
+    19/08, o folego-checker falhando calado desde a criação, e a /trend
+    fora do ar em 27/08. O arquivo virou `llm_runtime.py`; isto impede que
+    a colisão volte com outro nome."""
+    sombra = _AGENT_DIR / f"{_AGENT_DIR.name}.py"
+    assert not sombra.exists(), (
+        f"{sombra.name} dentro de {_AGENT_DIR.name}/ faz sombra ao pacote -- "
+        "renomeie (ver llm_runtime.py, que era exatamente este caso)")

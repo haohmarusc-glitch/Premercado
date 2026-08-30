@@ -1,5 +1,5 @@
 """
-Testes de agent.py::_agent_loop — cobre o bug de produção em que blocos
+Testes de llm_runtime.py::_agent_loop — cobre o bug de produção em que blocos
 tool_use presentes na resposta ficavam órfãos no histórico sempre que o
 stop_reason normalizado não era literalmente "tool_use" (ex.: Anthropic
 retornando "max_tokens"/"pause_turn" com tool_use já completo antes do
@@ -15,7 +15,7 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_agent_lo
 import json as _json
 import time
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 from agent.provider import NormalizedResponse, TextBlock, ToolUseBlock
 
 

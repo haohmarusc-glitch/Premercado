@@ -1,6 +1,6 @@
 """
 Provider adapter — wraps OpenAI-compatible APIs (OpenAI, Gemini, OpenRouter, Kimi, DeepSeek)
-and Anthropic into a single interface that agent.py can use transparently.
+and Anthropic into a single interface that llm_runtime.py can use transparently.
 """
 
 import json
@@ -690,7 +690,7 @@ class ProviderClient:
         """
         Cache incremental do HISTÓRICO (Anthropic): marca o último bloco das duas
         últimas mensagens com cache_control, sem mutar a lista original — o
-        agent.py reutiliza `messages` entre turnos, e mutá-la acumularia
+        llm_runtime.py reutiliza `messages` entre turnos, e mutá-la acumularia
         breakpoints além do máximo de 4 por request.
 
         Por que DUAS mensagens: o lookback do cache é de no máx. 20 blocos, e um

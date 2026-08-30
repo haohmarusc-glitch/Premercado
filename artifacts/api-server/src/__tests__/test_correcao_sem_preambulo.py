@@ -12,7 +12,7 @@ pôs um acompanhamento na frente. Prompt pede, código garante.
 """
 import pytest
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 from agent.provider import NormalizedResponse, TextBlock, ToolUseBlock
 
 

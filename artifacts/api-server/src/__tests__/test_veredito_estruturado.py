@@ -211,7 +211,7 @@ def test_negacao_no_texto_nao_vira_falsa_divergencia():
 def test_prompt_do_veredito_especifica_o_bloco():
     """Amarra por leitura de fonte: cobrar no validador um formato que o
     prompt não pede seria armar o retry para sempre disparar."""
-    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "agent.py"
+    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "llm_runtime.py"
              ).read_text(encoding="utf-8")
     trecho = fonte.split("def build_veredito_prompt", 1)[1].split("\ndef ", 1)[0]
     assert "```json" in trecho
@@ -258,7 +258,7 @@ def test_citar_capex_sem_o_dado_no_snapshot_e_erro():
 
 
 def test_prompt_ensina_o_capex_como_contexto_nao_gatilho():
-    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "agent.py"
+    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "llm_runtime.py"
              ).read_text(encoding="utf-8")
     trecho = fonte.split("def build_veredito_prompt", 1)[1].split("\ndef ", 1)[0]
     assert "capex_hyperscalers" in trecho
@@ -355,7 +355,7 @@ def test_folego_de_outro_ticker_nao_vale_para_este():
 
 
 def test_prompt_ensina_o_folego_como_contexto_nao_gatilho():
-    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "agent.py"
+    fonte = (pathlib.Path(__file__).resolve().parent.parent / "agent" / "llm_runtime.py"
              ).read_text(encoding="utf-8")
     trecho = fonte.split("def build_veredito_prompt", 1)[1].split("\ndef ", 1)[0]
     assert "folego_de_caixa" in trecho

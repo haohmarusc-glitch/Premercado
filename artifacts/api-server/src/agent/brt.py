@@ -11,9 +11,9 @@ usuário ou ao agente, e em qualquer contagem de dias que o usuário vá ler
 (dias até earnings, prazo de plano de saída) — perto da meia-noite BRT esses
 números saem 1 dia errados com o `today()` cru.
 
-Este módulo existe separado de agent.py porque tools.py também precisa dos
-helpers, e tools.py não pode importar agent.py (agent.py importa tools.py —
-seria circular). agent.py continua expondo `_now_brt`/`_today_brt_str`/
+Este módulo existe separado de llm_runtime.py porque tools.py também precisa dos
+helpers, e tools.py não pode importar llm_runtime.py (llm_runtime.py importa tools.py —
+seria circular). llm_runtime.py continua expondo `_now_brt`/`_today_brt_str`/
 `_now_brt_str` como fachada para não quebrar quem já os importa de lá.
 """
 

@@ -526,7 +526,7 @@ def test_o_snapshot_do_veredito_fixa_o_sentimento():
     """Amarra por leitura de fonte: valor que existe no validador mas ninguém
     põe no snapshot é o mesmo que não existir."""
     import pathlib
-    from agent import agent as gerador
+    from agent import llm_runtime as gerador
     fonte = pathlib.Path(gerador.__file__).read_text(encoding="utf-8")
     codigo = "\n".join(l for l in fonte.splitlines()
                        if not l.strip().startswith("#"))
