@@ -108,6 +108,16 @@ interface AnaliseIA {
   ausencias?: AusenciaDeColeta[];
   truncado?: boolean;
   avisos?: string[];
+  /**
+   * Os painéis que a análise REALMENTE leu, coletados no servidor.
+   * A tela passa a mostrar estes -- ver o comentário em `runIA`.
+   */
+  paineis?: {
+    trend?: TrendItem | null;
+    technicals?: TechItem | null;
+    snapshot?: Snapshot | null;
+    reaction?: ReactionResult | null;
+  };
 }
 
 interface SessionMove {
@@ -309,8 +319,14 @@ export default function AnaliseRapidaPage() {
     },
   });
 
-  // A IA só transforma número em leitura — precisa de painel coletado antes,
-  // e cada clique custa tokens (o custo volta na resposta e aparece na tela).
+  // A IA só transforma número em leitura, e cada clique custa tokens (o custo
+  // volta na resposta e aparece na tela).
+  //
+  // Não manda mais os painéis. Mandava o que estivesse no React Query naquele
+  // clique, e cada painel tem seu próprio ciclo de refresh -- nada garantia
+  // que os quatro fossem do mesmo momento. Em 29/08/2026 a Técnica do MRVL
+  // saiu de uma sessão anterior à do resto, e a prosa descreveu duas sessões
+  // como se fossem uma. Agora o servidor coleta os quatro no mesmo processo.
   const runIA = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/analise-rapida/ia", {
@@ -320,14 +336,25 @@ export default function AnaliseRapidaPage() {
         body: JSON.stringify({
           ticker,
           benchmark: benchmark.trim().toUpperCase() || "SMH",
-          trend, technicals: tech, snapshot, reaction,
         }),
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
       return data as AnaliseIA;
     },
-    onSuccess: setAnaliseIA,
+    onSuccess: (data) => {
+      setAnaliseIA(data);
+      // Adota os painéis que a análise leu. Sem isto o conserto só mudaria de
+      // lugar: o servidor analisaria dado fresco e a tela continuaria
+      // mostrando o que tinha em mão, com a prosa citando números que o
+      // usuário não vê em lugar nenhum.
+      const p = data.paineis;
+      if (!p) return;
+      if (p.trend) setTrend(p.trend);
+      if (p.technicals) setTech(p.technicals);
+      if (p.snapshot) setSnapshot(p.snapshot);
+      if (p.reaction) setReaction(p.reaction);
+    },
   });
 
   const temDados = Boolean(trend || tech || snapshot || reaction);

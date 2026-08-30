@@ -35,11 +35,19 @@ resposta diz o que entrou de fato — a tela mostra, para o leitor saber a
 profundidade daquela análise.
 
 Input (stdin JSON):
-  {"ticker": "INTC", "benchmark": "SMH",
-   "trend": {...} | null, "technicals": {...} | null,
-   "snapshot": {...} | null, "reaction": {...} | null}
+  {"ticker": "INTC", "benchmark": "SMH"}
+
+  Os quatro painéis (trend, technicals, snapshot, reaction) são COLETADOS
+  aqui, no mesmo processo e no mesmo instante -- ver `_coletar_paineis`. O
+  chamador pode mandá-los prontos, e aí eles têm precedência; é o que a
+  suíte faz. A rota não manda: era mandando que a tela conseguia enviar
+  painéis de sessões diferentes.
+
 Output (stdout JSON):
-  {"markdown": "...", "usage": {...}}  ou  {"error": "..."}
+  {"markdown": "...", "usage": {...}, "paineis": {...}}  ou  {"error": "..."}
+
+  `paineis` traz o que a análise leu, para a tela pintar a mesma coisa que a
+  prosa descreve.
 """
 import datetime as _dt
 import json
@@ -93,7 +101,7 @@ os.environ["AGENT_TRANSIENT_RETRIES"] = "0"
 # Teto do processo inteiro, incluindo imports, camada fundamental e LLM.
 # Tem que caber no timeout do Node com folga -- test_orcamento_analise_ia.py
 # lê os dois e falha se a invariante quebrar.
-_ORCAMENTO_TOTAL_S = float(os.environ.get("ANALISE_IA_ORCAMENTO_S", "195"))
+_ORCAMENTO_TOTAL_S = float(os.environ.get("ANALISE_IA_ORCAMENTO_S", "225"))
 _INICIO = time.monotonic()
 
 from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
@@ -153,6 +161,26 @@ MIN_TEXTO_CHARS = 200
 # a primeira chamada consumiu o orcamento inteiro e a troca de provedor --
 # que existia justamente para esse caso -- ficou inalcancavel.
 _TETO_FUNDAMENTO_S = float(os.environ.get("ANALISE_IA_FUNDAMENTO_S", "25"))
+
+# Teto da coleta dos quatro painéis.
+#
+# Ela é OBRIGATÓRIA (sem painel não há o que analisar), diferente da camada
+# fundamental -- mas precisa de teto pelo mesmo motivo: o que ela consome sai
+# do LLM. Quatro chamadas de rede em paralelo, com yfinance no meio; 30s cobre
+# o caso lento sem deixar uma fonte pendurada comer a análise.
+#
+# Ela entrou na aritmética do orçamento como termo NOVO, e o total subiu junto:
+#
+#     teto_coleta + teto_fundamento + 2 x _LLM_TIMEOUT_S <= _ORCAMENTO_TOTAL_S
+#     30          + 25              + 2 x 85             <= 225
+#
+# Antes eram 25 + 170 = 195, exatamente o orçamento e sem folga nenhuma.
+# Somar a coleta sem mexer no total teria tornado a segunda tentativa de
+# provedor inalcançável -- que é, palavra por palavra, o incidente de
+# 18/08/2026 que test_orcamento_analise_ia.py narra. O timeout do Node subiu
+# de 215s para 245s junto; a invariante do playbook §3 (interno < externo)
+# continua valendo e continua testada.
+_TETO_COLETA_S = float(os.environ.get("ANALISE_IA_COLETA_S", "30"))
 REC_LABELS = {
     "strongBuy": "compra forte", "buy": "compra", "hold": "manter",
     "sell": "venda", "strongSell": "venda forte",
@@ -552,10 +580,19 @@ def _defasagem_entre_paineis(dados: dict) -> dict | None:
     pegou (11,46%) porque o papel tinha caído dez por cento; se o balanço
     tivesse sido morno, nada teria avisado.
 
-    A causa não é cache do servidor (histórico 10 min, trend 30 min): é a tela
-    mandando `{trend, technicals, snapshot, reaction}` do que tem em memória.
-    Cada painel é um hook próprio, com fetch próprio -- e até aqui nenhum
-    deles dizia de quando era.
+    A causa daquele incidente era a tela mandar `{trend, technicals, snapshot,
+    reaction}` do que tinha em memória: cada painel era um hook próprio, com
+    fetch próprio, e nenhum deles dizia de quando era. Isso acabou -- desde
+    30/08/2026 os quatro são coletados aqui, no mesmo processo (ver
+    `_coletar_paineis`).
+
+    A checagem FICA, e não por precaução vaga: `get_trend.com_cache` tem
+    stale-if-error, e serve deliberadamente uma entrada antiga quando o Yahoo
+    recusa (rate limit é rotina no IP do servidor). Nesse caminho a Tendência
+    pode voltar de uma sessão anterior à dos outros três, coletados no mesmo
+    instante -- exatamente a forma do defeito de novo, por uma porta que
+    continua aberta de propósito, porque servir dado velho marcado é melhor
+    que não servir nada.
     """
     painel = [
         ("tendencia", (dados.get("trend") or {}).get("dadosAte")),
@@ -1040,13 +1077,128 @@ def analisar(dados: dict) -> dict:
     return saida
 
 
+# Nomes dos painéis, na ordem em que a tela os mostra, e como coletar cada um.
+# A chave é a mesma que o payload usa -- ver `_defasagem_entre_paineis`.
+_PAINEIS = ("trend", "technicals", "snapshot", "reaction")
+
+
+def _coletar_paineis(ticker: str, benchmark: str) -> dict:
+    """Coleta os quatro painéis NO MESMO PROCESSO e no mesmo instante.
+
+    Por que o servidor coleta, em vez de receber pronto
+    ---------------------------------------------------
+    A tela mandava os painéis que ela tinha em mão -- o que estivesse no
+    React Query naquele clique. Cada painel tem seu próprio ciclo de refresh,
+    então nada garantia que os quatro fossem do mesmo momento. Em 29/08/2026
+    a Técnica do MRVL chegou com preço e variação de uma sessão anterior à do
+    resto, e a prosa descreveu duas sessões diferentes como se fossem uma.
+
+    `_defasagem_entre_paineis` DETECTA isso e avisa. Isto aqui previne: quatro
+    painéis lidos em sequência dentro de um processo não conseguem estar em
+    sessões diferentes.
+
+    Por que aqui e não no Node
+    --------------------------
+    O Node teria de spawnar quatro interpretadores a mais. A contenção de
+    subprocesso é problema MEDIDO neste repo (ver lib/python-spawn.ts: boot de
+    7-12s e imports de 68-84s sob disputa, contra 0,111s e 5,679s no mesmo
+    container ocioso). Aqui não sobe processo nenhum: o interpretador já está
+    de pé, e os coletores são funções.
+
+    Falha aberta, painel a painel: um coletor que estoura vira `{"error":...}`
+    naquele painel só. A análise segue com o que veio -- é o mesmo contrato de
+    quando a tela mandava um painel vazio, e o prompt já sabe dizer que uma
+    camada faltou.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeout
+
+    from agent import earnings_reaction_analysis as _reacao
+    from agent import get_technicals as _tecnica
+    from agent import get_ticker_snapshot as _snapshot
+    from agent import get_trend as _tendencia
+
+    def _trend():
+        itens = _tendencia.com_cache([ticker])
+        return itens[0] if itens else None
+
+    def _reaction():
+        return _reacao.analyze_ticker(ticker, 8, benchmark)
+
+    coletores = {
+        "trend": _trend,
+        "technicals": lambda: _tecnica.technicals(ticker),
+        "snapshot": lambda: _snapshot.snapshot(ticker, benchmark),
+        "reaction": _reaction,
+    }
+
+    # Em paralelo porque os quatro são I/O de rede independente; sequencial
+    # somaria as latências sem necessidade. Mesmo critério da #101.
+    #
+    # Com TETO imposto, não só declarado. `_TETO_COLETA_S` sozinho seria a
+    # mesma "suposição que nada no código garante" que test_orcamento_
+    # analise_ia.py narra ter falhado em produção: a conta fecha no papel e a
+    # execução passa por cima. Aqui o prazo é um instante absoluto, e cada
+    # `result()` espera só o que sobrou dele.
+    prazo = time.monotonic() + _TETO_COLETA_S
+    saida: dict = {}
+    pool = ThreadPoolExecutor(max_workers=len(coletores))
+    try:
+        futuros = {nome: pool.submit(fn) for nome, fn in coletores.items()}
+        for nome, fut in futuros.items():
+            try:
+                saida[nome] = fut.result(timeout=max(0.0, prazo - time.monotonic()))
+            except FuturesTimeout:
+                print(f"[paineis] {nome}: estourou o teto de "
+                      f"{_TETO_COLETA_S:.0f}s da coleta", file=sys.stderr)
+                saida[nome] = {"error": f"coleta passou de {_TETO_COLETA_S:.0f}s"}
+            except Exception as e:  # noqa: BLE001 -- falha aberta por painel
+                print(f"[paineis] {nome}: {e}", file=sys.stderr)
+                saida[nome] = {"error": _motivo_curto(e)}
+    finally:
+        # `wait=False`: quem estourou o prazo continua pendurado num socket, e
+        # esperá-lo aqui devolveria pela porta dos fundos o tempo que o teto
+        # acabou de recusar. O processo termina logo depois da análise.
+        pool.shutdown(wait=False)
+    return saida
+
+
+def _com_paineis(args: dict) -> dict:
+    """Completa o payload com os painéis que o chamador não mandou.
+
+    O seam fica aqui, no `__main__`, e não dentro de `analisar()`: assim
+    `analisar()` continua uma função pura de payload -> análise, que é como a
+    suíte inteira a exercita. Teste que monta painel à mão segue mandando o
+    painel; a rota não manda mais nada e recebe coleta.
+    """
+    ticker = str(args.get("ticker") or "").strip().upper()
+    if not ticker:
+        return args
+    if all(args.get(nome) for nome in _PAINEIS):
+        return args
+    benchmark = str(args.get("benchmark") or "SMH").strip().upper() or "SMH"
+    coletados = _coletar_paineis(ticker, benchmark)
+    # O que veio do chamador tem precedência: quem manda painel está dizendo
+    # que quer AQUELE painel (é o que a suíte faz).
+    return {**args, **{k: v for k, v in coletados.items() if not args.get(k)}}
+
+
 if __name__ == "__main__":
     try:
         args = json.loads(sys.stdin.read() or "{}")
     except Exception:
         args = {}
+    args = _com_paineis(args)
     try:
         saida = analisar(args)
     except Exception as e:  # noqa: BLE001 — quota/chave/provedor viram erro legível
         saida = {"error": str(e) or e.__class__.__name__}
+    # Devolve os painéis que a análise REALMENTE leu.
+    #
+    # Sem isto o conserto só mudaria de lugar: o servidor passaria a analisar
+    # dado fresco enquanto a tela continuaria mostrando o que o React Query
+    # tinha em mão, e a prosa descreveria números que o usuário não vê. Quem
+    # pinta a tela tem de pintar a mesma coisa que a prosa leu.
+    if isinstance(saida, dict):
+        saida["paineis"] = {nome: args.get(nome) for nome in _PAINEIS}
     print(json.dumps(saida, ensure_ascii=False))

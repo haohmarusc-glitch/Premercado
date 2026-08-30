@@ -696,9 +696,15 @@ def for_ticker(ticker: str) -> dict:
         print(f"[get_trend] {ticker}: {e}", file=sys.stderr)
         return {"ticker": ticker, "error": friendly_error(e)}
 
-if __name__ == "__main__":
-    args = json.loads(sys.stdin.read())
-    tickers = args.get("tickers", [])
+def com_cache(tickers: list) -> list:
+    """`for_ticker` para vários tickers, passando pelo cache em disco.
+
+    Extraído do `__main__` para que o analise_rapida_ia possa coletar o painel
+    de Tendência NO MESMO PROCESSO sem furar o cache. Chamar `for_ticker`
+    direto funcionaria, mas gastaria uma ida ao Yahoo por análise -- e o
+    rate limit do Yahoo sobre o IP do servidor é o motivo de este cache
+    existir.
+    """
     cache = _cache_load()
     now = time.time()
     items = []
@@ -730,4 +736,10 @@ if __name__ == "__main__":
             items.append(result)
     if dirty:
         _cache_save(cache)
-    print(json_seguro.dumps({"items": items}, ensure_ascii=False))
+    return items
+
+
+if __name__ == "__main__":
+    args = json.loads(sys.stdin.read())
+    print(json_seguro.dumps({"items": com_cache(args.get("tickers", []))},
+                            ensure_ascii=False))
