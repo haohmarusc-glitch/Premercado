@@ -54,10 +54,12 @@ import time
 # pelo Node com o env pronto) nem aceitar o import achatado de get_alt_data.py
 # -- provider.py usa imports relativos e só carrega como `agent.provider`.
 #
-# O insert(0) é deliberado: o Python já coloca o diretório do script em
-# sys.path[0], e lá dentro existe um `agent.py`. Sem colocar o diretório PAI na
-# frente, `import agent` acha esse arquivo em vez do pacote e quebra num erro
-# de import relativo que não explica nada.
+# O insert(0) é deliberado: o Python coloca o diretório do script em
+# sys.path[0], e de lá `import agent` não acha o PACOTE -- é preciso o
+# diretório pai na frente. Até 30/08/2026 havia um agravante: um `agent.py`
+# dentro de `agent/`, que era achado no lugar do pacote e quebrava num erro
+# de import relativo que não explicava nada. Hoje ele se chama
+# llm_runtime.py e esse caso específico não existe mais.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent.provider import (  # noqa: E402
@@ -101,7 +103,7 @@ RESULTADO_FALSO = json.dumps({"ticker": "NVDA", "price": 181.42, "change_pct": 1
 
 # Resposta final curta demais é o sintoma do modelo que "reconhece" em vez de
 # responder ("Entendido, vou verificar..."). O loop de produção usa a mesma
-# ideia (agent.py::_min_report_chars), aqui num piso bem menor porque a
+# ideia (llm_runtime.py::_min_report_chars), aqui num piso bem menor porque a
 # pergunta é de uma linha só.
 MIN_CHARS_RESPOSTA = 40
 

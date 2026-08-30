@@ -211,7 +211,7 @@ def test_confluence_filtra_juros_e_petroleo():
 
 
 def test_agent_filtra_o_candle_diario():
-    fonte = _fonte("agent.py")
+    fonte = _fonte("llm_runtime.py")
     assert "sem_barra_incompleta(hist)" in fonte
 
 

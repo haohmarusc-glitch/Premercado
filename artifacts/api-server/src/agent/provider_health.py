@@ -46,10 +46,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 
-try:
-    from .brt import today_brt
-except ImportError:  # execução standalone
-    from brt import today_brt
+from .brt import today_brt
 
 # Em /var/cache/premercado (volume nomeado), não em /tmp. O orçamento diário
 # da Alpha Vantage mora aqui, e /tmp morre junto com o container: cada

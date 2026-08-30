@@ -49,26 +49,12 @@ import os
 import sys
 from datetime import date, timedelta
 from itertools import combinations
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-
-# brt.today_brt: import dos DOIS jeitos porque este script roda dos dois
-# jeitos (flat via spawn direto por caminho, e como módulo do pacote agent) --
-# mesmo padrão documentado em earnings_reaction_analysis.py.
-try:
-    from brt import today_brt
-    import market_data_provider
-    import radar_overrides as _radar_overrides
-except ImportError:
-    from agent.brt import today_brt
-    from agent import market_data_provider
-    from agent import radar_overrides as _radar_overrides
+from agent.brt import today_brt
+from agent import market_data_provider
+from agent import radar_overrides as _radar_overrides
 
 HOJE_SNAPSHOT = date(2026, 8, 14)  # data de referência dos dados
 

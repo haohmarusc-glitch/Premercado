@@ -42,32 +42,24 @@ import json
 import math
 from statistics import NormalDist
 
-from startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
 
 _probe_boot()
 
 import pandas as pd
 import yfinance as yf
 
-from bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
-from security import sanitize_ticker
-try:  # import duplo: spawn por caminho e também como membro do pacote
-    from agent import market_data_provider
-except ImportError:
-    import market_data_provider
-from brt import today_brt
-from get_scenario_params import compute as compute_scenario_params
-from get_earnings import get_earnings
-from earnings_reaction_analysis import analyze_ticker as analyze_earnings_reaction
-from get_news_feed import for_ticker as news_for_ticker, _company_names, translate_all
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+from agent.bounded_parallel import bounded_parallel_map, budget_from_deadline, exit_now
+from agent.security import sanitize_ticker
+from agent import market_data_provider
 
+from agent.brt import today_brt
+from agent.get_scenario_params import compute as compute_scenario_params
+from agent.get_earnings import get_earnings
+from agent.earnings_reaction_analysis import analyze_ticker as analyze_earnings_reaction
+from agent.get_news_feed import for_ticker as news_for_ticker, _company_names, translate_all
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
 _probe_imports()
 

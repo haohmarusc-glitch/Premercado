@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-from . import agent as a
+from . import llm_runtime as a
 
 
 if __name__ == "__main__":

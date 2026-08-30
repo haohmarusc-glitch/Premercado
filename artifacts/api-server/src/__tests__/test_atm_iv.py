@@ -105,7 +105,7 @@ class TestAtmIvPct:
 
 
 class TestRegistrarIv:
-    """Segunda barreira, no caminho de GRAVAÇÃO (agent.py::_registrar_iv).
+    """Segunda barreira, no caminho de GRAVAÇÃO (llm_runtime.py::_registrar_iv).
 
     Vale a redundância com _atm_iv_pct porque o custo do erro aqui é diferente:
     linha ruim em iv_history não volta atrás e não dá pra distinguir de uma boa
@@ -114,7 +114,7 @@ class TestRegistrarIv:
     """
 
     def _registrar(self, snapshot):
-        from agent import agent as a
+        from agent import llm_runtime as a
 
         a._registrar_iv(snapshot)
         return a.get_last_iv_snapshot()

@@ -14,35 +14,23 @@ Output (stdout JSON): {"items": [{ticker, trend, score, components, news, conflu
 import sys, json, os, re, time, datetime
 import yfinance as yf
 import pandas as pd
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pacote
-    from agent.security import sanitize_ticker, friendly_error
-    from agent.nomes_de_empresas import fala_do_papel
-    from agent.ciclo_volatilidade import _earnings_proximo, _SEM_EARNINGS
-    from agent.earnings_reaction_analysis import (
-        _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
-    )
-    from agent import earnings_dates as _earnings_dates
-    from agent import market_data_provider
-except ImportError:
-    from security import sanitize_ticker, friendly_error
-    from nomes_de_empresas import fala_do_papel
-    from ciclo_volatilidade import _earnings_proximo, _SEM_EARNINGS
-    from earnings_reaction_analysis import (
-        _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
-    )
-    import earnings_dates as _earnings_dates
-    import market_data_provider
+from agent.security import sanitize_ticker, friendly_error
+from agent.nomes_de_empresas import fala_do_papel
+from agent.ciclo_volatilidade import _earnings_proximo, _SEM_EARNINGS
+from agent.earnings_reaction_analysis import (
+    _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
+)
+from agent import earnings_dates as _earnings_dates
+from agent import market_data_provider
 
-# ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,
-#    então não pode importar agent/cache.py que usa import relativo).
+# ── Cache em disco, autocontido. O motivo original de não usar o
+#    agent/cache.py acabou: este script rodava por caminho, fora do pacote,
+#    e não alcançava um módulo de import relativo. Hoje roda como módulo e
+#    alcançaria -- a cópia daqui virou escolha, não restrição, e vale
+#    unificar numa próxima passada.
 #    Mesmo padrão: JSON em /tmp, falha aberta. TTL 30min — tendência sobre
 #    candle diário não muda a cada minuto, e o Yahoo rate-limita IP do Replit.
 _CACHE_PATH = os.environ.get("TREND_CACHE_PATH", "/tmp/premercado_trend_cache.json")

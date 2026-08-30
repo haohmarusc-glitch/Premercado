@@ -25,10 +25,7 @@ import os
 import sys
 from datetime import date
 
-try:  # import duplo: spawn por caminho e como membro do pacote
-    from brt import today_brt
-except ImportError:
-    from agent.brt import today_brt
+from agent.brt import today_brt
 
 CAMINHO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "dados", "radar_overrides.json")

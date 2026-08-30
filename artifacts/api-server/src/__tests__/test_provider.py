@@ -243,7 +243,7 @@ class TestAnthropicMessagesToOpenai:
         assert result[1]["content"] is None
 
     def test_reasoning_content_on_block_becomes_top_level_field(self):
-        """agent.py::_resp_to_history_content anexa reasoning_content no
+        """llm_runtime.py::_resp_to_history_content anexa reasoning_content no
         primeiro bloco do turno -- aqui ele precisa virar um campo de
         NÍVEL DE MENSAGEM (não ficar dentro do content/tool_calls), que é
         o formato que a API do DeepSeek exige de volta no turno seguinte."""

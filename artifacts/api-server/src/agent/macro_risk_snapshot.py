@@ -23,9 +23,12 @@ Este script usa market_alerts (Kospi), tools (notícias) e o pacote agent para
 earnings, e esses módulos fazem `from .cache import cached` -- import relativo
 que só resolve em contexto de pacote.
 
-Rodar por caminho põe agent/ no sys.path, e lá existe um agent.py que SOMBREIA
-o pacote agent/: `from agent import market_alerts` passa a procurar um atributo
-dentro do módulo errado. Medido em produção 19/08/2026:
+Rodar por caminho põe agent/ no sys.path e o pacote deixa de resolver pelo
+nome. Na época havia um agravante -- um `agent.py` DENTRO de `agent/`, que
+sombreava o pacote e fazia `from agent import market_alerts` procurar um
+atributo dentro do módulo errado. Esse arquivo virou `llm_runtime.py` e a
+sombra acabou; rodar por caminho continua quebrando, pelo import relativo.
+Medido em produção 19/08/2026:
 
     "^KS11":    "attempted relative import with no known parent package"
     "earnings":  idem
@@ -41,17 +44,10 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 
-try:
-    import json_seguro
-    import brt
-    from macro_risk import MacroRiskModule
-    from http_retry import SESSION
-except ImportError:  # rodando como membro do pacote agent
-    from agent import json_seguro
-    from agent import brt
-    from agent.macro_risk import MacroRiskModule
-    from agent.http_retry import SESSION
-
+from agent import json_seguro
+from agent import brt
+from agent.macro_risk import MacroRiskModule
+from agent.http_retry import SESSION
 
 def _hoje() -> date:
     """"Hoje" em Brasília, não em UTC.

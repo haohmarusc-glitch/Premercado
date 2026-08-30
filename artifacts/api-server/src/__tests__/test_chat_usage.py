@@ -1,5 +1,5 @@
 """
-Testes de agent.py::run_chat_stream -- cobre a linha USAGE:{json} adicionada
+Testes de llm_runtime.py::run_chat_stream -- cobre a linha USAGE:{json} adicionada
 pra dar visibilidade de custo às chamadas do chat (mesmo padrão de
 emit_usage() em run_agent.py, usado pelas runs diárias do agente).
 
@@ -9,7 +9,7 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_chat_usa
 
 import json as _json
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 from agent.provider import NormalizedResponse, TextBlock
 
 

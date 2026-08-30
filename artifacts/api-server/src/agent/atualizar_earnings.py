@@ -59,18 +59,10 @@ import os
 import sys
 from datetime import date
 
-# Import dos DOIS jeitos, mesmo padrão dos outros scripts do agente que
-# rodam tanto standalone quanto como módulo do pacote.
-try:
-    from brt import today_brt
-    from http_retry import SESSION
-    from radar_ia_2026 import EARNINGS
-    import provider_health
-except ImportError:
-    from agent.brt import today_brt
-    from agent.http_retry import SESSION
-    from agent.radar_ia_2026 import EARNINGS
-    from agent import provider_health
+from agent.brt import today_brt
+from agent.http_retry import SESSION
+from agent.radar_ia_2026 import EARNINGS
+from agent import provider_health
 
 _BASE_URL = "https://www.alphavantage.co/query"
 

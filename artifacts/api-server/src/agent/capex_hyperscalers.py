@@ -45,12 +45,8 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-try:
-    import json_seguro
-    from brt import today_brt
-except ImportError:
-    from agent import json_seguro
-    from agent.brt import today_brt
+from agent import json_seguro
+from agent.brt import today_brt
 
 OVERLAY_PATH_DEFAULT = "/var/cache/premercado/capex_hyperscalers.json"
 

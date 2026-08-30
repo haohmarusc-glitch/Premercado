@@ -69,15 +69,9 @@ import datetime as _dt
 import sys
 from typing import Any, Iterable
 
-try:
-    from cache import cached
-    from http_retry import SESSION
-    from security import sanitize_ticker
-except ImportError:  # pragma: no cover - caminho de pacote
-    from .cache import cached
-    from .http_retry import SESSION
-    from .security import sanitize_ticker
-
+from .cache import cached
+from .http_retry import SESSION
+from .security import sanitize_ticker
 
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 

@@ -14,16 +14,19 @@ if _API_SERVER_SRC_DIR not in sys.path:
 
 # Fixa o PACOTE `agent` em sys.modules antes de qualquer teste rodar.
 #
-# Existe um `agent.py` DENTRO de `agent/`, e vários testes inserem
-# `src/agent/` no sys.path para importar módulos soltos (`from brt import
-# ...`). A partir daí o nome `agent` passa a resolver para o MÓDULO
-# `agent/agent.py` em vez do pacote — e como `agent.py` usa import relativo,
-# qualquer `from agent.x import y` coletado depois estoura com
-# "attempted relative import with no known parent package".
+# A ameaça específica que motivou isto acabou em 30/08/2026: existia um
+# `agent.py` DENTRO de `agent/`, e vários testes inserem `src/agent/` no
+# sys.path para importar módulos soltos (`from brt import ...`). A partir
+# daí o nome `agent` resolvia para o MÓDULO em vez do pacote — e como ele
+# usa import relativo, qualquer `from agent.x import y` coletado depois
+# estourava com "attempted relative import with no known parent package".
 #
-# O sintoma é traiçoeiro: a suíte inteira passa, e o mesmo arquivo falha
-# quando rodado junto com um teste "poluidor" numa ordem diferente. Já
-# aconteceu duas vezes neste repo. Importar o pacote aqui resolve de vez:
-# uma vez em sys.modules, ele ganha de qualquer alteração posterior de
-# sys.path, para todos os testes.
+# O sintoma era traiçoeiro: a suíte inteira passava, e o mesmo arquivo
+# falhava quando rodado junto com um teste "poluidor" numa ordem diferente.
+# Aconteceu duas vezes neste repo. O arquivo virou `llm_runtime.py`, e
+# test_scripts_de_spawn_importam.py impede que outro apareça.
+#
+# A fixação fica: custa um import e continua valendo para qualquer arquivo
+# que venha a colidir com o nome do pacote. Uma vez em sys.modules, ele
+# ganha de qualquer alteração posterior de sys.path.
 importlib.import_module("agent")

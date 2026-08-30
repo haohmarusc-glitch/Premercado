@@ -55,18 +55,10 @@ from datetime import timedelta
 import pandas as pd
 import yfinance as yf
 
-# Import dos DOIS jeitos, mesmo padrão dos outros scripts do agente que
-# rodam tanto standalone quanto como módulo do pacote.
-try:
-    from brt import today_brt
-    from radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
-                               HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
-    from parametros_macro import INDICADORES_GLOBAIS
-except ImportError:
-    from agent.brt import today_brt
-    from agent.radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
-                                     HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
-    from agent.parametros_macro import INDICADORES_GLOBAIS
+from agent.brt import today_brt
+from agent.radar_ia_2026 import (CORRELACOES, CORRELACOES_ATUALIZADO_EM,
+                                 HOJE_SNAPSHOT, PORTFOLIO_DEFAULT, TEMA_IA)
+from agent.parametros_macro import INDICADORES_GLOBAIS
 
 # Mínimo de pregões em comum pra um par valer. ~3 meses: abaixo disso a
 # correlação vira ruído (papel recém-listado, ADR com feriado diferente),

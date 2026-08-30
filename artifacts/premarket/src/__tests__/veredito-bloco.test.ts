@@ -44,7 +44,7 @@ describe("extrairBlocoDoVeredito", () => {
 // ── o par que importa: bloco ilegível NÃO pode sumir da tela ────────────────
 //
 // Engolir em silêncio um bloco que ninguém conseguiu ler é pior que mostrar o
-// fence cru: o `agent.py` ainda anexa o aviso de "leitura degradada" ao texto,
+// fence cru: o `llm_runtime.py` ainda anexa o aviso de "leitura degradada" ao texto,
 // e uma tela que apagasse o fence diria o contrário do aviso logo abaixo dele.
 
 describe("bloco que o validador recusaria fica visível", () => {

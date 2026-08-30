@@ -11,7 +11,7 @@
 import path from "path";
 import { and, eq, gte } from "drizzle-orm";
 import { db, alertsTable, alertFiringsTable, intradaySpikesTable, bounceAlertFiringsTable, squeezeAlertFiringsTable, type Alert } from "@workspace/db";
-import { agentDir, getPythonBin, state as agentState } from "./runner";
+import { agentDir, getPythonBin, state as agentState, spawnAgente } from "./runner";
 import { sendAlertEmail, sendBounceAlertEmail, sendSqueezeAlertEmail } from "./mailer";
 import { logger } from "./logger";
 import { runExclusiveFresh, filaPendentes } from "./python-queue";
@@ -128,8 +128,7 @@ function fetchQuotes(tickers: string[]): Promise<Quote[] | null> {
 
 function fetchTechnicals(tickers: string[]): Promise<Technicals[] | null> {
   return runExclusiveFresh("get_technicals", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("get_technicals.py");
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
     let out = "";

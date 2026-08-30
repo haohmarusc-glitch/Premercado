@@ -3,7 +3,7 @@ import { coalescer } from "../lib/em-voo";
 import path from "path";
 import { desc, gte } from "drizzle-orm";
 import { db, intradaySpikesTable, agentRunsTable, type IntradaySpike } from "@workspace/db";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { getPythonBin, agentDir, spawnAgente } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
 import { spawnPython } from "../lib/python-spawn";
@@ -19,8 +19,7 @@ function runPython(script: string, payload: object): Promise<unknown> {
   // fundidas numa só antes de disputar vaga. Invertido, a segunda ocuparia uma
   // vaga só pra esperar a primeira. Ver lib/vaga-python.ts.
   return coalescer(`${script}:${JSON.stringify(payload)}`, () => comVagaPython(script, () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", script);
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente(script);
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

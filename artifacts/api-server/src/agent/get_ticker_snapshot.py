@@ -24,25 +24,12 @@ import sys
 
 import yfinance as yf
 
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
+from agent.get_scenario_params import compute as compute_cenario
 
-try:
-    from get_scenario_params import compute as compute_cenario
-except ImportError:  # rodando como módulo do pacote (testes)
-    from agent.get_scenario_params import compute as compute_cenario
-
-try:
-    import market_data_provider
-except ImportError:
-    from agent import market_data_provider
-
+from agent import market_data_provider
 
 def _num(v):
     """float arredondado ou None — fast_info devolve None/NaN sem avisar."""

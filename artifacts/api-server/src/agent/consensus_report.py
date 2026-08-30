@@ -12,7 +12,7 @@ desde a PR #240, o Grupo A do relatório diário é sempre config.PORTFOLIO_TICK
 (fixo), e as categorias de dado por ticker (cotação, técnico, candles, short,
 analistas, opções) já são sempre as mesmas -- não sobra nenhuma decisão real
 pro modelo tomar nessa etapa. Coletar direto em Python (mesmo padrão que
-run_veredito já usa em agent.py) elimina ~10 turnos de tool-calling por
+run_veredito já usa em llm_runtime.py) elimina ~10 turnos de tool-calling por
 provedor, que é a maior fatia do custo do relatório diário normal -- e o
 mesmo pacote de dados é reaproveitado pelos 3 provedores, coletado uma vez só.
 
@@ -132,7 +132,7 @@ def _build_snapshot(data: dict, tickers: list[str]) -> dict:
 
 
 def _build_writer_prompt(today: str, data: dict, tickers: list[str]) -> str:
-    """Mesma rubrica de rótulo do relatório diário normal (agent.py
+    """Mesma rubrica de rótulo do relatório diário normal (llm_runtime.py
     ::_system_stable_full, seção RÓTULO POR ATIVO), reescrita pra um contexto
     SEM tool-calling: os limiares numéricos vêm importados direto de
     report_validator.py, então não podem divergir da checagem determinística

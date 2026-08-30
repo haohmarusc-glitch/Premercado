@@ -1,8 +1,7 @@
 import { Router, type IRouter } from "express";
-import path from "path";
 import { and, asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, usersTable } from "@workspace/db";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnAgente } from "../lib/runner";
 import { computeOpenLotTotals } from "../lib/portfolio-math";
 import {
   ListPortfolioPositionsResponse,
@@ -17,7 +16,6 @@ import {
   UpdatePortfolioPurchaseParams as PortfolioPurchaseParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
-import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
@@ -31,8 +29,7 @@ function fetchHistoricalPrices(ticker: string, dates: string[]): Promise<Record<
   // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
   // Ver lib/vaga-python.ts.
   return comVagaPython("portfolio", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "get_historical_price.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("get_historical_price.py");
     py.stdin.write(JSON.stringify({ ticker, dates }));
     py.stdin.end();
     let out = "";

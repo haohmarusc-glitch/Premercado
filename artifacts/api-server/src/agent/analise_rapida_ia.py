@@ -427,9 +427,10 @@ def _buscar_fundamento(ticker: str) -> tuple[dict, list[str], list[dict]]:
     _inicio_fundamento = time.monotonic()
 
     try:
-        # Mesma extração do get_fundamentals.py (que não dá pra importar
-        # daqui: ele usa import plano `from security import`, que não
-        # resolve no contexto de pacote deste script).
+        # Mesma extração do get_fundamentals.py. A duplicação era imposta:
+        # aquele módulo só tinha import plano e não resolvia no contexto de
+        # pacote. Desde a unificação do spawn ele importa normalmente, então
+        # isto aqui virou cópia por inércia -- candidata a sair.
         info = yf.Ticker(ticker).info or {}
         alvo_medio = info.get("targetMeanPrice")
         preco = info.get("regularMarketPrice") or info.get("currentPrice")

@@ -1,6 +1,6 @@
 """
 Testes da rubrica de RÓTULO POR ATIVO no prompt do relatório diário
-(agent.py::_system_stable_full).
+(llm_runtime.py::_system_stable_full).
 
 O relatório diário atribui um rótulo de cor (🟢/🟡/🔴) por ativo do Grupo A.
 Antes desta rubrica o emoji não existia em lugar nenhum do prompt -- o modelo
@@ -27,7 +27,7 @@ import inspect
 import pytest
 
 from agent import tools
-from agent.agent import _system_stable_full
+from agent.llm_runtime import _system_stable_full
 
 # Campo citado no prompt -> ferramenta que precisa devolvê-lo.
 # Se um destes for renomeado em tools.py sem atualizar o prompt, o teste quebra.

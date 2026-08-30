@@ -154,7 +154,7 @@ def test_os_sinais_entram_no_prompt_block():
 # ── o nível numérico é extraído do texto do item ────────────────────────────
 
 def test_nivel_numerico_e_extraido_do_texto_do_item(monkeypatch):
-    from agent import agent as gerador
+    from agent import llm_runtime as gerador
 
     monkeypatch.setattr(gerador.t, "get_exit_plan_items", lambda: [
         {"ticker": "BABA", "status": "pending",
@@ -226,7 +226,7 @@ def test_sem_par_acima_do_corte_nao_ha_sinal():
 def test_correlacao_desconhecida_nao_vira_zero(monkeypatch):
     """O overlay não cobre o par → o par simplesmente não entra. Inventar 0
     seria pior que calar."""
-    from agent import agent as gerador
+    from agent import llm_runtime as gerador
     import agent.radar_ia_2026 as radar
     monkeypatch.setattr(radar, "correlacao", lambda a, b: None)
     assert gerador._correlacoes_da_carteira(["AAA", "BBB"]) == []

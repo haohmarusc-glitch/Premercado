@@ -20,7 +20,7 @@ Formato esperado do snapshot (dict):
                           # semana/feriado isso derrubaria RSI_STALE pra
                           # TODO ticker (tolerância de frescor é zero, ver
                           # STALE_TECHNICAL_DAYS abaixo). Quem monta o
-                          # snapshot (agent.py::_build_veredito_snapshot)
+                          # snapshot (llm_runtime.py::_build_veredito_snapshot)
                           # deriva isso da data real do último candle
                           # baixado, não do relógio do processo.
   "generated_at": "2026-08-01T16:15:00-03:00",
@@ -50,12 +50,8 @@ from typing import Any
 from .validador_nucleo import frase_com_moeda_errada
 
 # radar_ia_2026 é stdlib-only (dados embutidos + funções puras), então não
-# quebra o contrato "sem dependências externas" deste módulo. Import dos
-# DOIS jeitos porque este arquivo também roda standalone (__main__ no fim).
-try:
-    from radar_ia_2026 import CORR_ALTA, correlacao
-except ImportError:
-    from agent.radar_ia_2026 import CORR_ALTA, correlacao
+# quebra o contrato "sem dependências externas" deste módulo.
+from agent.radar_ia_2026 import CORR_ALTA, correlacao
 
 # ---------------------------------------------------------------- config ---
 

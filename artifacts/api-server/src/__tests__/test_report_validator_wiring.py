@@ -15,7 +15,7 @@ import json as _json
 
 import pytest
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 from agent import config
 from agent.provider import NormalizedResponse, TextBlock, ToolUseBlock
 from agent.report_validator import new_snapshot

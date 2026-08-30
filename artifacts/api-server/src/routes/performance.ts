@@ -1,10 +1,8 @@
 import { Router, type IRouter } from "express";
-import path from "path";
 import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnAgente } from "../lib/runner";
 import { asc, eq, inArray } from "drizzle-orm";
 import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
-import { spawnPython } from "../lib/python-spawn";
 
 const router: IRouter = Router();
 
@@ -58,8 +56,7 @@ router.get("/performance", async (req, res): Promise<void> => {
 
   const tickers = [...new Set(positions.map(({ p }) => p.ticker)), "SPY"];
 
-  const scriptPath = path.join(agentDir, "agent", "get_performance.py");
-  const py = spawnPython(getPythonBin(), [scriptPath, tickers.join(",")]);
+  const py = spawnAgente("get_performance.py", [tickers.join(",")]);
 
   let out = "";
   let err = "";

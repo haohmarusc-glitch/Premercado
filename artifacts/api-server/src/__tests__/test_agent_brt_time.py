@@ -1,5 +1,5 @@
 """
-Testes de agent.py::_now_brt/_today_brt_str/_now_brt_str -- cobre o bug em que
+Testes de llm_runtime.py::_now_brt/_today_brt_str/_now_brt_str -- cobre o bug em que
 os prompts do agente ("Data de hoje: X", "às Y de X (Y BRT)") usavam
 datetime.date.today()/datetime.datetime.now() cru, que retorna o fuso do
 processo (UTC no container) em vez de Brasília. No horário BRT 21h-23h59
@@ -13,7 +13,7 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_agent_br
 
 import datetime
 
-from agent import agent as agent_module
+from agent import llm_runtime as agent_module
 
 
 def test_today_brt_str_ainda_e_dia_anterior_perto_da_meia_noite_utc():

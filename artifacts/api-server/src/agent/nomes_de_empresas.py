@@ -1,18 +1,24 @@
 """Como um papel aparece ESCRITO — mapa de nomes e relevância de manchete.
 
-Módulo deliberadamente plano: só stdlib (re), nenhum import relativo. Ele
-existe por causa de um incidente de deploy (27/08/2026): a #410 fez o
-get_trend importar `fala_do_papel` de news_sources, e news_sources puxa
-`config` e `cache` por import RELATIVO — que só resolve dentro do pacote.
-O get_trend roda por SPAWN (sys.path[0] = src/agent, sem pacote), caiu no
-braço de imports planos, e o /trend inteiro morreu com
-"attempted relative import with no known parent package".
+Módulo só de stdlib (re), sem import relativo. Nasceu de um incidente de
+deploy (27/08/2026): a #410 fez o get_trend importar `fala_do_papel` de
+news_sources, e news_sources puxa `config` e `cache` por import RELATIVO —
+que só resolve dentro do pacote. O get_trend rodava por SPAWN
+(sys.path[0] = src/agent, sem pacote), caiu no braço de imports planos, e o
+/trend inteiro morreu com "attempted relative import with no known parent
+package".
 
-A lição é a de sempre, invertida: reusar em vez de copiar continua certo,
-mas o módulo reusado precisa ser importável dos DOIS contextos. O que os
-scripts de spawn consomem mora em módulos planos (security, http_retry,
-volume_intradiario, este); o que é só do pacote pode ser relativo.
-test_scripts_de_spawn_importam.py fixa o contrato.
+A restrição que ele foi criado para respeitar não existe mais: desde a
+unificação do spawn, todo script roda como módulo do pacote e alcança
+qualquer irmão, relativo inclusive. Este arquivo continua onde está porque
+separar "como um papel aparece escrito" de "buscar notícia" é uma divisão
+que se sustenta sozinha — mas ela agora é escolha de desenho, não
+contorno de um contexto de import.
+
+A lição que sobrevive é sobre a forma do incidente, não sobre imports:
+quando existem dois jeitos de rodar a mesma coisa, o que funciona num
+quebra no outro, e o teste do jeito errado passa verde.
+test_scripts_de_spawn_importam.py fixa o contrato de hoje.
 """
 
 import re

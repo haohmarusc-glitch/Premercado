@@ -41,13 +41,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-try:
-    import json_seguro
-    from security import sanitize_ticker
-except ImportError:
-    from agent import json_seguro
-    from agent.security import sanitize_ticker
-
+from agent import json_seguro
+from agent.security import sanitize_ticker
 
 # ── config ───────────────────────────────────────────────────────────────────
 

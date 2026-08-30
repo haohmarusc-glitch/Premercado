@@ -3,19 +3,11 @@ import sys, json
 import numpy as np
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+from agent.security import sanitize_ticker
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-try:  # import duplo: spawn por caminho e também como membro do pacote
-    from agent import market_data_provider
-except ImportError:
-    import market_data_provider
+from agent import market_data_provider
 
 def position_size(account_size: float, risk_pct: float, entry: float, stop: float) -> dict:
     if entry <= 0 or stop <= 0 or entry == stop:

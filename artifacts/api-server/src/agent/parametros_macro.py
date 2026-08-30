@@ -40,16 +40,10 @@ import argparse
 import json
 from datetime import date, timedelta
 
-try:
-    from brt import today_brt
-    from radar_ia_2026 import correlacao
-    from parametros_volatilidade import (MULT_STOP, _carteira_default,
-                                         classe_vol, parametros)
-except ImportError:
-    from agent.brt import today_brt
-    from agent.radar_ia_2026 import correlacao
-    from agent.parametros_volatilidade import (MULT_STOP, _carteira_default,
-                                               classe_vol, parametros)
+from agent.brt import today_brt
+from agent.radar_ia_2026 import correlacao
+from agent.parametros_volatilidade import (MULT_STOP, _carteira_default,
+                                           classe_vol, parametros)
 
 # Multiplicadores do modo macro sobre a vol operacional.
 MULT_FOMC = 1.25            # semana de FOMC sem projeções
