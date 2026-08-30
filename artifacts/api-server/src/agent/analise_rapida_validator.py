@@ -268,6 +268,47 @@ _TERMOS_DO_BLOCO = {
 # bloco esta' presente.
 _FUNDAMENTO_GENERICO = r"fundament\w+|avalia[cç][aã]o"
 
+# Dentro de `valuation` cada métrica tem disponibilidade PRÓPRIA. Os múltiplos
+# saem do XBRL da SEC e o DCF sai da FMP -- fontes independentes de propósito,
+# e é ROTINA um vir sem o outro (a docstring de `get_fundamentals_valuation`
+# diz isso com todas as letras: "falha de um lado não derruba o outro").
+#
+# Sem este recorte a regra pergunta pelo BLOCO e a frase nega CAMPOS. Foi o
+# que aconteceu com o MRVL em 30/08/2026: vieram P/L, P/VP, crescimento e
+# margem; faltaram DCF, EV/EBITDA e dívida líquida/EBITDA -- e o payload
+# ainda trazia `multiplos_indisponiveis` com o motivo de cada um. O modelo
+# repetiu esse motivo fielmente e levou ERRO por dizer a verdade que o
+# próprio payload lhe deu.
+#
+# Os nomes são os de `_MULTIPLOS_DA_SEC` em tools.py, e a checagem é por
+# PRESENÇA DA CHAVE: `_buscar_fundamento` monta o bloco com `v is not None`,
+# então métrica que não veio não vira chave nenhuma.
+_CAMPOS_DA_VALUATION = (
+    (r"\bdcf\b|fluxo\s+de\s+caixa|valor\s+justo", "dcf_fair_value"),
+    (r"ev\s*/\s*ebitda", "ev_to_ebitda_ttm"),
+    (r"d[ií]vida\s+l[ií]quida\s*/\s*ebitda", "net_debt_to_ebitda_ttm"),
+    (r"\bp/l\b|pre[cç]o[/ ]lucro", "pe_ratio_ttm"),
+    (r"\bp/vp\b|\bp/b\b", "pb_ratio"),
+    (r"\broe\b", "roe_pct_ttm"),
+    (r"margem\s+l[ií]quida", "net_margin_pct_ttm"),
+    (r"crescimento\s+d\w+\s+receita", "revenue_growth_pct_ttm"),
+    (r"fcf\s+yield", "fcf_yield_pct_ttm"),
+)
+
+
+def _valuation_so_nega_metrica_ausente(frase: str, valuation: dict) -> bool:
+    """A frase nomeia métrica de valuation, e TODAS as que nomeia faltaram?
+
+    False quando não nomeia métrica nenhuma (aí quem decide é a regra de
+    bloco) e quando nomeia ao menos uma que veio -- essa é a negação de dado
+    presente que a regra existe para pegar.
+    """
+    nomeadas = [campo for termos, campo in _CAMPOS_DA_VALUATION
+                if re.search(termos, frase)]
+    if not nomeadas:
+        return False
+    return all(valuation.get(campo) is None for campo in nomeadas)
+
 # O SUJEITO da negacao tem que ser a camada fundamental. Sem isto, "o RSI nao
 # estava disponivel" -- frase sobre outro dado -- viraria apontamento.
 _FALA_DO_FUNDAMENTO = (
@@ -592,9 +633,26 @@ def validar_analise(texto, dados=None) -> list:
             nomeados = [c for c, termos in _TERMOS_DO_BLOCO.items()
                         if re.search(termos, frase)]
             presentes_na_frase = [c for c in nomeados if c in chaves_presentes]
-            if not nega_generico and not presentes_na_frase:
+
+            # `valuation` é o único bloco com métricas de disponibilidade
+            # própria (SEC x FMP), e a frase pode negar CAMPO em vez do
+            # bloco. Quando toda métrica que ela nomeia faltou de verdade, a
+            # frase está certa -- e o bloco sai de cena para ela.
+            chaves_cobradas = list(chaves_presentes)
+            if "valuation" in presentes_na_frase and _valuation_so_nega_metrica_ausente(
+                    frase, dic(fundamento.get("valuation"))):
+                presentes_na_frase.remove("valuation")
+                chaves_cobradas.remove("valuation")
+
+            # `nega_generico` sozinho já não basta: negar a camada em geral só
+            # é erro se sobrou bloco presente que a frase NÃO exonerou. Sem
+            # isto, "os múltiplos de avaliação não puderam ser calculados"
+            # dispararia pela palavra "avaliação" mesmo nomeando só métrica
+            # ausente.
+            if not (nega_generico and chaves_cobradas) and not presentes_na_frase:
                 continue
             citados = ([r for c, r in _BLOCOS_FUNDAMENTAIS if c in presentes_na_frase]
+                       or [r for c, r in _BLOCOS_FUNDAMENTAIS if c in chaves_cobradas]
                        or presentes)
             add("ERRO", "ANALISE_NEGA_DADO_PRESENTE",
                 f"diz que a camada fundamental não veio, mas o payload traz "
