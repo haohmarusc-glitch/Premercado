@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import os
 
-try:
-    from provider import _DEFAULT_ORDER as ORDEM_PADRAO
-except ImportError:
-    from agent.provider import _DEFAULT_ORDER as ORDEM_PADRAO
+from agent.provider import _DEFAULT_ORDER as ORDEM_PADRAO
 
 # Provedores que não CONVERGEM em redigir análise longa -- não que estejam fora
 # do ar.

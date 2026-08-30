@@ -1,10 +1,7 @@
 import sys, json
 import numpy as np
 
-try:  # import duplo: spawn por caminho (checker diário) e como membro do pacote
-    from agent import market_data_provider
-except ImportError:
-    import market_data_provider
+from agent import market_data_provider
 
 # Recalcula vol_annual/beta_sector de scenario_params (Painel de Cenários) a
 # partir do histórico real de preços, em vez dos valores fixos digitados à

@@ -2,14 +2,8 @@ import sys, json, math
 import numpy as np
 import yfinance as yf
 import pandas as pd
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
-
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
 # ── Estrutura de preço e RSI de Wilder: MESMA lógica de get_trend.py
 # (price_structure/rsi_wilder) -- ver comentário em _confluence_signals sobre

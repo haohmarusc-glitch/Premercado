@@ -48,19 +48,10 @@ import sys
 
 import numpy as np
 import yfinance as yf
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-
-try:  # spawn por caminho (rota) e módulo do pacote (testes)
-    import market_data_provider
-except ImportError:
-    from agent import market_data_provider
+from agent import market_data_provider
 
 LAMBDA_EWMA = 0.94          # RiskMetrics; meia-vida ≈ 11 pregões
 PERIODO = "1y"

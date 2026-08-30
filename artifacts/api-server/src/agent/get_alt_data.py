@@ -26,24 +26,13 @@ import csv
 import datetime
 import io
 import sys, json, os
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-try:
-    # Rodando como script standalone (spawn direto do .py, sem -m agent.xxx)
-    # -- Python coloca o diretório do próprio script no sys.path.
-    from security import sanitize_ticker, friendly_error
-    from http_retry import SESSION
-except ImportError:
-    # Importado como agent.get_alt_data de dentro do processo principal
-    # (ex.: tools.py) -- aqui `agent` já é um pacote, precisa de import relativo.
-    from .security import sanitize_ticker, friendly_error
-    from .http_retry import SESSION
+# Importado como agent.get_alt_data de dentro do processo principal
+# (ex.: tools.py) -- aqui `agent` já é um pacote, precisa de import relativo.
+from .security import sanitize_ticker, friendly_error
+from .http_retry import SESSION
 
 def congress_trades(tickers: set[str]) -> dict:
     api_key = os.environ.get("QUIVER_API_KEY", "").strip()

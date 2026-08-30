@@ -50,12 +50,8 @@ from typing import Any
 from .validador_nucleo import frase_com_moeda_errada
 
 # radar_ia_2026 é stdlib-only (dados embutidos + funções puras), então não
-# quebra o contrato "sem dependências externas" deste módulo. Import dos
-# DOIS jeitos porque este arquivo também roda standalone (__main__ no fim).
-try:
-    from radar_ia_2026 import CORR_ALTA, correlacao
-except ImportError:
-    from agent.radar_ia_2026 import CORR_ALTA, correlacao
+# quebra o contrato "sem dependências externas" deste módulo.
+from agent.radar_ia_2026 import CORR_ALTA, correlacao
 
 # ---------------------------------------------------------------- config ---
 

@@ -1,33 +1,16 @@
 import sys
 
 # Mede quanto do tempo do processo é interpretador+import (ver
-# startup_probe.py). Importado dos dois jeitos pelo mesmo motivo do
-# bounded_parallel abaixo: este script roda como arquivo solto.
-try:
-    from startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
-except ImportError:
-    from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
+# startup_probe.py).
+from agent.startup_probe import boot as _probe_boot, imports_prontos as _probe_imports
 
 _probe_boot()
 
 import yfinance as yf
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
-
-# bounded_parallel é importado dos DOIS jeitos porque este script roda dos dois
-# jeitos: como arquivo solto (scenarios.ts spawna por caminho, sem PYTHONPATH --
-# aí sys.path[0] é o próprio diretório agent/) e, em outros pontos, como módulo
-# do pacote. Só stdlib dentro dele, então o import flat é seguro.
-try:
-    from bounded_parallel import deadline_exceeded
-except ImportError:
-    from agent.bounded_parallel import deadline_exceeded
+from agent.bounded_parallel import deadline_exceeded
 
 _probe_imports()
 

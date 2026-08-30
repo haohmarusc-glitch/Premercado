@@ -46,16 +46,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 import yfinance as yf
 
-try:
-    from . import hist_cache
-    from . import provider_health
-    from . import alpha_vantage_provider
-    from .security import friendly_error
-except ImportError:  # execução standalone
-    import hist_cache
-    import provider_health
-    import alpha_vantage_provider
-    from security import friendly_error
+from . import hist_cache
+from . import provider_health
+from . import alpha_vantage_provider
+from .security import friendly_error
 
 # Diferença de fechamento acima disso entre duas fontes vira warning
 # explícito em vez de silêncio — mesmo espírito do incidente da vol coletada à

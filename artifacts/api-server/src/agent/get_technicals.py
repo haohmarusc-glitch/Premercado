@@ -25,10 +25,7 @@ import pandas as pd
 from agent.security import sanitize_ticker, friendly_error
 from agent.volume_intradiario import barras_da_sessao, rvol_da_sessao
 from agent import json_seguro
-try:
-    from agent import market_data_provider
-except ImportError:  # execução standalone (sys.path[0] = src/agent)
-    import market_data_provider
+from agent import market_data_provider
 
 # Cópia de tools.py::_rvol_signal -- ver o comentário longo lá para o porquê
 # (volume intradiário é em U, a fração linear superestima o rvol na abertura;

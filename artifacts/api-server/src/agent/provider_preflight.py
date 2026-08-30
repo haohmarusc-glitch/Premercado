@@ -42,14 +42,9 @@ import os
 import sys
 import time
 
-try:
-    from . import market_data_provider as mdp
-    from . import provider_health
-    from . import alpha_vantage_provider
-except ImportError:
-    import market_data_provider as mdp
-    import provider_health
-    import alpha_vantage_provider
+from . import market_data_provider as mdp
+from . import provider_health
+from . import alpha_vantage_provider
 
 PROBE_TICKER = os.environ.get("AGENT_PREFLIGHT_TICKER", "AAPL")
 

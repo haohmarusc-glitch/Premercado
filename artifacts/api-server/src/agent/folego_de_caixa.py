@@ -62,13 +62,8 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-try:
-    import config
-    import json_seguro
-    from brt import today_brt
-except ImportError:
-    from agent import config, json_seguro
-    from agent.brt import today_brt
+from agent import config, json_seguro
+from agent.brt import today_brt
 
 OVERLAY_PATH_DEFAULT = "/var/cache/premercado/folego_de_caixa.json"
 

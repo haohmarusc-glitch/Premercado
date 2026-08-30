@@ -41,17 +41,10 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 
-try:
-    import json_seguro
-    import brt
-    from macro_risk import MacroRiskModule
-    from http_retry import SESSION
-except ImportError:  # rodando como membro do pacote agent
-    from agent import json_seguro
-    from agent import brt
-    from agent.macro_risk import MacroRiskModule
-    from agent.http_retry import SESSION
-
+from agent import json_seguro
+from agent import brt
+from agent.macro_risk import MacroRiskModule
+from agent.http_retry import SESSION
 
 def _hoje() -> date:
     """"Hoje" em Brasília, não em UTC.

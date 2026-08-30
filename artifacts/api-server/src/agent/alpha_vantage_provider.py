@@ -50,14 +50,9 @@ from datetime import timedelta
 
 import pandas as pd
 
-try:
-    from .http_retry import SESSION
-    from .brt import today_brt
-    from . import provider_health
-except ImportError:  # execução standalone (mesmo padrão dos demais módulos)
-    from http_retry import SESSION
-    from brt import today_brt
-    import provider_health
+from .http_retry import SESSION
+from .brt import today_brt
+from . import provider_health
 
 _BASE_URL = "https://www.alphavantage.co/query"
 
@@ -101,12 +96,14 @@ def _api_key() -> str:
 # ele cobre a rodada inteira; e como não persiste, uma rodada amanhã tenta de
 # novo sem precisar de ninguém para rearmar.
 #
-# Mora no AMBIENTE, e não numa global de módulo, por uma razão específica
-# deste repo: os scripts são importados dos DOIS jeitos -- `alpha_vantage_
-# provider` (spawn por caminho) e `agent.alpha_vantage_provider` (membro do
-# pacote). São dois objetos de módulo distintos, com globais distintas, então
-# uma flag de módulo seria armada num e lida no outro. O ambiente é único no
-# processo e imune a isso.
+# Mora no AMBIENTE, e não numa global de módulo. A razão original acabou:
+# o módulo era carregado sob DOIS nomes (`alpha_vantage_provider` no spawn
+# por caminho e `agent.alpha_vantage_provider` como membro do pacote), dois
+# objetos com globais distintas, e uma flag de módulo seria armada num e
+# lida no outro. Desde a unificação do spawn existe um nome só.
+# Fica no ambiente porque trocar agora não compra nada e mexeria no caminho
+# que controla quota de provedor -- o lugar errado para um refactor de
+# conveniência.
 _CHAVE_LIMITE = "AGENT_AV_LIMITE_DIARIO_BATIDO"
 
 _MARCAS_DE_LIMITE_DIARIO = (

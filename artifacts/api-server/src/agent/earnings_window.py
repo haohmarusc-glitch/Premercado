@@ -51,28 +51,15 @@ from datetime import date, datetime
 
 import pandas as pd
 
-try:  # import duplo: spawn por caminho (routes/scenarios.ts) e como pacote
-    from bounded_parallel import deadline_exceeded
-    import earnings_dates as _earnings_dates
-    import radar_overrides as _overrides
-    from earnings_reaction_analysis import analyze_ticker
-    from security import sanitize_ticker
-except ImportError:
-    from agent.bounded_parallel import deadline_exceeded
-    from agent import earnings_dates as _earnings_dates
-    from agent import radar_overrides as _overrides
-    from agent.earnings_reaction_analysis import analyze_ticker
-    from agent.security import sanitize_ticker
+from agent.bounded_parallel import deadline_exceeded
+from agent import earnings_dates as _earnings_dates
+from agent import radar_overrides as _overrides
+from agent.earnings_reaction_analysis import analyze_ticker
+from agent.security import sanitize_ticker
 
 import yfinance as yf
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
-
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
 # Quantos balanços passados alimentam a "realizada". 8 = dois anos de
 # trimestres: amostra grande o bastante para uma média fazer sentido e curta o

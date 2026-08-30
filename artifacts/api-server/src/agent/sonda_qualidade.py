@@ -46,11 +46,7 @@ import re
 import sys
 import time
 
-try:
-    from . import analise_rapida_ia as mod
-except ImportError:  # rodando por caminho, sem pacote
-    import analise_rapida_ia as mod  # type: ignore
-
+from . import analise_rapida_ia as mod
 
 # Cada caso é: payload, e o que a resposta PRECISA (ou não pode) conter.
 #

@@ -5,21 +5,10 @@ Output (stdout JSON): {"items": [ {ticker, news:[{title, published, summary, sou
 """
 import sys, json, re
 import yfinance as yf
-# Import duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent. `security` era o unico que
-# ainda vinha so' na forma plana, e por isso o modulo nao podia ser importado
-# por um teste -- a convencao da suite proibe (com razao) por o diretorio
-# agent/ no sys.path, porque existe um agent.py DENTRO dele.
-try:
-    from security import sanitize_ticker, friendly_error
-except ImportError:
-    from agent.security import sanitize_ticker, friendly_error
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+from agent.security import sanitize_ticker, friendly_error
 
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
 def clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()

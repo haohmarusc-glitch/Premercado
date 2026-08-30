@@ -5,31 +5,14 @@ Output (stdout JSON): {"fearGreed": {...}, "sectors": [{name, ticker, changePct}
 """
 import sys, json
 import yfinance as yf
-# Import duplo: estes scripts rodam dos DOIS jeitos -- spawn por caminho
-# (imports planos) e como membro do pacote agent (testes). `security` e
-# `http_retry` vinham so' na forma plana, e por isso o modulo era impossivel
-# de importar num teste: a convencao da suite proibe (com razao) por o
-# diretorio agent/ no sys.path, porque existe um agent.py DENTRO dele.
-try:
-    from security import friendly_error
-except ImportError:
-    from agent.security import friendly_error
-try:
-    from http_retry import SESSION
-except ImportError:
-    from agent.http_retry import SESSION
-try:
-    from sentimento import faixa as _faixa
-except ImportError:
-    from agent.sentimento import faixa as _faixa
-# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
-# duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
-# (imports planos) e como membro do pacote agent.
-try:
-    import json_seguro
-except ImportError:
-    from agent import json_seguro
+from agent.security import friendly_error
 
+from agent.http_retry import SESSION
+
+from agent.sentimento import faixa as _faixa
+
+# Serializacao que nao emite NaN/Infinity -- ver json_seguro.py.
+from agent import json_seguro
 
 SECTOR_ETFS = [
     ("Tecnologia", "XLK"), ("Energia", "XLE"), ("Financeiro", "XLF"),

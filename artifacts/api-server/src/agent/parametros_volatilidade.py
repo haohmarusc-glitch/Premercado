@@ -50,16 +50,9 @@ import json
 import math
 from datetime import date
 
-# Import dos DOIS jeitos: este arquivo roda como script solto (spawn por
-# caminho) e como módulo do pacote -- mesmo padrão dos demais do agente.
-try:
-    from brt import today_brt
-    from radar_ia_2026 import (CORR_ALTA, EARNINGS, PORTFOLIO_DEFAULT,
-                               REACAO_EARNINGS, TEMA_IA, correlacao)
-except ImportError:
-    from agent.brt import today_brt
-    from agent.radar_ia_2026 import (CORR_ALTA, EARNINGS, PORTFOLIO_DEFAULT,
-                                     REACAO_EARNINGS, TEMA_IA, correlacao)
+from agent.brt import today_brt
+from agent.radar_ia_2026 import (CORR_ALTA, EARNINGS, PORTFOLIO_DEFAULT,
+                                 REACAO_EARNINGS, TEMA_IA, correlacao)
 
 # Classes de vol semanal (%). Cortes RECALIBRADOS em 15/08/2026 sobre a
 # distribuição realmente medida (yfinance, 6 meses, 32 tickers do tema).
