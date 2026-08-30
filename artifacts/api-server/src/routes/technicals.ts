@@ -1,10 +1,8 @@
 import { Router, type IRouter } from "express";
 import { coalescer } from "../lib/em-voo";
-import path from "path";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnAgente } from "../lib/runner";
 import { getOrCreateSettings } from "./settings";
 import { logger } from "../lib/logger";
-import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
@@ -16,8 +14,7 @@ const CACHE_TTL_MS = 60_000;
 function fetchTechnicals(tickers: string[]): Promise<unknown> {
   // comVagaPython por dentro do coalescer -- ver lib/vaga-python.ts.
   return coalescer(`technicals:${tickers.join(",")}`, () => comVagaPython("technicals", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "get_technicals.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("get_technicals.py");
     py.stdin.write(JSON.stringify({ tickers }));
     py.stdin.end();
     let out = "";

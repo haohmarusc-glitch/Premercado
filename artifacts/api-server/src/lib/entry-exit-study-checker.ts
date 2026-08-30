@@ -12,7 +12,7 @@
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db, entryExitStudyTargetsTable, entryExitStudyResolutionsTable } from "@workspace/db";
-import { getPythonBin, agentDir } from "./runner";
+import { getPythonBin, agentDir, spawnAgente } from "./runner";
 import { spawnPython } from "./python-spawn";
 import { runExclusive } from "./python-queue";
 import { todayBRTDateString } from "./timezone";
@@ -28,8 +28,7 @@ const TIMEOUT_MS = 180_000;
 
 function runEntryExitStudyScriptExclusive(studies: Array<{ ticker: string; targetPrice: number; targetDate: string }>): Promise<{ results: StudyResult[] }> {
   return runExclusive("entry_exit_study", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "entry_exit_study.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("entry_exit_study.py");
     py.stdin.write(JSON.stringify({ studies }));
     py.stdin.end();
     let out = "";

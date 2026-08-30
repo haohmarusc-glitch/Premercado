@@ -7,7 +7,11 @@ import { existsSync } from "fs";
 import { asc, eq, inArray, gte, sql } from "drizzle-orm";
 import { db, reportsTable, agentRunsTable, settingsTable, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { logger } from "./logger";
-import { spawnPython } from "./python-spawn";
+import type {
+  ChildProcessWithoutNullStreams,
+  SpawnOptionsWithoutStdio,
+} from "child_process";
+import { spawnPython, moduloDoAgente } from "./python-spawn";
 import { sendReportEmail } from "./mailer";
 import { bannerDeAvisos, bannerProvedoresCaidos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
@@ -157,6 +161,41 @@ export const agentDir = path.resolve(workspaceRoot, "artifacts/api-server/src");
 export function getPythonBin(): string {
   const venvPython = path.resolve(workspaceRoot, ".venv/bin/python");
   return existsSync(venvPython) ? venvPython : "python3";
+}
+
+/**
+ * Spawn de script do agente. SEMPRE como módulo do pacote, nunca por caminho.
+ *
+ * Por que isto existe -- o incidente do #418, 27/08/2026: a /trend caiu em
+ * produção com `ImportError: attempted relative import with no known parent
+ * package`. A causa não foi o import que a #410 acrescentou; foi o repo ter
+ * DUAS formas de rodar o mesmo script, que exigem formas OPOSTAS de import:
+ *
+ *   python3 src/agent/get_trend.py   -> sys.path[0] = src/agent, sem pacote.
+ *                                       `from agent.x import y` quebra, e o
+ *                                       `agent.py` ainda faz sombra ao pacote.
+ *   python3 -m agent.get_trend       -> cwd = src, pacote de verdade.
+ *                                       `from agent.x import y` funciona.
+ *
+ * Enquanto as duas conviviam, dezenas de módulos carregavam uma perna de
+ * import plano só para sobreviver à primeira, e cada dependência nova
+ * precisava ser plana até o fundo -- que foi exatamente o que ninguém lembrou
+ * de fazer na #410.
+ *
+ * Com todo spawn passando por aqui existe uma forma só.
+ */
+export function spawnAgente(
+  script: string,
+  args: readonly string[] = [],
+  opts: SpawnOptionsWithoutStdio = {},
+): ChildProcessWithoutNullStreams {
+  return spawnPython(getPythonBin(), ["-m", moduloDoAgente(script), ...args], {
+    ...opts,
+    // `cwd` explícito e não herdado: `-m agent.x` só resolve a partir do
+    // diretório que CONTÉM o pacote, e o cwd do Node varia (raiz do repo,
+    // artifacts/api-server no dev, /app no container).
+    cwd: opts.cwd ?? agentDir,
+  });
 }
 
 // Quantos passos recentes manter no histórico exibido no painel de status --

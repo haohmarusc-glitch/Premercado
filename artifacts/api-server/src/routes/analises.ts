@@ -1,9 +1,7 @@
 import { Router, type IRouter } from "express";
-import path from "path";
 import { coalescer } from "../lib/em-voo";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { spawnAgente } from "../lib/runner";
 import { logger } from "../lib/logger";
-import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
@@ -23,8 +21,7 @@ const ANOS_MAX = 10;
 
 function runPadroes(ticker: string, anos: number): Promise<unknown> {
   return coalescer(`padroes:${ticker}:${anos}`, () => comVagaPython("padroes", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "padroes_estatisticos.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("padroes_estatisticos.py");
     py.stdin.write(JSON.stringify({ ticker, anos }));
     py.stdin.end();
     let out = "";

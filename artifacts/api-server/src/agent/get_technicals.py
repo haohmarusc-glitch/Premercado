@@ -22,9 +22,9 @@ logging.disable(logging.CRITICAL)
 
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker, friendly_error
-from volume_intradiario import barras_da_sessao, rvol_da_sessao
-import json_seguro
+from agent.security import sanitize_ticker, friendly_error
+from agent.volume_intradiario import barras_da_sessao, rvol_da_sessao
+from agent import json_seguro
 try:
     from agent import market_data_provider
 except ImportError:  # execução standalone (sys.path[0] = src/agent)

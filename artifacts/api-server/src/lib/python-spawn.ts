@@ -161,3 +161,16 @@ export function _resetPythonSpawn(): void {
   picoDesdeUltimoRelato = 0;
   vivosPorRotulo.clear();
 }
+
+/**
+ * Nome de módulo do pacote `agent` a partir de como o script é chamado.
+ *
+ * Aceita as duas formas que existiam no repo -- `"get_trend.py"` e
+ * `"/app/src/agent/get_trend.py"` -- e devolve sempre `"agent.get_trend"`.
+ * Existe para que a conversão aconteça num lugar só: um `.replace` repetido
+ * em vinte call sites diverge no primeiro que alguém esquecer.
+ */
+export function moduloDoAgente(script: string): string {
+  const base = (script.split("/").pop() ?? script).replace(/\.py$/, "");
+  return base.startsWith("agent.") ? base : `agent.${base}`;
+}

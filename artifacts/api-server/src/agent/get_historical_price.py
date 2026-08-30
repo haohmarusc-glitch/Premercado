@@ -29,7 +29,7 @@ import sys, json, re
 from datetime import datetime, timedelta
 import yfinance as yf
 import pandas as pd
-from security import sanitize_ticker
+from agent.security import sanitize_ticker
 # Serializacao que nao emite NaN/Infinity -- ver json_seguro.py. Import
 # duplo porque estes scripts rodam dos DOIS jeitos: spawn por caminho
 # (imports planos) e como membro do pacote agent.

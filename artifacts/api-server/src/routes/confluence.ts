@@ -1,7 +1,5 @@
 import { Router, type IRouter } from "express";
-import path from "path";
-import { getPythonBin, agentDir } from "../lib/runner";
-import { spawnPython } from "../lib/python-spawn";
+import { spawnAgente } from "../lib/runner";
 import { comVagaPython } from "../lib/vaga-python";
 
 const router: IRouter = Router();
@@ -10,8 +8,7 @@ function runConfluence(payload: object): Promise<unknown> {
   // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
   // Ver lib/vaga-python.ts.
   return comVagaPython("confluence", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "confluence_engine.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("confluence_engine.py");
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";

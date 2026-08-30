@@ -1,9 +1,7 @@
 import { Router, type IRouter } from "express";
-import path from "path";
 import { and, eq, asc, desc, inArray } from "drizzle-orm";
 import { db, entryExitStudyTargetsTable, entryExitStudyHistoryTable, entryExitStudyResolutionsTable, alertsTable, usersTable } from "@workspace/db";
-import { getPythonBin, agentDir } from "../lib/runner";
-import { spawnPython } from "../lib/python-spawn";
+import { spawnAgente } from "../lib/runner";
 import { comVagaPython } from "../lib/vaga-python";
 import { todayBRTDateString } from "../lib/timezone";
 import { logger } from "../lib/logger";
@@ -57,8 +55,7 @@ export interface StudyResult {
 function runEntryExitStudyScript(studies: Array<{ ticker: string; targetPrice: number; targetDate: string }>, timeoutMs = 45_000): Promise<{ results: StudyResult[] }> {
   // comVagaPython -- teto de Python simultâneo vindo de rota HTTP, mesmo padrão de earnings-reaction.ts.
   return comVagaPython("entry_exit_study", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "entry_exit_study.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("entry_exit_study.py");
     py.stdin.write(JSON.stringify({ studies }));
     py.stdin.end();
     let out = "";

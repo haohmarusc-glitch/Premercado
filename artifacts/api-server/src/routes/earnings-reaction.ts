@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import path from "path";
-import { getPythonBin, agentDir } from "../lib/runner";
+import { getPythonBin, agentDir, spawnAgente } from "../lib/runner";
 import { spawnPython } from "../lib/python-spawn";
 import { comVagaPython } from "../lib/vaga-python";
 import { coalescer } from "../lib/em-voo";
@@ -14,8 +14,7 @@ function runEarningsReactionScript(payload: object, timeoutMs = 60_000): Promise
   // comVagaPython -- teto de Python simultâneo vindo de rota HTTP.
   // Ver lib/vaga-python.ts.
   return comVagaPython("earnings_reaction", () => new Promise((resolve, reject) => {
-    const scriptPath = path.join(agentDir, "agent", "earnings_reaction_analysis.py");
-    const py = spawnPython(getPythonBin(), [scriptPath]);
+    const py = spawnAgente("earnings_reaction_analysis.py");
     py.stdin.write(JSON.stringify(payload));
     py.stdin.end();
     let out = "";
