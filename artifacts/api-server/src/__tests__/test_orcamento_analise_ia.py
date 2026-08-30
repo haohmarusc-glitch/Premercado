@@ -80,9 +80,18 @@ def test_duas_tentativas_de_provedor_cabem_no_orcamento():
     Este teste continua valendo como piso -- o orçamento precisa comportar ao
     menos duas tentativas -- mas quem GARANTE o teto agora é o prazo passado ao
     cliente (definir_orcamento), testado em test_orcamento_da_cadeia.py.
-    Aritmética de fora não segura laço de dentro."""
+    Aritmética de fora não segura laço de dentro.
+
+    ATUALIZAÇÃO 30/08/2026 -- entrou um TERCEIRO termo. A coleta dos quatro
+    painéis passou do navegador para dentro deste processo (ver
+    `_coletar_paineis`), e o que ela consome também sai do LLM. Somá-la sem
+    mexer no total teria deixado 30 + 25 + 170 = 225 dentro de 195, ou seja,
+    a segunda tentativa de provedor de novo inalcançável -- o mesmo desfecho
+    de 18/08, por uma porta nova. O orçamento subiu para 225 e o timeout do
+    Node de 215s para 245s."""
     mod = _modulo()
-    assert 2 * mod._LLM_TIMEOUT_S + mod._TETO_FUNDAMENTO_S <= mod._ORCAMENTO_TOTAL_S
+    assert (2 * mod._LLM_TIMEOUT_S + mod._TETO_FUNDAMENTO_S
+            + mod._TETO_COLETA_S) <= mod._ORCAMENTO_TOTAL_S
 
 
 def test_a_camada_opcional_tem_teto_proprio():
@@ -92,6 +101,27 @@ def test_a_camada_opcional_tem_teto_proprio():
     mod = _modulo()
     assert mod._TETO_FUNDAMENTO_S > 0
     assert mod._TETO_FUNDAMENTO_S < mod._ORCAMENTO_TOTAL_S
+
+
+def test_a_coleta_dos_paineis_tem_teto_proprio_e_imposto():
+    """Teto declarado e não imposto é o defeito que este arquivo inteiro
+    documenta: em 18/08/2026 a coleta fundamental tinha 20s "de suposição" e
+    consumiu 124s dos 135s disponíveis.
+
+    Então não basta a constante existir -- `_coletar_paineis` tem de passar
+    um prazo ao `result()`. Sem isso, quatro chamadas de rede em paralelo
+    podem ficar penduradas até o Node matar o processo, e o usuário volta a
+    receber 500 genérico em vez de análise com um painel faltando."""
+    import inspect
+
+    mod = _modulo()
+    assert 0 < mod._TETO_COLETA_S < mod._ORCAMENTO_TOTAL_S
+
+    fonte = inspect.getsource(mod._coletar_paineis)
+    assert "_TETO_COLETA_S" in fonte, "o teto não é usado por quem coleta"
+    assert "timeout=" in fonte, (
+        "nenhum result() com prazo -- o teto é decoração, e a coleta pode "
+        "passar por cima dele igual passou em 18/08")
 
 
 def test_a_rota_registra_o_stderr_quando_a_analise_tropeca_e_sai(monkeypatch):

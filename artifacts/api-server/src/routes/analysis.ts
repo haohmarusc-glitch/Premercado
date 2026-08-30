@@ -107,7 +107,7 @@ function guardarIA(chave: string, valor: unknown): void {
 // comentário de `coalescer`: embarcar num trabalho que já gastou o orçamento
 // não é economia, é herdar uma morte marcada.
 //
-// 60s contra o teto de 215s da rota: quem chega depois disso não teria tempo
+// 60s contra o teto de 245s da rota: quem chega depois disso não teria tempo
 // nem para UMA passada completa (a análise que deu certo levou 58s).
 const IDADE_MAX_CARONA_MS = 60_000;
 
@@ -139,7 +139,7 @@ function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
   if (guardado && Date.now() - guardado.em <= CACHE_IA_TTL_MS) {
     logger.info(
       { idadeMs: Date.now() - guardado.em },
-      "analise_rapida_ia: devolvendo análise já calculada (mesmos painéis)",
+      "analise_rapida_ia: devolvendo análise já calculada (mesmo ticker, dentro do TTL)",
     );
     return Promise.resolve(guardado.valor);
   }
@@ -171,7 +171,13 @@ function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
     //
     // Agora o Python fixa o próprio orçamento (ver analise_rapida_ia.py):
     // 85s por chamada, uma tentativa por provedor. Duas tentativas de
-    // provedor + coleta fundamental cabem em 195s; 215s aqui deixa margem.
+    // provedor + coleta dos painéis + coleta fundamental cabem em 225s;
+    // 245s aqui deixa margem.
+    //
+    // Subiu de 215s em 30/08/2026 porque a coleta dos quatro painéis passou
+    // do navegador para dentro do processo Python (30s de teto próprio), e
+    // somá-la sem mexer no total teria deixado a segunda tentativa de
+    // provedor inalcançável -- o incidente de 18/08 por uma porta nova.
     //
     // Subiu de 150s em 19/08/2026 junto com o teto por chamada: com 55s o
     // anthropic era cortado pelo nosso relógio ("failed after 55.1s") em vez
@@ -191,7 +197,7 @@ function runAnaliseRapidaIA(payload: object, exec: Execucao): Promise<unknown> {
         "analise_rapida_ia: estourou o orçamento de tempo",
       );
       reject(new Error("timeout"));
-    }, 215_000);
+    }, 245_000);
     py.on("close", (code) => {
       clearTimeout(t);
       if (code !== 0) return reject(new Error(err || "Script failed"));
@@ -300,13 +306,24 @@ router.post("/analise-rapida/ia", async (req, res): Promise<void> => {
     if (JSON.stringify(req.body).length > LIMITE_CORPO_IA) {
       res.status(400).json({ error: "payload grande demais" }); return;
     }
+    // Os painéis NÃO vêm mais do corpo da requisição.
+    //
+    // A tela mandava o que tivesse no React Query naquele clique, e cada
+    // painel tem seu próprio ciclo de refresh -- nada garantia que os quatro
+    // fossem do mesmo momento. Em 29/08/2026 a Técnica do MRVL chegou de uma
+    // sessão anterior à do resto, e a prosa descreveu duas sessões como se
+    // fossem uma. Agora o Python coleta os quatro no mesmo processo (ver
+    // analise_rapida_ia.py::_coletar_paineis) e devolve, em `paineis`, o que
+    // leu -- é isso que a tela pinta.
+    //
+    // Efeito colateral bem-vindo no cache: a chave é o payload, que antes
+    // carregava preço ao vivo dentro dos painéis. Duas chamadas seguidas
+    // quase nunca tinham a mesma chave, então o TTL de 10 min existia e
+    // raramente acertava -- cada clique virava chamada paga. Com ticker +
+    // benchmark, ele passa a valer de verdade.
     const data = await runAnaliseRapidaIA({
       ticker,
       benchmark: String(req.body?.benchmark ?? "").trim().toUpperCase() || "SMH",
-      trend: req.body?.trend ?? null,
-      technicals: req.body?.technicals ?? null,
-      snapshot: req.body?.snapshot ?? null,
-      reaction: req.body?.reaction ?? null,
     }, exec) as { usage?: UsoLlm; error?: string };
     // O script devolve {error} para falhas de conteúdo (resposta curta,
     // sem painel) — nesses casos o provedor pode já ter sido cobrado, então

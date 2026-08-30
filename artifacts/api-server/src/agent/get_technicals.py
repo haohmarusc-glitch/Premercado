@@ -12,9 +12,25 @@ import os, sys, json, warnings, logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Save the real stdout fd BEFORE any library can pollute it ────────────────
-_real_stdout_fd = os.dup(1)          # save a copy of fd-1
-os.dup2(2, 1)                        # redirect fd-1 → stderr for the entire run
-sys.stdout = open(os.devnull, "w")   # also redirect Python's sys.stdout object
+#
+# Sob `if __name__`, e não solto no módulo. Os dois lados importam:
+#
+#   ANTES dos imports pesados, porque é isso que a proteção faz -- yfinance e
+#   pandas imprimem em stdout durante o próprio import, e é esse lixo que
+#   sujaria o pipe que o Node lê. Mover para o fim do arquivo não funciona.
+#
+#   SÓ como script, porque `os.dup2(2, 1)` é irreversível e vale para o
+#   PROCESSO inteiro. Quando este módulo é importado como biblioteca (o
+#   analise_rapida_ia chama `technicals()` direto, para coletar os painéis no
+#   mesmo processo), quem manda no stdout é quem importou -- e um import que
+#   sequestra o fd 1 do chamador destrói a saída dele em silêncio.
+#
+# `-m agent.get_technicals` também entra aqui: rodando por -m, o módulo É o
+# __main__. Ou seja, o caminho de spawn continua exatamente como era.
+if __name__ == "__main__":
+    _real_stdout_fd = os.dup(1)          # save a copy of fd-1
+    os.dup2(2, 1)                        # redirect fd-1 → stderr for the entire run
+    sys.stdout = open(os.devnull, "w")   # also redirect Python's sys.stdout object
 
 # ── Suppress all warning channels ─────────────────────────────────────────────
 warnings.filterwarnings("ignore")
