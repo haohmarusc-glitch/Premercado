@@ -1396,11 +1396,37 @@ def test_distante_com_a_conta_certa_nao_cai(frase):
 # E negar dado presente é pior que omitir: quem lê "não estava disponível"
 # para de procurar. A informação estava a uma seção de distância.
 
+# Nomes REAIS das chaves. A fixture usava `pe`/`dcf`, que o payload nunca
+# produz -- `_buscar_fundamento` copia as chaves de `get_fundamentals_valuation`
+# tal como saem de `_MULTIPLOS_DA_SEC`. Com nome inventado, uma checagem por
+# CAMPO passa a olhar para chave que não existe e concorda com qualquer coisa.
 _COM_FUNDAMENTO = {
     "precoAtual": {"valor": 482.76},
     "snapshot": {"price": 482.76},
     "_fundamento": {"alvosAnalistas": {"alvoMedio": 600.0, "consenso": "Buy"},
-                    "valuation": {"pe": 90.1, "dcf": 300.0}},
+                    "valuation": {"pe_ratio_ttm": 90.1, "dcf_fair_value": 300.0}},
+}
+
+# O caso MRVL de 30/08/2026: metade dos múltiplos veio, o DCF e os dois que
+# dependem de EBITDA não. `_buscar_fundamento` filtra `v is not None`, então
+# métrica ausente não vira chave -- é por isso que a checagem é por presença.
+_VALUATION_PARCIAL = {
+    "precoAtual": {"valor": 216.62},
+    "snapshot": {"price": 216.62},
+    "_fundamento": {
+        "valuation": {
+            "current_price": 216.62,
+            "pe_ratio_ttm": 71.96,
+            "pb_ratio": 10.25,
+            "revenue_growth_pct_ttm": 30.62,
+            "net_margin_pct_ttm": 27.93,
+            "dcf_indisponivel": "o plano da conta não cobre o endpoint",
+            "multiplos_indisponiveis": {
+                "ev_to_ebitda_ttm": "sem D&A trimestral para compor EBITDA",
+                "net_debt_to_ebitda_ttm": "sem D&A trimestral para compor EBITDA",
+            },
+        },
+    },
 }
 _SEM_FUNDAMENTO = {"precoAtual": {"valor": 482.76}, "snapshot": {"price": 482.76},
                    "_fundamento": {}}
@@ -1417,6 +1443,85 @@ def test_o_incidente_do_amd():
                if a["codigo"] == "ANALISE_NEGA_DADO_PRESENTE")
     assert "alvos de analistas" in msg and "valuation/DCF" in msg, \
         "a mensagem tem que dizer O QUE estava na mão"
+
+
+# ── o caso MRVL: campo ausente dentro de bloco presente ───────────────────
+#
+# 30/08/2026, na tela. O texto disse, corretamente:
+#
+#   "O DCF (fluxo de caixa descontado) não estava disponível; e múltiplos como
+#    EV/EBITDA e Dívida Líquida/EBITDA não puderam ser calculados devido à
+#    indisponibilidade de dados trimestrais para Depreciação e Amortização."
+#
+# ...e levou ERRO. Os três campos faltaram DE VERDADE, e o payload ainda
+# trazia `multiplos_indisponiveis` com o motivo de cada um -- o modelo estava
+# repetindo o que o próprio payload lhe deu.
+#
+# A regra perguntava pelo BLOCO ("`valuation` veio?" -- veio, por causa do P/L
+# e do P/VP) enquanto a frase negava CAMPOS. É a mesma lição do recorte de
+# `_blocosOmitidos`, um nível mais fundo: presença do bloco não é presença da
+# métrica, porque as duas metades têm fontes independentes (SEC e FMP) e é
+# rotina uma vir sem a outra.
+
+_FRASE_MRVL = ("O DCF (fluxo de caixa descontado) não estava disponível; e "
+               "múltiplos como EV/EBITDA e Dívida Líquida/EBITDA não puderam "
+               "ser calculados devido à indisponibilidade de dados trimestrais "
+               "para Depreciação e Amortização.")
+
+
+def test_o_caso_mrvl_nao_e_erro():
+    """Nomeia três métricas, e as três faltaram. Não há dado presente sendo
+    negado -- há o motivo da ausência sendo transmitido, que é o que o
+    payload pede que o texto faça."""
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(_FRASE_MRVL), _VALUATION_PARCIAL))
+
+
+def test_negar_metrica_que_veio_continua_erro():
+    """O outro lado, e o que impede a correção de virar buraco: no MESMO
+    payload, negar o P/L (que veio, 71,96x) é exatamente o defeito de
+    origem."""
+    frase = "O P/L não estava disponível para este papel nesta rodada."
+    achados = validar_analise(_texto_completo(frase), _VALUATION_PARCIAL)
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(achados)
+
+
+def test_negar_metrica_ausente_e_presente_na_mesma_frase_e_erro():
+    """Uma verdadeira não compra a falsa. A frase nomeia o DCF (ausente) e o
+    P/VP (presente); o P/VP basta para condenar.
+
+    A forma "Nem o DCF nem o P/VP estavam disponíveis" NÃO é pega, e não por
+    causa deste recorte: `_NEGA_DISPONIBILIDADE` exige "não" adjacente ao
+    verbo, e "nem ... nem ..." não casa. É falso negativo pré-existente, de
+    outra natureza (vocabulário de negação, não presença de campo). Fica
+    anotado aqui em vez de virar um alargamento do gatilho de carona --
+    o comentário da própria regra avisa que ampliar o gatilho sem estreitar
+    o alvo troca um falso negativo por um falso positivo."""
+    frase = ("O DCF e o P/VP não estavam disponíveis para compor a "
+             "avaliação deste papel.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_negar_o_bloco_inteiro_continua_erro_mesmo_com_metrica_faltando():
+    """Sem nomear métrica, quem decide é a regra de bloco -- e o bloco veio.
+    "o valuation não veio" é falso mesmo com três métricas ausentes."""
+    frase = "Dados de valuation não estavam disponíveis para este papel."
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_a_palavra_avaliacao_sozinha_nao_condena_frase_verdadeira():
+    """`_FUNDAMENTO_GENERICO` casa com "avaliação", e "múltiplos de avaliação"
+    é como se escreve valuation em português. Antes do recorte, essa palavra
+    disparava a regra mesmo quando a frase nomeava só métrica ausente."""
+    # "não ESTAVAM DISPONÍVEIS", e não "não puderam ser calculados": a
+    # segunda forma não casa com `_NEGA_DISPONIBILIDADE` (nem antes nem
+    # depois desta correção), então o teste passaria sem exercitar nada.
+    frase = ("Os múltiplos de avaliação EV/EBITDA e Dívida Líquida/EBITDA "
+             "não estavam disponíveis.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
 
 
 def test_a_mesma_frase_passa_quando_e_verdade():
