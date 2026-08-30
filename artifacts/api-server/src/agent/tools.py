@@ -3,7 +3,6 @@ Ferramentas disponíveis para o agente de pré-mercado.
 """
 
 import datetime
-import json
 import os
 import re
 import sys

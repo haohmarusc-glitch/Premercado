@@ -44,7 +44,6 @@ Output (stdout JSON):
 import datetime as _dt
 import json
 import os
-import re
 import sys
 import time
 
@@ -104,7 +103,7 @@ _probe_boot()
 import yfinance as yf
 
 from agent.provider import get_client, get_run_usage, texto_da_resposta
-from agent.ordem_das_telas import (
+from agent.ordem_das_telas import (  # noqa: F401 -- re-exportação, ver abaixo
     ORDEM_PADRAO as _ORDEM_PADRAO,
     PERMITIR_ENV as _PERMITIR_ENV,
     PRIMEIRO as _PRIMEIRO_AQUI,
@@ -120,6 +119,11 @@ from agent.ordem_das_telas import (
 # Os nomes seguem re-exportados com o prefixo `_` de antes: eles são o que os
 # testes e o resto do módulo já chamam, e renomeá-los junto com a mudança de
 # casa faria um refactor virar dois.
+#
+# O `noqa: F401` acima existe por isso: para o ruff eles são importados e nunca
+# usados aqui dentro, e é verdade -- quem os usa é test_orcamento_da_cadeia.py,
+# que confere por esta tela se ela está mesmo ligada na política compartilhada.
+# Apagá-los "porque o lint reclamou" derruba nove testes; já derrubou uma vez.
 _aplicar_ordem_na_env()
 
 from agent.security import mask_sensitive_data, sanitize_for_llm

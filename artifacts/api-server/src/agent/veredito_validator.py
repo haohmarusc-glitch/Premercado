@@ -384,8 +384,8 @@ def validate_snapshot(snapshot: dict[str, Any]) -> ValidationReport:
             continue
         rep.add("INFO", "ESTRUTURA_FIXADA",
                 f"{tk}: " + "; ".join(partes) + ". Tendência é posição + "
-                f"inclinação + estrutura + força -- não chame de tendência o "
-                f"que o ADX diz que é lateral.", ticker=tk, signal=True)
+                "inclinação + estrutura + força -- não chame de tendência o "
+                "que o ADX diz que é lateral.", ticker=tk, signal=True)
 
     # 11) pares da carteira que são quase o mesmo trade.
     #

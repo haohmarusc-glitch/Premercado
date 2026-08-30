@@ -30,7 +30,6 @@ try:  # import duplo: o script roda por spawn (sys.path[0]=src/agent) e como pac
         _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
     )
     from agent import earnings_dates as _earnings_dates
-    from agent.http_retry import SESSION
     from agent import market_data_provider
 except ImportError:
     from security import sanitize_ticker, friendly_error
@@ -40,7 +39,6 @@ except ImportError:
         _janela_da_reacao, _sessao_de_hoje_ainda_em_curso, _NY_TZ,
     )
     import earnings_dates as _earnings_dates
-    from http_retry import SESSION
     import market_data_provider
 
 # ── Cache em disco (autocontido: este script roda via spawn, fora do pacote,

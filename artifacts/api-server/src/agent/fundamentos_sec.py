@@ -1045,7 +1045,6 @@ def para_ticker(ticker: str, preco: float | None = None) -> dict:
 # accession, data do arquivamento e tags) -- é ela que se compara linha a
 # linha com o 10-Q/10-K, sem precisar adivinhar de onde o número veio.
 if __name__ == "__main__":  # pragma: no cover
-    import json
 
     try:
         import json_seguro

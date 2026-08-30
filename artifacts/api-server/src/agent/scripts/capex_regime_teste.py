@@ -45,7 +45,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 import padroes_estatisticos as pe  # noqa: E402

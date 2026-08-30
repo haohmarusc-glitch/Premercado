@@ -164,7 +164,7 @@ def _run_for_ticker(ticker: str, dfs: dict, regime_label: str) -> str:
     rows_with = _grid_search(df, sector_returns)
     _print_table(rows_with)
 
-    print(f"\n-- Grid search SEM sector_returns (ablação) --")
+    print("\n-- Grid search SEM sector_returns (ablação) --")
     rows_without = _grid_search(df, None)
     _print_table(rows_without)
 
@@ -178,7 +178,7 @@ def _run_for_ticker(ticker: str, dfs: dict, regime_label: str) -> str:
         f"Período: {df.index[0].date()} a {df.index[-1].date()}\n",
         f"### Com sector_returns ({', '.join(other_tickers)})\n",
         _md_table(rows_with),
-        f"\n### Sem sector_returns (ablação)\n",
+        "\n### Sem sector_returns (ablação)\n",
         _md_table(rows_without),
         f"\n### Buy & hold {ticker}\n",
         f"total_return_pct={bh['total_return_pct']:.2f}%, cagr={bh['cagr']*100:.2f}%, "

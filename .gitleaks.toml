@@ -1,0 +1,67 @@
+# Varredura de segredo no commit.
+#
+# Por que existe: este repositório vazou credencial QUATRO vezes, cada uma por
+# um caminho diferente.
+#
+#   #257  senha em texto puro no log de erro
+#   #377  chave da Alpha Vantage no log do coletor
+#   #409  chave da FMP publicada na tela, no .md e no e-mail
+#   28/08 chave da FMP num campo de diagnóstico novo, a caminho do payload
+#
+# `mask_sensitive_data` (security.py) cobre as quatro, e vai continuar
+# cobrindo. Mas ela é máscara de RUNTIME: roda depois que o segredo já está no
+# processo, e todo caminho novo nasce sem máscara -- foi literalmente o que
+# aconteceu nas quatro vezes. O comentário do próprio módulo diz isso:
+# "mascarar nas PONTAS deixa um caminho novo nascer sem máscara".
+#
+# Isto aqui é a outra metade: pegar a chave ANTES de ela entrar no histórico,
+# onde nenhuma máscara alcança.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "chave-de-provedor-de-dado"
+description = "Chave de provedor de dado de mercado em query string ou atribuição"
+# Os provedores que este repo usa passam credencial assim: FMP (apikey),
+# Finnhub (token), FRED (api_key), Alpha Vantage. Mesma lista do regex de
+# mascaramento em security.py -- as duas defesas cobrem o mesmo alvo, uma no
+# commit e outra em execução.
+#
+# Duas sutilezas que custaram um build vermelho cada uma quando estavam
+# erradas, e que o test_ci_endurecido.py agora tranca:
+#
+#   `[ \t]*` e não `\s*` -- `\s` inclui quebra de linha. Com `\s*` o padrão
+#   atravessava a linha e casava `ANTHROPIC_API_KEY=` (vazio) com o NOME da
+#   variável seguinte, `DEEPSEEK_API_KEY`, que tem 16 caracteres. O
+#   .env.example inteiro virava vazamento, e o CI reprovaria todo commit.
+#
+#   O grupo de captura é o VALOR, não o rótulo. O gitleaks reporta o grupo 1
+#   como sendo o segredo: com o rótulo em grupo 1, todo achado dizia
+#   `Secret: apikey` -- inútil no relatório e, pior, a allowlist por marcador
+#   testava `apikey` em vez da chave e nunca casava.
+regex = '''(?i)(?:apikey|api_key|access_token|auth_token)[ \t]*[=:][ \t]*["']?([A-Za-z0-9_\-]{16,})'''
+secretGroup = 1
+tags = ["chave", "provedor"]
+
+[allowlist]
+description = "O que não é segredo, apesar de casar com o padrão"
+paths = [
+  '''pnpm-lock\.yaml''',
+  '''\.gitleaks\.toml''',
+  # Bytecode não é fonte; só aparece numa varredura local com `--no-git`.
+  '''__pycache__/''',
+]
+regexes = [
+  # Placeholders de documentação e de teste. O piso de 16 caracteres do regex
+  # acima já derruba a maioria, mas estes aparecem com comprimento real.
+  '''(?i)(sua[-_]?chave|your[-_]?key|<CHAVE>|test[-_]?key|dummy|example|xxxx+)''',
+  # Fixtures de teste que PRECISAM ter a forma de uma chave real para
+  # exercitar o mascaramento. O marcador vai dentro da própria string, não
+  # numa allowlist por caminho: assim uma chave de verdade colada num arquivo
+  # de teste continua sendo pega.
+  '''EXEMPLO[A-Za-z0-9_\-]{8,}''',
+  # `SEGREDO...` é o outro marcador já em uso no repo, nas fixtures que
+  # exercitam `censurar_chave` e `mask_sensitive_data`. Mesma regra: o
+  # marcador vive dentro da string, não numa lista de caminhos.
+  '''SEGREDO[A-Za-z0-9_\-]{6,}''',
+]

@@ -83,9 +83,26 @@ def stop_distance(ticker: str, period: str = "3mo", atr_multiplier: float = 2.0)
         return {"error": str(e)}
 
 def portfolio_exposure(positions: list) -> dict:
+    """Concentração da carteira POR POSIÇÃO. Não por setor -- e isso importa.
+
+    `sector_map` existia aqui declarado e nunca preenchido, sobra de uma
+    intenção que nunca foi implementada. O lint o encontrou, e ele apontava
+    para um problema maior que ele mesmo: numa carteira de NVDA, MRVL, AMD,
+    ARM, SMCI e TSM, esta função devolve `concentrationRisk: "LOW"` sempre que
+    nenhum papel isolado passa de 15% -- enquanto a carteira inteira é
+    semicondutor. O número está certo para a pergunta que ele responde, e a
+    pergunta não é a que o nome sugere.
+
+    Implementar concentração setorial de verdade precisa de um mapa
+    ticker->setor COMPLETO. O que existe (`SECTOR_GROUPS`, em
+    sector_contagion.py) foi montado para contágio entre pares e cobre uma
+    parte dos papéis; usá-lo aqui produziria "concentração baixa" para o que
+    ele não classifica, que é o mesmo defeito com outra roupa.
+
+    Então, por ora, a saída DECLARA a base: quem lê "LOW" vê ao lado que isso
+    é por posição, não por setor. Ver a nota de `baseDaConcentracao`.
+    """
     total_invested = sum(float(p.get("investedAmount", 0)) for p in positions)
-    tickers = [p["ticker"] for p in positions if p.get("ticker")]
-    sector_map: dict[str, float] = {}
     ticker_pcts = []
 
     for p in positions:
@@ -107,6 +124,11 @@ def portfolio_exposure(positions: list) -> dict:
         "tickers": ticker_pcts,
         "maxSinglePositionPct": round(max_single, 2),
         "concentrationRisk": concentration_risk,
+        # A base viaja junto com o veredito -- mesma razão do `smaOrigem` no
+        # snapshot: sem ela, "LOW" se lê como "a carteira está diversificada",
+        # que é uma afirmação que esta função não faz.
+        "baseDaConcentracao": "posicao_individual",
+        "concentracaoSetorialAvaliada": False,
     }
 
 def correlation(tickers: list, period: str = "6mo") -> dict:

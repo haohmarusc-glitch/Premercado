@@ -559,7 +559,6 @@ def _aplicar_vol_medida(blob: dict) -> None:
 
 def _aplicar_overlay_correlacoes() -> None:
     global CORRELACOES_JANELA_FIM, CORRELACOES_ATUALIZADO_EM
-    import os
     path = os.environ.get("RADAR_CORR_OVERLAY") or _OVERLAY_PATH_DEFAULT
     try:
         with open(path, encoding="utf-8") as f:
@@ -596,7 +595,6 @@ def _aplicar_overlay_correlacoes() -> None:
 
 def _aplicar_overlay_earnings() -> None:
     global EARNINGS_ATUALIZADO_EM, EARNINGS_APLICADOS
-    import os
     path = os.environ.get("RADAR_EARNINGS_OVERLAY") or _OVERLAY_EARNINGS_DEFAULT
     try:
         with open(path, encoding="utf-8") as f:

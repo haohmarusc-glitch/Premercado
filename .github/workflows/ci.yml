@@ -7,6 +7,39 @@ on:
     branches: [main]
 
 jobs:
+  # ── Varredura de segredo ────────────────────────────────────────────────
+  #
+  # BLOQUEANTE de propósito, diferente do preflight lá embaixo. O preflight
+  # informa sobre o mundo externo, que pode estar fora do ar sem culpa nossa;
+  # este aqui olha só o nosso diff, e uma credencial no diff é sempre defeito
+  # nosso.
+  #
+  # Quatro vazamentos até aqui (#257, #377, #409 e um em 28/08), cada um por
+  # um caminho novo. `mask_sensitive_data` cobre os quatro em runtime, mas ela
+  # roda depois que o segredo já está no processo -- e caminho novo nasce sem
+  # máscara. Isto pega antes de entrar no histórico, onde máscara nenhuma
+  # alcança.
+  segredos:
+    name: Varredura de segredo (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Histórico completo: num PR interessa o que os commits DELE
+          # introduzem, e com `fetch-depth: 1` não há com o que comparar.
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
+          # Explícito de propósito. A action acha o .gitleaks.toml da raiz
+          # sozinha, mas se alguém mover o arquivo ela cai calada no ruleset
+          # padrão -- que não conhece o formato de chave da FMP nem da Alpha
+          # Vantage, justo as duas que já vazaram aqui.
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   typecheck-and-js-tests:
     name: Typecheck + Vitest (TS/JS)
     runs-on: ubuntu-latest
@@ -44,6 +77,19 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # Antes do pytest: lint que falha é barato de ler, e teste que falha
+      # por causa de import morto custa uma leitura de stack.
+      #
+      # O ruleset está escolhido em ruff.toml, e o que ele NÃO checa é tão
+      # deliberado quanto o que checa -- rodar o padrão devolve 189 achados,
+      # dos quais 7 são defeito. Checagem que reprova código correto ensina
+      # todo mundo a ignorá-la, e foi por isso que este repo passou três meses
+      # sem lint nenhum.
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check artifacts
 
       - name: Run pytest
         run: pytest

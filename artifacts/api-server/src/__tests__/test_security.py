@@ -205,14 +205,25 @@ def test_validate_api_key_rejects_bad(bad):
 # pegava `?apikey=`, que é justamente como FMP/Finnhub/FRED autenticam.
 
 
+# A chave desta fixture é SINTÉTICA, com o marcador "EXEMPLO" no começo.
+#
+# Até 29/08/2026 ela era a chave real do incidente, commitada aqui como
+# "o caso real" -- e a varredura de segredo que entrou no CI nesse dia a
+# encontrou. Máscara de runtime não alcança o histórico do git: trocar a
+# fixture impede que ela volte, mas NÃO a remove dos commits antigos. Só a
+# rotação da chave resolve aquilo.
+#
+# A forma foi preservada de propósito (mesmo comprimento, alfanumérico sem
+# prefixo): é justamente isso que torna chave de FMP/Alpha Vantage difícil de
+# reconhecer, e o teste não valeria nada com um "xxx" no lugar.
 def test_mascara_apikey_de_query_string_o_caso_real():
     texto = (
         "403 Client Error: Forbidden for url: "
         "https://financialmodelingprep.com/api/v3/stock_news"
-        "?tickers=GOOGL&limit=6&apikey=aaIKPZy3lwwVgKyfLeovcRcWwDoqGEiY"
+        "?tickers=GOOGL&limit=6&apikey=EXEMPLOaaIKPZy3lwwVgKyfLeovcRcWw"
     )
     saida = mask_sensitive_data(texto)
-    assert "aaIKPZy3lwwVgKyfLeovcRcWwDoqGEiY" not in saida
+    assert "EXEMPLOaaIKPZy3lwwVgKyfLeovcRcWw" not in saida
     assert "apikey=***MASKED***" in saida
     # o resto da mensagem precisa sobreviver -- é o que torna o log útil
     assert "403 Client Error" in saida
