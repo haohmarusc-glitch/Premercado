@@ -9,7 +9,7 @@ separa um crash que devolve (teto de IA subiu) de um crash que gruda
 fracos). Por isso as flags qualitativas entram no classificador.
 
 Consumidores:
-  - earnings_reaction_analysis.analyze_ticker (events[].setup + summary.ultimo_setup)
+  - earnings_reaction_analysis.analyze_ticker (via anexar_setups)
   - entry_exit_study (earningsSetup / entryBlockedByEarnings; não zera pullback)
   - reason_code do Veredito (EARNINGS_REGIME_*) — ainda não ligado
 """
@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-# Cortes alinhados a RUNUP_ESTICADO_PCT em earnings_reaction_analysis.py
-# (10%) e ao miolo "sem drama" da tabela AVGO (~±6% no D+1).
 RUNUP_HOT_PCT = 10.0
 RUNUP_COLD_PCT = -8.0
 GAP_CRASH_PCT = -6.0
@@ -65,7 +63,7 @@ def classify_earnings_setup(
 
     qualitative (todos opcionais, default False / "in_line"):
       ai_guide_vs_implied: "above" | "in_line" | "below"
-      long_range_raised: bool     # teto de longo prazo subiu (ex. 2027)
+      long_range_raised: bool
       new_customer_or_tam: bool
       margin_guide_down: bool
       backlog_disappointing: bool
@@ -118,12 +116,20 @@ def classify_earnings_setup(
 
 
 def setup_do_evento(event: dict, qualitative: dict | None = None) -> dict:
-    """Regime do evento a partir de run-up + fechamento da sessão de reação.
-
-    Sem flags do call, HOT_DECEPTION e NEW_CEILING quase não disparam —
-    preço sozinho não separa crash que gruda de crash que devolve.
-    """
+    """Regime do evento a partir de run-up + fechamento da sessão de reação."""
     janela = event.get("janela_reacao")
     sessao = event.get("announcement_day") if janela == "anuncio" else event.get("next_day")
     close_pct = (sessao or {}).get("close_pct")
     return classify_earnings_setup(event.get("runup_pct"), close_pct, qualitative)
+
+
+def anexar_setups(resultado: dict, qualitative: dict | None = None) -> dict:
+    """Preenche events[].setup e summary.ultimo_setup sem alterar o resto."""
+    if not resultado or resultado.get("error"):
+        return resultado
+    for ev in resultado.get("events") or []:
+        ev["setup"] = setup_do_evento(ev, qualitative)
+    events = resultado.get("events") or []
+    if events:
+        resultado.setdefault("summary", {})["ultimo_setup"] = events[0].get("setup")
+    return resultado

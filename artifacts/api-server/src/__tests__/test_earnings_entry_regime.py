@@ -1,8 +1,5 @@
 """Testes puros do classificador de entrada pós-earnings.
 
-Os pares (run-up, gap D+1, flags) reproduzem os 8 prints da AVGO
-usados para calibrar os cortes — sem rede.
-
 Rodar (da raiz do repo):
   pytest artifacts/api-server/src/__tests__/test_earnings_entry_regime.py -v
 """
@@ -14,6 +11,7 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from agent.earnings_entry_regime import (  # noqa: E402
+    anexar_setups,
     classify_earnings_setup,
     setup_do_evento,
 )
@@ -21,13 +19,8 @@ from agent.earnings_entry_regime import (  # noqa: E402
 
 def test_dez24_new_ceiling_google_tpu():
     out = classify_earnings_setup(
-        4.0,
-        24.5,
-        {
-            "ai_guide_vs_implied": "above",
-            "new_customer_or_tam": True,
-            "long_range_raised": True,
-        },
+        4.0, 24.5,
+        {"ai_guide_vs_implied": "above", "new_customer_or_tam": True, "long_range_raised": True},
     )
     assert out["regime"] == "NEW_CEILING"
     assert out["entry_blocked"] is False
@@ -37,26 +30,16 @@ def test_dez24_new_ceiling_google_tpu():
 
 def test_set25_new_ceiling_openai_100bi():
     out = classify_earnings_setup(
-        2.0,
-        9.6,
-        {
-            "new_customer_or_tam": True,
-            "long_range_raised": True,
-            "ai_guide_vs_implied": "above",
-        },
+        2.0, 9.6,
+        {"new_customer_or_tam": True, "long_range_raised": True, "ai_guide_vs_implied": "above"},
     )
     assert out["regime"] == "NEW_CEILING"
 
 
 def test_dez25_hot_deception_nao_compra_dip():
     out = classify_earnings_setup(
-        14.0,
-        -11.4,
-        {
-            "ai_guide_vs_implied": "below",
-            "long_range_raised": False,
-            "margin_guide_down": True,
-        },
+        14.0, -11.4,
+        {"ai_guide_vs_implied": "below", "long_range_raised": False, "margin_guide_down": True},
     )
     assert out["regime"] == "HOT_DECEPTION"
     assert out["entry_blocked"] is True
@@ -66,24 +49,15 @@ def test_dez25_hot_deception_nao_compra_dip():
 
 def test_jun26_hot_deception_2027_flat():
     out = classify_earnings_setup(
-        11.0,
-        -10.5,
-        {
-            "ai_guide_vs_implied": "below",
-            "long_range_raised": False,
-            "backlog_disappointing": True,
-        },
+        11.0, -10.5,
+        {"ai_guide_vs_implied": "below", "long_range_raised": False, "backlog_disappointing": True},
     )
     assert out["regime"] == "HOT_DECEPTION"
     assert out["entry_blocked"] is True
 
 
 def test_mar25_already_discounted_compra_bounce():
-    out = classify_earnings_setup(
-        -10.0,
-        13.0,
-        {"ai_guide_vs_implied": "in_line"},
-    )
+    out = classify_earnings_setup(-10.0, 13.0, {"ai_guide_vs_implied": "in_line"})
     assert out["regime"] == "ALREADY_DISCOUNTED"
     assert out["entry_blocked"] is False
     assert out["size_relativo"] == 0.75
@@ -91,11 +65,7 @@ def test_mar25_already_discounted_compra_bounce():
 
 
 def test_jun25_ok_beat_nao_entra():
-    out = classify_earnings_setup(
-        3.0,
-        3.0,
-        {"ai_guide_vs_implied": "in_line"},
-    )
+    out = classify_earnings_setup(3.0, 3.0, {"ai_guide_vs_implied": "in_line"})
     assert out["regime"] == "OK_BEAT"
     assert out["entry_blocked"] is True
     assert out["acao"] == "nao_entrar"
@@ -103,14 +73,9 @@ def test_jun25_ok_beat_nao_entra():
 
 def test_set24_light_miss_espera():
     out = classify_earnings_setup(
-        1.0,
-        -6.5,
-        {
-            "ai_guide_vs_implied": "below",
-            "long_range_raised": False,
-            "margin_guide_down": False,
-            "backlog_disappointing": False,
-        },
+        1.0, -6.5,
+        {"ai_guide_vs_implied": "below", "long_range_raised": False,
+         "margin_guide_down": False, "backlog_disappointing": False},
     )
     assert out["regime"] == "LIGHT_MISS_GUIDE"
     assert out["acao"] == "esperar_d2_d3"
@@ -118,8 +83,6 @@ def test_set24_light_miss_espera():
 
 
 def test_crash_sem_flag_qualitativa_nao_vira_hot_deception():
-    """Sem deception no call, um gap de -7% com run-up quente não
-    pode ser tratado como o caso dez/25 — falta o teto que não subiu."""
     out = classify_earnings_setup(12.0, -7.0, {"ai_guide_vs_implied": "in_line"})
     assert out["regime"] != "HOT_DECEPTION"
 
@@ -141,3 +104,21 @@ def test_setup_do_evento_usa_fechamento_da_sessao_de_reacao():
     out = setup_do_evento(ev, {"ai_guide_vs_implied": "in_line"})
     assert out["regime"] == "ALREADY_DISCOUNTED"
     assert out["gap_d1_pct"] == 13.0
+
+
+def test_anexar_setups_preenche_ultimo_e_nao_toca_erro():
+    err = anexar_setups({"ticker": "AVGO", "error": "sem dados"})
+    assert err["error"] == "sem dados"
+    assert "summary" not in err
+    out = anexar_setups({
+        "ticker": "AVGO",
+        "summary": {},
+        "events": [{
+            "runup_pct": -10.0,
+            "janela_reacao": "seguinte",
+            "announcement_day": {"close_pct": -6.0},
+            "next_day": {"close_pct": 13.0},
+        }],
+    })
+    assert out["events"][0]["setup"]["regime"] == "ALREADY_DISCOUNTED"
+    assert out["summary"]["ultimo_setup"]["regime"] == "ALREADY_DISCOUNTED"
