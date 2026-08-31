@@ -8,10 +8,10 @@ separa um crash que devolve (teto de IA subiu) de um crash que gruda
 (guide de IA abaixo do implícito / 2027 flat / margem ou backlog
 fracos). Por isso as flags qualitativas entram no classificador.
 
-Consumidores previstos (ainda não ligados neste commit):
-  - earnings_reaction_analysis.analyze_ticker
-  - entry_exit_study (bloquear pullback em HOT_DECEPTION)
-  - reason_code do Veredito (EARNINGS_REGIME_*)
+Consumidores:
+  - earnings_reaction_analysis.analyze_ticker (events[].setup + summary.ultimo_setup)
+  - entry_exit_study (earningsSetup / entryBlockedByEarnings; não zera pullback)
+  - reason_code do Veredito (EARNINGS_REGIME_*) — ainda não ligado
 """
 
 from __future__ import annotations
@@ -115,3 +115,15 @@ def classify_earnings_setup(
         "runup_pct": runup if runup_pct is not None else None,
         "gap_d1_pct": gap if gap_d1_pct is not None else None,
     }
+
+
+def setup_do_evento(event: dict, qualitative: dict | None = None) -> dict:
+    """Regime do evento a partir de run-up + fechamento da sessão de reação.
+
+    Sem flags do call, HOT_DECEPTION e NEW_CEILING quase não disparam —
+    preço sozinho não separa crash que gruda de crash que devolve.
+    """
+    janela = event.get("janela_reacao")
+    sessao = event.get("announcement_day") if janela == "anuncio" else event.get("next_day")
+    close_pct = (sessao or {}).get("close_pct")
+    return classify_earnings_setup(event.get("runup_pct"), close_pct, qualitative)

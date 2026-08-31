@@ -15,6 +15,7 @@ if _SRC_DIR not in sys.path:
 
 from agent.earnings_entry_regime import (  # noqa: E402
     classify_earnings_setup,
+    setup_do_evento,
 )
 
 
@@ -128,3 +129,15 @@ def test_none_nao_quebra():
     assert out["regime"] == "OK_BEAT"
     assert out["runup_pct"] is None
     assert out["gap_d1_pct"] is None
+
+
+def test_setup_do_evento_usa_fechamento_da_sessao_de_reacao():
+    ev = {
+        "runup_pct": -10.0,
+        "janela_reacao": "seguinte",
+        "announcement_day": {"close_pct": -6.0},
+        "next_day": {"close_pct": 13.0},
+    }
+    out = setup_do_evento(ev, {"ai_guide_vs_implied": "in_line"})
+    assert out["regime"] == "ALREADY_DISCOUNTED"
+    assert out["gap_d1_pct"] == 13.0
