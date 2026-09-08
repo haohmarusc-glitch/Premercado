@@ -165,15 +165,22 @@ def analisar(serie: pd.Series) -> dict:
 
 
 def _fmt(linha: dict) -> str:
+    """`média` é do próprio bucket; `Δ` é o que o p-valor testa.
+
+    Os dois separados e rotulados de propósito. Antes saía um "IC95" que era
+    da média do bucket, colado num p que era da diferença -- e a leitura
+    natural, de que um confirma o outro, estava errada."""
     ret = linha["retorno_medio_pct"]
-    ic = linha["ic95_pct"]
+    dif = linha["diferenca_pct"]
+    ic = linha["ic95_diferenca_pct"]
     p = linha["p_valor"]
     marca = "  <-- SOBREVIVE A HOLM" if linha.get("sobrevive") else ""
     corpo = (f"{linha['rotulo']:<44} n={linha['n']:>4}  "
              f"média={ret:+.3f}%" if ret is not None else
              f"{linha['rotulo']:<44} n={linha['n']:>4}  média=  ---  ")
+    corpo += f"  Δ={dif:+.3f}%" if dif is not None else "  Δ=  ---  "
     if ic:
-        corpo += f"  IC95=[{ic[0]:+.3f}, {ic[1]:+.3f}]"
+        corpo += f" IC95=[{ic[0]:+.3f}, {ic[1]:+.3f}]"
     corpo += f"  p={p}" if p is not None else "  p=(amostra pequena)"
     corpo += f"  piso={linha['piso_detectavel_pct']:.2f}%"
     return corpo + marca
@@ -195,6 +202,8 @@ def main() -> None:
 
     r = analisar(serie)
     print(f"\nDesvio-padrão diário da carteira: {r['sigma_diario_pct']:.3f}%")
+    print("`média` = do próprio bucket.  `Δ` = média do bucket menos a do resto,")
+    print("que é o que o p-valor e o IC95 medem -- os três não são o mesmo número.")
     print("`piso` = menor diferença que o teste enxerga com ~80% de poder.")
     print("Referência: o efeito 'virada do mês' da literatura vale 0,10% a 0,20%/dia.\n")
 
