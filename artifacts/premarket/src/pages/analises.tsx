@@ -130,7 +130,12 @@ interface Padrao {
   n: number;
   retorno_medio_pct: number | null;
   positivos_pct: number | null;
-  ic95_pct: [number, number] | null;
+  // Da DIFERENÇA para os demais pregões, não da média do próprio bucket --
+  // é a diferença que a coluna `p_valor` ao lado testa. Renomeado (era
+  // `ic95_pct`) para um backend antigo falhar visível em vez de encher a
+  // coluna com o número de outra pergunta.
+  diferenca_pct: number | null;
+  ic95_diferenca_pct: [number, number] | null;
   p_valor: number | null;
   sobrevive: boolean;
   nota?: string;
@@ -182,7 +187,7 @@ function TabelaPadroes({ titulo, linhas }: { titulo: string; linhas: Padrao[] })
             <th className="text-right px-3 py-2">n</th>
             <th className="text-right px-3 py-2">Retorno médio</th>
             <th className="text-right px-3 py-2">% positivos</th>
-            <th className="text-right px-3 py-2">IC 95%</th>
+            <th className="text-right px-3 py-2" title="Diferença para os demais pregões, com IC 95% — é o que a coluna p testa">Δ vs resto (IC 95%)</th>
             <th className="text-right px-3 py-2">p</th>
             <th className="text-right px-3 py-2">Sobrevive?</th>
           </tr>
@@ -199,7 +204,14 @@ function TabelaPadroes({ titulo, linhas }: { titulo: string; linhas: Padrao[] })
                 {l.positivos_pct == null ? "—" : `${l.positivos_pct.toFixed(0)}%`}
               </td>
               <td className="px-3 py-2 text-right text-muted-foreground">
-                {l.ic95_pct ? `${l.ic95_pct[0].toFixed(2)}% a ${l.ic95_pct[1].toFixed(2)}%` : "—"}
+                {l.diferenca_pct == null ? "—" : (
+                  <>
+                    {l.diferenca_pct >= 0 ? "+" : ""}{l.diferenca_pct.toFixed(3)}%
+                    {l.ic95_diferenca_pct
+                      ? ` [${l.ic95_diferenca_pct[0].toFixed(3)}, ${l.ic95_diferenca_pct[1].toFixed(3)}]`
+                      : ""}
+                  </>
+                )}
               </td>
               <td className="px-3 py-2 text-right text-muted-foreground" title={l.nota ?? ""}>
                 {l.p_valor == null ? (l.nota ? "amostra curta" : "—") : l.p_valor.toFixed(4)}

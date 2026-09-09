@@ -86,16 +86,69 @@ FATORES = [
 
 # ── estatística ──────────────────────────────────────────────────────────────
 
+def _medias_reamostradas(valores: np.ndarray, rng, amostras: int,
+                         bloco: int = 256) -> np.ndarray:
+    """Médias de `amostras` reamostragens, em blocos.
+
+    Em blocos porque o "resto" de um bucket tem milhares de pregões: a matriz
+    inteira (2000 x 4800) custaria ~150 MB entre o índice e os valores, e isso
+    57 vezes seguidas numa varredura. O resultado é idêntico ao da matriz
+    única -- só o pico de memória muda.
+    """
+    n = len(valores)
+    saida = np.empty(amostras, dtype=float)
+    for i in range(0, amostras, bloco):
+        k = min(bloco, amostras - i)
+        saida[i:i + k] = valores[rng.integers(0, n, size=(k, n))].mean(axis=1)
+    return saida
+
+
 def _ic_bootstrap(valores: np.ndarray, semente: int = SEMENTE) -> list | None:
     """IC 95% da MÉDIA por bootstrap. Semente fixa: dois operadores olhando o
-    mesmo papel têm que ver o mesmo intervalo."""
+    mesmo papel têm que ver o mesmo intervalo.
+
+    ATENÇÃO ao arredondamento: devolve em FRAÇÃO, com 6 casas. Eram 3, e 3
+    casas de fração é 0,1 PONTO PERCENTUAL -- um limite de 0,00058 virava
+    0,001 e chegava à tela como "0,1%". Todo IC saía múltiplo exato de 0,1,
+    sobre uma grandeza cujo erro-padrão é da ordem de 0,08%. O intervalo não
+    estava errado: estava quantizado grosso demais para dizer qualquer coisa.
+    Quem formata para percentual arredonda depois, na escala certa.
+    """
     n = len(valores)
     if n < MIN_OBS:
         return None
     rng = np.random.default_rng(semente)
-    medias = valores[rng.integers(0, n, size=(BOOTSTRAP_AMOSTRAS, n))].mean(axis=1)
+    medias = _medias_reamostradas(valores, rng, BOOTSTRAP_AMOSTRAS)
     lo, hi = np.percentile(medias, [2.5, 97.5])
-    return [round(float(lo), 3), round(float(hi), 3)]
+    return [round(float(lo), 6), round(float(hi), 6)]
+
+
+def ic_bootstrap_diferenca(grupo: np.ndarray, resto: np.ndarray,
+                           semente: int = SEMENTE) -> list | None:
+    """IC 95% da DIFERENÇA entre a média do grupo e a do resto.
+
+    Por que este e não o IC do grupo sozinho: ao lado dele mora o p-valor de
+    `teste_permutacao`, que testa a DIFERENÇA. Os dois respondiam perguntas
+    diferentes e eram lidos como se respondessem a mesma -- na varredura do
+    SPY em 08/09/2026, a janela de virada do mês saiu com IC [0,000; 0,100] e
+    p=0,82 lado a lado, e o intervalo quase excluindo zero sugeria "quase tem
+    alguma coisa" enquanto o p dizia "indistinguível do resto". O IC era da
+    média da janela; o p, da diferença para os outros pregões.
+
+    Reamostra os DOIS lados de forma independente, que é o bootstrap de duas
+    amostras: a incerteza da comparação inclui a do grupo E a do resto.
+
+    Mesmo piso do teste de permutação (`MIN_OBS` nos dois lados), para o
+    intervalo e o p aparecerem e sumirem juntos -- linha com um e sem o outro
+    é convite a ler o que sobrou como se fosse o que faltou.
+    """
+    if len(grupo) < MIN_OBS or len(resto) < MIN_OBS:
+        return None
+    rng = np.random.default_rng(semente)
+    mg = _medias_reamostradas(grupo, rng, BOOTSTRAP_AMOSTRAS)
+    mr = _medias_reamostradas(resto, rng, BOOTSTRAP_AMOSTRAS)
+    lo, hi = np.percentile(mg - mr, [2.5, 97.5])
+    return [round(float(lo), 6), round(float(hi), 6)]
 
 
 def teste_permutacao(grupo: np.ndarray, resto: np.ndarray,
@@ -150,20 +203,28 @@ def holm(padroes: list, alfa: float = ALFA) -> list:
 # ── padrões ──────────────────────────────────────────────────────────────────
 
 def _linha(rotulo: str, grupo: np.ndarray, resto: np.ndarray) -> dict:
+    # `retorno_medio_pct` é a média do PRÓPRIO grupo -- é o número que
+    # responde "quanto rende neste dia". `diferenca_pct` e o IC dela são o que
+    # a coluna do p-valor está testando. Os três juntos, e nomeados, porque
+    # foi a mistura silenciosa dos dois primeiros que enganou a leitura.
     linha = {
         "rotulo": rotulo,
         "n": int(len(grupo)),
         "retorno_medio_pct": round(float(grupo.mean()) * 100, 3) if len(grupo) else None,
         "positivos_pct": round(float((grupo > 0).mean()) * 100, 1) if len(grupo) else None,
-        "ic95_pct": None,
+        "diferenca_pct": None,
+        "ic95_diferenca_pct": None,
         "p_valor": None,
     }
-    ic = _ic_bootstrap(grupo)
-    if ic:
-        linha["ic95_pct"] = [round(ic[0] * 100, 3), round(ic[1] * 100, 3)]
+    if len(grupo) and len(resto):
+        linha["diferenca_pct"] = round(
+            float(grupo.mean() - resto.mean()) * 100, 3)
     if len(grupo) < MIN_OBS:
         linha["nota"] = f"amostra de {len(grupo)} pregões — abaixo do mínimo de {MIN_OBS} para testar"
         return linha
+    ic = ic_bootstrap_diferenca(grupo, resto)
+    if ic:
+        linha["ic95_diferenca_pct"] = [round(ic[0] * 100, 3), round(ic[1] * 100, 3)]
     linha["p_valor"] = teste_permutacao(grupo, resto)
     return linha
 

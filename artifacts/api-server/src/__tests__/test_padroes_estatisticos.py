@@ -175,3 +175,100 @@ def test_leitura_de_fatores_diz_quando_nada_explica():
     fator = pd.Series(rng.normal(0, 0.02, 300), index=ret.index)
     rel = pe.montar_relatorio("X", ret, {}, {"Aleatório": (fator, "retorno")})
     assert "idiossincrático" in rel["leituraFatores"]
+
+
+# ── o IC responde a MESMA pergunta que o p ao lado ───────────────────────────
+#
+# Achado na varredura do SPY (20 anos) em 08/09/2026. A janela de virada do
+# mês saiu assim:
+#
+#     n=964  média=+0,058%  IC95=[-0,000, +0,100]  p=0,8161
+#
+# Um IC que quase exclui zero ao lado de um p de 0,82. Parece contradição, e
+# não era: o IC era da média do PRÓPRIO grupo (bootstrap de uma amostra), o p
+# era da DIFERENÇA para os demais pregões (permutação). Duas perguntas
+# diferentes, na mesma linha, sem nada dizendo qual era qual.
+#
+# Num ativo com deriva positiva -- que é todo índice de ações no longo prazo
+# -- o IC da média de QUALQUER bucket tende a ficar acima de zero. Ele
+# confirmava a deriva do mercado, não um padrão de calendário, e era lido
+# como se confirmasse o segundo.
+
+
+def _dois_grupos_iguais(media_diaria: float, n_grupo=250, n_resto=4000):
+    """Mesma distribuição nos dois lados: não há efeito nenhum a achar."""
+    rng = np.random.default_rng(11)
+    grupo = rng.normal(media_diaria, 0.012, n_grupo)
+    resto = rng.normal(media_diaria, 0.012, n_resto)
+    return grupo, resto
+
+
+def test_o_ic_e_da_diferenca_e_nao_da_media_do_grupo():
+    """O caso do SPY, reproduzido: deriva positiva forte e ZERO efeito de
+    calendário. O IC da diferença tem de conter zero, concordando com o p."""
+    grupo, resto = _dois_grupos_iguais(media_diaria=0.0005)   # ~+12%/ano
+    linha = pe._linha("bucket sem efeito", grupo, resto)
+
+    assert linha["p_valor"] > 0.05, "sanidade: não há efeito para achar"
+    lo, hi = linha["ic95_diferenca_pct"]
+    assert lo < 0 < hi, (
+        f"IC da diferença [{lo}, {hi}] devia conter zero, como o p={linha['p_valor']} diz")
+
+    # E o defeito de origem, dito com precisão: os dois intervalos ficam
+    # CENTRADOS em lugares diferentes. O do grupo em torno da deriva do
+    # mercado; o da diferença em torno de zero, que é onde a resposta à
+    # pergunta do p-valor mora.
+    #
+    # (Não é que o IC do grupo exclua zero -- com este n ele também o contém.
+    # O que enganava era o deslocamento: um intervalo puxado para o positivo
+    # pela deriva, encostando em zero por baixo, ao lado de um p que dizia
+    # "indistinguível". No SPY o arredondamento grosso piorou, imprimindo o
+    # limite inferior como "-0,000".)
+    centro_do_grupo = sum(pe._ic_bootstrap(grupo)) / 2 * 100
+    centro_da_diferenca = sum(linha["ic95_diferenca_pct"]) / 2
+    assert centro_do_grupo > 2 * abs(centro_da_diferenca), (
+        f"centro do IC do grupo ({centro_do_grupo:.4f}%) devia estar puxado "
+        f"pela deriva, longe do centro da diferença ({centro_da_diferenca:.4f}%) "
+        "-- é esse deslocamento que fazia um parecer confirmar o outro")
+
+
+def test_o_ic_da_diferenca_acusa_efeito_de_verdade():
+    """O outro lado: com efeito plantado, o IC tem de EXCLUIR zero. Sem isto
+    a correção viraria um intervalo que nunca diz nada."""
+    grupo, resto = _dois_grupos_iguais(media_diaria=0.0005)
+    grupo = grupo + 0.004                       # +0,4%/dia, bem acima do piso
+    linha = pe._linha("bucket com efeito", grupo, resto)
+    lo, hi = linha["ic95_diferenca_pct"]
+    assert lo > 0, f"IC [{lo}, {hi}] devia excluir zero"
+    assert linha["p_valor"] <= 0.05
+    assert linha["diferenca_pct"] > 0.3
+
+
+def test_o_ic_nao_esta_quantizado_em_decimos_de_ponto():
+    """O segundo defeito, independente do primeiro.
+
+    `_ic_bootstrap` arredondava para 3 casas na escala de FRAÇÃO, e só depois
+    multiplicava por 100: 0,00058 -> 0,001 -> "0,1%". Todo IC da varredura do
+    SPY saía múltiplo exato de 0,1 ponto percentual, sobre uma grandeza cujo
+    erro-padrão é da ordem de 0,08%. O intervalo não estava errado -- estava
+    grosso demais para significar alguma coisa."""
+    grupo, resto = _dois_grupos_iguais(media_diaria=0.0005)
+    lo, hi = pe._linha("resolução", grupo, resto)["ic95_diferenca_pct"]
+    fino = [v for v in (lo, hi) if abs(v * 10 - round(v * 10)) > 1e-9]
+    assert fino, (
+        f"IC [{lo}, {hi}]: os dois limites caíram em múltiplos de 0,1 ponto "
+        "-- sinal de arredondamento na escala errada")
+
+
+def test_ic_e_p_aparecem_e_somem_juntos():
+    """Mesmo piso nos dois. Linha com intervalo e sem p convida a ler o que
+    sobrou como se fosse o que faltou."""
+    rng = np.random.default_rng(3)
+    curto = rng.normal(0, 0.012, pe.MIN_OBS - 1)
+    resto = rng.normal(0, 0.012, 500)
+    linha = pe._linha("amostra curta", curto, resto)
+    assert linha["p_valor"] is None
+    assert linha["ic95_diferenca_pct"] is None
+    assert "nota" in linha
+    # a média do próprio bucket continua, que é informação legítima
+    assert linha["retorno_medio_pct"] is not None
