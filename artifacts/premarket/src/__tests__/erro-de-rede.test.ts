@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { ehFalhaDeRede, ehRespostaNaoJson, mensagemDeFalha } from "../lib/erro-de-rede";
+import { comRetentativaDeRede, ehFalhaDeRede, ehRespostaNaoJson, mensagemDeFalha } from "../lib/erro-de-rede";
 
 function erroDe(nome: string, mensagem: string): Error {
   const e = new Error(mensagem);
@@ -60,6 +60,56 @@ describe("erro-de-rede", () => {
     expect(mensagemDeFalha(new Error("ticker inválido"))).toBe("ticker inválido");
     expect(mensagemDeFalha("Sem resultado")).toBe("Sem resultado");
     expect(mensagemDeFalha(null)).toBe("Falha desconhecida");
+  });
+});
+
+describe("comRetentativaDeRede", () => {
+  it("tenta de novo quando a conexão caiu, e entrega o resultado da segunda", async () => {
+    // É o caso da ARM (14:31:01, `status: 0` aos 11,8s no Caddy): a análise
+    // terminou no servidor e ficou no cache; a segunda tentativa a pega.
+    let n = 0;
+    const r = await comRetentativaDeRede(async () => {
+      n += 1;
+      if (n === 1) throw erroDe("TypeError", "Failed to fetch");
+      return "análise";
+    }, 0);
+    expect(r).toBe("análise");
+    expect(n).toBe(2);
+  });
+
+  it("não repete erro do app — o servidor já respondeu", async () => {
+    // Repetir um "ticker inválido" só gasta tempo; e num 500 do Python,
+    // dinheiro.
+    let n = 0;
+    await expect(comRetentativaDeRede(async () => {
+      n += 1;
+      throw new Error("ticker inválido");
+    }, 0)).rejects.toThrow("ticker inválido");
+    expect(n).toBe(1);
+  });
+
+  it("tenta UMA vez a mais, não em laço", async () => {
+    // Rede fora de verdade não melhora na terceira, e cada rodada é uma
+    // espera longa na cara de quem está olhando.
+    let n = 0;
+    await expect(comRetentativaDeRede(async () => {
+      n += 1;
+      throw erroDe("TypeError", "Failed to fetch");
+    }, 0)).rejects.toThrow("Failed to fetch");
+    expect(n).toBe(2);
+  });
+
+  it("falhando as duas, o erro chega traduzido à tela", async () => {
+    const erro = await comRetentativaDeRede(
+      async () => { throw erroDe("TypeError", "Failed to fetch"); }, 0,
+    ).catch((e) => e);
+    expect(mensagemDeFalha(erro)).toContain("conexão caiu");
+  });
+
+  it("no caminho feliz não chama duas vezes", async () => {
+    let n = 0;
+    expect(await comRetentativaDeRede(async () => { n += 1; return "ok"; }, 0)).toBe("ok");
+    expect(n).toBe(1);
   });
 });
 

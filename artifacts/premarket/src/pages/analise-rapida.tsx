@@ -6,7 +6,7 @@ import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/e
 import { CamadaAusente, type AusenciaDeColeta } from "@/components/camada-ausente";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
-import { mensagemDeFalha } from "@/lib/erro-de-rede";
+import { comRetentativaDeRede, mensagemDeFalha } from "@/lib/erro-de-rede";
 import { rotuloRvol } from "@/lib/indicators";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
@@ -362,11 +362,16 @@ export default function AnaliseRapidaPage() {
       // A rota espera até 245s pelo Python (ver routes/analysis.ts). É a
       // requisição mais longa do app, e por isso a que mais morre no meio —
       // deploy, rede, aba em segundo plano. `postJson` é quem distingue
-      // "nada voltou" de "voltou erro do app".
-      return await postJson("/api/analise-rapida/ia", {
+      // "nada voltou" de "voltou erro do app", e a retentativa cobre o
+      // primeiro caso (ver comRetentativaDeRede para por que ela é barata).
+      //
+      // Só a IA leva retentativa. Os outros três botões respondem em 1 a 5
+      // segundos — janela pequena demais para valer a complexidade — e o
+      // argumento de custo zero (cache + coalescer) é desta rota.
+      return await comRetentativaDeRede(() => postJson("/api/analise-rapida/ia", {
         ticker,
         benchmark: benchmark.trim().toUpperCase() || "SMH",
-      }, "Falha na análise com IA") as AnaliseIA;
+      }, "Falha na análise com IA")) as AnaliseIA;
     },
     onSuccess: (data) => {
       setAnaliseIA(data);

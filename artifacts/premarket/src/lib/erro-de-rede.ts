@@ -58,3 +58,45 @@ export function mensagemDeFalha(erro: unknown): string {
   if (typeof erro === "string") return erro;
   return "Falha desconhecida";
 }
+
+/**
+ * Uma segunda tentativa, SÓ quando a primeira morreu na rede.
+ *
+ * O que motivou (21/09/2026, do log do Caddy): a Análise com IA da ARM saiu
+ * às 14:31:01 e o Caddy registrou `status: 0, size: 0` aos 11,8s -- nenhuma
+ * resposta escrita, o cliente sumiu. Dezenove minutos antes, a MESMA análise
+ * do MESMO celular levou 69,9s e voltou 200. A diferença estava no protocolo:
+ * a que funcionou era HTTP/3, que sobrevive a troca de IP porque a conexão é
+ * identificada por um connection ID; a que morreu era HTTP/2 sobre TCP, onde
+ * mudar de rede mata a conexão pendente junto. Quem escolhe o protocolo é o
+ * navegador, então não há o que configurar aqui -- a retentativa é a defesa.
+ *
+ * O que torna isto barato, e não um "tenta de novo e paga de novo": o
+ * servidor NÃO soube que o cliente sumiu. Ele terminou a análise, pagou os
+ * tokens e guardou (`cacheIA`, TTL de 10 min, chave ticker+benchmark). Então
+ * a segunda tentativa cai num de dois casos, e nenhum gasta de novo:
+ *
+ *   - análise já terminou  -> cache por TTL, resposta imediata;
+ *   - análise ainda roda   -> `coalescer` (lib/em-voo.ts) a faz pegar carona
+ *                             na execução em curso.
+ *
+ * Só sobra custo se a primeira requisição nunca tiver CHEGADO ao servidor --
+ * e aí é exatamente o custo do usuário clicando outra vez.
+ *
+ * UMA tentativa a mais, nunca um laço: rede fora de verdade não melhora na
+ * terceira, e cada rodada é uma espera longa na cara de quem está olhando.
+ * Erro do app (ticker inválido, 500 do Python) não é repetido -- repetir o
+ * que o servidor já respondeu só gasta tempo e dinheiro.
+ */
+export async function comRetentativaDeRede<T>(
+  fn: () => Promise<T>,
+  esperaMs = 2000,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (erro) {
+    if (!ehFalhaDeRede(erro)) throw erro;
+    await new Promise((r) => setTimeout(r, esperaMs));
+    return fn();
+  }
+}
