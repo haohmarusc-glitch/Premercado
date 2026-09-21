@@ -259,3 +259,66 @@ export function pct(v: number | null | undefined, casas = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(casas)}%`;
 }
+
+/**
+ * O bloco "Análise com IA" do relatório, com o veredito do validador JUNTO.
+ *
+ * O .md levava só o texto do modelo. A tela mostra o bloco amarelo ("⚠ O
+ * validador apontou N problema(s)"); o arquivo exportado não mostrava nada —
+ * e é o arquivo que sobrevive à sessão, que é relido depois e que circula
+ * por fora do app.
+ *
+ * Incidente que motivou (21/09/2026): os relatórios de ADI e MRVL saíram com
+ * "17,29% abaixo da máxima" e "29,93% abaixo da máxima". Os dois números são
+ * a SUBIDA até a máxima, não a distância abaixo dela (o certo é −14,74% e
+ * −23,04%), e a checagem 9b do validador (ANALISE_DISTANCIA_DA_FAIXA) pegou
+ * os dois na hora. O .md não levou uma linha disso, e as análises foram
+ * lidas como se estivessem limpas.
+ *
+ * Um validador cujo veredito não acompanha o documento validado não protege
+ * quem lê o documento.
+ *
+ * Citação em bloco (`>`), e no TOPO: o aviso tem que ser visto por quem abre
+ * o arquivo e lê a primeira tela, não por quem chega ao fim.
+ */
+export function blocoAnaliseIA(
+  markdown: string,
+  avisos?: string[] | null,
+  truncado?: boolean,
+): string {
+  const partes = ["## Análise com IA"];
+  if (avisos?.length) {
+    partes.push(
+      `> ⚠ **O validador apontou ${avisos.length} problema(s) nesta análise:**`,
+      ...avisos.map((a) => `> - ${a}`),
+    );
+  }
+  if (truncado) {
+    partes.push("> ⚠ **O texto foi cortado por tamanho — a Síntese pode estar incompleta.**");
+  }
+  partes.push(markdown);
+  return partes.join("\n\n");
+}
+
+/**
+ * De qual sessão saem as médias da reação a earnings.
+ *
+ * Sem esta linha o .md exibe a coluna "Gap dia" (D0) logo abaixo de médias
+ * que, num emissor que divulga APÓS o fechamento, vêm da sessão SEGUINTE — e
+ * as duas coisas se leem como contradição. Aconteceu ao conferir o MRVL em
+ * 21/09/2026: os oito gaps da tabela eram positivos (média +2,26%), o "gap
+ * médio" do resumo era −1,1%, e os dois estavam certos, em colunas
+ * diferentes. A tela já marca a coluna que reage com "◂"; o arquivo não
+ * marcava nada.
+ */
+export function notaDaJanelaDeReacao(
+  janela: "anuncio" | "seguinte" | undefined | null,
+): string | null {
+  if (janela === "seguinte") {
+    return 'sessão SEGUINTE ao anúncio (divulga após o fechamento) — é a coluna "Fech. D+1"';
+  }
+  if (janela === "anuncio") {
+    return 'sessão do anúncio (divulga antes da abertura) — é a coluna "Fech. dia"';
+  }
+  return null;
+}
