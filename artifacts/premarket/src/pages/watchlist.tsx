@@ -13,7 +13,10 @@ interface WatchlistItem {
 
 async function fetchWatchlist(): Promise<WatchlistItem[]> {
   const r = await fetch("/api/watchlist", { credentials: "include" });
-  if (!r.ok) throw new Error("Failed to fetch");
+  // Nunca "Failed to fetch": essa é a frase do NAVEGADOR para "nada voltou",
+  // e repeti-la aqui — onde a resposta voltou, só que com status de erro —
+  // apaga a diferença entre os dois casos na hora de diagnosticar.
+  if (!r.ok) throw new Error(`Falha ao carregar a watchlist (${r.status})`);
   return r.json();
 }
 

@@ -6,6 +6,7 @@ import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/e
 import { CamadaAusente, type AusenciaDeColeta } from "@/components/camada-ausente";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
+import { mensagemDeFalha } from "@/lib/erro-de-rede";
 import { rotuloRvol } from "@/lib/indicators";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
@@ -195,10 +196,48 @@ function fmtUsd(v: number | null | undefined): string {
   return `$${v.toFixed(2)}`;
 }
 
+/**
+ * Lê o corpo como TEXTO e só então tenta o JSON.
+ *
+ * Era `await r.json()` direto, antes de olhar o `r.ok`. Quando quem responde
+ * não é o app — o proxy devolvendo a própria página de 502 com o container
+ * subindo — o parse estoura primeiro, e o 502 chegava à tela como
+ * "SyntaxError: Unexpected token '<'": o status real, que é a informação
+ * toda, se perdia no caminho.
+ */
 async function getJson(url: string): Promise<unknown> {
   const r = await fetch(url, { credentials: "include" });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || "Falha na requisição");
+  const texto = await r.text();
+  let data: unknown = null;
+  try {
+    data = texto ? JSON.parse(texto) : null;
+  } catch {
+    throw new Error(
+      r.ok
+        ? "O servidor respondeu algo que não é do app — tente de novo em alguns segundos."
+        : `O servidor respondeu ${r.status} sem detalhe — em geral é o proxy com o app reiniciando.`,
+    );
+  }
+  if (!r.ok) throw new Error((data as { error?: string } | null)?.error || `Falha na requisição (${r.status})`);
+  return data;
+}
+
+async function postJson(url: string, corpo: object, seFalhar: string): Promise<unknown> {
+  const r = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+  });
+  const texto = await r.text();
+  let data: unknown = null;
+  try {
+    data = texto ? JSON.parse(texto) : null;
+  } catch {
+    throw new Error(`O servidor respondeu ${r.status} sem detalhe — em geral é o proxy com o app reiniciando.`);
+  }
+  const erro = (data as { error?: string } | null)?.error;
+  if (!r.ok || erro) throw new Error(erro || `${seFalhar} (${r.status})`);
   return data;
 }
 
@@ -293,23 +332,14 @@ export default function AnaliseRapidaPage() {
       // mesmo princípio de falha parcial do script de snapshot.
       const [snapRes, reacRes] = await Promise.allSettled([
         getJson(`/api/ticker-snapshot?ticker=${encodeURIComponent(ticker)}&benchmark=${encodeURIComponent(benchmark.trim().toUpperCase() || "SMH")}`),
-        fetch("/api/earnings-reaction/run", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tickers: [ticker], lookback: 8 }),
-        }).then(async (r) => {
-          const data = await r.json();
-          if (!r.ok) throw new Error(data.error || "Falha na reação a earnings");
-          return data;
-        }),
+        postJson("/api/earnings-reaction/run", { tickers: [ticker], lookback: 8 }, "Falha na reação a earnings"),
       ]);
       const snap = snapRes.status === "fulfilled"
         ? (snapRes.value as Snapshot)
-        : { ticker, benchmark, error: String(snapRes.reason) } as Snapshot;
+        : { ticker, benchmark, error: mensagemDeFalha(snapRes.reason) } as Snapshot;
       const reac = reacRes.status === "fulfilled"
         ? ((reacRes.value as ReactionResult[])[0] ?? { ticker, error: "Sem resultado" })
-        : { ticker, error: String(reacRes.reason) } as ReactionResult;
+        : { ticker, error: mensagemDeFalha(reacRes.reason) } as ReactionResult;
       return { snap, reac };
     },
     onSuccess: ({ snap, reac }) => {
@@ -329,18 +359,14 @@ export default function AnaliseRapidaPage() {
   // como se fossem uma. Agora o servidor coleta os quatro no mesmo processo.
   const runIA = useMutation({
     mutationFn: async () => {
-      const r = await fetch("/api/analise-rapida/ia", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticker,
-          benchmark: benchmark.trim().toUpperCase() || "SMH",
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok || data.error) throw new Error(data.error || "Falha na análise com IA");
-      return data as AnaliseIA;
+      // A rota espera até 245s pelo Python (ver routes/analysis.ts). É a
+      // requisição mais longa do app, e por isso a que mais morre no meio —
+      // deploy, rede, aba em segundo plano. `postJson` é quem distingue
+      // "nada voltou" de "voltou erro do app".
+      return await postJson("/api/analise-rapida/ia", {
+        ticker,
+        benchmark: benchmark.trim().toUpperCase() || "SMH",
+      }, "Falha na análise com IA") as AnaliseIA;
     },
     onSuccess: (data) => {
       setAnaliseIA(data);
@@ -518,7 +544,7 @@ export default function AnaliseRapidaPage() {
         </div>
         {(runTrend.isError || runTech.isError || runNiveis.isError || runIA.isError) && (
           <p className="text-sm text-red-400 font-mono">
-            {String(runTrend.error ?? runTech.error ?? runNiveis.error ?? runIA.error)}
+            {mensagemDeFalha(runTrend.error ?? runTech.error ?? runNiveis.error ?? runIA.error)}
           </p>
         )}
         {temDados && (

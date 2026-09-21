@@ -379,7 +379,7 @@ function makeTickerRoute(routePath: string, script: string, cacheName: string, e
       res.json(data);
     } catch (err) {
       logger.error({ err }, `Failed: ${routePath}`);
-      res.status(500).json({ error: `Failed to fetch ${routePath}` });
+      res.status(500).json({ error: `Falha ao calcular ${routePath}` });
     }
   });
 }
@@ -416,7 +416,7 @@ router.get("/ticker-snapshot", async (req, res): Promise<void> => {
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /ticker-snapshot");
-    res.status(500).json({ error: "Failed to fetch ticker snapshot" });
+    res.status(500).json({ error: "Falha ao montar o retrato do ticker" });
   }
 });
 
@@ -430,7 +430,7 @@ router.get("/macro", async (_req, res): Promise<void> => {
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /macro");
-    res.status(500).json({ error: "Failed to fetch macro" });
+    res.status(500).json({ error: "Falha ao coletar o macro" });
   }
 });
 
@@ -446,7 +446,7 @@ router.get("/institutional-filings", async (_req, res): Promise<void> => {
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed: /institutional-filings");
-    res.status(500).json({ error: "Failed to fetch institutional filings" });
+    res.status(500).json({ error: "Falha ao coletar as posições institucionais" });
   }
 });
 
@@ -531,7 +531,7 @@ router.get("/market-alerts", async (_req, res): Promise<void> => {
     res.json(await mergeIntradaySpikes(data));
   } catch (err) {
     logger.error({ err }, "Failed: /market-alerts");
-    res.status(500).json({ error: "Failed to fetch market alerts" });
+    res.status(500).json({ error: "Falha ao apurar os alertas de mercado" });
   }
 });
 

@@ -70,7 +70,7 @@ router.get("/tickers/chart", async (req, res): Promise<void> => {
     res.json(GetTickerChartResponse.parse(data));
   } catch (err) {
     logger.error({ err }, "Failed to fetch chart data");
-    res.status(500).json({ error: "Failed to fetch chart" });
+    res.status(500).json({ error: "Falha ao montar o gráfico" });
   }
 });
 
