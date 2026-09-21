@@ -53,6 +53,11 @@ from .validador_nucleo import frase_com_moeda_errada
 # quebra o contrato "sem dependências externas" deste módulo.
 from agent.radar_ia_2026 import CORR_ALTA, correlacao
 
+# sentimento.py não importa nada (é a tabela de faixas e funções puras). A
+# faixa vem DELE e não de uma escada local: é a quarta cópia que aquele
+# módulo existe para não deixar nascer.
+from agent.sentimento import classificar as classificar_sentimento
+
 # ---------------------------------------------------------------- config ---
 
 PCT_TOLERANCE_PP = 0.10  # tolerância em pontos percentuais p/ recomputo
@@ -426,18 +431,24 @@ _EARNINGS_COM_DATA = re.compile(
     re.IGNORECASE)
 
 
-def _datas_atribuidas_a_earnings(seg: str):
+def _datas_atribuidas_a_earnings(seg: str, desde: int = 0):
     """(dia, mes) de cada data que o trecho pendura em earnings.
 
     Devolve TODAS, nao a primeira: a forma tipica do erro e' o trecho trazer
     uma data certa e uma errada, e conferir so' a primeira transforma o acerto
-    num alibi para o erro."""
+    num alibi para o erro.
+
+    `desde` marca onde acaba o CABECALHO colado na frente (ver
+    `_segmentos_com_cabecalho`): o predicado pode vir de la', a data NAO --
+    senao uma data escrita no titulo da lista ("Calendario de earnings,
+    fechado em 18/set: NVDA ...") seria pendurada em todo ticker da linha."""
     achadas = []
     for m in _EARNINGS_COM_DATA.finditer(seg):
         # Os dois lados da alternancia: grupos 1-3 (predicado antes) ou 4-6.
-        dia, mes_txt, mes_num = m.group(1), m.group(2), m.group(3)
-        if dia is None:
-            dia, mes_txt, mes_num = m.group(4), m.group(5), m.group(6)
+        g = 1 if m.group(1) is not None else 4
+        if m.start(g) < desde:
+            continue  # a data esta' no cabecalho, nao no trecho do ticker
+        dia, mes_txt, mes_num = m.group(g), m.group(g + 1), m.group(g + 2)
         mes = MONTHS_PT[mes_txt[:3].lower()] if mes_txt else int(mes_num)
         dia = int(dia)
         if 1 <= dia <= 31 and 1 <= mes <= 12:
@@ -579,15 +590,81 @@ _DIAS_ATE_EARNINGS = re.compile(
 
 # "Fear & Greed em 57,6" / "Sentimento do mercado em 57,6" -- o score citado
 # na prosa, que agora tem um valor FIXADO no snapshot para confrontar.
+#
+# A ancora TEM que nomear o indice. Ate 21/09/2026 a palavra "sentimento"
+# sozinha ancorava, e "sentimento" e' palavra corrente em portugues: no
+# veredito daquele dia ela apareceu no TITULO de uma secao --
+#
+#     "**Macro e sentimento**: CPI em 334,131 (base ago/2026)"
+#
+# -- e a janela lazy de 25 chars atravessou o "**: CPI em " e capturou o
+# indice de precos. O validador publicou "Texto cita Fear & Greed 334.1,
+# mas o snapshot fixou 29.1" num texto que citava 29,1 CORRETAMENTE, tres
+# oracoes adiante.
+#
+# Nao e' caso isolado: a mesma ancora fraca captura o RSI em "sentimento
+# neutro, RSI 45,54" e a contagem em "o sentimento das noticias trouxe 12
+# manchetes". Exigir o nome do indice ("fear & greed" ou "sentimento do
+# mercado") mata a classe inteira por default-deny, e as duas formas que o
+# comentario acima cita como o alvo real continuam casando.
 _SENTIMENTO_CITADO = re.compile(
-    r"(?:fear\s*&?\s*greed|sentimento(?:\s+d[eo]\s+mercado)?)"
+    r"(?:fear\s*&?\s*greed|sentimento\s+d[eo]\s+mercado)"
     r"[^.\n]{0,25}?(\d{1,3}(?:[.,]\d)?)",
     re.IGNORECASE)
 
+# Os rotulos de `sentimento.FAIXAS`, ja' sem acento (os trechos chegam aqui
+# normalizados). Os compostos vem ANTES dos simples: em alternancia o Python
+# para no primeiro que casa, e "medo" casaria dentro de "medo extremo".
+_FAIXAS_PT = r"medo\s+extremo|ganancia\s+extrema|medo|ganancia|neutro"
+
+# A faixa nomeada logo depois do NOME do indice.
+_FAIXA_POR_NOME = re.compile(
+    rf"(?:fear\s*&?\s*greed|sentimento\s+d[eo]\s+mercado)"
+    rf"[^.\n]{{0,40}}?\b({_FAIXAS_PT})\b",
+    re.IGNORECASE)
+
+
+def _faixas_citadas(norm_texto: str, score) -> list:
+    """[(posicao, faixa)] -- cada vez que o texto NOMEIA a faixa do indice.
+
+    Duas ancoras, porque o veredito de 21/09/2026 usou as duas formas na
+    mesma pagina: o nome do indice ("Fear & Greed Index em 29,1 (MEDO
+    extremo)") e o proprio score fixado, sem o nome ("mercado em medo
+    extremo (29,1)", na linha de abertura).
+
+    O que NAO serve de ancora e' a palavra da faixa sozinha: "neutro"
+    aparece sete vezes naquele texto falando de RSI ("RSI 54,36 neutro"),
+    que e' outro indicador e outra escala. Exigir o indice -- pelo nome ou
+    pelo numero colado -- e' o que separa a afirmacao sobre o Fear & Greed
+    das outras."""
+    achadas = [(m.start(1), m.group(1))
+               for m in _FAIXA_POR_NOME.finditer(norm_texto)]
+    for txt in {f"{score:g}", f"{score:g}".replace(".", ",")}:
+        num = re.escape(txt)
+        perto = re.compile(
+            rf"\b({_FAIXAS_PT})\b[^.\n]{{0,6}}?\(?\s*{num}(?!\d)"
+            rf"|{num}(?!\d)[^.\n]{{0,6}}?\(?\s*({_FAIXAS_PT})\b",
+            re.IGNORECASE)
+        for m in perto.finditer(norm_texto):
+            g = 1 if m.group(1) is not None else 2
+            achadas.append((m.start(g), m.group(g)))
+    return sorted({(p, re.sub(r"\s+", " ", f)) for p, f in achadas})
+
+
 # O texto citando o indice em OUTRO momento ("uma semana atras estava em 45")
 # nao esta contradizendo o valor de hoje.
+#
+# Com `\b`, e nao como estava. Sem as bordas, a alternativa `ano` casava
+# DENTRO de "plano" e de "americano", e `mes` dentro de "mesmo" -- as tres
+# palavras mais comuns deste corpus ("plano de saida" abre todo veredito).
+# O efeito era um silenciador: no veredito de 21/09/2026 as duas afirmacoes
+# de faixa cairam por causa de "gate de plano de saida" e de "o mercado
+# americano esta em panico", e qualquer numero errado de Fear & Greed
+# escrito perto dessas palavras teria caido junto -- este guard protege
+# tambem o SENTIMENTO_ERRADO acima.
 _SENTIMENTO_HISTORICO = re.compile(
-    r"semana|m[êe]s|ano|anterior|passad|atr[áa]s|hist[óo]ric|fechamento\s+de\s+ontem",
+    r"\b(?:semanas?|m[êe]s(?:es)?|anos?|anterior(?:es)?|passad\w*|atr[áa]s|"
+    r"hist[óo]ric\w*|fechamento\s+de\s+ontem)\b",
     re.IGNORECASE)
 
 # "RSI 38.92" / "RSI de 47,81" -- o valor citado. O `(?![<>≤≥])` e o
@@ -609,10 +686,30 @@ _PRECO_CITADO = re.compile(
 # Cifrao que NAO e' o preco do papel. Sem isto, "Stop-loss em $275, preco
 # atual $240.77" acusava o proprio stop de estar errado -- o `em $` casa nos
 # dois. Um nivel nomeado antes do valor o desqualifica como cotacao.
+#
+# A segunda familia de nao-cotacao e' o VALOR CALCULADO: preco-alvo de
+# analista, DCF, valor justo. Ate 21/09/2026 a lista so' conhecia niveis
+# tecnicos, e o veredito daquele dia escreveu, para AVGO --
+#
+#     "Consenso de analistas em $531,85 (+48,7% upside), mas este target
+#      reflete tese de longo prazo; hoje, o papel esta em venda estrutural"
+#
+# -- com o preco real ($357,61) citado CERTO no mesmo paragrafo. Saiu
+# "PRECO_CITADO_ERRADO: texto cita $531.85, snapshot traz $357.61 (49% de
+# diferenca)" contra a unica frase do paragrafo que ja' se explicava.
+#
+# Um alvo de consenso esta' longe do preco por DEFINICAO -- e' o que a
+# palavra "upside" mede. Confronta-lo com a cotacao do dia e' comparar duas
+# grandezas diferentes, e a tolerancia de 10% garante que quase todo alvo
+# vire erro. "alvo" e "target" ja' estavam na lista; faltava o vocabulario
+# de quem PRODUZ o alvo (consenso, analista) e o de valuation (DCF, valor
+# justo), que e' como a frase real foi escrita.
 _VALOR_DE_NIVEL = re.compile(
     r"(?:stop|suporte|support|resist|alvo|target|take[-\s]?profit|bollinger|"
     r"m[áa]xima|m[íi]nima|\bsma\b|\bmm\s?\d|\bema\b|vwap|upper|lower|"
-    r"breakeven|custo|entrada|quebrar)[^$\n]{0,25}$",
+    r"breakeven|custo|entrada|quebrar|"
+    r"consenso|analista|\bdcf\b|valor\s+justo|fair\s+value|justo\s+valor|"
+    r"pre[çc]o[-\s]?alvo)[^$\n]{0,25}$",
     re.IGNORECASE)
 
 _TICKER_FLAT = re.compile(
@@ -631,6 +728,51 @@ _NEGACAO = re.compile(
     r"[\s\w]{0,20}$")
 
 
+def _segmentos_com_cabecalho(texto: str, tickers) -> dict:
+    """{ticker: [(cabecalho_da_linha, trecho)]} -- o trecho e' o mesmo que
+    `_segmentos_por_ticker` devolve; o cabecalho e' o que vem ANTES do
+    primeiro ticker da linha, e e' o mesmo para todos os tickers dela.
+
+    Por que o cabecalho precisa existir. Numa ENUMERACAO o sujeito e'
+    escrito uma vez so', no titulo da lista, e portanto cai fora do trecho
+    de todo ticker. O veredito de 21/09/2026 trouxe a linha
+
+        "**Calendario de earnings**: NVDA 57 dias (18/nov), ARM 44 dias
+         (4/nov), MRVL 71 dias (2/dez), INTC 33 dias (22/out), ADI 65 dias
+         (26/nov), BABA 51 dias (12/nov), AVGO 52 dias (13/nov). Nenhum
+         balanco nos proximos 5 pregoes ..."
+
+    e os trechos sairam assim: `"baba 51 dias (12/nov), "`, sem a palavra
+    "earnings" em lugar nenhum. As duas checagens de earnings exigem esse
+    predicado perto da data (`_EARNINGS_COM_DATA`, `_DIAS_ATE_EARNINGS`),
+    entao nenhuma olhou nenhum ticker -- MENOS o ultimo, que herda o resto
+    da frase e por acaso pegou o "gate de earnings" do fim.
+
+    O resultado foi um relatorio com UM achado ("AVGO: texto cita 13/11,
+    painel diz 09/12") onde havia CINCO: NVDA 18/nov contra 17/11, ADI
+    26/nov contra 24/11, MRVL 2/dez contra 01/12 e -- a pior -- BABA
+    12/nov contra 24/11, doze dias, com a contagem escrita como "51 dias"
+    onde o painel dizia 64. Ser o ultimo da lista era a unica diferenca
+    entre AVGO e os outros quatro.
+
+    O cabecalho entra como CONTEXTO (de onde o predicado pode vir), nunca
+    como conteudo: quem o usa filtra por posicao para nao pendurar num
+    ticker um numero escrito no titulo da lista."""
+    saida: dict = {}
+    alvos = [str(tk).upper() for tk in (tickers or []) if tk]
+    if not alvos:
+        return saida
+    padrao = re.compile(r"\b(" + "|".join(re.escape(a.lower()) for a in alvos)
+                        + r")\b")
+    for linha in _norm(texto).split("\n"):
+        marcas = [(m.start(), m.group(1).upper()) for m in padrao.finditer(linha)]
+        cabecalho = linha[:marcas[0][0]] if marcas else ""
+        for i, (pos, tk) in enumerate(marcas):
+            fim = marcas[i + 1][0] if i + 1 < len(marcas) else len(linha)
+            saida.setdefault(tk, []).append((cabecalho, linha[pos:fim]))
+    return saida
+
+
 def _segmentos_por_ticker(texto: str, tickers) -> dict:
     """{ticker: [trechos]} -- cada ticker fica com o trecho que vai da sua
     mencao ate a mencao do PROXIMO ticker, ou ate o fim da linha.
@@ -647,19 +789,12 @@ def _segmentos_por_ticker(texto: str, tickers) -> dict:
          depois do preco, e a janela nunca chegava la.
 
     A fronteira de LINHA continua valendo: cada posicao e' um bullet, e o
-    dado de um papel nao pode ser confrontado com o texto de outro."""
-    saida: dict = {}
-    alvos = [str(tk).upper() for tk in (tickers or []) if tk]
-    if not alvos:
-        return saida
-    padrao = re.compile(r"\b(" + "|".join(re.escape(a.lower()) for a in alvos)
-                        + r")\b")
-    for linha in _norm(texto).split("\n"):
-        marcas = [(m.start(), m.group(1).upper()) for m in padrao.finditer(linha)]
-        for i, (pos, tk) in enumerate(marcas):
-            fim = marcas[i + 1][0] if i + 1 < len(marcas) else len(linha)
-            saida.setdefault(tk, []).append(linha[pos:fim])
-    return saida
+    dado de um papel nao pode ser confrontado com o texto de outro.
+
+    Deriva de `_segmentos_com_cabecalho` para as duas formas nao poderem
+    divergir; quem precisa do contexto da linha chama aquela direto."""
+    return {tk: [trecho for _, trecho in pares]
+            for tk, pares in _segmentos_com_cabecalho(texto, tickers).items()}
 
 
 def _tickers_com_intencao_de_compra(texto: str, universo: list[str]) -> list[str]:
@@ -712,8 +847,10 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
     norm_text = _norm(texto)
     # Um trecho por mencao de ticker, com fronteira de linha -- ver
     # _segmentos_por_ticker para o que isto substitui e por que.
-    segmentos = _segmentos_por_ticker(
-        texto, set(quotes) | set(technicals) | set(earnings))
+    universo_dos_trechos = set(quotes) | set(technicals) | set(earnings)
+    segmentos_cab = _segmentos_com_cabecalho(texto, universo_dos_trechos)
+    segmentos = {tk: [trecho for _, trecho in pares]
+                 for tk, pares in segmentos_cab.items()}
 
     # 0) moeda
     #
@@ -789,14 +926,20 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
         ed = _parse_date(edate)
         # procura mencoes tipo "earnings ... 11/ago" no trecho do ticker
         vistas: set = set()
-        for seg in segmentos.get(tk, []):
+        for cab, seg in segmentos_cab.get(tk, []):
+            # O CABECALHO da linha conta como contexto: numa enumeracao o
+            # "earnings" e' escrito uma vez so', no titulo da lista, e sem
+            # ele o trecho de cada ticker e' so' "baba 51 dias (12/nov), ".
+            # Ver `_segmentos_com_cabecalho` para o relatorio que saiu com
+            # um achado de cinco por causa disto.
+            contexto = cab + seg
             # As tres palavras que `_EARNINGS_COM_DATA` reconhece. O guard
             # conhecia so' duas, entao "24/11, data do proximo balanco" era
             # descartado antes de o regex olhar -- filtro barato mais estreito
             # que a checagem que ele protege e' filtro que esconde achado.
-            if not any(p in seg for p in ("earnings", "resultado", "balanc")):
+            if not any(p in contexto for p in ("earnings", "resultado", "balanc")):
                 continue
-            for day, mon in _datas_atribuidas_a_earnings(seg):
+            for day, mon in _datas_atribuidas_a_earnings(contexto, desde=len(cab)):
                 if (day, mon) in vistas:
                     continue
                 vistas.add((day, mon))
@@ -946,9 +1089,15 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
         real_dias = (ed - as_of).days
         if real_dias < 0:
             continue
-        for seg in segmentos.get(tk, []):
-            for dm in _DIAS_ATE_EARNINGS.finditer(seg):
-                citado = int(dm.group(1) or dm.group(2))
+        for cab, seg in segmentos_cab.get(tk, []):
+            # Mesmo motivo do 2): "**Calendario de earnings**: ... BABA 51
+            # dias (12/nov)" so' tem a palavra "earnings" no cabecalho.
+            contexto = cab + seg
+            for dm in _DIAS_ATE_EARNINGS.finditer(contexto):
+                g = 1 if dm.group(1) is not None else 2
+                if dm.start(g) < len(cab):
+                    continue  # a contagem esta' no titulo da lista
+                citado = int(dm.group(g))
                 if abs(citado - real_dias) > DIAS_EARNINGS_TOLERANCIA:
                     rep.add("ERROR", "DIAS_ATE_EARNINGS_ERRADO",
                             f"Texto diz {citado} dias ate o earnings de "
@@ -973,6 +1122,44 @@ def lint_veredito(texto: str, snapshot: dict[str, Any],
                         f"Texto cita Fear & Greed {citado}, mas o snapshot "
                         f"fixou {fixado}. O indice anda intradia -- use o "
                         f"valor do snapshot, nao uma releitura.")
+
+    # 3f-bis) a FAIXA citada bate com a que o score fixado produz?
+    #
+    # O numero e a palavra sao afirmacoes separadas, e ate 21/09/2026 so' o
+    # numero era conferido. Naquele dia o score saiu certo e a palavra nao:
+    #
+    #     texto:  "Fear & Greed Index em 29,1 (MEDO extremo)"
+    #             "mercado em medo extremo (29,1)"     <- na abertura
+    #     painel: "Fear & Greed: 29.1 · medo"
+    #
+    # 29,1 e' "medo" (faixa 25-45); "medo extremo" e' a faixa ATE 25. E a
+    # troca nao e' de grau: em `sentimento.INTERPRETACOES`, "medo extremo"
+    # e' "Panico -- potencial oportunidade CONTRARIA", isto e', a faixa em
+    # que o operador compra. O veredito seguiu a palavra e escreveu "o
+    # mercado americano esta em panico local", num texto cuja conclusao era
+    # vender tres posicoes.
+    #
+    # Nao e' o caso de fronteira que `sentimento.py` documenta (aquele era
+    # 0,3 ponto de deriva atravessando os 55): 29,1 esta' a 4,1 pontos da
+    # borda dos 25, longe demais para ser deriva de leitura.
+    #
+    # A faixa vem de `sentimento.classificar` -- a MESMA escada que o painel
+    # e o agente usam. Uma segunda tabela de limiares aqui seria a quarta
+    # copia da escada que aquele modulo existe para eliminar.
+    rotulo_fixado = _norm(classificar_sentimento(fixado))
+    if rotulo_fixado != "desconhecido":
+        ja_apontadas: set = set()
+        for pos, citada in _faixas_citadas(norm_text, fixado):
+            if citada == rotulo_fixado or citada in ja_apontadas:
+                continue
+            if _SENTIMENTO_HISTORICO.search(norm_text[max(0, pos - 60):pos + 60]):
+                continue  # fala de outro momento, nao do de hoje
+            ja_apontadas.add(citada)
+            rep.add("ERROR", "SENTIMENTO_FAIXA_ERRADA",
+                    f"Texto chama o sentimento de \"{citada}\", mas o score "
+                    f"fixado ({fixado}) cai em \"{rotulo_fixado}\". A faixa "
+                    f"troca a leitura, nao so' a intensidade: \"medo extremo\" "
+                    f"e' a faixa de panico/oportunidade contraria.")
 
     # 3g) o RSI citado bate com o do snapshot?
     #

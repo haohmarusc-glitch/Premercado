@@ -1157,3 +1157,155 @@ def test_os_dois_validadores_usam_a_mesma_regra():
     from agent import analise_rapida_validator, validador_nucleo
     assert (analise_rapida_validator.frase_com_moeda_errada
             is validador_nucleo.frase_com_moeda_errada)
+
+
+# --------------------------------------------------------------------------
+# Veredito de 21/09/2026: o relatório saiu com TRÊS apontamentos, dois deles
+# falsos, e deixou passar cinco achados reais. As cinco falhas abaixo são
+# independentes entre si e estão todas escritas com a frase original.
+# --------------------------------------------------------------------------
+
+def _snap_2109():
+    """Carteira e painel do dia 21/09/2026, com os números reais."""
+    return {
+        "as_of": "2026-09-18",
+        "quotes": {
+            "NVDA": {"price": 222.27}, "ARM": {"price": 275.61},
+            "MRVL": {"price": 74.00}, "INTC": {"price": 108.60},
+            "ADI": {"price": 375.72}, "BABA": {"price": 113.24},
+            "AVGO": {"price": 357.61},
+        },
+        "technicals": {"AVGO": {"rsi": 45.54}},
+        "earnings": {
+            "INTC": "2026-10-22", "ARM": "2026-11-04", "NVDA": "2026-11-17",
+            "ADI": "2026-11-24", "BABA": "2026-11-24", "MRVL": "2026-12-01",
+            "AVGO": "2026-12-09",
+        },
+        "sentimento": {"score": 29.1, "rating_pt": "medo"},
+    }
+
+
+def test_sentimento_em_titulo_de_secao_nao_ancora_citacao():
+    """A frase real: o número capturado era o CPI, três orações antes do
+    Fear & Greed -- que o texto citava CERTO."""
+    texto = ("**Macro e sentimento**: CPI em 334,131 (base ago/2026), "
+             "desemprego 4,1%, Fed funds 3,63%. "
+             "O Fear & Greed Index em 29,1 mantém o pano de fundo defensivo.")
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "SENTIMENTO_ERRADO"], \
+        "o 334,1 é o CPI; a palavra 'sentimento' era só o título da seção"
+
+
+@pytest.mark.parametrize("frase,esperado", [
+    ("Sentimento do mercado em 57,6 no fechamento.", True),
+    ("Fear & Greed em 57,6, bem acima do snapshot.", True),
+    ("Fear & Greed caiu para 57,6 hoje.", True),
+    # as três formas que a âncora fraca capturava por engano
+    ("**Macro e sentimento**: CPI em 57,6 pontos.", False),
+    ("AVGO com sentimento neutro, RSI 57,6 e ADX 26.", False),
+    ("O sentimento das notícias trouxe 57 manchetes positivas.", False),
+])
+def test_ancora_do_sentimento_exige_o_nome_do_indice(frase, esperado):
+    """57,6 contra o 29,1 fixado: só é erro quando o texto está mesmo
+    falando do índice."""
+    rep = lint_veredito(frase, _snap_2109())
+    achou = any(i.code == "SENTIMENTO_ERRADO" for i in rep.issues)
+    assert achou is esperado, frase
+
+
+def test_alvo_de_consenso_nao_e_cotacao():
+    """A frase real do AVGO. O preço do dia ($357,61) está citado CERTO na
+    mesma frase; o $531,85 é o alvo, que por definição fica longe dele."""
+    texto = ("AVGO: preço $357,61 está 5,83% abaixo da SMA50. Consenso de "
+             "analistas em $531,85 (+48,7% upside), mas este target reflete "
+             "tese de longo prazo.")
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "PRECO_CITADO_ERRADO"], \
+        "alvo de analista não é cotação"
+
+
+def test_preco_errado_de_verdade_continua_pego():
+    """O contraponto do teste acima: sem âncora de nível, é cotação."""
+    texto = "AVGO negociava em $531,85 na abertura."
+    rep = lint_veredito(texto, _snap_2109())
+    assert any(i.code == "PRECO_CITADO_ERRADO" for i in rep.issues)
+
+
+# A linha do calendário, exatamente como saiu.
+_CALENDARIO_2109 = (
+    "**Calendário de earnings**: NVDA 57 dias (18/nov), ARM 44 dias "
+    "(4/nov), MRVL 71 dias (2/dez), INTC 33 dias (22/out), ADI 65 dias "
+    "(26/nov), BABA 51 dias (12/nov), AVGO 52 dias (13/nov). Nenhum "
+    "balanço nos próximos 5 pregões — gate de earnings não trava decisões."
+)
+
+
+def test_enumeracao_confere_todos_e_nao_so_o_ultimo():
+    """Na lista, "earnings" é escrito uma vez, no título -- e fica fora do
+    trecho de todo ticker. Só AVGO era conferido, por ser o último e herdar
+    o resto da frase. BABA erra por DOZE dias e saía em silêncio."""
+    rep = lint_veredito(_CALENDARIO_2109, _snap_2109())
+    datas = {i.ticker for i in rep.issues if i.code == "EARNINGS_DATE_MISMATCH"}
+    assert datas == {"NVDA", "ADI", "BABA", "MRVL", "AVGO"}, datas
+    # ARM (4/nov) e INTC (22/out) estão certos e não podem aparecer
+    assert "ARM" not in datas and "INTC" not in datas
+    contagens = {i.ticker for i in rep.issues
+                 if i.code == "DIAS_ATE_EARNINGS_ERRADO"}
+    assert "BABA" in contagens, "51 dias onde o painel diz 67"
+
+
+def test_data_do_cabecalho_nao_e_pendurada_nos_tickers():
+    """O cabeçalho entra como contexto, não como conteúdo: uma data escrita
+    no título da lista não é a data de earnings de ninguém."""
+    texto = ("**Calendário de earnings, fechado em 18/set**: NVDA 60 dias "
+             "(17/nov), ARM 47 dias (4/nov).")
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "EARNINGS_DATE_MISMATCH"], \
+        "18/set é a data do fechamento do painel, não de um earnings"
+
+
+def test_faixa_do_sentimento_citada_fora_da_escada():
+    """O score saiu certo e a palavra não: 29,1 é "medo" (25-45); "medo
+    extremo" é a faixa até 25 -- e é a faixa de compra contrária."""
+    texto = ("Mercado em medo extremo (29,1) com contágio setorial negativo. "
+             "O índice indica pânico local.")
+    rep = lint_veredito(texto, _snap_2109())
+    faixa = [i for i in rep.issues if i.code == "SENTIMENTO_FAIXA_ERRADA"]
+    assert len(faixa) == 1, rep.summary()
+    assert "medo extremo" in faixa[0].message and "medo" in faixa[0].message
+
+
+def test_faixa_certa_nao_vira_erro():
+    texto = "Fear & Greed Index em 29,1, medo predominante no mercado."
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "SENTIMENTO_FAIXA_ERRADA"]
+
+
+def test_rsi_neutro_nao_e_faixa_do_sentimento():
+    """"neutro" aparece sete vezes no veredito real falando de RSI. Outro
+    indicador, outra escala -- a âncora tem que ser o índice."""
+    texto = ("NVDA: RSI 54,36 neutro, MACD bearish piorando. "
+             "ADI: RSI 55,11 neutro, estrutura alta.")
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "SENTIMENTO_FAIXA_ERRADA"]
+
+
+@pytest.mark.parametrize("vizinhanca", [
+    "gate de plano de saída acionado em 3 ativos, ",   # "ano" dentro de "plano"
+    "o mercado americano reagiu e ",                    # dentro de "americano"
+    "no mesmo pregão, ",                                # "mes" dentro de "mesmo"
+])
+def test_palavra_comum_nao_silencia_o_sentimento(vizinhanca):
+    """O guard de "fala de outro momento" não tinha bordas de palavra, e
+    "plano"/"americano"/"mesmo" o disparavam. Ele protege também o
+    SENTIMENTO_ERRADO, então o silêncio valia para os dois checks."""
+    texto = f"{vizinhanca}Fear & Greed em 57,6 hoje."
+    rep = lint_veredito(texto, _snap_2109())
+    assert any(i.code == "SENTIMENTO_ERRADO" for i in rep.issues), texto
+
+
+def test_referencia_historica_continua_ignorada():
+    """O que o guard existe para deixar passar."""
+    texto = "Uma semana atrás o Fear & Greed estava em 57,6; hoje, 29,1."
+    rep = lint_veredito(texto, _snap_2109())
+    assert not [i for i in rep.issues if i.code == "SENTIMENTO_ERRADO"]
