@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { Activity, Gauge, ScanSearch, Sparkles, TrendingUp } from "lucide-react";
-import { ExportarRelatorio, cabecalho, itens, tabela, pct } from "@/components/exportar-relatorio";
+import {
+  ExportarRelatorio, blocoAnaliseIA, cabecalho, itens, notaDaJanelaDeReacao,
+  tabela, pct,
+} from "@/components/exportar-relatorio";
 import { CamadaAusente, type AusenciaDeColeta } from "@/components/camada-ausente";
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
@@ -137,6 +140,13 @@ interface ReactionResult {
   stale?: boolean;
   summary?: {
     n_events: number;
+    /**
+     * De qual sessão saíram TODAS as médias deste resumo — inclusive
+     * `gap_pct_mean` e `close_pct_mean`. "seguinte" para quem divulga depois
+     * do fechamento. O backend já mandava; a interface local não declarava,
+     * então o relatório exportado não tinha como dizer.
+     */
+    janela_reacao?: "anuncio" | "seguinte";
     gap_pct_mean: number;
     close_pct_mean: number;
     close_pct_abs_mean: number;
@@ -437,7 +447,11 @@ export default function AnaliseRapidaPage() {
       const s = reaction.summary;
       blocos.push("## Reação a earnings\n\n" + itens([
         ["Eventos", s.n_events],
+        // Ver notaDaJanelaDeReacao: é o que liga estas médias à coluna certa
+        // da tabela de eventos logo abaixo.
+        ["Janela da reação", notaDaJanelaDeReacao(s.janela_reacao)],
         ["Fechamento médio", pct(s.close_pct_mean)],
+        ["Gap médio", `${pct(s.gap_pct_mean)} (da mesma sessão da reação)`],
         ["Média absoluta", `${s.close_pct_abs_mean.toFixed(2)}%`],
         ["Threshold sugerido", `±${s.suggested_threshold_pct.toFixed(2)}%`],
         // Bandas de volatilidade, não estrutura de preço — ver comentário
@@ -453,21 +467,26 @@ export default function AnaliseRapidaPage() {
           : []),
       ]) + "\n\n_R1/R2/S1/S2 projetam a volatilidade histórica de earnings sobre o preço atual — não são suporte/resistência técnico._");
       if (reaction.events?.length) {
+        // "◂" na coluna que reage, o mesmo marcador da tela. É o que liga
+        // cada linha da tabela à média do resumo acima.
+        const marca = (reage: boolean, v: string) => (reage ? `${v} ◂` : v);
         blocos.push("### Eventos\n\n" + tabela(
           ["Data", "Run-up", "Gap dia", "Fech. dia", "Fech. D+1"],
           reaction.events.map((e) => [
             e.earnings_date,
             e.runup_pct != null ? pct(e.runup_pct) : "—",
             e.announcement_day ? pct(e.announcement_day.gap_pct) : "—",
-            e.announcement_day ? pct(e.announcement_day.close_pct) : "—",
-            e.next_day ? pct(e.next_day.close_pct) : "—",
+            e.announcement_day ? marca(e.janela_reacao === "anuncio", pct(e.announcement_day.close_pct)) : "—",
+            e.next_day ? marca(e.janela_reacao === "seguinte", pct(e.next_day.close_pct)) : "—",
           ]),
-        ));
+        ) + "\n\n_“◂” marca a sessão que conta como reação — é dela que saem as médias acima._");
       }
     }
 
     if (analiseIA) {
-      blocos.push("## Análise com IA\n\n" + analiseIA.markdown);
+      // O veredito do validador vai JUNTO do texto validado — ver
+      // blocoAnaliseIA para o incidente de ADI/MRVL que motivou.
+      blocos.push(blocoAnaliseIA(analiseIA.markdown, analiseIA.avisos, analiseIA.truncado));
     }
 
     return blocos.join("\n\n");

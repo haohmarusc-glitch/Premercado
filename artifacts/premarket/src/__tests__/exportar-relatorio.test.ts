@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   tabela, itens, pct, cabecalho, montarRelatorioSetor,
-  ROTULO_POR_MODO_EXPORTADO, nomeArquivoMarkdown,
+  ROTULO_POR_MODO_EXPORTADO, nomeArquivoMarkdown, blocoAnaliseIA, notaDaJanelaDeReacao,
 } from "@/components/exportar-relatorio";
 
 describe("nomeArquivoMarkdown", () => {
@@ -151,5 +151,63 @@ describe("ROTULO_POR_MODO_EXPORTADO", () => {
     for (const m of doAgente) {
       expect(ROTULO_POR_MODO_EXPORTADO[m]).toBeUndefined();
     }
+  });
+});
+
+// ── O veredito do validador acompanha o documento validado ──────────────────
+//
+// Ver o cabeçalho de `blocoAnaliseIA`: os relatórios de ADI e MRVL de
+// 21/09/2026 saíram do app com um erro que o validador tinha pego (a
+// distância até a máxima de 52 semanas medida sobre o preço em vez de sobre
+// a máxima) e o .md não trazia uma linha disso.
+describe("blocoAnaliseIA", () => {
+  it("sem aviso, é o texto e mais nada", () => {
+    expect(blocoAnaliseIA("## Quadro geral\n\ntexto")).toBe(
+      "## Análise com IA\n\n## Quadro geral\n\ntexto");
+    expect(blocoAnaliseIA("texto", [])).not.toContain("⚠");
+    expect(blocoAnaliseIA("texto", null, false)).not.toContain("⚠");
+  });
+
+  it("os avisos vêm ANTES do texto, e todos", () => {
+    const b = blocoAnaliseIA("o texto da análise", [
+      "ANALISE_DISTANCIA_DA_FAIXA: diz 17.29% em relação à máxima de 52 semanas",
+      "ANALISE_POSICAO_NA_FAIXA: metade superior",
+    ]);
+    expect(b).toContain("2 problema(s)");
+    expect(b).toContain("ANALISE_DISTANCIA_DA_FAIXA");
+    expect(b).toContain("ANALISE_POSICAO_NA_FAIXA");
+    // Quem abre o arquivo tem que ver o aviso na primeira tela, não no fim.
+    expect(b.indexOf("⚠")).toBeLessThan(b.indexOf("o texto da análise"));
+    // Citação em bloco: sobrevive a qualquer renderizador de markdown.
+    for (const linha of b.split("\n").filter((l) => l.includes("ANALISE_"))) {
+      expect(linha.startsWith(">")).toBe(true);
+    }
+  });
+
+  it("o corte por tamanho também é aviso", () => {
+    // Corpo com marca própria: o próprio aviso contém a palavra "texto", e
+    // procurá-la acusaria o aviso de estar depois de si mesmo.
+    const b = blocoAnaliseIA("## Quadro geral", null, true);
+    expect(b).toContain("cortado por tamanho");
+    expect(b.indexOf("cortado")).toBeLessThan(b.indexOf("## Quadro geral"));
+  });
+});
+
+// Ver o cabeçalho de `notaDaJanelaDeReacao`: num emissor que divulga após o
+// fechamento, a tabela de eventos mostra o gap de D0 e o resumo traz a média
+// de D+1 — sem esta linha, os dois se leem como contradição.
+describe("notaDaJanelaDeReacao", () => {
+  it("aponta a coluna certa em cada caso", () => {
+    expect(notaDaJanelaDeReacao("seguinte")).toContain("Fech. D+1");
+    expect(notaDaJanelaDeReacao("seguinte")).toContain("SEGUINTE");
+    expect(notaDaJanelaDeReacao("anuncio")).toContain("Fech. dia");
+    expect(notaDaJanelaDeReacao("anuncio")).toContain("antes da abertura");
+  });
+
+  it("sem a janela, não inventa uma", () => {
+    // `itens` descarta null, então a linha simplesmente não sai — melhor que
+    // afirmar a janela errada num payload antigo que não traz o campo.
+    expect(notaDaJanelaDeReacao(undefined)).toBeNull();
+    expect(notaDaJanelaDeReacao(null)).toBeNull();
   });
 });
