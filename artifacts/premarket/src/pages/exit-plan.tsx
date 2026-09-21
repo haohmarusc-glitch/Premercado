@@ -149,7 +149,22 @@ function ItemRow({
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground/90">{item.rationale}</p>
+      {/*
+        A justificativa vem com a data de quando foi escrita.
+
+        O preço ao vivo aparece no cabeçalho do item, e o rationale cita o
+        preço do momento em que o plano foi feito. Em 21/09/2026 a tela
+        mostrava MRVL a US$ 255,49 com o texto falando de US$ 254,81, e ADI a
+        US$ 380,08 com o texto em US$ 379,57 -- os dois certos, de instantes
+        diferentes, e nada na tela dizia isso. Dois números quase iguais e
+        sem data se leem como erro de um deles.
+      */}
+      <p className="text-xs text-muted-foreground/90">
+        {item.rationale}{" "}
+        <span className="text-muted-foreground/60 whitespace-nowrap" title={`Justificativa escrita em ${new Date(item.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`}>
+          (texto de {new Date(item.updatedAt).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" })})
+        </span>
+      </p>
 
       {signal && (
         <div className={cn("border rounded px-2 py-1 text-[11px] font-mono", TONE_STYLE[signal.tone])}>
@@ -366,10 +381,21 @@ export default function ExitPlanPage() {
           <h1 className="text-3xl font-bold font-mono text-foreground tracking-tight flex items-center gap-2">
             <Flag className="h-7 w-7 text-primary" /> PLANO DE SAÍDA
           </h1>
+          {/*
+            O número no menu lateral é `overdueCount + dueSoonCount`, não
+            `pendingCount` -- ele conta o que PEDE AÇÃO agora (vencido ou
+            vencendo em até 3 dias), pelo mesmo corte de useExitPlanDueCount
+            em layout.tsx. Com 8 pendentes, 3 vencidos e nada no prazo curto,
+            o menu mostra 3, e em 21/09/2026 isso foi lido como contador
+            quebrado. Dizer aqui o que o número é custa uma linha.
+          */}
           <p className="text-muted-foreground font-mono text-sm mt-2">
             {pendingCount} pendente{pendingCount !== 1 ? "s" : ""}
             {overdueCount > 0 && <span className="text-red-400"> · {overdueCount} vencido{overdueCount !== 1 ? "s" : ""}</span>}
             {dueSoonCount > 0 && <span className="text-amber-400"> · {dueSoonCount} no prazo curto</span>}
+          </p>
+          <p className="text-muted-foreground/60 font-mono text-[11px] mt-1">
+            O número no menu ({overdueCount + dueSoonCount}) conta só o que pede ação: vencido ou vencendo em até 3 dias.
           </p>
         </div>
         <div className="flex items-center gap-2">
