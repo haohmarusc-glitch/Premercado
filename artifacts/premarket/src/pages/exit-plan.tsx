@@ -124,7 +124,13 @@ function ItemRow({
           <span className="font-mono font-bold text-sm text-foreground">{item.ticker}</span>
           <span className="text-xs">{item.action}</span>
           {tech?.price != null && (
-            <span className="font-mono text-[11px] text-muted-foreground">
+            // O horário da cotação fica no title: o preço ao vivo e o preço
+            // citado na justificativa são de instantes diferentes, e agora os
+            // dois dizem de quando são.
+            <span
+              className="font-mono text-[11px] text-muted-foreground"
+              title={ctx.fetchedAt ? `Cotação de ${new Date(ctx.fetchedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` : undefined}
+            >
               US$ {tech.price.toFixed(2)}
               {tech.changePct != null && (
                 <span className={tech.changePct >= 0 ? "text-emerald-400" : "text-red-400"}>
@@ -150,19 +156,24 @@ function ItemRow({
       </div>
 
       {/*
-        A justificativa vem com a data de quando foi escrita.
+        A justificativa vem com a data E A HORA de quando foi escrita.
 
         O preço ao vivo aparece no cabeçalho do item, e o rationale cita o
         preço do momento em que o plano foi feito. Em 21/09/2026 a tela
         mostrava MRVL a US$ 255,49 com o texto falando de US$ 254,81, e ADI a
         US$ 380,08 com o texto em US$ 379,57 -- os dois certos, de instantes
-        diferentes, e nada na tela dizia isso. Dois números quase iguais e
-        sem data se leem como erro de um deles.
+        diferentes, e nada na tela dizia isso.
+
+        A hora entrou depois: só a data não separa dois preços do MESMO dia,
+        que é justamente o caso mais comum (a reavaliação roda hoje e o plano
+        é relido hoje). Na AVGO, US$ 360,86 na tela contra US$ 361,05 no
+        texto, ambos de 21/09 -- com "(texto de 21/09)" a divergência
+        continuava sem explicação.
       */}
       <p className="text-xs text-muted-foreground/90">
         {item.rationale}{" "}
         <span className="text-muted-foreground/60 whitespace-nowrap" title={`Justificativa escrita em ${new Date(item.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`}>
-          (texto de {new Date(item.updatedAt).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" })})
+          (texto de {new Date(item.updatedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })})
         </span>
       </p>
 

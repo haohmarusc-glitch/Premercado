@@ -118,6 +118,16 @@ export function useTacticalContext(tickers: string[]) {
     technicalsByTicker,
     newsByTicker,
     alertsByTicker,
+    /**
+     * Quando os preços/técnicos desta leitura chegaram (epoch ms, 0 se ainda
+     * não chegaram). Existe para a tela poder DATAR o preço que mostra.
+     *
+     * O Plano de Saída exibe este preço ao lado de um texto que cita o preço
+     * de quando o plano foi escrito. Em 21/09/2026 a AVGO apareceu a US$
+     * 360,86 na tela contra US$ 361,05 no texto -- os dois certos, do mesmo
+     * dia, e nada dizia de que instante era cada um.
+     */
+    fetchedAt: technicalsQ.dataUpdatedAt,
     isLoading: enabled && (technicalsQ.isLoading || newsQ.isLoading || alertsQ.isLoading),
   };
 }
