@@ -2558,3 +2558,37 @@ def test_a_janela_vem_do_summary_e_nao_dos_eventos():
 ])
 def test_frase_que_nao_erra_a_atribuicao_passa(frase):
     assert _COD_18 not in _codigos(validar_analise(_texto_completo(frase), _AMC))
+
+
+# ── RVOL confrontado com a razão de volume ──────────────────────────────────
+
+@pytest.mark.parametrize("frase", [
+    # ARM 21/09/2026, verbatim: o incidente que originou a regra
+    "O RVOL está em 8,42 (sinal 'alto'), bem superior ao volumeRatio de 1,22 "
+    "sobre a média de 20 dias — ou seja, o volume do pregão mais recente "
+    "destoa fortemente do padrão intradiário recente.",
+    "O RVOL de 8,42 destoa da razão de volume de 1,22.",
+    "RVOL 8,42 contra razão de volume 1,22: números inconsistentes entre si.",
+    "O volume relativo (8,42) diverge da razão de volume sobre a média de 20 "
+    "dias (1,22).",
+])
+def test_opor_rvol_a_razao_de_volume_e_erro(frase):
+    assert "ANALISE_RVOL_CONTRA_RAZAO_VOLUME" in _codigos(
+        validar_analise(_texto_completo(frase)))
+
+
+@pytest.mark.parametrize("frase", [
+    # os dois lado a lado, sem opor: é a redação correta
+    "O RVOL está em 8,42 e a razão de volume sobre a média de 20 dias, em 1,22.",
+    # citar só um deles nunca cai
+    "O RVOL de 8,42 confirma a intensidade do movimento.",
+    "A razão de volume está em 1,22 sobre a média de 20 dias.",
+    # explicar que se confirmam é exatamente o que a regra quer
+    "O RVOL de 8,42 é coerente com a razão de volume de 1,22: com o pregão em "
+    "curso, um confirma o outro.",
+    # negação da oposição não pode cair
+    "O RVOL de 8,42 não contradiz a razão de volume de 1,22.",
+])
+def test_citar_rvol_e_razao_de_volume_sem_opor_passa(frase):
+    assert "ANALISE_RVOL_CONTRA_RAZAO_VOLUME" not in _codigos(
+        validar_analise(_texto_completo(frase)))
