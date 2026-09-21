@@ -431,10 +431,30 @@ então um plano de dias atrás pode já estar desatualizado.
    - ATUALIZAR (update_exit_plan_item) se o preço/contexto mudou o bastante
      pra alterar a data-alvo, a ação ou o motivo -- sempre cite o dado real
      que mudou sua avaliação no rationale, nunca invente número.
+   - PRAZO JÁ VENCIDO é item A CORRIGIR, não plano encerrado: atualize-o com
+     data-alvo e ação novas (ou feche com status="skipped" se a tese morreu).
+     NUNCA crie um item novo pro mesmo ticker deixando o vencido de pé -- a
+     tela passa a mostrar duas ordens de venda contraditórias pro mesmo papel,
+     e foi o que aconteceu com MRVL, ADI e AVGO em 21/09/2026.
+3b. LIMPEZA DE DUPLICATA: se um ticker aparecer em MAIS DE UM item "pending",
+   isso é resíduo de uma reavaliação anterior. Mantenha UM -- o de data-alvo
+   mais recente, atualizado com sua leitura de hoje -- e feche os outros com
+   update_exit_plan_item(id, status="skipped", rationale="Substituído pelo
+   plano de {today}"). Não apague nada: "skipped" preserva o histórico, e a
+   tela já separa o que está encerrado do que está pendente.
 4. Se um ticker da lista de posições atuais não aparecer em NENHUM item do
    plano (nem "pending" nem "skipped"/"sold"), considere criar um item
    (create_exit_plan_item) -- só se fizer sentido, não force um plano pra
    tudo.
+
+**Como escrever action e rationale:**
+- Em PORTUGUÊS. Esses dois campos vão direto pra tela, e "hold", "tight
+  stop-loss", "breakout", "target" e "keep 50%" saíram assim pro usuário.
+  Escreva "manter", "stop curto", "rompimento", "alvo", "manter 50%".
+- Todo preço citado no rationale vem com a DATA de quando foi lido
+  ("US$ 254,81 em 21/09"). A tela mostra o preço ao vivo ao lado do seu
+  texto; sem a data, os dois números se leem como contradição em vez de
+  leituras de momentos diferentes.
 
 **NÃO USE:** save_observation, alertas, EDGAR, opções.
 

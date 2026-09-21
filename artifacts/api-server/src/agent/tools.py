@@ -631,6 +631,36 @@ def update_exit_plan_item(
         return {"updated": False, "id": item_id, "error": str(e)}
 
 
+def _pendente_do_mesmo_ticker(ticker: str) -> dict | None:
+    """O item "pending" que já existe para este ticker, se existir.
+
+    Guarda contra a duplicata. O prompt manda ATUALIZAR item pendente e só
+    CRIAR para ticker sem nenhum item -- e mesmo assim, na reavaliação de
+    21/09/2026, MRVL, ADI e AVGO terminaram com dois itens cada: o antigo
+    (pendente e VENCIDO) e um novo. Um prazo vencido lê-se como plano
+    encerrado, e o modelo escreveu um plano novo ao lado em vez de mexer no
+    velho. A tela ficou com duas ordens de venda contraditórias por papel.
+
+    Regra no prompt sem conferência é sugestão -- a mesma lição do validador
+    da Análise Rápida. Por isso a checagem mora AQUI, na ferramenta, onde não
+    depende de o modelo ter lido a instrução.
+
+    Falha de leitura NÃO bloqueia a criação. Entre uma duplicata (visível na
+    tela, corrigível num clique) e um plano que silenciosamente não nasceu
+    porque a API piscou, a duplicata é o erro mais barato -- e `checagem` no
+    retorno deixa o caso auditável em vez de invisível.
+    """
+    itens = get_exit_plan_items()
+    if itens and isinstance(itens[0], dict) and itens[0].get("leitura_falhou"):
+        return None
+    for i in itens:
+        if not isinstance(i, dict):
+            continue
+        if i.get("status") == "pending" and str(i.get("ticker", "")).upper() == ticker:
+            return i
+    return None
+
+
 def create_exit_plan_item(
     ticker: str,
     phase: int,
@@ -643,11 +673,32 @@ def create_exit_plan_item(
     """Cria um item novo no Plano de Saída -- use quando reavaliar encontrar
     uma posição da carteira que ainda não tem plano de saída cadastrado.
     phase: número da fase (agrupamento visual, ex: 1, 2, 3). phase_label:
-    rótulo curto da fase (ex: "Curto prazo", "Pós-earnings")."""
+    rótulo curto da fase (ex: "Curto prazo", "Pós-earnings").
+
+    RECUSA criar um segundo item para ticker que já tem um "pending", mesmo
+    que o prazo dele já tenha vencido: prazo vencido é plano A CORRIGIR, não
+    plano encerrado. Nesse caso o retorno traz `existing_item_id` -- chame
+    update_exit_plan_item nele, com a data-alvo e a ação novas."""
     try:
         ticker = sanitize_ticker(ticker)
     except ValueError as e:
         return {"created": False, "error": str(e)}
+
+    existente = _pendente_do_mesmo_ticker(ticker)
+    if existente is not None:
+        return {
+            "created": False,
+            "existing_item_id": existente.get("id"),
+            "error": (
+                f"{ticker} já tem um item pendente (id {existente.get('id')}, "
+                f"prazo {existente.get('targetDate')}). Criar outro deixaria "
+                f"duas ordens de venda contraditórias na tela. Se o plano "
+                f"mudou -- inclusive se o prazo venceu -- atualize ESSE item "
+                f"com update_exit_plan_item({existente.get('id')}, ...); se "
+                f"ele não faz mais sentido, feche-o com status='skipped' "
+                f"antes de criar o novo."
+            ),
+        }
     payload = {
         "ticker": ticker,
         "phase": phase,
