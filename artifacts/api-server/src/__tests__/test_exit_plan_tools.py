@@ -8,7 +8,25 @@ Rodar (da raiz do repo): pytest artifacts/api-server/src/__tests__/test_exit_pla
 """
 from unittest import mock
 
+import pytest
+
 from agent import tools
+
+
+@pytest.fixture(autouse=True)
+def sem_data_alvo(monkeypatch):
+    """Nenhuma data-alvo, por padrão, em TODO teste deste arquivo.
+
+    `create_exit_plan_item` e `update_exit_plan_item` consultam a data-alvo
+    da carteira antes de escrever (guarda de prazo). Sem este stub cada uma
+    dessas chamadas vira três tentativas de conexão recusada contra
+    localhost:5000 -- 6 segundos por teste, 60 no arquivo.
+
+    O padrão é "não configurada" porque é o caso em que a guarda não opina:
+    quem testa a guarda declara a data que quer, e o resto do arquivo não
+    precisa saber que ela existe.
+    """
+    monkeypatch.setattr(tools, "_data_alvo_da_carteira", lambda: None)
 
 
 class _FakeResponse:
@@ -206,7 +224,10 @@ class TestPromptDaReavaliacao:
 
     def _prompt(self):
         from agent.llm_runtime import build_exit_plan_prompt
-        return build_exit_plan_prompt()
+        # `build_exit_plan_prompt` lê a data-alvo pela API interna; sem o
+        # stub cada chamada vira três tentativas de conexão recusada.
+        with mock.patch.object(tools, "_data_alvo_da_carteira", return_value="2026-10-05"):
+            return build_exit_plan_prompt()
 
     def test_prazo_vencido_e_item_a_corrigir(self):
         # MRVL/ADI/AVGO ganharam um item novo ao lado do vencido.
@@ -227,7 +248,7 @@ class TestPromptDaReavaliacao:
     def test_manda_datar_o_preco_citado(self):
         # A tela mostra o preço ao vivo ao lado do texto; sem data, os dois
         # se leem como contradição (MRVL 255,49 na tela x 254,81 no texto).
-        assert "DATA de quando foi lido" in self._prompt()
+        assert "DATA E HORA" in self._prompt()
 
     def test_manda_limpar_duplicata_existente(self):
         # A guarda em create_exit_plan_item impede duplicata NOVA; as três que
@@ -238,3 +259,115 @@ class TestPromptDaReavaliacao:
         assert "LIMPEZA DE DUPLICATA" in p
         assert "MAIS DE UM item" in p
         assert 'status="skipped"' in p
+
+
+class TestPrazoNaoPassaDaDataAlvo:
+    """O plano não pode vencer depois de o dinheiro sair.
+
+    Incidente (21/09/2026): a reavaliação escreveu para a AVGO prazo
+    09/12/2026 e ação "aguardar catalisador pré-earnings de dezembro", para um
+    usuário cuja data-alvo é 05/10. O prompt não mencionava horizonte nenhum e
+    `get_scenario_status` -- a única ferramenta que conhece a data-alvo -- nem
+    estava em EXIT_PLAN_TOOLS. O modelo não errou a conta: ele nunca soube que
+    havia prazo.
+    """
+
+    def _alvo(self, data="2026-10-05", configured=True):
+        return mock.patch.object(
+            tools, "_data_alvo_da_carteira",
+            return_value=data if configured else None,
+        )
+
+    def test_recusa_criacao_depois_do_alvo(self):
+        with self._alvo(), _sem_plano(), mock.patch.object(tools.requests, "post") as post:
+            r = tools.create_exit_plan_item(
+                ticker="AVGO", phase=1, phase_label="Fase 1", target_date="2026-12-09",
+                action="Aguardar catalisador pré-earnings", rationale="dezembro",
+            )
+        assert r["created"] is False
+        assert "2026-10-05" in r["error"]
+        post.assert_not_called()
+
+    def test_recusa_update_depois_do_alvo(self):
+        with self._alvo(), mock.patch.object(tools.requests, "patch") as patch_:
+            r = tools.update_exit_plan_item(3, target_date="2026-12-09")
+        assert r["updated"] is False
+        assert "2026-10-05" in r["error"]
+        patch_.assert_not_called()
+
+    def test_o_proprio_dia_do_alvo_passa(self):
+        # Fronteira: sair NO dia do resgate é plano válido, não estouro.
+        with self._alvo(), mock.patch.object(tools.requests, "patch",
+                                             return_value=_FakeResponse({"id": 3})):
+            r = tools.update_exit_plan_item(3, target_date="2026-10-05")
+        assert r["updated"] is True
+
+    def test_prazo_anterior_passa(self):
+        with self._alvo(), _sem_plano(), mock.patch.object(
+                tools.requests, "post", return_value=_FakeResponse({"id": 9})):
+            r = tools.create_exit_plan_item(
+                ticker="AVGO", phase=1, phase_label="Fase 1", target_date="2026-10-01",
+                action="Vender", rationale="dentro do prazo",
+            )
+        assert r["created"] is True
+
+    def test_sem_data_alvo_configurada_nao_opina(self):
+        # Sem prazo escolhido pelo usuário, a rota devolve um default --
+        # tratá-lo como compromisso seria inventar um prazo que ninguém deu.
+        with self._alvo(configured=False), _sem_plano(), mock.patch.object(
+                tools.requests, "post", return_value=_FakeResponse({"id": 9})):
+            r = tools.create_exit_plan_item(
+                ticker="AVGO", phase=1, phase_label="Fase 1", target_date="2027-12-09",
+                action="Vender", rationale="sem prazo configurado",
+            )
+        assert r["created"] is True
+
+    def test_update_sem_mexer_na_data_nao_e_barrado(self):
+        # Mudar só a ação/motivo de um item cujo prazo já estava fora não pode
+        # travar: a guarda vale pra data que ESTA chamada escreve.
+        with self._alvo(), mock.patch.object(tools.requests, "patch",
+                                             return_value=_FakeResponse({"id": 3})):
+            r = tools.update_exit_plan_item(3, action="Vender 50%")
+        assert r["updated"] is True
+
+    def test_data_alvo_ilegivel_nao_vira_recusa(self):
+        with mock.patch.object(tools.SESSION, "get", side_effect=OSError("timeout")):
+            assert tools._data_alvo_da_carteira() is None
+        with mock.patch.object(tools.SESSION, "get",
+                               return_value=_FakeResponse({"configured": False, "dataAlvo": "2026-12-31"})):
+            assert tools._data_alvo_da_carteira() is None
+
+
+class TestEstruturaDoItemNoPrompt:
+    def _prompt(self):
+        from agent.llm_runtime import build_exit_plan_prompt
+        with mock.patch.object(tools, "_data_alvo_da_carteira", return_value="2026-10-05"):
+            return build_exit_plan_prompt()
+
+    def test_o_prazo_da_carteira_entra_no_system(self):
+        p = self._prompt()
+        assert "PRAZO DA CARTEIRA: 2026-10-05" in p
+        assert "NENHUM item pode ter data-alvo depois dela" in p
+
+    def test_sem_prazo_configurado_o_prompt_diz_isso(self):
+        from agent.llm_runtime import build_exit_plan_prompt
+        with mock.patch.object(tools, "_data_alvo_da_carteira", return_value=None):
+            p = build_exit_plan_prompt()
+        assert "não configurado" in p
+
+    def test_exige_stop_alvo_e_regra_temporal(self):
+        # O plano da AVGO trazia só "rompimento acima de US$ 370+": gatilho de
+        # entrada, sem alvo de realização e sem o que fazer se nada acontecer.
+        p = self._prompt()
+        for regra in ("STOP:", "ALVO:", "REGRA TEMPORAL:"):
+            assert regra in p, regra
+
+    def test_exige_stop_abaixo_do_gatilho_parcial(self):
+        # "Stop em US$ 350" + "se tocar US$ 340, vender 50%" é impossível: a
+        # US$ 350 a posição já saiu inteira.
+        p = self._prompt()
+        assert "COERÊNCIA ENTRE OS NÍVEIS" in p
+        assert "ABAIXO de todo gatilho de venda parcial" in p
+
+    def test_preco_citado_vem_com_hora(self):
+        assert "DATA E HORA" in self._prompt()

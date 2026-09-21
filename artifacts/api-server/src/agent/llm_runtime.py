@@ -402,9 +402,39 @@ short interest, analistas, alertas, save_observation).
 Limite: no máximo 400 palavras. Seja direto e factual."""
 
 
+def _horizonte_da_carteira() -> str:
+    """O bloco de prazo do prompt, ou o aviso de que não há prazo configurado.
+
+    Incidente (21/09/2026): a reavaliação escreveu para a AVGO prazo
+    09/12/2026 e ação "aguardar catalisador pré-earnings de dezembro", para
+    um usuário cujo dinheiro sai em 05/10. Este prompt não mencionava
+    horizonte nenhum e `get_scenario_status` -- a única ferramenta que
+    conhece a data-alvo -- nem estava em EXIT_PLAN_TOOLS. O modelo não errou
+    a conta: ele nunca soube que havia prazo.
+
+    O prazo entra no SYSTEM, não como ferramenta a consultar: é restrição que
+    vale para TODO item, e ferramenta opcional é ferramenta que às vezes não
+    é chamada.
+    """
+    alvo = t._data_alvo_da_carteira()
+    if not alvo:
+        return (
+            "PRAZO DA CARTEIRA: não configurado no Painel de Cenários. Trabalhe pelo\n"
+            "horizonte que cada tese pedir, e diga no motivo qual horizonte você assumiu."
+        )
+    return f"""PRAZO DA CARTEIRA: {alvo}. É quando o dinheiro sai -- data-alvo do Painel de
+Cenários, escolhida pelo usuário. NENHUM item pode ter data-alvo depois dela:
+plano que vence depois do resgate não pode ser executado. Tese que precisa de
+mais tempo que isso não vira prazo maior -- vira plano de sair dentro do prazo
+mesmo assim, com o motivo dizendo o que se perde. Catalisador posterior a
+{alvo} (earnings, evento, sazonalidade) NÃO sustenta uma espera: cite-o, se
+for o caso, como risco de estar vendendo antes dele."""
+
+
 def build_exit_plan_prompt() -> str:
     today = _today_brt_str()
     return f"""Você é um analista de ações reavaliando o PLANO DE SAÍDA da carteira em {today}.
+{_horizonte_da_carteira()}
 Posições atuais da carteira (fonte: lotes reais, não campo cacheado): {", ".join(config.PORTFOLIO_TICKERS) or "(nenhuma)"}.
 Note que ETF de caixa (ex.: SGOV) fica de fora desta lista de propósito -- não
 tem catalisador direcional pra plano de saída, não é item faltando.
@@ -447,14 +477,27 @@ então um plano de dias atrás pode já estar desatualizado.
    (create_exit_plan_item) -- só se fizer sentido, não force um plano pra
    tudo.
 
+**O que um item precisa dizer (sem isso ele não é plano, é opinião):**
+- STOP: o preço em que a tese está errada e a posição sai.
+- ALVO: o preço de realização dentro do prazo. "Romper US$ 370+" não é alvo
+  -- é gatilho de entrada; o alvo é onde se vende.
+- REGRA TEMPORAL: o que fazer se nada acontecer ("se não romper US$ 369 até
+  28/09, reconsiderar").
+- COERÊNCIA ENTRE OS NÍVEIS, e esta falha é fácil de cometer: o stop fica
+  ABAIXO de todo gatilho de venda parcial. "Stop em US$ 350" junto de "se
+  tocar US$ 340, vender 50%" é impossível -- a US$ 350 a posição já saiu
+  inteira, e os US$ 340 nunca chegam a ser consultados. Releia os preços do
+  seu próprio item em ordem antes de gravar.
+
 **Como escrever action e rationale:**
 - Em PORTUGUÊS. Esses dois campos vão direto pra tela, e "hold", "tight
   stop-loss", "breakout", "target" e "keep 50%" saíram assim pro usuário.
   Escreva "manter", "stop curto", "rompimento", "alvo", "manter 50%".
-- Todo preço citado no rationale vem com a DATA de quando foi lido
-  ("US$ 254,81 em 21/09"). A tela mostra o preço ao vivo ao lado do seu
-  texto; sem a data, os dois números se leem como contradição em vez de
-  leituras de momentos diferentes.
+- Todo preço citado no rationale vem com DATA E HORA de quando foi lido
+  ("US$ 254,81 em 21/09 13h40"). A tela mostra o preço ao vivo ao lado do seu
+  texto; sem o horário, dois preços do MESMO dia (US$ 360,86 na tela, US$
+  361,05 no texto) se leem como contradição em vez de leituras de momentos
+  diferentes.
 
 **NÃO USE:** save_observation, alertas, EDGAR, opções.
 

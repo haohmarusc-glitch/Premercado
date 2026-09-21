@@ -604,7 +604,14 @@ def update_exit_plan_item(
     (padrão), "skipped" (o ticker saiu da carteira ou o plano deixou de fazer
     sentido -- não confundir com "sold", que afirma que ESTE plano causou a
     venda, o que muitas vezes não dá pra confirmar) ou "sold" (só quando o
-    plano de fato foi executado)."""
+    plano de fato foi executado).
+
+    RECUSA target_date depois da data-alvo do Painel de Cenários -- ver
+    _prazo_estoura_o_alvo."""
+    estouro = _prazo_estoura_o_alvo(target_date)
+    if estouro:
+        return {"updated": False, "id": item_id, "error": estouro}
+
     payload = {
         k: v
         for k, v in {
@@ -629,6 +636,59 @@ def update_exit_plan_item(
         return {"updated": True, "id": item_id, "item": r.json()}
     except Exception as e:
         return {"updated": False, "id": item_id, "error": str(e)}
+
+
+def _data_alvo_da_carteira() -> str | None:
+    """A data-alvo do Painel de Cenários -- o dia em que o dinheiro sai.
+
+    None quando o usuário não configurou (a rota devolve um default nesse
+    caso, e usar esse default como prazo seria inventar um compromisso que
+    ninguém assumiu).
+
+    Incidente (21/09/2026): a reavaliação escreveu para a AVGO um plano com
+    prazo 09/12/2026 e ação "aguardar catalisador pré-earnings de dezembro",
+    para um usuário cujo dinheiro sai em 05/10. O prompt do Plano de Saída
+    não mencionava horizonte NENHUM, e `get_scenario_status` -- a ferramenta
+    que conhece a data-alvo -- nem estava na lista desta rodada. O modelo não
+    errou a conta: ele nunca soube que havia prazo.
+    """
+    try:
+        r = SESSION.get(
+            f"{_api_url()}/api/scenario-alert-settings",
+            headers=_internal_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        cfg = r.json()
+    except Exception:
+        # Mesmo fail-open do resto: sem a data, a guarda não opina.
+        return None
+    if not cfg.get("configured"):
+        return None
+    alvo = cfg.get("dataAlvo")
+    return str(alvo) if alvo else None
+
+
+def _prazo_estoura_o_alvo(target_date: str | None) -> str | None:
+    """A mensagem de recusa, ou None quando o prazo cabe.
+
+    Comparação lexicográfica porque as duas datas são YYYY-MM-DD -- formato
+    em que ordem de string e ordem cronológica são a mesma coisa. Data
+    malformada não vira recusa: quem valida formato é a API, e inventar um
+    segundo validador aqui só criaria duas respostas para o mesmo erro.
+    """
+    if not target_date or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+        return None
+    alvo = _data_alvo_da_carteira()
+    if not alvo or target_date <= alvo:
+        return None
+    return (
+        f"prazo {target_date} passa da data-alvo da carteira ({alvo}), que é "
+        f"quando o dinheiro sai. Plano que vence depois disso não pode ser "
+        f"executado. Use uma data até {alvo} -- se a tese precisa de mais "
+        f"tempo que isso, o plano é sair dentro do prazo mesmo assim, e o "
+        f"motivo deve dizer o que se perde com isso."
+    )
 
 
 def _pendente_do_mesmo_ticker(ticker: str) -> dict | None:
@@ -683,6 +743,10 @@ def create_exit_plan_item(
         ticker = sanitize_ticker(ticker)
     except ValueError as e:
         return {"created": False, "error": str(e)}
+
+    estouro = _prazo_estoura_o_alvo(target_date)
+    if estouro:
+        return {"created": False, "error": f"{ticker}: {estouro}"}
 
     existente = _pendente_do_mesmo_ticker(ticker)
     if existente is not None:
