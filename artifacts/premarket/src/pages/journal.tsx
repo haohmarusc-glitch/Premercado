@@ -23,7 +23,8 @@ interface TradeJournalEntry {
 
 async function fetchJournal(): Promise<TradeJournalEntry[]> {
   const r = await fetch("/api/journal", { credentials: "include" });
-  if (!r.ok) throw new Error("Failed to fetch");
+  // Ver a nota em watchlist.tsx: "Failed to fetch" é a frase do navegador.
+  if (!r.ok) throw new Error(`Falha ao carregar o diário (${r.status})`);
   return r.json();
 }
 

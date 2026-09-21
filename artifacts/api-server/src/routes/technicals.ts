@@ -68,7 +68,7 @@ router.get("/technicals", async (req, res): Promise<void> => {
     res.json(data);
   } catch (err) {
     logger.error({ err }, "Failed to fetch technicals");
-    res.status(500).json({ error: "Failed to fetch technicals" });
+    res.status(500).json({ error: "Falha ao calcular os indicadores técnicos" });
   }
 });
 

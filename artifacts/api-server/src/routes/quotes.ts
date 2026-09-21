@@ -76,14 +76,14 @@ router.get("/fx/usdbrl", async (_req, res): Promise<void> => {
     const data = (await fetchQuotes(["BRL=X"])) as Array<{ price?: number | null }>;
     const rate = data[0]?.price;
     if (rate == null || rate <= 0) {
-      res.status(502).json({ error: "FX rate unavailable" });
+      res.status(502).json({ error: "Cotação do dólar indisponível" });
       return;
     }
     fxCache = { rate, fetchedAt: now };
     res.json(GetFxUsdBrlResponse.parse({ rate }));
   } catch (err) {
     logger.error({ err }, "Failed to fetch USDBRL rate");
-    res.status(500).json({ error: "Failed to fetch FX rate" });
+    res.status(500).json({ error: "Falha ao obter a cotação do dólar" });
   }
 });
 
@@ -122,7 +122,7 @@ router.get("/tickers/quotes", async (req, res): Promise<void> => {
     res.json(GetTickerQuotesResponse.parse(data));
   } catch (err) {
     logger.error({ err }, "Failed to fetch ticker quotes");
-    res.status(500).json({ error: "Failed to fetch quotes" });
+    res.status(500).json({ error: "Falha ao obter as cotações" });
   }
 });
 
