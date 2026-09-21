@@ -222,7 +222,14 @@ MAX_DADOS_CHARS = 14_000
 #                 (valuation) juntos e concluiu que a diferença era espaço EXTRA
 #                 de alta. Virou tese de compra sobre dois números incompatíveis.
 #   semântica     R1/R2/S1/S2 descritos como "zona de defesa"; run-up pós-balanço
-#                 comentado no futuro ("chega esticado ao balanço").
+#                 comentado no futuro ("chega esticado ao balanço"). ARM
+#                 21/09/2026 -- rvol 8,42 e volumeRatio 1,22 lidos como
+#                 contradição ("destoa fortemente (...) algo a acompanhar antes
+#                 de tirar conclusões sobre convicção"), num pregão de 42
+#                 minutos. Medem coisas diferentes: 1,22 vez um dia INTEIRO
+#                 médio em 42 minutos é o que PRODUZ rvol 8,4 -- um confirma o
+#                 outro. A análise transformou a confirmação de volume que o
+#                 salto de +12,11% precisava em motivo de desconfiança.
 #   tamanho       2500 e 4500 tokens cortados no mesmo ponto: o modelo escrevia
 #                 até o teto porque o limite estava no ÚLTIMO item da lista.
 SYSTEM = (
@@ -298,10 +305,12 @@ SYSTEM = (
     "0,92%. Os outros múltiplos são razões, sem unidade — não use %.\n"
     "- `multiplos_indisponiveis` é o que NÃO existe, com o motivo escrito. "
     "Não estime, não deduza dos outros, não descreva como se tivesse vindo.\n"
-    "- `rvolSignal` igual a `indefinido_abertura`: o pregão tem menos de 30 "
-    "minutos e o RVOL está inflado pelo leilão de abertura. Não conclua nada "
-    "sobre força compradora ou realização a partir dele; se mencionar, diga que "
-    "ainda não é conclusivo.\n"
+    "- RVOL: `rvolSignal` igual a `indefinido_abertura` é pregão com menos de "
+    "30 minutos, com o RVOL inflado pelo leilão — não conclua força compradora "
+    "dele; mencionando, diga que não é conclusivo. E NÃO o confronte com a "
+    "razão de volume: o RVOL compara com o esperado PARA ESTE PONTO da sessão, "
+    "a razão compara com dias INTEIROS, então em pregão aberto a razão é menor "
+    "por construção e um CONFIRMA o outro.\n"
     "- `reacaoEarnings.summary.runup.janela_contem_earnings` igual a true: o "
     "balanço JÁ ocorreu, há `pregoes_desde_earnings` pregões, e o próximo está "
     "distante. Escreva no passado ('reagiu com +X%'), NUNCA no futuro ('chega "
@@ -320,6 +329,8 @@ SYSTEM = (
     "tendência do gráfico, DCF acima do preço com o papel abaixo da MM200.\n"
     "Use só a camada que veio: sem valuation nem alvos, diga em uma linha que a "
     "fundamental não estava disponível e siga — nunca preencha de memória.\n"
+    "Escreva o nome do INDICADOR, nunca o do campo do JSON ('a distância até a "
+    "MM50', não 'o `pctAboveSma50`').\n"
     "NÃO recomende comprar ou vender. Descreva cenários e níveis de "
     "invalidação; a decisão é do leitor. Sem juridiquês e sem disclaimer "
     "genérico no fim — o leitor sabe o que é."

@@ -480,6 +480,36 @@ _DERIVA_VOLATILIDADE = (
 _BETA_VOLATIL_DIRETO = r"\bbeta\b[^.;]{0,80}?(?:mais|menos)\s+vol[áa]til"
 
 
+# ── RVOL confrontado com a razao de volume ─────────────────────────────────
+#
+# Incidente real (ARM, 21/09/2026, 42 minutos de pregao): "O RVOL esta em
+# 8,42 (sinal 'alto'), bem superior ao `volumeRatio` de 1,22 sobre a media de
+# 20 dias -- ou seja, o volume do pregao mais recente DESTOA FORTEMENTE do
+# padrao intradiario recente, algo a acompanhar antes de tirar conclusoes
+# sobre conviccao do movimento".
+#
+# Os dois numeros nao se contradizem: medem coisas diferentes.
+#
+#     rvol         volume contra o esperado PARA ESTE PONTO da sessao,
+#                  ajustado pela curva em U (ver volume_intradiario.py)
+#     volumeRatio  volume de hoje contra a media de 20 dias INTEIROS
+#
+# Com o pregao em curso o segundo e' naturalmente menor, e 1,22 vez um dia
+# inteiro em 42 minutos e' justamente o que PRODUZ rvol 8,4. Um confirma o
+# outro. O texto transformou a confirmacao de volume que o salto de +12,11%
+# precisava em motivo de desconfianca -- inverteu o sinal do indicador.
+_RVOL = r"\brvol\b|volume\s+relativo"
+_RAZAO_VOLUME = r"volumeratio|raz[ãa]o\s+de\s+volume|m[ée]dia\s+de\s+20\s+dias"
+# So' cai quando CONFRONTA os dois. "rvol 8,42 e a razao de volume 1,22"
+# apenas lista, e e' redacao legitima.
+_CONFRONTO = (
+    r"(?:bem\s+)?(?:superior|acima|maior|abaixo|menor|inferior)\s+a[o]?\b|"
+    r"destoa|discrepa\w*|diverg\w*|contrasta\w*|em\s+contraste|"
+    r"contradi\w*|inconsist\w*|(?:ao\s+)?contr[áa]rio\s+d[oa]|"
+    r"n[ãa]o\s+bate|incompat[íi]vel"
+)
+
+
 # ── Significância afirmada sem o campo que a banca ──────────────────────────
 #
 # Incidente real (NVDA, 26/08/2026): "Nota-se uma correlacao forte e
@@ -1107,6 +1137,27 @@ def validar_analise(texto, dados=None) -> list:
             "contra o benchmark (cov/var), não razão de volatilidades — só "
             "quando a correlação é 1 os dois coincidem. A volatilidade está "
             "no próprio payload, em `volAnnual`. "
+            f"Trecho: “{frase.strip()[:120]}”.")
+        break
+
+    # ── 12b. RVOL confrontado com a razão de volume ─────────────────────────
+    #
+    # Os dois medem coisas diferentes (ver o bloco de _RVOL lá em cima): com o
+    # pregão em curso, a razão de volume é naturalmente menor que o RVOL, e um
+    # CONFIRMA o outro. Só cai quando o texto os põe em oposição.
+    for frase in frases(prosa_sa):
+        if not (re.search(_RVOL, frase) and re.search(_RAZAO_VOLUME, frase)):
+            continue
+        if not re.search(_CONFRONTO, frase) or afirmacao_negada(frase, _CONFRONTO):
+            continue
+        add("ERRO", "ANALISE_RVOL_CONTRA_RAZAO_VOLUME",
+            "opõe o RVOL à razão de volume, mas eles não medem a mesma coisa: "
+            "RVOL compara com o esperado PARA ESTE PONTO da sessão (ajustado "
+            "pela curva do dia) e a razão de volume compara com a média de 20 "
+            "dias INTEIROS. Com o pregão em curso o segundo é naturalmente "
+            "menor — negociar 1,2 vez um dia inteiro em 40 minutos é o que "
+            "PRODUZ um RVOL alto. Um confirma o outro; tratá-los como "
+            "divergentes inverte o sinal do indicador. "
             f"Trecho: “{frase.strip()[:120]}”.")
         break
 

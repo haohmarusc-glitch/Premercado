@@ -468,6 +468,8 @@ _REGRAS_QUE_NAO_PODEM_SUMIR = [
     ("upside do DCF tem base própria", "valuation.current_price"),
     ("R1/S1 não são suporte técnico", "bandas estatísticas"),
     ("RVOL no leilão de abertura", "indefinido_abertura"),
+    ("RVOL não se confronta com a razão de volume", "ESTE PONTO da sessão"),
+    ("nome do indicador, não do campo", "nome do INDICADOR"),
     ("balanço já ocorrido vai no passado", "janela_contem_earnings"),
     ("run-up sem o salto do evento", "runup_atual_ex_evento_pct"),
     ("não recomenda comprar ou vender", "NÃO recomende"),
@@ -497,7 +499,23 @@ def test_nenhuma_regra_se_perdeu_na_consolidacao(descricao, marca):
 # Cada uma delas veio de um incidente que este teste não conhece, e encurtar
 # a redação de uma regra sem o contexto que a produziu é o jeito silencioso de
 # lhe tirar os dentes. Abrir espaço assim seria pior do que subir o teto.
-TETO_DO_SYSTEM_CHARS = 5550
+#
+# 21/09/2026: 5550 -> 5850. Classe de erro nova: DOIS campos sobre o mesmo
+# assunto lidos como contraditórios. ARM, 42 minutos de pregão -- "RVOL 8,42
+# (...) bem superior ao volumeRatio de 1,22 (...) destoa fortemente, algo a
+# acompanhar antes de tirar conclusões sobre convicção". Os dois concordam:
+# 1,22 vez um dia INTEIRO em 42 minutos é o que produz RVOL 8,4. O texto virou
+# a confirmação de volume do salto de +12,11% em desconfiança.
+#
+# Os 300 chars compraram duas coisas: a distinção RVOL x razão de volume,
+# CONSOLIDADA dentro do bullet de RVOL que já existia (não é item novo), e uma
+# linha proibindo citar nome de campo do JSON na prosa -- o mesmo texto trazia
+# "o `volumeRatio` de 1,22" e "+18,5% segundo `pctAboveSma50`", e foi ver dois
+# nomes parecidos lado a lado que convidou a comparação errada.
+#
+# A regra também virou checagem de saída (ANALISE_RVOL_CONTRA_RAZAO_VOLUME no
+# validador): prompt pede, validador cobra.
+TETO_DO_SYSTEM_CHARS = 5850
 
 
 def test_o_prompt_nao_volta_a_inchar():
