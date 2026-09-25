@@ -755,6 +755,11 @@ _CHAT_TOOL_NAMES = {
     "get_insider_trades",
     # Acao / estado da carteira (liberadas no chat com guardrails no prompt)
     "get_portfolio_snapshot",
+    # O que JÁ FOI VENDIDO. Sem esta, o chat tinha uma visão da carteira em que
+    # papel vendido não existe: `get_portfolio_snapshot` corta quantidade zero,
+    # e posição liquidada fica exatamente com zero (recomputePosition). O chat
+    # respondia que não havia venda nenhuma -- ver resultado_realizado.py.
+    "resultado_realizado",
     "list_alerts", "create_alert", "delete_alert",
     "get_scenario_status", "get_exit_plan_items",
 }
