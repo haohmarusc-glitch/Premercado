@@ -10,7 +10,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { comRetentativaDeRede, ehFalhaDeRede, ehRespostaNaoJson, mensagemDeFalha } from "../lib/erro-de-rede";
+import {
+  comRetentativaDeRede, ehFalhaDeRede, ehRespostaNaoJson, mensagemDeFalha,
+  mensagemDeFalhaHttp,
+} from "../lib/erro-de-rede";
 
 function erroDe(nome: string, mensagem: string): Error {
   const e = new Error(mensagem);
@@ -149,5 +152,53 @@ describe("nenhuma mensagem nossa imita o erro do navegador", () => {
       }
     }
     expect(achados).toEqual([]);
+  });
+});
+
+// ── O status da resposta muda o que se deve fazer ───────────────────────────
+//
+// Ver o cabeçalho de `mensagemDeFalhaHttp`: em Configurações, TODA falha ao
+// salvar virava "Verifique os campos e tente novamente". Num 403 -- e
+// `PATCH /settings` exige admin, porque a linha de settings é global -- essa
+// frase manda procurar erro onde não tem, e convence o usuário de que o
+// ticker não pode ser adicionado.
+describe("mensagemDeFalhaHttp", () => {
+  const resposta = (status: number, error?: string) => ({ status, data: error ? { error } : null });
+
+  it("403 diz que é permissão, e que os campos estão certos", () => {
+    const m = mensagemDeFalhaHttp(resposta(403, "Admin access required"));
+    expect(m).toContain("permissão");
+    expect(m).toContain("administrador");
+    expect(m).toContain("tentar de novo não resolve");
+    // O que NÃO pode aparecer: o conselho que fez o usuário procurar no
+    // lugar errado.
+    expect(m).not.toContain("Confira os campos");
+  });
+
+  it("401 manda entrar de novo, sem culpar o que foi digitado", () => {
+    const m = mensagemDeFalhaHttp(resposta(401));
+    expect(m).toContain("sessão expirou");
+    expect(m).toContain("nada do que você digitou estava errado");
+  });
+
+  it("400 repassa o motivo que o servidor deu", () => {
+    expect(mensagemDeFalhaHttp(resposta(400, "tickers: array vazio")))
+      .toContain("tickers: array vazio");
+    // Sem detalhe, cai na frase genérica -- aí "confira os campos" é correto.
+    expect(mensagemDeFalhaHttp(resposta(400))).toContain("Confira os campos");
+  });
+
+  it("5xx aponta para o log, não para os campos", () => {
+    const m = mensagemDeFalhaHttp(resposta(500));
+    expect(m).toContain("500");
+    expect(m).toContain("Não é problema nos campos");
+  });
+
+  it("sem status, é a tradução de sempre", () => {
+    const rede = new Error("Failed to fetch");
+    rede.name = "TypeError";
+    expect(mensagemDeFalhaHttp(rede)).toContain("conexão caiu");
+    expect(mensagemDeFalhaHttp(new Error("ticker inválido"))).toBe("ticker inválido");
+    expect(mensagemDeFalhaHttp(null)).toBe("Falha desconhecida");
   });
 });

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { mensagemDeFalhaHttp } from "@/lib/erro-de-rede";
 import { Save, Mail, Clock, Tag, Plus, X, Zap, DollarSign } from "lucide-react";
 
 const PROVIDER_OPTIONS: { value: string; label: string }[] = [
@@ -33,7 +34,7 @@ function formatUsd(v: number | null | undefined): string {
   return `US$ ${v.toFixed(v < 1 ? 4 : 2)}`;
 }
 
-const POPULAR_TICKERS: { symbol: string; name: string }[] = [
+export const POPULAR_TICKERS: { symbol: string; name: string }[] = [
   { symbol: "AAPL", name: "Apple" },
   { symbol: "MSFT", name: "Microsoft" },
   { symbol: "NVDA", name: "Nvidia" },
@@ -75,6 +76,28 @@ const POPULAR_TICKERS: { symbol: string; name: string }[] = [
   { symbol: "BRK.B", name: "Berkshire Hathaway" },
   { symbol: "SPY", name: "S&P 500 ETF" },
   { symbol: "QQQ", name: "Nasdaq ETF" },
+  // ADRs chinesas: a lista tinha 41 símbolos e NENHUMA delas, enquanto
+  // carregava SQ, PYPL e MSTR. Digitar "PDD" não abria sugestão nenhuma, o
+  // que se lê como ticker não suportado (relato de 25/09/2026).
+  { symbol: "PDD", name: "PDD Holdings (Temu/Pinduoduo)" },
+  { symbol: "BABA", name: "Alibaba" },
+  { symbol: "BIDU", name: "Baidu" },
+  { symbol: "NTES", name: "NetEase" },
+  { symbol: "JD", name: "JD.com" },
+  { symbol: "KWEB", name: "ETF internet chinesa" },
+  // Semis e infraestrutura de IA que já estão no default de `tickers` da
+  // própria rota de settings, mas não sugeriam nada ao serem digitados.
+  { symbol: "SNDK", name: "SanDisk" },
+  { symbol: "WDC", name: "Western Digital" },
+  { symbol: "STX", name: "Seagate" },
+  { symbol: "ALAB", name: "Astera Labs" },
+  { symbol: "CRDO", name: "Credo Technology" },
+  { symbol: "ANET", name: "Arista Networks" },
+  { symbol: "VRT", name: "Vertiv" },
+  { symbol: "ADI", name: "Analog Devices" },
+  { symbol: "AOSL", name: "Alpha & Omega Semiconductor" },
+  { symbol: "TXN", name: "Texas Instruments" },
+  { symbol: "SMH", name: "ETF de semicondutores" },
 ];
 
 const schema = z.object({
@@ -117,6 +140,8 @@ function TickerEditor({
   const [input, setInput] = useState("");
   const [activeIdx, setActiveIdx] = useState(-1);
   const [open, setOpen] = useState(false);
+  /** Por que o último Enter não criou um chip. Ver addTicker. */
+  const [aviso, setAviso] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -131,7 +156,23 @@ function TickerEditor({
 
   function addTicker(symbol: string) {
     const ticker = symbol.trim().toUpperCase();
-    if (!ticker || value.includes(ticker)) return;
+    if (!ticker) return;
+    // Duplicata AVISA, não desaparece em silêncio.
+    //
+    // Era `if (!ticker || value.includes(ticker)) return;` -- digitar um ticker
+    // que já está na lista não fazia absolutamente nada: sem chip novo, sem
+    // mensagem, sem o campo limpar. É indistinguível de "este ticker não é
+    // aceito", e é o relato de 25/09/2026 ("não consigo adicionar o PDD") com
+    // a lista já tendo 15 tickers, onde não se enxerga o que já está lá.
+    if (value.includes(ticker)) {
+      setAviso(`${ticker} já está na lista.`);
+      setInput("");
+      setOpen(false);
+      setActiveIdx(-1);
+      inputRef.current?.focus();
+      return;
+    }
+    setAviso(null);
     onChange([...value, ticker]);
     setInput("");
     setOpen(false);
@@ -251,6 +292,23 @@ function TickerEditor({
           ))}
         </div>
       )}
+
+      {aviso && (
+        <p className="mt-1.5 text-xs font-mono text-amber-500" data-testid="aviso-ticker">{aviso}</p>
+      )}
+      {/*
+        A lista de sugestões cobre uma fração dos tickers, então NÃO ter
+        sugestão é o caso normal, não recusa. Sem esta linha, campo que não
+        abre dropdown se lê como "este ticker não é aceito" -- foi por aí que
+        o PDD (ausente de POPULAR_TICKERS, como toda ADR chinesa até hoje)
+        passou por não-suportado em 25/09/2026.
+      */}
+      {open && input.trim() && suggestions.length === 0 && !value.includes(input.trim().toUpperCase()) && (
+        <p className="mt-1.5 text-xs font-mono text-muted-foreground">
+          Sem sugestão para “{input.trim().toUpperCase()}” — a lista de sugestões é curta.
+          Pressione <kbd className="px-1 bg-secondary border border-border rounded text-[10px]">Enter</kbd> para adicionar assim mesmo.
+        </p>
+      )}
     </div>
   );
 }
@@ -308,8 +366,13 @@ export default function Settings() {
           queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
           toast({ title: "Configurações salvas", description: "As alterações entrarão em vigor imediatamente." });
         },
-        onError: () => {
-          toast({ title: "Erro ao salvar", description: "Verifique os campos e tente novamente.", variant: "destructive" });
+        // A mensagem diz o que de fato aconteceu. Era sempre "Verifique os
+        // campos e tente novamente" -- frase que, num 403, manda o usuário
+        // procurar erro onde não tem: esta rota exige admin, porque a linha de
+        // settings é global (tickers, orçamento de IA, e-mail de notificação
+        // valem para o deployment inteiro). Ver mensagemDeFalhaHttp.
+        onError: (erro) => {
+          toast({ title: "Erro ao salvar", description: mensagemDeFalhaHttp(erro), variant: "destructive" });
         },
       },
     );
