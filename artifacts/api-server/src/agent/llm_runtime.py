@@ -644,6 +644,25 @@ Formato da resposta (Markdown):
   declarar EARNINGS_PROXIMO são erros que forçam correção."""
 
 
+def _inventario_de_ferramentas() -> str:
+    """A lista de ferramentas do chat, DERIVADA de CHAT_TOOLS.
+
+    Era escrita à mão no prompt, e por isso envelhecia calada: a ferramenta
+    nova entrava no schema e continuava fora do inventário, então o modelo não
+    sabia que existia. `resultado_realizado` nasceu assim, e a lista de
+    sugestões de ticker em settings.tsx tinha adoecido do mesmo jeito.
+
+    Nome e primeira frase da descrição, nada mais: o schema completo já viaja
+    no mesmo request, e repetir parâmetro aqui seria pagar o token duas vezes.
+    """
+    linhas = []
+    for f in CHAT_TOOLS:
+        desc = str(f.get("description") or "").strip().replace("\n", " ")
+        primeira = desc.split(". ")[0].rstrip(".")
+        linhas.append(f"- {f['name']}: {primeira}." if primeira else f"- {f['name']}")
+    return "\n".join(linhas)
+
+
 def build_chat_prompt() -> str:
     today = _today_brt_str()
     now = _now_brt_str()
@@ -675,25 +694,22 @@ não esteja nessa lista, mesmo que ele tenha aparecido em análises recentes.
 Se o usuário pedir um ticker específico fora da carteira, responda normalmente
 sobre ele, só não o rotule como posição da carteira.
 
-Ferramentas disponíveis:
-- Análise: get_stock_data, get_news, get_technical_indicators, detect_candle_patterns,
-  get_fear_greed_index, get_sector_performance, get_short_interest, get_analyst_ratings,
-  get_options_data, get_geopolitical_news, check_squeeze_setup, get_macro_indicators,
-  get_retail_sentiment, get_fundamentals_valuation, get_insider_trades,
-  get_gamma_exposure (máx 1x/resposta), get_earnings_transcript
-- Carteira / ações: get_portfolio_snapshot (qty, custo, P&L), list_alerts, create_alert,
-  delete_alert, get_scenario_status (chance de empatar), get_exit_plan_items
-  (metas/janelas de venda cadastradas)
+Ferramentas disponíveis (TODAS as do sistema — o schema de cada uma vem junto
+desta mensagem, com os parâmetros):
+{_inventario_de_ferramentas()}
 
 Regras:
 - Responda à pergunta do usuário de forma direta e concisa.
 - Use ferramentas apenas quando necessário. Máximo 6 chamadas por resposta.
-- Preferências de ação: antes de create_alert, chame list_alerts (evite duplicata).
-  No máximo 2 create_alert por resposta; sempre explique o motivo ao usuário.
+- ESCRITA só quando o usuário PEDIR. create_alert, delete_alert,
+  create_exit_plan_item, update_exit_plan_item e save_observation mudam dado
+  real; não os chame por iniciativa própria no meio de uma resposta
+  informativa, e diga o que gravou.
+- Antes de create_alert, chame list_alerts (evite duplicata). No máximo 2
+  create_alert por resposta; sempre explique o motivo.
   delete_alert só com motivo claro (nível superado / obsoleto).
-- NÃO use: save_observation, search_edgar_filings, read_filing,
-  check_market_alerts, detect_sector_contagion, update_exit_plan_item,
-  create_exit_plan_item.
+- get_gamma_exposure: máximo 1x por resposta (cota de 5/dia do provedor).
+- read_filing traz documento inteiro da SEC: peça um, não vários.
 - Formate em Markdown. Seja factual; cite números.
 
 === ESTADO ATUAL (carteira / alertas / cenário) ===
@@ -745,24 +761,33 @@ def _resp_to_history_content(resp) -> list:
 
 # ── Chat tool subset ──────────────────────────────────────────────────────────
 
-_CHAT_TOOL_NAMES = {
-    # Analise
-    "get_stock_data", "get_news", "get_technical_indicators",
-    "detect_candle_patterns", "get_fear_greed_index", "get_sector_performance",
-    "get_short_interest", "get_analyst_ratings", "get_options_data",
-    "get_geopolitical_news", "check_squeeze_setup",
-    "get_macro_indicators", "get_retail_sentiment", "get_fundamentals_valuation",
-    "get_insider_trades",
-    # Acao / estado da carteira (liberadas no chat com guardrails no prompt)
-    "get_portfolio_snapshot",
-    "list_alerts", "create_alert", "delete_alert",
-    "get_scenario_status", "get_exit_plan_items",
-}
-# get_gamma_exposure/get_earnings_transcript (CHAT_ONLY_TOOLS em tools.py)
-# ficam de FORA de t.TOOLS de propósito -- tier grátis de 5 req/dia e 5
-# req/min, respectivamente, estouraria numa varredura automática com vários
-# tickers. Só entram aqui, no Chat, onde o usuário pede um ticker por vez.
-CHAT_TOOLS = [tool for tool in t.TOOLS if tool["name"] in _CHAT_TOOL_NAMES] + t.CHAT_ONLY_TOOLS
+# O chat recebe TODAS as ferramentas. É a única superfície em que isso é certo,
+# e é deliberado.
+#
+# Era uma lista de nomes mantida à mão, e o defeito dela não é uma ferramenta
+# específica que faltava: é que a lista precisava ser editada para cada
+# ferramenta nova, e ninguém lembra. Doze ficaram de fora ao longo do tempo,
+# entre elas `get_earnings_reaction_history` e `get_earnings_calendar` -- justo
+# as que respondem as perguntas mais frequentes deste usuário. O
+# `resultado_realizado` (25/09/2026) nasceu com o mesmo problema: existia,
+# funcionava, e o chat não o via. Mesma família do POPULAR_TICKERS em
+# settings.tsx e do inventário de ferramentas escrito à mão no prompt.
+#
+# Por que o chat pode ter tudo e as outras rodadas não: aqui é uma pessoa
+# pedindo uma coisa por vez, não varredura automática sobre a carteira inteira.
+# Os subconjuntos das rodadas automáticas (premarket, alertas, plano de saída,
+# veredito) continuam estreitos justamente porque lá o custo se multiplica pelo
+# número de tickers sem ninguém olhando.
+#
+# Custo medido: as 12 que faltavam somam ~2.500 tokens de schema, +62% sobre os
+# ~4.100 de hoje. O bloco de tools vai com `cache_control` (ver
+# provider._call_anthropic), então isso é uma escrita de cache por sessão e
+# leituras a ~10% do preço depois -- não 2.500 tokens novos por mensagem.
+#
+# CHAT_ONLY_TOOLS (get_gamma_exposure, get_earnings_transcript) fica FORA de
+# t.TOOLS de propósito: tier grátis de 5 req/dia e 5 req/min estouraria numa
+# varredura automática. Só entra aqui.
+CHAT_TOOLS = list(t.TOOLS) + list(t.CHAT_ONLY_TOOLS)
 
 # Subconjunto para a varredura rápida intradiária. O prompt do premarket já
 # proíbe as demais ferramentas; aqui cortamos de fato o schema delas do request,

@@ -23,6 +23,7 @@ from .backtest import run_backtest as _run_backtest
 from .cache import cached
 from .http_retry import SESSION
 from .portfolio_snapshot import get_portfolio_snapshot
+from .resultado_realizado import resultado_realizado
 from .security import mask_sensitive_data, sanitize_for_llm, sanitize_ticker, sanitize_url
 from .volume_intradiario import barras_da_sessao, rvol_da_sessao
 
@@ -2816,10 +2817,13 @@ TOOLS = [
     {
         "name": "get_portfolio_snapshot",
         "description": (
-            "Snapshot das posições abertas da carteira: quantidade, custo médio, "
+            "Snapshot das posições ABERTAS da carteira: quantidade, custo médio, "
             "investido e (por padrão) preço atual + P&L não realizado. Use quando "
             "o usuário perguntar sobre a carteira, patrimônio, quanto tem em um "
-            "ticker ou resultado não realizado."
+            "ticker ou resultado não realizado. "
+            "NÃO devolve papel já vendido: posição zerada sai daqui (quantidade 0). "
+            "Para o que foi vendido, lucro realizado ou preço de compra histórico, "
+            "use resultado_realizado."
         ),
         "input_schema": {
             "type": "object",
@@ -2828,6 +2832,40 @@ TOOLS = [
                     "type": "boolean",
                     "description": "True = preço ao vivo + P&L. False = só qty/custo.",
                     "default": True,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "resultado_realizado",
+        "description": (
+            "Lucro REALIZADO por ticker (vendas já fechadas), do maior para o "
+            "menor, com o menor e o maior preço pago em cada papel. Use sempre "
+            "que a pergunta for sobre o que JÁ FOI VENDIDO, lucro ou prejuízo "
+            "realizado, quais papéis deram mais dinheiro, ou preço de compra "
+            "histórico. get_portfolio_snapshot não serve para isso: papel "
+            "totalmente vendido tem quantidade zero e não aparece lá. "
+            "Lote que não dá para calcular (sem preço de compra ou de venda) vem "
+            "em lotesIncomputaveis com o motivo -- se houver, diga que a soma "
+            "daquele ticker está incompleta, nunca some por cima."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "top": {
+                    "type": "integer",
+                    "description": "Quantos tickers no ranking (0 = todos).",
+                    "default": 7,
+                },
+                "incluir_simulado": {
+                    "type": "boolean",
+                    "description": (
+                        "False (padrão) = só dinheiro real. Posição simulada "
+                        "somada ao real inflaria o lucro com dinheiro que "
+                        "ninguém recebeu."
+                    ),
+                    "default": False,
                 },
             },
             "required": [],
@@ -3490,6 +3528,7 @@ DISPATCH = {
     "read_filing": read_filing,
     "save_observation": save_observation,
     "get_portfolio_snapshot": get_portfolio_snapshot,
+    "resultado_realizado": resultado_realizado,
     "list_alerts": list_alerts,
     "create_alert": create_alert,
     "delete_alert": delete_alert,
