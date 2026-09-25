@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   decidirDisparo, assuntoDoAlertaComposto, avaliarCondicoes, COOLDOWN_MS,
   type AlertaParaDecisao, type Condicao, type RetratoDoTicker,
-} from "../alert-conditions";
+} from "@workspace/alertas";
 
 const HOJE = "2026-09-25";
 const AGORA = new Date("2026-09-25T18:00:00Z"); // 14:00 ET, pregão em curso

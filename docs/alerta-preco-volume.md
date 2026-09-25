@@ -2,8 +2,8 @@
 
 Projeto: **Premercado** — página `/alerts` (Alertas de Preço) e `/chat`.
 
-Estado desta especificação: **partes 1 a 4 entregues**, 5 pendente (ver
-"Onde isto está" no fim).
+Estado desta especificação: **entregue**. Ver "Onde isto está" no fim para
+o mapa de arquivos e as divergências deliberadas.
 
 ## Contexto
 
@@ -165,9 +165,13 @@ Corpo: condições atendidas com valores, nota/origem, link para
 - [x] E-mail no formato `[Premercado] AVGO — confirmação: preço 366,20 > 365 e
       RVOL 1,35x > 1,2x`, com nota/origem e link para a Análise Rápida.
       (`assuntoDoAlertaComposto`, em `decidir-disparo.test.ts`)
-- [ ] UI de `/alerts` com "+ Adicionar condição" e Nota/Origem.
-- [ ] Botão no chat pré-preenche AVGO / preço > 365 / RVOL > 1,2 a partir da
-      resposta de 25/09/2026.
+- [x] UI de `/alerts` com "+ Adicionar condição (E)", Nota/Origem, "avaliar no
+      fechamento", "disparar uma vez", e o valor atual de cada condição na lista
+      — saindo do MESMO avaliador que o checker usa. (`alerts.tsx`)
+- [x] Botão no chat pré-preenche AVGO / preço > 365 / RVOL > 1,2 a partir da
+      resposta de 25/09/2026. (`monitorar-do-chat.test.ts`)
+- [x] O exemplo de bloco JSON do prompt é lido DO prompt pelo teste do parser —
+      prompt e parser não podem divergir em silêncio.
 
 ## Onde isto está
 
@@ -177,7 +181,29 @@ Corpo: condições atendidas com valores, nota/origem, link para
 | 2. fonte do RVOL | `agent/volume_intradiario.py`, `get_technicals.py`, `tools.py`, `lib/timezone.ts`, `premarket/src/lib/indicators.ts` | entregue |
 | 3. schema + migração + contratos | `lib/db/src/schema/premarket.ts`, `lib/db/migrations/0039_*.sql`, `api-server/src/lib/ensure-schema.ts`, `lib/api-spec/openapi.yaml`, `lib/api-zod`, `lib/api-client-react`, `api-server/src/routes/alerts.ts` | entregue |
 | 4. checker + e-mail | `api-server/src/lib/alert-checker.ts`, `lib/mailer.ts`, `lib/timezone.ts` | entregue |
-| 5. UI + botão do chat | `premarket/src/pages/alerts.tsx`, `pages/chat.tsx` | pendente |
+| 5. UI + botão do chat | `premarket/src/pages/alerts.tsx`, `pages/chat.tsx`, `premarket/src/lib/monitorar-do-chat.ts`, `agent/llm_runtime.py` | entregue |
+
+### O avaliador é um pacote compartilhado
+
+`lib/alertas` (`@workspace/alertas`), no mesmo padrão de `lib/scenario-math`, que
+já é usado pelo servidor e pela tela. A linha
+`preço 351,05 / 365 ❌ · RVOL 0,89 / 1,2 ❌` da tela sai do mesmo
+`avaliarCondicoes` que decide o disparo e do mesmo `descreverCondicoes` que
+escreve o assunto do e-mail. Uma segunda versão no frontend poderia mostrar ✅
+num alerta que o checker não vai disparar — e ninguém falharia.
+
+### O botão do chat não cria alerta
+
+Ele leva para `/alerts` com o formulário preenchido. A extração por texto é
+palpite sobre linguagem natural; um palpite que virasse alerta automático
+mandaria e-mail sobre um nível que o agente nunca recomendou. O bloco JSON do
+agente tem precedência sobre o texto, e o texto é a rede para as respostas que
+já estão no histórico.
+
+O defeito que só o texto REAL revelou: o agente escreve o nível em negrito
+(`acima de **$365-370**`), e um regex ancorado em "acima de" seguido de `$` ou
+dígito não achava nada. Casos escritos à mão sem asterisco passavam. Um extrator
+testado só com entrada sintética concorda consigo mesmo.
 
 ### Sobre a migração: não há backfill
 
@@ -209,6 +235,6 @@ Alertas que já existem: **comportamento inalterado**. Eles têm `conditions`
 vazio, caem no mesmo caminho de antes, e os testes fixam isso (incluindo que o
 guarda de RVOL não os afeta).
 
-Alertas compostos: **funcionam de ponta a ponta** — são criados pela API,
-avaliados pelo checker a cada 5 minutos e mandam e-mail. O que falta é a tela:
-até a parte 5, criá-los exige um POST na API.
+Alertas compostos: **funcionam de ponta a ponta** — criados pela tela ou pelo
+botão do chat, avaliados pelo checker a cada 5 minutos, com e-mail que leva os
+números no assunto.

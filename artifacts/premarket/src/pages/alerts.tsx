@@ -20,7 +20,19 @@ import {
   Clock, ChevronDown, ChevronUp, History,
 } from "lucide-react";
 import { useGetTickerQuotes, getGetTickerQuotesQueryKey } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+// O MESMO avaliador que o checker usa para decidir o disparo e que o e-mail usa
+// para escrever o assunto. Ele mora em lib/alertas justamente para não existir
+// uma segunda versão aqui: "preço 351,05 / 365 ❌ · RVOL 0,89 / 1,2 ❌" na tela e
+// a decisão no servidor têm de ser a mesma conta, senão a tela promete um
+// disparo que o checker não vai fazer.
+import {
+  avaliarCondicoes, condicoesDoAlerta, descreverCondicoes, validarCondicoes,
+  INDICADORES_DE_CONDICAO, INDICADORES_SEM_NIVEL, NOME_DO_INDICADOR,
+  type Condicao, type IndicadorDeCondicao, type RetratoDoTicker,
+} from "@workspace/alertas";
+import { lerCondicoesDaUrl } from "@/lib/monitorar-do-chat";
 
 const CONDITIONS = [
   { key: "above", label: "Sobe acima de", icon: TrendingUp, color: "text-green-400" },
@@ -57,7 +69,16 @@ export function indicatorBadgeLabel(alert: {
   thresholdPrice?: number | null;
   thresholdPct?: number | null;
   thresholdValue?: number | null;
+  conditions?: unknown;
 }) {
+  // Alerta composto grava indicator="price" sem threshold nenhum, porque o
+  // schema exige as colunas antigas. Cair no ramo de preço aqui faria a etiqueta
+  // dizer "↑ acima de +0%" -- um número que ninguém escolheu, ao lado da linha
+  // que mostra as condições de verdade.
+  if (Array.isArray(alert.conditions) && alert.conditions.length > 0) {
+    const n = alert.conditions.length;
+    return n === 1 ? "1 condição" : `${n} condições (E)`;
+  }
   const dir = alert.condition === "above" ? "↑ acima de" : "↓ abaixo de";
   switch (alert.indicator) {
     case "rsi":
@@ -173,7 +194,90 @@ export default function Alerts() {
   const [notifyEmail, setNotifyEmail] = useState("");
   const effectiveNotifyEmail = notifyEmail || user?.email || "";
 
+  // Modo composto: a lista guarda TODAS as condições, não só as extras.
+  //
+  // A alternativa -- primeira condição nos campos antigos e o resto numa lista
+  // -- cria um estado que não dá para representar: um alerta só de RVOL não tem
+  // primeira condição nos campos de preço/RSI, e o formulário ficaria pedindo um
+  // número que o alerta não usa. Lista vazia = modo simples, com os campos de
+  // sempre; lista não vazia = modo composto, e os campos de sempre saem de cena.
+  const [condicoes, setCondicoes] = useState<Condicao[]>([]);
+  const composto = condicoes.length > 0;
+  const [note, setNote] = useState("");
+  const [confirmAtClose, setConfirmAtClose] = useState(false);
+  const [fireOnce, setFireOnce] = useState(false);
+
+  /** A condição que os campos de sempre descrevem agora. */
+  function condicaoDoFormulario(): Condicao | null {
+    if (indicator === "price") {
+      const bruto = alertMode === "price" ? thresholdPrice : thresholdPct;
+      const value = parseFloat(bruto);
+      return {
+        indicator: alertMode === "price" ? "price" : "changePct",
+        op: condition,
+        value: Number.isFinite(value) ? value : null,
+      };
+    }
+    if (indicator === "rsi") {
+      const value = parseFloat(thresholdValue);
+      return { indicator: "rsi14", op: condition, value: Number.isFinite(value) ? value : null };
+    }
+    if (indicator === "macd" || indicator === "sma20" || indicator === "sma50") {
+      return { indicator, op: condition, value: null };
+    }
+    return null;
+  }
+
+  function adicionarCondicao() {
+    // A primeira vez semeia a lista com o que os campos já dizem, para o clique
+    // não jogar fora o que o usuário acabou de digitar.
+    const base = composto ? condicoes : [condicaoDoFormulario()].filter((c): c is Condicao => !!c);
+    setCondicoes([...base, { indicator: "rvol", op: "above", value: 1.2 }]);
+  }
+
   const availableSymbols = quotes?.map((q) => q.symbol) ?? [];
+
+  // Indicadores para mostrar o valor ATUAL de cada condição na lista.
+  //
+  // Só para os tickers que têm condição não-preço: `/api/technicals` roda um
+  // subprocesso Python, e a fila dele é a MESMA que o checker de alertas usa
+  // (python-queue.ts descarta o ciclo do checker quando a fila não drenou). Uma
+  // chamada por visita, no máximo a cada 5 minutos, é comparável à cadência do
+  // próprio checker; buscar a cada foco de janela custaria ciclos de alerta.
+  const simbolosComIndicador = [...new Set(
+    (alerts ?? [])
+      .filter((a) => condicoesDoAlerta(a).some((c) => c.indicator !== "price" && c.indicator !== "changePct"))
+      .map((a) => a.symbol),
+  )].sort();
+
+  const { data: tecnicos } = useQuery({
+    queryKey: ["technicals-alertas", simbolosComIndicador.join(",")],
+    enabled: simbolosComIndicador.length > 0,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const qs = `?tickers=${encodeURIComponent(simbolosComIndicador.join(","))}`;
+      const r = await fetch(`/api/technicals${qs}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Falha ao buscar indicadores");
+      const json = await r.json() as { items?: RetratoDoTicker[] };
+      return json.items ?? [];
+    },
+  });
+
+  /** O retrato do ticker agora, das duas fontes — igual ao que o checker monta. */
+  function retratoDe(symbol: string): RetratoDoTicker {
+    const q = quotes?.find((x) => x.symbol === symbol);
+    const t = tecnicos?.find((x) => x.ticker === symbol);
+    return {
+      ...(t ?? { ticker: symbol }),
+      ticker: symbol,
+      // Preço da cotação tem precedência, como no checker: a série diária dos
+      // técnicos passa por cache, e os dois números não podem discordar entre a
+      // tela e o disparo.
+      price: q?.price ?? t?.price ?? null,
+      changePct: q?.changePct ?? t?.changePct ?? null,
+    };
+  }
 
   const search = useSearch();
   useEffect(() => {
@@ -185,11 +289,84 @@ export default function Alerts() {
       setAlertMode("price");
       setThresholdPrice(prefill.price);
     }
+
+    // Pré-preenchimento vindo do botão "Criar alerta" do chat. A PRIMEIRA
+    // condição entra nos campos do formulário de sempre (para o usuário poder
+    // editá-la ali) e o resto vira `extras`. Nada é criado: o usuário revisa e
+    // confirma, porque a extração do texto do chat é palpite sobre linguagem
+    // natural -- ver lib/monitorar-do-chat.ts.
+    const { conditions, note: notaDaUrl } = lerCondicoesDaUrl(search);
+    if (notaDaUrl) setNote(notaDaUrl);
+    if (conditions.length === 1) {
+      // Uma condição só cabe nos campos de sempre, e é onde o usuário espera
+      // poder editá-la.
+      const [c] = conditions;
+      setCondition(c.op);
+      if (c.indicator === "price") { setIndicator("price"); setAlertMode("price"); setThresholdPrice(String(c.value)); }
+      else if (c.indicator === "changePct") { setIndicator("price"); setAlertMode("pct"); setThresholdPct(String(c.value)); }
+      else if (c.indicator === "rsi14") { setIndicator("rsi"); setThresholdValue(String(c.value)); }
+      else setCondicoes(conditions as Condicao[]);
+    } else if (conditions.length > 1) {
+      setCondicoes(conditions as Condicao[]);
+    }
   }, [search]);
+
+  /** Campos que todo alerta manda, composto ou não. */
+  function camposComuns() {
+    return {
+      ...(note.trim() ? { note: note.trim() } : {}),
+      ...(confirmAtClose ? { confirmAtClose: true } : {}),
+      ...(fireOnce ? { fireOnce: true } : {}),
+    };
+  }
+
+  function limparFormulario() {
+    setSymbol("");
+    setThresholdPct(""); setThresholdPrice(""); setThresholdValue("");
+    setCondicoes([]); setNote(""); setConfirmAtClose(false); setFireOnce(false);
+  }
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!symbol) return;
+
+    if (composto) {
+      // `validarCondicoes` é a MESMA função que a rota roda antes do INSERT.
+      // Validar aqui não substitui o servidor -- é para o usuário ver o erro no
+      // formulário, com o campo à vista, em vez de num toast depois do 400.
+      const erro = validarCondicoes(condicoes);
+      if (erro) { toast({ title: "Condições inválidas", description: erro, variant: "destructive" }); return; }
+
+      createAlert.mutate(
+        {
+          data: {
+            symbol,
+            // indicator/condition seguem gravados: o schema os exige, e um
+            // alerta composto tem de continuar legível para quem ler a tabela
+            // pelas colunas antigas.
+            indicator: "price",
+            condition: condicoes[0].op,
+            thresholdPct: null, thresholdPrice: null, thresholdValue: null,
+            conditions: condicoes.map((c) => ({ ...c, value: c.value ?? null })),
+            ...camposComuns(),
+            ...(effectiveNotifyEmail.trim() ? { notifyEmail: effectiveNotifyEmail.trim() } : {}),
+          },
+        },
+        {
+          onSuccess: () => {
+            invalidate();
+            limparFormulario();
+            toast({
+              title: "Alerta criado",
+              description: `${symbol}: ${descreverCondicoes(avaliarCondicoes(condicoes, { ticker: symbol }).condicoes)
+                .replace(/ [✅❌]/g, "")}`,
+            });
+          },
+          onError: () => toast({ title: "Erro ao criar alerta", variant: "destructive" }),
+        },
+      );
+      return;
+    }
 
     let desc: string;
     let body: { symbol: string; indicator: IndicatorKey; condition: "above" | "below"; thresholdPct: number | null; thresholdPrice: number | null; thresholdValue: number | null; notifyEmail?: string };
@@ -219,14 +396,11 @@ export default function Alerts() {
     }
 
     createAlert.mutate(
-      { data: body },
+      { data: { ...body, ...camposComuns() } },
       {
         onSuccess: () => {
           invalidate();
-          setSymbol("");
-          setThresholdPct("");
-          setThresholdPrice("");
-          setThresholdValue("");
+          limparFormulario();
           toast({ title: "Alerta criado", description: desc });
         },
         onError: () => toast({ title: "Erro ao criar alerta", variant: "destructive" }),
@@ -234,8 +408,9 @@ export default function Alerts() {
     );
   }
 
-  const canSubmit = symbol && (
-    indicator === "price" ? (alertMode === "pct" ? !!thresholdPct : !!thresholdPrice)
+  const canSubmit = !!symbol && (composto
+    ? validarCondicoes(condicoes) == null
+    : indicator === "price" ? (alertMode === "pct" ? !!thresholdPct : !!thresholdPrice)
     : indicator === "rsi" ? !!thresholdValue
     : true // macd/sma20/sma50 só precisam da condição
   );
@@ -330,7 +505,82 @@ export default function Alerts() {
             )}
           </div>
 
-          <div>
+          {composto && (
+            <div data-testid="construtor-de-condicoes">
+              <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">
+                Condições (todas têm de valer ao mesmo tempo)
+              </label>
+              <div className="space-y-2">
+                {condicoes.map((c, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    {i > 0 && <span className="font-mono text-xs text-primary font-bold w-4">E</span>}
+                    {i === 0 && <span className="w-4" />}
+                    <select
+                      value={c.indicator}
+                      onChange={(e) => setCondicoes(condicoes.map((x, j) =>
+                        j === i ? { ...x, indicator: e.target.value as IndicadorDeCondicao } : x))}
+                      className="font-mono text-sm bg-secondary border border-border rounded px-2 py-1.5"
+                      data-testid={`cond-indicador-${i}`}
+                    >
+                      {INDICADORES_DE_CONDICAO.map((ind) => (
+                        <option key={ind} value={ind}>{NOME_DO_INDICADOR[ind]}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={c.op}
+                      onChange={(e) => setCondicoes(condicoes.map((x, j) =>
+                        j === i ? { ...x, op: e.target.value as "above" | "below" } : x))}
+                      className="font-mono text-sm bg-secondary border border-border rounded px-2 py-1.5"
+                      data-testid={`cond-op-${i}`}
+                    >
+                      <option value="above">acima de</option>
+                      <option value="below">abaixo de</option>
+                    </select>
+                    {INDICADORES_SEM_NIVEL.includes(c.indicator) ? (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {c.indicator === "macd"
+                          ? `(histograma ${c.op === "above" ? "bullish" : "bearish"})`
+                          : "(cruzamento do preço com a média)"}
+                      </span>
+                    ) : (
+                      <Input
+                        value={c.value ?? ""}
+                        onChange={(e) => {
+                          const n = parseFloat(e.target.value);
+                          setCondicoes(condicoes.map((x, j) =>
+                            j === i ? { ...x, value: Number.isFinite(n) ? n : null } : x));
+                        }}
+                        type="number"
+                        step="0.01"
+                        placeholder={c.indicator === "rvol" ? "1.2" : "365.00"}
+                        className="font-mono bg-secondary border-border w-28 h-9 text-sm"
+                        data-testid={`cond-valor-${i}`}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCondicoes(condicoes.filter((_, j) => j !== i))}
+                      className="text-muted-foreground hover:text-red-400 transition-colors p-1"
+                      aria-label="Remover condição"
+                      data-testid={`cond-remover-${i}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {condicoes.some((c) => c.indicator === "rvol") && (
+                <p className="text-[11px] font-mono text-muted-foreground mt-2 border-l-2 border-border pl-2">
+                  RVOL nos primeiros 30 minutos de pregão não é conclusivo e não
+                  satisfaz a condição — o alerta espera o pregão andar. Para
+                  confirmação de rompimento, "avaliar no fechamento" é mais
+                  confiável: o RVOL segue instável até ~10h30 ET.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className={composto ? "hidden" : undefined}>
             <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">Indicador</label>
             <div className="flex flex-wrap gap-2">
               {INDICATORS.map((ind) => (
@@ -349,6 +599,50 @@ export default function Alerts() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <label className="font-mono text-xs uppercase text-muted-foreground block mb-2">
+              Nota / origem <span className="normal-case text-[10px]">(opcional)</span>
+            </label>
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Chat 25/09 — confirmação de reversão"
+              className="font-mono bg-secondary border-border w-full max-w-md"
+              data-testid="input-note"
+            />
+            {/* Vai no corpo do e-mail. Três meses depois, "por que criei este
+                alerta?" não tem resposta em lugar nenhum sem isto. */}
+          </div>
+
+          <div className="flex flex-wrap gap-6">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Switch
+                checked={confirmAtClose}
+                onCheckedChange={setConfirmAtClose}
+                data-testid="switch-confirm-at-close"
+              />
+              <span className="font-mono text-xs">
+                Avaliar no fechamento (16:00 ET)
+                <span className="block text-[10px] text-muted-foreground">
+                  evita rompimento falso intradiário
+                </span>
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Switch
+                checked={fireOnce}
+                onCheckedChange={setFireOnce}
+                data-testid="switch-fire-once"
+              />
+              <span className="font-mono text-xs">
+                Disparar uma vez e desativar
+                <span className="block text-[10px] text-muted-foreground">
+                  em vez do cooldown de 4h
+                </span>
+              </span>
+            </label>
           </div>
 
           <div>
@@ -475,6 +769,17 @@ export default function Alerts() {
             )}
 
             <Button
+              type="button"
+              variant="outline"
+              onClick={adicionarCondicao}
+              className="font-mono"
+              data-testid="btn-add-condicao"
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Adicionar condição (E)
+            </Button>
+
+            <Button
               type="submit"
               disabled={!canSubmit || createAlert.isPending}
               className="font-mono font-bold"
@@ -564,6 +869,16 @@ export default function Alerts() {
                       >
                         {indicatorBadgeLabel(alert)}
                       </Badge>
+                      {alert.confirmAtClose && (
+                        <Badge variant="outline" className="font-mono text-xs border-border text-muted-foreground">
+                          no fechamento
+                        </Badge>
+                      )}
+                      {alert.fireOnce && (
+                        <Badge variant="outline" className="font-mono text-xs border-border text-muted-foreground">
+                          uma vez
+                        </Badge>
+                      )}
                       {alert.indicator && alert.indicator !== "price" && (
                         <Badge variant="outline" className="font-mono text-xs text-muted-foreground border-border uppercase">
                           {alert.indicator}
@@ -575,6 +890,23 @@ export default function Alerts() {
                         </Badge>
                       )}
                     </div>
+                    {/* Condições com o valor atual de cada uma. Sai do MESMO
+                        `descreverCondicoes` que o e-mail usa, avaliado com o
+                        MESMO `avaliarCondicoes` do checker -- uma linha que
+                        dissesse ✅ num alerta que o checker não vai disparar
+                        seria pior que não mostrar nada. */}
+                    {(alert.conditions?.length ?? 0) > 0 && (
+                      <div className="mt-1 font-mono text-[11px] text-muted-foreground" data-testid={`condicoes-${alert.id}`}>
+                        {descreverCondicoes(
+                          avaliarCondicoes(condicoesDoAlerta(alert), retratoDe(alert.symbol)).condicoes,
+                        )}
+                      </div>
+                    )}
+                    {alert.note && (
+                      <div className="mt-1 font-mono text-[11px] text-muted-foreground/80 border-l-2 border-border pl-2">
+                        {alert.note}
+                      </div>
+                    )}
                     {lastFired && (
                       <div className="flex items-center gap-1 mt-0.5 text-[11px] font-mono text-muted-foreground">
                         <Clock className="h-3 w-3" />

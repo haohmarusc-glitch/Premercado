@@ -18,7 +18,7 @@ import { join } from "path";
 // `@workspace/db/schema` e não `@workspace/db`: o index do pacote abre a conexão
 // e exige DATABASE_URL, e este teste só quer a DECLARAÇÃO das tabelas.
 import { alertsTable, alertFiringsTable } from "@workspace/db/schema";
-import { INDICADORES_DE_CONDICAO } from "../lib/alert-conditions";
+import { INDICADORES_DE_CONDICAO } from "@workspace/alertas";
 
 const RAIZ = join(__dirname, "../../../..");
 const ler = (p: string) => readFileSync(join(RAIZ, p), "utf-8");

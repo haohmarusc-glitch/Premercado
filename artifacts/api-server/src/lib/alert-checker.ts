@@ -21,7 +21,7 @@ import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import {
   decidirDisparo, descreverCondicoes,
   type CondicaoAvaliada, type RetratoDoTicker,
-} from "./alert-conditions";
+} from "@workspace/alertas";
 import { getOrCreateSettings } from "../routes/settings";
 import { dataDaBolsa, pregaoEncerrado, todayBRTDateString } from "./timezone";
 

@@ -167,6 +167,9 @@ importers:
 
   artifacts/api-server:
     dependencies:
+      '@workspace/alertas':
+        specifier: workspace:*
+        version: link:../../lib/alertas
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
@@ -573,6 +576,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 'catalog:'
         version: 5.2.0(vite@7.3.3(@types/node@25.6.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.21.0)(yaml@2.8.4))
+      '@workspace/alertas':
+        specifier: workspace:*
+        version: link:../../lib/alertas
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
@@ -663,6 +669,12 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 3.25.76
+
+  lib/alertas:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.6.2
 
   lib/api-client-react:
     dependencies:

@@ -4,7 +4,7 @@ import { logger } from "./logger";
 import { markdownParaHtml } from "./markdown-email";
 import {
   assuntoDoAlertaComposto, descreverCondicoes, type CondicaoAvaliada,
-} from "./alert-conditions";
+} from "@workspace/alertas";
 
 function createTransport() {
   return nodemailer.createTransport({

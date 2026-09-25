@@ -13,7 +13,7 @@ import {
 import { logger } from "../lib/logger";
 import { startOfTodayBRT } from "../lib/timezone";
 import { isAlertIndicator } from "../lib/alert-indicators";
-import { validarCondicoes } from "../lib/alert-conditions";
+import { validarCondicoes } from "@workspace/alertas";
 
 const router: IRouter = Router();
 

@@ -22,6 +22,9 @@
     },
     {
       "path": "../../lib/scenario-math"
+    },
+    {
+      "path": "../../lib/alertas"
     }
   ]
 }

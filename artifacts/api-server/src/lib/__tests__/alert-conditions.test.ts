@@ -10,7 +10,7 @@ import {
   avaliarCondicoes, condicoesDoAlerta, condicoesDoAlertaAntigo, descreverCondicoes,
   motivoParaIgnorarRvol, rotuloDeRvolIndisponivel, rvolEhDeHoje, validarCondicoes,
   type Condicao, type RetratoDoTicker,
-} from "../alert-conditions";
+} from "@workspace/alertas";
 
 /** O caso do chat: "confirmação acima de $365-370 com volume >1.2x". */
 const AVGO: Condicao[] = [
