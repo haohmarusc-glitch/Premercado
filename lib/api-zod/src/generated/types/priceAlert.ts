@@ -5,6 +5,7 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { AlertCondition } from './alertCondition';
 
 export interface PriceAlert {
   id: number;
@@ -21,6 +22,17 @@ export interface PriceAlert {
      * @nullable
      */
   thresholdValue?: number | null;
+  /** Condicoes em E: dispara so quando todas passam. Lista vazia = alerta antigo, avaliado pelas colunas threshold_* acima. */
+  conditions: AlertCondition[];
+  /** Avaliar so' apos 16:00 ET, com fechamento e RVOL do dia inteiro. */
+  confirmAtClose: boolean;
+  /** Disparar uma vez e desativar, em vez do cooldown de 4h. */
+  fireOnce: boolean;
+  /**
+     * Nota/origem em texto livre (ex.: 'Chat 25/09 -- confirmacao de reversao').
+     * @nullable
+     */
+  note?: string | null;
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;

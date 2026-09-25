@@ -5,6 +5,7 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { AlertCondition } from './alertCondition';
 
 export interface AlertCreateInput {
   symbol: string;
@@ -17,6 +18,11 @@ export interface AlertCreateInput {
   thresholdPrice?: number | null;
   /** @nullable */
   thresholdValue?: number | null;
+  /** Condicoes em E. Quando presente, substitui indicator/threshold_*. */
+  conditions?: AlertCondition[];
+  confirmAtClose?: boolean;
+  fireOnce?: boolean;
+  note?: string;
   /** Default: e-mail de login do usuario. */
   notifyEmail?: string;
 }

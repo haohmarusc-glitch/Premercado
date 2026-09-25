@@ -52,6 +52,19 @@
 export type IndicadorDeCondicao =
   | "price" | "changePct" | "rsi14" | "macd" | "sma20" | "sma50" | "rvol";
 
+export const INDICADORES_DE_CONDICAO: IndicadorDeCondicao[] = [
+  "price", "changePct", "rsi14", "macd", "sma20", "sma50", "rvol",
+];
+
+/**
+ * Indicadores cujo "above"/"below" já descreve a condição inteira.
+ *
+ * MACD é sinal do histograma; MM20/MM50 são cruzamento do preço com a média.
+ * Exigir nível deles rejeitaria alerta válido; aceitar nível dos OUTROS sem
+ * valor criaria alerta que nunca dispara e não diz por quê.
+ */
+export const INDICADORES_SEM_NIVEL: IndicadorDeCondicao[] = ["macd", "sma20", "sma50"];
+
 export type OperadorDeCondicao = "above" | "below";
 
 export interface Condicao {
@@ -277,4 +290,73 @@ export function condicoesDoAlertaAntigo(a: {
   if (a.indicator === "sma20") return [{ indicator: "sma20", op, value: null }];
   if (a.indicator === "sma50") return [{ indicator: "sma50", op, value: null }];
   return [];
+}
+
+/**
+ * As condições deste alerta, seja ele novo ou antigo.
+ *
+ * **Não há backfill.** A especificação pede "alertas existentes viram
+ * `conditions` com 1 item"; a conversão acontece na LEITURA, não numa migração
+ * que reescreve as linhas. Duas razões:
+ *
+ * 1. A precedência de `thresholdPrice` sobre `thresholdPct` não é expressável em
+ *    SQL sem reimplementá-la ali -- terceira cópia de uma regra que já quebrou
+ *    quando tinha duas (ver `volume_intradiario.py`).
+ * 2. Uma migração que escreva a condição errada num alerta que manda e-mail
+ *    sobre dinheiro real é difícil de desfazer; uma derivação na leitura é
+ *    sempre coerente com as colunas, e as colunas continuam intactas.
+ *
+ * O efeito no comportamento é o mesmo: `condicoesDoAlertaAntigo` é a única
+ * conversão, e ela tem teste desde antes do schema existir.
+ */
+export function condicoesDoAlerta(a: {
+  conditions?: unknown;
+  indicator: string;
+  condition: string;
+  thresholdPct?: number | null;
+  thresholdPrice?: number | null;
+  thresholdValue?: number | null;
+}): Condicao[] {
+  if (Array.isArray(a.conditions) && a.conditions.length > 0) {
+    return a.conditions as Condicao[];
+  }
+  return condicoesDoAlertaAntigo(a);
+}
+
+/**
+ * Por que esta lista de condições é inválida, ou null se serve.
+ *
+ * Roda na CRIAÇÃO. `avaliarCondicoes` já se recusa a disparar com condição mal
+ * formada, então um alerta ruim é inerte e não perigoso -- mas inerte e
+ * silencioso é pior de descobrir que rejeitado na hora, e o usuário fica
+ * esperando um e-mail que nunca vem.
+ */
+export function validarCondicoes(condicoes: unknown): string | null {
+  if (!Array.isArray(condicoes) || condicoes.length === 0) {
+    return "informe ao menos uma condição";
+  }
+  for (const [i, c] of condicoes.entries()) {
+    const onde = `condição ${i + 1}`;
+    if (typeof c !== "object" || c === null) return `${onde}: formato inválido`;
+    const { indicator, op, value } = c as Record<string, unknown>;
+    if (!INDICADORES_DE_CONDICAO.includes(indicator as IndicadorDeCondicao)) {
+      return `${onde}: indicator deve ser um de ${INDICADORES_DE_CONDICAO.join(", ")}`;
+    }
+    if (op !== "above" && op !== "below") {
+      return `${onde}: op deve ser 'above' ou 'below'`;
+    }
+    const semNivel = INDICADORES_SEM_NIVEL.includes(indicator as IndicadorDeCondicao);
+    if (!semNivel && (typeof value !== "number" || !Number.isFinite(value))) {
+      return `${onde}: ${String(indicator)} exige um valor numérico de corte`;
+    }
+  }
+  const vistos = condicoes.map((c) => `${(c as Condicao).indicator}:${(c as Condicao).op}`);
+  const repetido = vistos.find((v, i) => vistos.indexOf(v) !== i);
+  if (repetido) {
+    // Duas condições do mesmo indicador na mesma direção: a mais frouxa nunca
+    // decide nada, e o usuário fica com um alerta que parece mais exigente do
+    // que é. A faixa ("entre X e Y") se escreve com above + below.
+    return `condição repetida (${repetido}) -- para uma faixa, use above e below`;
+  }
+  return null;
 }

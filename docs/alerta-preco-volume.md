@@ -2,7 +2,7 @@
 
 Projeto: **Premercado** — página `/alerts` (Alertas de Preço) e `/chat`.
 
-Estado desta especificação: **partes 1 e 2 entregues**, 3 a 5 pendentes (ver
+Estado desta especificação: **partes 1 a 3 entregues**, 4 e 5 pendentes (ver
 "Onde isto está" no fim).
 
 ## Contexto
@@ -153,7 +153,13 @@ Corpo: condições atendidas com valores, nota/origem, link para
       preço 351 + RVOL 1,5 → não. (`alert-conditions.test.ts`)
 - [x] Alertas de preço puro não mudam de comportamento.
       (`condicoesDoAlertaAntigo`, e o caso "alerta que olha SÓ o preço não muda")
-- [ ] Schema `conditions` + migração dos alertas existentes.
+- [x] Schema `conditions` + os alertas existentes seguem funcionando **sem
+      backfill** — a conversão é na leitura (`condicoesDoAlerta`), e há teste de
+      que a migração não faz `UPDATE alerts`.
+      (`contrato-de-alerta.test.ts`, `alert-conditions.test.ts`)
+- [x] Os quatro contratos que descrevem um alerta não divergem — openapi, zod de
+      runtime, tipos e client React, mais o `ensure-schema` contra a migração.
+      (`contrato-de-alerta.test.ts`)
 - [ ] Checker avaliando condições múltiplas e e-mail no formato acima.
 - [ ] UI de `/alerts` com "+ Adicionar condição" e Nota/Origem.
 - [ ] Botão no chat pré-preenche AVGO / preço > 365 / RVOL > 1,2 a partir da
@@ -165,10 +171,28 @@ Corpo: condições atendidas com valores, nota/origem, link para
 | --- | --- | --- |
 | 1. avaliador de condições | `api-server/src/lib/alert-conditions.ts` | entregue |
 | 2. fonte do RVOL | `agent/volume_intradiario.py`, `get_technicals.py`, `tools.py`, `lib/timezone.ts`, `premarket/src/lib/indicators.ts` | entregue |
-| 3. schema + migração | `lib/db/src/schema/premarket.ts`, `lib/api-spec/openapi.yaml`, `lib/api-zod`, `lib/api-client-react` | pendente |
+| 3. schema + migração + contratos | `lib/db/src/schema/premarket.ts`, `lib/db/migrations/0039_*.sql`, `api-server/src/lib/ensure-schema.ts`, `lib/api-spec/openapi.yaml`, `lib/api-zod`, `lib/api-client-react`, `api-server/src/routes/alerts.ts` | entregue |
 | 4. checker + e-mail | `api-server/src/lib/alert-checker.ts`, `lib/mailer.ts` | pendente |
 | 5. UI + botão do chat | `premarket/src/pages/alerts.tsx`, `pages/chat.tsx` | pendente |
 
-Nada da parte 1 ou 2 mudou o comportamento dos alertas em produção: o avaliador
-novo ainda não é chamado por ninguém. O que mudou de fato é o RVOL — pregão
-curto, sinal de uma fonte só, e a apresentação na Análise Rápida.
+### Sobre a migração: não há backfill
+
+A especificação pede "alertas existentes viram `conditions` com 1 item". A
+coluna entra com `DEFAULT '[]'` e **nenhuma linha é reescrita**; a conversão
+acontece na leitura, em `condicoesDoAlerta`. Dois motivos:
+
+1. A precedência de `threshold_price` sobre `threshold_pct` teria de ser
+   reimplementada em SQL — terceira cópia de uma regra que já quebrou com duas.
+2. Uma migração que escreva a condição errada num alerta que manda e-mail sobre
+   dinheiro real é difícil de desfazer; uma derivação na leitura é sempre
+   coerente com as colunas, e as colunas ficam intactas.
+
+Lista vazia **não** dispara, então nenhuma linha antiga passa pelo estado
+"dispara sempre" — o pior erro possível nesta migração.
+
+Nada das partes 1 a 3 mudou o comportamento dos alertas que já existem: o
+avaliador novo ainda não é chamado pelo checker, e as colunas novas têm default
+inerte. O que mudou de fato é o RVOL — pregão curto, sinal de uma fonte só, e a
+apresentação na Análise Rápida — e a API passa a aceitar `conditions` na
+criação, sem que nada ainda as avalie. É por isso que a parte 4 é a próxima: até
+ela, um alerta composto é gravado e não dispara.

@@ -105,6 +105,53 @@ export interface AgentStatus {
   uptimeSeconds?: number;
 }
 
+export type AlertConditionIndicator = typeof AlertConditionIndicator[keyof typeof AlertConditionIndicator];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AlertConditionIndicator = {
+  price: 'price',
+  changePct: 'changePct',
+  rsi14: 'rsi14',
+  macd: 'macd',
+  sma20: 'sma20',
+  sma50: 'sma50',
+  rvol: 'rvol',
+} as const;
+
+
+export type AlertConditionOp = typeof AlertConditionOp[keyof typeof AlertConditionOp];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AlertConditionOp = {
+  above: 'above',
+  below: 'below',
+} as const;
+
+
+export interface AlertCondition {
+  indicator: AlertConditionIndicator;
+  op: AlertConditionOp;
+  /**
+     * Nivel de corte. macd/sma20/sma50 nao usam (above/below ja descreve a condicao).
+     * @nullable
+     */
+  value?: number | null;
+}
+
+/**
+ * Uma condicao como ela estava no momento do disparo.
+ */
+export interface EvaluatedAlertCondition {
+  condicao: AlertCondition;
+  /** @nullable */
+  atual: number | null;
+  satisfeita: boolean;
+  /** Por que nao foi possivel avaliar, quando for o caso. */
+  motivo?: string;
+}
+
 export interface PriceAlert {
   id: number;
   symbol: string;
@@ -120,6 +167,17 @@ export interface PriceAlert {
      * @nullable
      */
   thresholdValue?: number | null;
+  /** Condicoes em E: dispara so quando todas passam. Lista vazia = alerta antigo, avaliado pelas colunas threshold_* acima. */
+  conditions: AlertCondition[];
+  /** Avaliar so' apos 16:00 ET, com fechamento e RVOL do dia inteiro. */
+  confirmAtClose: boolean;
+  /** Disparar uma vez e desativar, em vez do cooldown de 4h. */
+  fireOnce: boolean;
+  /**
+     * Nota/origem em texto livre (ex.: 'Chat 25/09 -- confirmacao de reversao').
+     * @nullable
+     */
+  note?: string | null;
   enabled: boolean;
   /** @nullable */
   lastTriggeredAt?: string | null;
@@ -142,6 +200,11 @@ export interface AlertCreateInput {
   thresholdPrice?: number | null;
   /** @nullable */
   thresholdValue?: number | null;
+  /** Condicoes em E. Quando presente, substitui indicator/threshold_*. */
+  conditions?: AlertCondition[];
+  confirmAtClose?: boolean;
+  fireOnce?: boolean;
+  note?: string;
   /** Default: e-mail de login do usuario. */
   notifyEmail?: string;
 }
@@ -174,6 +237,8 @@ export interface AlertFiring {
   changePctAtFiring?: number | null;
   /** @nullable */
   priceAtFiring?: number | null;
+  /** Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo. */
+  conditions?: EvaluatedAlertCondition[];
   firedAt: string;
 }
 

@@ -173,6 +173,24 @@ export const RunAgentResponse = zod.object({
 
 
 /**
+ * Condicao de alerta: um indicador, uma direcao e (quando o indicador usa) um
+ * nivel de corte.
+ */
+export const AlertConditionSchema = zod.object({
+  "indicator": zod.enum(["price", "changePct", "rsi14", "macd", "sma20", "sma50", "rvol"]),
+  "op": zod.enum(["above", "below"]),
+  "value": zod.coerce.number().nullish().describe('Nivel de corte. macd\/sma20\/sma50 nao usam (above\/below ja descreve a condicao).')
+})
+
+export const EvaluatedAlertConditionSchema = zod.object({
+  "condicao": AlertConditionSchema,
+  "atual": zod.coerce.number().nullable(),
+  "satisfeita": zod.boolean(),
+  "motivo": zod.string().optional()
+})
+
+
+/**
  * @summary List all price alerts
  */
 export const ListAlertsResponseItem = zod.object({
@@ -183,6 +201,10 @@ export const ListAlertsResponseItem = zod.object({
   "thresholdPct": zod.coerce.number().nullish(),
   "thresholdPrice": zod.coerce.number().nullish(),
   "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
+  "conditions": zod.array(AlertConditionSchema).describe('Condicoes em E: dispara so quando todas passam. Lista vazia = alerta antigo, avaliado pelas colunas threshold_* acima.'),
+  "confirmAtClose": zod.boolean(),
+  "fireOnce": zod.boolean(),
+  "note": zod.string().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "notifyEmail": zod.string().nullish().describe('E-mail que recebe a notificacao deste alerta, definido na criacao.'),
@@ -201,6 +223,10 @@ export const CreateAlertBody = zod.object({
   "thresholdPct": zod.number().nullish(),
   "thresholdPrice": zod.number().nullish(),
   "thresholdValue": zod.number().nullish(),
+  "conditions": zod.array(AlertConditionSchema).optional().describe('Condicoes em E. Quando presente, substitui indicator\/threshold_*.'),
+  "confirmAtClose": zod.boolean().optional(),
+  "fireOnce": zod.boolean().optional(),
+  "note": zod.string().optional(),
   "notifyEmail": zod.string().email().optional().describe('Default: e-mail de login do usuario.')
 })
 
@@ -232,6 +258,10 @@ export const ToggleAlertResponse = zod.object({
   "thresholdPct": zod.coerce.number().nullish(),
   "thresholdPrice": zod.coerce.number().nullish(),
   "thresholdValue": zod.coerce.number().nullish().describe('Threshold generico (ex: nivel de RSI). Nao usado por macd\/sma20\/sma50.'),
+  "conditions": zod.array(AlertConditionSchema).describe('Condicoes em E: dispara so quando todas passam. Lista vazia = alerta antigo, avaliado pelas colunas threshold_* acima.'),
+  "confirmAtClose": zod.boolean(),
+  "fireOnce": zod.boolean(),
+  "note": zod.string().nullish(),
   "enabled": zod.boolean(),
   "lastTriggeredAt": zod.string().nullish(),
   "notifyEmail": zod.string().nullish().describe('E-mail que recebe a notificacao deste alerta, definido na criacao.'),
@@ -268,6 +298,7 @@ export const ListAlertFiringsResponseItem = zod.object({
   "valueAtFiring": zod.coerce.number().nullish(),
   "changePctAtFiring": zod.coerce.number().nullish(),
   "priceAtFiring": zod.coerce.number().nullish(),
+  "conditions": zod.array(EvaluatedAlertConditionSchema).optional().describe('Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo.'),
   "firedAt": zod.string()
 })
 export const ListAlertFiringsResponse = zod.array(ListAlertFiringsResponseItem)
