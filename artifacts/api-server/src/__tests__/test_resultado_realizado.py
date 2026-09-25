@@ -14,6 +14,11 @@ import pytest
 
 from agent import resultado_realizado as rr
 
+# A função REAL, capturada antes de a fixture `sem_cotacao` trocá-la. Os dois
+# testes que exercitam a própria busca de cotação usam esta referência; o resto
+# do arquivo usa o stub.
+_PRECO_ATUAL_REAL = rr._preco_atual
+
 
 class _Resp:
     def __init__(self, payload, status=200):
@@ -26,6 +31,17 @@ class _Resp:
 
     def json(self):
         return self._payload
+
+
+@pytest.fixture(autouse=True)
+def sem_cotacao(monkeypatch):
+    """Sem preço atual, por padrão, em TODO teste deste arquivo.
+
+    `resultado_realizado` busca uma cotação por ticker do ranking, e isso
+    passa por get_stock_data -> rede. Quem testa o preço atual declara o que
+    quer encontrar; o resto do arquivo não precisa saber que ele existe.
+    """
+    monkeypatch.setattr(rr, "_preco_atual", lambda _t: None)
 
 
 def _api(posicoes, lotes_por_id):
@@ -334,3 +350,85 @@ class TestChatTemTudo:
         for escrita in ("create_exit_plan_item", "update_exit_plan_item",
                         "save_observation", "create_alert", "delete_alert"):
             assert escrita in prompt
+
+
+class TestPrecoAtual:
+    """O preço atual ao lado do preço pago -- pedido de 25/09/2026.
+
+    O ponto do campo é a comparação: "paguei entre X e Y, hoje está Z". Por
+    isso ele vem com a FONTE (mercado / fechamento / pré-mercado) e com a
+    distância até os dois extremos pagos.
+    """
+
+    def _uma_venda(self):
+        return _api([_pos(1, "MU")], {1: [
+            _lote(400, 793, "2026-06-18", 1000),
+            _lote(400, 1042.36),
+        ]})
+
+    def test_preco_fonte_e_distancias(self, monkeypatch):
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: (1080.53, "mercado"))
+        with self._uma_venda():
+            r = rr.resultado_realizado()
+        t = r["tickers"][0]
+        assert t["precoAtualUsd"] == 1080.53
+        assert t["precoAtualFonte"] == "mercado"
+        # 1080,53 / 1042,36 - 1 = +3,66% sobre o pior preço pago
+        assert t["precoAtualVsMaiorPagoPct"] == 3.66
+        # 1080,53 / 793 - 1 = +36,26% sobre o melhor
+        assert t["precoAtualVsMenorPagoPct"] == 36.26
+
+    def test_cotacao_ausente_e_DITA_nao_omitida(self, monkeypatch):
+        # Campo que simplesmente falta é indistinguível de "papel sem preço",
+        # e é aí que o modelo preenche de memória.
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: None)
+        with self._uma_venda():
+            r = rr.resultado_realizado()
+        t = r["tickers"][0]
+        assert t["precoAtualUsd"] is None
+        assert "não disponível" in t["precoAtualNota"]
+
+    def test_pode_ser_desligado(self, monkeypatch):
+        monkeypatch.setattr(rr, "_preco_atual",
+                            lambda _t: pytest.fail("não devia buscar cotação"))
+        with self._uma_venda():
+            r = rr.resultado_realizado(incluir_preco_atual=False)
+        assert "precoAtualUsd" not in r["tickers"][0]
+
+    def test_cota_so_o_que_entra_no_ranking(self, monkeypatch):
+        # Com 8 vendedores e top=3, são 3 cotações, não 8: buscar antes do
+        # corte pagaria 5 que ninguém vê.
+        pedidos = []
+        monkeypatch.setattr(rr, "_preco_atual",
+                            lambda t: (pedidos.append(t), (10.0, "mercado"))[1])
+        posicoes, lotes = TestRanking()._carteira()
+        with _api(posicoes, lotes):
+            r = rr.resultado_realizado(top=3)
+        assert len(r["tickers"]) == 3
+        assert pedidos == ["AAA", "BBB", "CCC"]
+
+    def test_a_fonte_do_preco_vem_da_precedencia_do_quote(self, monkeypatch):
+        # Mesma precedência de portfolio_snapshot: negociação, depois último
+        # fechamento, depois pré-mercado.
+        from agent import tools
+        casos = [
+            ({"regular_market_price": 100, "last_close": 90}, (100.0, "mercado")),
+            ({"last_close": 90, "pre_market_price": 95}, (90.0, "último fechamento")),
+            ({"pre_market_price": 95}, (95.0, "pré-mercado")),
+            ({}, None),
+            ({"regular_market_price": 0}, None),
+        ]
+        for quote, esperado in casos:
+            with mock.patch.object(tools, "get_stock_data", return_value=quote):
+                assert _PRECO_ATUAL_REAL("MU") == esperado, quote
+
+    def test_quote_que_explode_nao_derruba_o_relatorio(self):
+        from agent import tools
+        with mock.patch.object(tools, "get_stock_data", side_effect=OSError("timeout")):
+            assert _PRECO_ATUAL_REAL("MU") is None
+
+    def test_a_ferramenta_declara_o_parametro(self):
+        from agent import tools
+        f = next(t for t in tools.TOOLS if t["name"] == "resultado_realizado")
+        assert "incluir_preco_atual" in f["input_schema"]["properties"]
+        assert "fonte" in f["description"]

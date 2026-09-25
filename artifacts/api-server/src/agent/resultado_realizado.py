@@ -91,7 +91,38 @@ def _lucro_do_lote(lote: dict) -> tuple[float, float, float] | str:
     return (amount, proceeds, proceeds - amount)
 
 
-def resultado_realizado(top: int = 7, incluir_simulado: bool = False) -> dict:
+def _preco_atual(ticker: str) -> tuple[float, str] | None:
+    """(preço, de onde veio) ou None.
+
+    A fonte vem junto de propósito. Preço sem dizer se é negociação ao vivo,
+    último fechamento ou pré-mercado é o mesmo problema que apareceu no Plano
+    de Saída em 21/09: dois números certos de instantes diferentes lidos como
+    contradição. Aqui é pior, porque o número vai ao lado de preços de compra
+    históricos, e a comparação é o ponto do relatório.
+
+    Import tardio: tools.py importa ESTE módulo, então importá-lo no topo
+    fecharia o ciclo. Mesmo padrão de portfolio_snapshot.
+    """
+    from .tools import get_stock_data
+    try:
+        q = get_stock_data(ticker)
+    except Exception:
+        return None
+    if not isinstance(q, dict):
+        return None
+    for campo, fonte in (
+        ("regular_market_price", "mercado"),
+        ("last_close", "último fechamento"),
+        ("pre_market_price", "pré-mercado"),
+    ):
+        v = _num(q.get(campo))
+        if v is not None and v > 0:
+            return (v, fonte)
+    return None
+
+
+def resultado_realizado(top: int = 7, incluir_simulado: bool = False,
+                        incluir_preco_atual: bool = True) -> dict:
     """
     Lucro REALIZADO por ticker (vendas já fechadas), do maior para o menor, com
     o menor e o maior preço pago em cada papel.
@@ -213,13 +244,40 @@ def resultado_realizado(top: int = 7, incluir_simulado: bool = False) -> dict:
     vendidos.sort(key=lambda x: x["lucroRealizadoUsd"], reverse=True)
     ranking = vendidos[:top] if top and top > 0 else vendidos
 
+    # O preço atual é buscado DEPOIS do corte, só para quem está no ranking:
+    # uma cotação por ticker exibido, não por ticker da carteira. Com 11
+    # vendedores e top=7, buscar antes pagaria 4 cotações que ninguém vê.
+    if incluir_preco_atual:
+        for linha in ranking:
+            atual = _preco_atual(linha["ticker"])
+            if atual is None:
+                # Cotação que não veio é DITA. Sem isto, o campo ausente é
+                # indistinguível de "papel sem preço" e o modelo preenche de
+                # memória.
+                linha["precoAtualUsd"] = None
+                linha["precoAtualNota"] = "cotação não disponível agora"
+                continue
+            preco, fonte = atual
+            linha["precoAtualUsd"] = round(preco, 4)
+            linha["precoAtualFonte"] = fonte
+            maior = linha.get("maiorPrecoPagoUsd")
+            menor = linha.get("menorPrecoPagoUsd")
+            # Contra o MAIOR pago: é a compra que mais doeu, e é dela que sai a
+            # pergunta útil ("o papel já passou do meu pior preço?").
+            if maior:
+                linha["precoAtualVsMaiorPagoPct"] = round((preco / maior - 1) * 100, 2)
+            if menor:
+                linha["precoAtualVsMenorPagoPct"] = round((preco / menor - 1) * 100, 2)
+
     resultado: dict = {
         "tickers": ranking,
         "tickersComVenda": len(vendidos),
         "totalLucroRealizadoUsd": round(sum(x["lucroRealizadoUsd"] for x in vendidos), 2),
         "criterio": ("lucro realizado em USD dos lotes com venda registrada; "
                      "menorPrecoPagoUsd/maiorPrecoPagoUsd cobrem TODOS os lotes "
-                     "do ticker, vendidos e abertos"),
+                     "do ticker, vendidos e abertos; precoAtualUsd vem com "
+                     "precoAtualFonte (mercado / último fechamento / "
+                     "pré-mercado) -- cite a fonte junto do preço"),
     }
     if not incluir_simulado and simuladas_fora:
         resultado["posicoesSimuladasExcluidas"] = simuladas_fora

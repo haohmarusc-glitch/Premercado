@@ -2846,6 +2846,9 @@ TOOLS = [
             "realizado, quais papéis deram mais dinheiro, ou preço de compra "
             "histórico. get_portfolio_snapshot não serve para isso: papel "
             "totalmente vendido tem quantidade zero e não aparece lá. "
+            "Traz também o preço atual de cada ticker do ranking, com a fonte "
+            "(mercado / último fechamento / pré-mercado) -- cite a fonte junto "
+            "do preço, senão o leitor não sabe se é cotação ao vivo. "
             "Lote que não dá para calcular (sem preço de compra ou de venda) vem "
             "em lotesIncomputaveis com o motivo -- se houver, diga que a soma "
             "daquele ticker está incompleta, nunca some por cima."
@@ -2866,6 +2869,15 @@ TOOLS = [
                         "ninguém recebeu."
                     ),
                     "default": False,
+                },
+                "incluir_preco_atual": {
+                    "type": "boolean",
+                    "description": (
+                        "True (padrão) = traz precoAtualUsd de cada ticker do "
+                        "ranking, com precoAtualFonte e a distância até o menor "
+                        "e o maior preço pago. Uma cotação por ticker exibido."
+                    ),
+                    "default": True,
                 },
             },
             "required": [],
