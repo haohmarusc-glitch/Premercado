@@ -167,9 +167,15 @@ class TestRanking:
             r = rr.resultado_realizado(top=7)
         assert [t["ticker"] for t in r["tickers"]] == \
             ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
-        # O total NÃO é o do top: soma quem vendeu, os oito.
         assert r["tickersComVenda"] == 8
-        assert r["totalLucroRealizadoUsd"] == 4400.0
+        # DOIS totais, cada um com o escopo no nome. O relatório de
+        # 25/09/2026 publicou o da carteira inteira como "total (top 7)":
+        # os sete somavam 385,88 e o campo trazia 401,52, dos onze.
+        assert r["somaDoRankingUsd"] == 4200.0        # 900+800+700+600+500+400+300
+        assert r["totalLucroRealizadoTodosOsTickersUsd"] == 4400.0  # + HHH (200)
+        assert "totalLucroRealizadoUsd" not in r      # nome ambíguo, aposentado
+        assert "somaDoRankingUsd" in r["criterio"]
+        assert "Não troque um pelo outro" in r["criterio"]
 
     def test_top_zero_traz_todos(self):
         posicoes, lotes = self._carteira()
@@ -195,7 +201,7 @@ class TestSimulado:
         }):
             r = rr.resultado_realizado()
         assert [t["ticker"] for t in r["tickers"]] == ["NVDA"]
-        assert r["totalLucroRealizadoUsd"] == 500.0
+        assert r["totalLucroRealizadoTodosOsTickersUsd"] == 500.0
         # Excluir calado seria tão ruim quanto somar: quem lê precisa saber.
         assert r["posicoesSimuladasExcluidas"] == 1
 
@@ -432,3 +438,68 @@ class TestPrecoAtual:
         f = next(t for t in tools.TOOLS if t["name"] == "resultado_realizado")
         assert "incluir_preco_atual" in f["input_schema"]["properties"]
         assert "fonte" in f["description"]
+
+
+class TestPrecoDeVenda:
+    """"Vendi cedo?" -- a pergunta que a coluna anterior não respondia.
+
+    O relatório de 25/09/2026 concluiu "META e INTC continuam subindo após
+    vendidas" citando precoAtualVsMaiorPagoPct, que compara o preço de hoje
+    com o preço PAGO. A conclusão podia até estar certa; o número não a
+    sustentava, e não havia campo que sustentasse.
+    """
+
+    def test_preco_medio_de_venda_e_ponderado_pela_quantidade(self, monkeypatch):
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: None)
+        # Lote A: 1000 a US$ 100 = 10 ações, vendidas a 120 -> 1200
+        # Lote B: 1000 a US$ 500 =  2 ações, vendidas a 600 -> 1200
+        # Recebido 2400 em 12 ações -> média ponderada 200, NÃO (120+600)/2=360.
+        with _api([_pos(1, "X")], {1: [
+            _lote(1000, 100, "2026-03-01", 120),
+            _lote(1000, 500, "2026-03-01", 600),
+        ]}):
+            r = rr.resultado_realizado()
+        assert r["tickers"][0]["precoVendaMedioUsd"] == 200.0
+
+    def test_vs_venda_diz_se_subiu_depois_da_saida(self, monkeypatch):
+        # Vendido a 100, hoje 126 -> +26% DEPOIS da venda (dinheiro deixado na
+        # mesa), mesmo tendo sido pago 599: os dois números respondem coisas
+        # diferentes, e é essa a distinção que faltava.
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: (126.0, "mercado"))
+        with _api([_pos(1, "META")], {1: [_lote(599, 599, "2026-03-01", 100)]}):
+            r = rr.resultado_realizado()
+        t = r["tickers"][0]
+        assert t["precoVendaMedioUsd"] == 100.0
+        assert t["precoAtualVsVendaPct"] == 26.0
+        # E continua diferente do vs-pago, que é o que foi confundido.
+        assert t["precoAtualVsMaiorPagoPct"] == round((126 / 599 - 1) * 100, 2)
+
+    def test_venda_acima_do_preco_de_hoje_da_negativo(self, monkeypatch):
+        # Vendeu bem: saiu a 120, hoje está 90.
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: (90.0, "mercado"))
+        with _api([_pos(1, "ARM")], {1: [_lote(1000, 100, "2026-03-01", 120)]}):
+            r = rr.resultado_realizado()
+        assert r["tickers"][0]["precoAtualVsVendaPct"] == -25.0
+
+    def test_o_criterio_manda_usar_o_campo_certo(self, monkeypatch):
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: None)
+        with _api([_pos(1, "X")], {1: [_lote(1000, 100, "2026-03-01", 120)]}):
+            r = rr.resultado_realizado()
+        assert "precoAtualVsVendaPct" in r["criterio"]
+        assert "não responde essa pergunta" in r["criterio"]
+
+    def test_lote_incomputavel_nao_entra_na_media_de_venda(self, monkeypatch):
+        monkeypatch.setattr(rr, "_preco_atual", lambda _t: None)
+        with _api([_pos(1, "X")], {1: [
+            _lote(1000, 100, "2026-03-01", 120),
+            _lote(1000, 100, "2026-03-02", None),   # sem preço de venda
+        ]}):
+            r = rr.resultado_realizado()
+        # Só o primeiro lote conta: 10 ações a 120.
+        assert r["tickers"][0]["precoVendaMedioUsd"] == 120.0
+
+    def test_a_ferramenta_avisa_qual_campo_usar(self):
+        from agent import tools
+        f = next(t for t in tools.TOOLS if t["name"] == "resultado_realizado")
+        assert "precoAtualVsVendaPct" in f["description"]
+        assert "somaDoRankingUsd" in f["description"]
