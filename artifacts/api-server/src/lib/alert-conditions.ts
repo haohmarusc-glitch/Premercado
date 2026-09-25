@@ -34,6 +34,19 @@
  * de RVOL simplesmente NÃO É SATISFEITA enquanto o número não é conclusivo, em
  * vez de ser satisfeita por um denominador inventado. Ver
  * `RVOL_INDEFINIDO_NAO_SATISFAZ`.
+ *
+ * ## RVOL de outro pregão
+ *
+ * O frame `period="1d"` do provedor volta com o ÚLTIMO dia negociado, não com
+ * hoje: num feriado, ou numa resposta velha, o rvol chega completo, plausível e
+ * referente a ontem. Nada no número denuncia isso, então a data vem junto
+ * (`rvolData`) e é comparada com a data em horário de bolsa. Divergência =
+ * indefinido. Ver `rvolEhDeHoje`.
+ *
+ * O que NÃO está aqui de propósito: a duração da sessão. Pregão curto (210
+ * minutos em vez de 390) é calendário, e calendário replicado em dois idiomas é
+ * a mesma armadilha da conta do rvol. A comparação de DATA basta para o que
+ * este lado precisa decidir, e a duração fica só em `volume_intradiario.py`.
  */
 
 export type IndicadorDeCondicao =
@@ -58,8 +71,15 @@ export interface RetratoDoTicker {
   sma20?: number | null;
   sma50?: number | null;
   rvol?: number | null;
-  /** "indefinido_abertura" | "alto" | "normal" | "baixo" — ver get_technicals.py. */
+  /**
+   * "indefinido_abertura" | "indisponivel" | "alto" | "normal" | "baixo"
+   * — ver volume_intradiario.situacao_do_rvol, que é a única fonte disto.
+   */
   rvolSignal?: string | null;
+  /** Data (YYYY-MM-DD) do pregão a que as barras do rvol pertencem. */
+  rvolData?: string | null;
+  /** Hora de bolsa (HH:MM) da última barra fechada que entrou no rvol. */
+  rvolAte?: string | null;
 }
 
 export interface CondicaoAvaliada {
@@ -88,6 +108,53 @@ export interface ResultadoDaAvaliacao {
  */
 export const RVOL_INDEFINIDO_NAO_SATISFAZ = "indefinido_abertura";
 
+/** Sem barra de pregão utilizável — pré-mercado, feriado, sem base de volume. */
+export const RVOL_INDISPONIVEL = "indisponivel";
+
+/**
+ * O rvol é do pregão de hoje?
+ *
+ * Sem `rvolData` a resposta é NÃO. Payload de antes deste campo existir não
+ * pode ser tratado como "provavelmente é de hoje": o alerta composto passaria a
+ * disparar com rvol de data desconhecida exatamente nos deploys em que o Python
+ * e o Node estão fora de passo, que é quando o risco é maior.
+ */
+export function rvolEhDeHoje(
+  retrato: RetratoDoTicker, dataDeHojeNaBolsa: string,
+): boolean {
+  return retrato.rvolData != null && retrato.rvolData === dataDeHojeNaBolsa;
+}
+
+/**
+ * Por que o rvol deste retrato não serve, ou null se ele serve.
+ *
+ * Uma função só, com a ordem dos motivos fixada, para a tela, o e-mail e o
+ * checker darem a MESMA explicação — "RVOL indisponível (abertura)" na tela e
+ * "não disparou porque..." no log têm de sair da mesma decisão.
+ */
+export function motivoParaIgnorarRvol(
+  retrato: RetratoDoTicker, dataDeHojeNaBolsa?: string,
+): string | null {
+  if (retrato.rvolSignal === RVOL_INDEFINIDO_NAO_SATISFAZ) {
+    return "pregão com menos de 30 minutos — RVOL ainda não é conclusivo";
+  }
+  if (retrato.rvolSignal === RVOL_INDISPONIVEL || retrato.rvol == null) {
+    return "sem RVOL do pregão de hoje";
+  }
+  if (dataDeHojeNaBolsa != null && !rvolEhDeHoje(retrato, dataDeHojeNaBolsa)) {
+    return `RVOL é do pregão de ${retrato.rvolData ?? "data desconhecida"}, não de hoje`;
+  }
+  return null;
+}
+
+/** "RVOL indisponível (abertura)" — o rótulo curto para a tela. */
+export function rotuloDeRvolIndisponivel(retrato: RetratoDoTicker): string {
+  if (retrato.rvolSignal === RVOL_INDEFINIDO_NAO_SATISFAZ) {
+    return "RVOL indisponível (abertura)";
+  }
+  return "RVOL indisponível";
+}
+
 function valorDoIndicador(ind: IndicadorDeCondicao, t: RetratoDoTicker): number | null {
   switch (ind) {
     case "price": return t.price ?? null;
@@ -101,7 +168,9 @@ function valorDoIndicador(ind: IndicadorDeCondicao, t: RetratoDoTicker): number 
   }
 }
 
-function avaliarUma(c: Condicao, t: RetratoDoTicker): CondicaoAvaliada {
+function avaliarUma(
+  c: Condicao, t: RetratoDoTicker, dataDeHojeNaBolsa?: string,
+): CondicaoAvaliada {
   // SMA é cruzamento: compara o PREÇO com a média, não a média com um valor.
   // Era assim no avaliador antigo (evalTechnical) e continua sendo — mudar a
   // semântica silenciosamente inverteria o sentido dos alertas que já existem.
@@ -123,13 +192,11 @@ function avaliarUma(c: Condicao, t: RetratoDoTicker): CondicaoAvaliada {
     return { condicao: c, atual: t.macdHistogram, satisfeita };
   }
 
-  if (c.indicator === "rvol" && t.rvolSignal === RVOL_INDEFINIDO_NAO_SATISFAZ) {
-    return {
-      condicao: c,
-      atual: t.rvol ?? null,
-      satisfeita: false,
-      motivo: "pregão com menos de 30 minutos — RVOL ainda não é conclusivo",
-    };
+  if (c.indicator === "rvol") {
+    const motivo = motivoParaIgnorarRvol(t, dataDeHojeNaBolsa);
+    // O valor continua visível mesmo quando não vale: a tela mostra o número e
+    // diz por que ele não conta, em vez de esconder ou imprimir 0.
+    if (motivo) return { condicao: c, atual: t.rvol ?? null, satisfeita: false, motivo };
   }
 
   const atual = valorDoIndicador(c.indicator, t);
@@ -152,11 +219,15 @@ function avaliarUma(c: Condicao, t: RetratoDoTicker): CondicaoAvaliada {
  *
  * Lista vazia NÃO dispara. Um alerta sem condição dispararia sempre, e é o
  * estado em que uma migração malfeita deixaria as linhas antigas.
+ *
+ * `dataDeHojeNaBolsa` (de `timezone.dataDaBolsa`) liga a recusa de rvol de outro
+ * pregão. Omiti-la avalia sem esse guarda -- é o que os testes de cortes puros
+ * querem, e o checker sempre passa.
  */
 export function avaliarCondicoes(
-  condicoes: Condicao[], t: RetratoDoTicker,
+  condicoes: Condicao[], t: RetratoDoTicker, dataDeHojeNaBolsa?: string,
 ): ResultadoDaAvaliacao {
-  const avaliadas = condicoes.map((c) => avaliarUma(c, t));
+  const avaliadas = condicoes.map((c) => avaliarUma(c, t, dataDeHojeNaBolsa));
   return {
     disparou: avaliadas.length > 0 && avaliadas.every((a) => a.satisfeita),
     condicoes: avaliadas,

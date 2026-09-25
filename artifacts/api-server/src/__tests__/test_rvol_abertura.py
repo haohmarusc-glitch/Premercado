@@ -1,6 +1,7 @@
-"""As duas cópias de `_rvol_signal` não podem divergir.
+"""Nem a conta nem o SINAL do rvol podem voltar a existir em duas cópias.
 
-Três comentários no código citavam ESTE arquivo como a garantia disso:
+Três comentários no código citavam ESTE arquivo como a garantia de que as duas
+cópias de `_rvol_signal` não divergiam:
 
     tools.py:907            "test_rvol_abertura.py amarra as duas cópias."
     get_technicals.py:38    "test_rvol_abertura.py garante que as duas
@@ -9,10 +10,13 @@ Três comentários no código citavam ESTE arquivo como a garantia disso:
 Ele não existia. A duplicação era documentada como segura por um teste que
 nunca foi escrito — e foi por isso que a CONTA do rvol (que também era cópia,
 e essa nem citava teste nenhum) pôde quebrar nos dois arquivos ao mesmo tempo
-sem ninguém ver. A conta agora mora em volume_intradiario.py; o `_rvol_signal`
-segue duplicado, e este arquivo passa a ser o que os comentários prometem.
+sem ninguém ver.
 
-## Por que comparar o FONTE e não importar
+Hoje as duas coisas moram em `volume_intradiario.py` e as cópias foram
+apagadas. Este arquivo guarda a ausência: um teste de igualdade entre cópias
+ainda permitia editar as duas juntas e errar nas duas juntas.
+
+## Por que ler o FONTE e não importar
 
 `get_technicals.py` faz, no nível do módulo:
 
@@ -22,61 +26,53 @@ segue duplicado, e este arquivo passa a ser o que os comentários prometem.
 
 Importá-lo dentro do pytest redireciona o fd 1 do processo inteiro para
 stderr, pelo resto da sessão de testes. É quase certo que foi esse o obstáculo
-que deixou o arquivo por escrever. Comparar o código-fonte não tem efeito
-colateral nenhum e responde exatamente à pergunta que interessa: as duas
-cópias dizem a mesma coisa?
+que deixou o arquivo por escrever. Ler o código-fonte não tem efeito colateral
+nenhum e responde exatamente à pergunta que interessa.
 """
 
-import ast
+import os
 import pathlib
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 AGENTE = pathlib.Path(__file__).resolve().parents[1] / "agent"
 
 
-def _funcao(arquivo: str, nome: str) -> str:
-    """O corpo da função, sem comentário nem docstring.
+def test_rvol_signal_nao_existe_mais_como_copia():
+    """A duplicação foi APAGADA, não amarrada.
 
-    `ast.unparse` normaliza espaçamento e apaga comentários; a docstring é
-    removida à mão. Sem isso o teste acusaria diferença de formatação, que é
-    ruído, em vez de diferença de comportamento, que é o que importa.
+    Amarrar duas cópias com um teste de igualdade é o segundo melhor: continua
+    sendo possível editar as duas juntas e errar nas duas juntas, que é
+    exatamente o que aconteceu com a conta do rvol. O sinal agora mora em
+    `volume_intradiario.situacao_do_rvol` e este teste guarda a ausência.
     """
-    arvore = ast.parse((AGENTE / arquivo).read_text(encoding="utf-8"))
-    for no in ast.walk(arvore):
-        if isinstance(no, ast.FunctionDef) and no.name == nome:
-            corpo = list(no.body)
-            if (corpo and isinstance(corpo[0], ast.Expr)
-                    and isinstance(corpo[0].value, ast.Constant)
-                    and isinstance(corpo[0].value.value, str)):
-                corpo = corpo[1:]
-            return "\n".join(ast.unparse(x) for x in corpo)
-    raise AssertionError(f"{nome} não encontrada em {arquivo}")
+    for arquivo in ("tools.py", "get_technicals.py"):
+        fonte = (AGENTE / arquivo).read_text(encoding="utf-8")
+        assert "def _rvol_signal" not in fonte, (
+            f"{arquivo} recriou _rvol_signal -- use situacao_do_rvol de "
+            f"volume_intradiario.py")
+        assert "_RVOL_FRACAO_MINIMA" not in fonte, (
+            f"{arquivo} recriou o piso de abertura. Ele agora e' "
+            f"MINUTOS_MINIMOS_CONCLUSIVOS, em MINUTOS -- a forma em fracao "
+            f"(6/78) vale 16 minutos num pregao de 210, nao 30.")
 
 
-def _constante(arquivo: str, nome: str) -> str:
-    """A EXPRESSÃO da constante, não o valor.
+def test_o_piso_de_abertura_e_medido_em_minutos():
+    """`6/78` em fração contra 30 em minutos não é a mesma regra.
 
-    `_RVOL_FRACAO_MINIMA = 6 / 78` não é literal, então `literal_eval` estoura.
-    E comparar a expressão é mais forte que comparar o número: pega uma cópia
-    virar `0.0769`, que dá o mesmo resultado hoje e esconde de onde veio.
+    Num pregão curto (210 minutos) a fração 6/78 corresponde a 16 minutos, e o
+    guarda que existe por causa do NBIS (rvol 5,81 aos SETE minutos) ficaria
+    afrouxado justo nos dias em que o denominador já é mais frágil.
     """
-    arvore = ast.parse((AGENTE / arquivo).read_text(encoding="utf-8"))
-    for no in arvore.body:
-        if isinstance(no, ast.Assign) and any(
-                isinstance(a, ast.Name) and a.id == nome for a in no.targets):
-            return ast.unparse(no.value)
-    raise AssertionError(f"{nome} não encontrada em {arquivo}")
-
-
-def test_rvol_signal_e_identico_nos_dois_arquivos():
-    assert (_funcao("tools.py", "_rvol_signal")
-            == _funcao("get_technicals.py", "_rvol_signal"))
-
-
-def test_a_fracao_minima_e_a_mesma():
-    """O piso que segura o rvol inflado da abertura — NBIS 17/08/2026 saiu com
-    rvol 5,81 "alto" aos sete minutos de pregão."""
-    assert (_constante("tools.py", "_RVOL_FRACAO_MINIMA")
-            == _constante("get_technicals.py", "_RVOL_FRACAO_MINIMA"))
+    from agent.volume_intradiario import (
+        MINUTOS_MINIMOS_CONCLUSIVOS, MINUTOS_DO_PREGAO_CURTO, situacao_do_rvol,
+    )
+    assert MINUTOS_MINIMOS_CONCLUSIVOS == 30
+    equivalente_em_minutos = (6 / 78) * MINUTOS_DO_PREGAO_CURTO
+    assert equivalente_em_minutos < MINUTOS_MINIMOS_CONCLUSIVOS
+    # 16 minutos de pregão não bastam, mesmo num dia curto.
+    assert situacao_do_rvol(5.81, equivalente_em_minutos) == "indefinido_abertura"
 
 
 def test_a_conta_do_rvol_nao_voltou_a_ser_duplicada():
@@ -88,6 +84,6 @@ def test_a_conta_do_rvol_nao_voltou_a_ser_duplicada():
         fonte = (AGENTE / arquivo).read_text(encoding="utf-8")
         assert "len(intraday) / 78" not in fonte, (
             f"{arquivo} voltou a derivar o tempo decorrido da CONTAGEM de "
-            f"barras — use rvol_da_sessao de volume_intradiario.py")
-        assert "rvol_da_sessao" in fonte, (
+            f"barras — use medida_do_rvol de volume_intradiario.py")
+        assert "medida_do_rvol" in fonte, (
             f"{arquivo} deixou de usar a conta compartilhada")

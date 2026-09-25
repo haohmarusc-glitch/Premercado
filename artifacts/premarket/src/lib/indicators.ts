@@ -279,7 +279,8 @@ export function attachIndicatorFields<T>(rows: T[], closes: number[]): (T & Indi
 // ── Rótulos de sinal vindos do backend ──────────────────────────────────────
 
 /** Valores possíveis de `rvolSignal` nas respostas de /api/technicals. */
-export type RvolSignal = "alto" | "baixo" | "normal" | "indefinido_abertura";
+export type RvolSignal =
+  | "alto" | "baixo" | "normal" | "indefinido_abertura" | "indisponivel";
 
 /**
  * Texto legível para `rvolSignal`. `indefinido_abertura` existe porque o RVOL
@@ -292,5 +293,35 @@ export type RvolSignal = "alto" | "baixo" | "normal" | "indefinido_abertura";
  */
 export function rotuloRvol(sinal: string | null | undefined): string {
   if (!sinal) return "—";
-  return sinal === "indefinido_abertura" ? "ainda não conclusivo (início do pregão)" : sinal;
+  if (sinal === "indefinido_abertura") return "ainda não conclusivo (início do pregão)";
+  if (sinal === "indisponivel") return "sem dado do pregão";
+  return sinal;
+}
+
+/**
+ * O RVOL como ele deve APARECER: valor e nota.
+ *
+ * O número e o rótulo vinham em campos independentes, e nos primeiros 30
+ * minutos a tela mostrava `5,81` em destaque com a ressalva em letra miúda
+ * embaixo. Quem bate o olho lê o número. Aqui, quando o RVOL não é conclusivo,
+ * o lugar de destaque diz "indisponível" e o número desce para a nota, onde não
+ * pode ser confundido com medida.
+ *
+ * Um RVOL ausente NUNCA vira 0: zero afirma volume nenhum, e o que se sabe é
+ * que não há barra de pregão para medir.
+ */
+export function exibicaoDeRvol(
+  rvol: number | null | undefined, sinal: string | null | undefined,
+): { valor: string; nota: string } {
+  if (sinal === "indefinido_abertura") {
+    const numero = rvol != null ? `${rvol.toFixed(2)}x` : "sem valor";
+    return {
+      valor: "indisponível",
+      nota: `abertura — ${numero} não é conclusivo com menos de 30 min de pregão`,
+    };
+  }
+  if (rvol == null || sinal === "indisponivel") {
+    return { valor: "—", nota: "sem barra do pregão (fora do horário ou sem dado)" };
+  }
+  return { valor: rvol.toFixed(2), nota: rotuloRvol(sinal) };
 }
