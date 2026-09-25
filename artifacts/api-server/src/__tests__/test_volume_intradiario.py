@@ -127,3 +127,43 @@ def test_fechamento_e_exclusivo():
     """A barra das 16h00 já é pós-fechamento: o pregão vai até 15h55."""
     assert len(barras_da_sessao(_frame(16, 0, 1, 1_000_000))) == 0
     assert len(barras_da_sessao(_frame(15, 55, 1, 1_000_000))) == 1
+
+
+# ── o alerta composto (preço E RVOL) ────────────────────────────────────────
+#
+# Critério de aceite da tarefa do alerta de volume: o RVOL ajustado ao horário.
+# Os números são os da especificação, e o ponto de escrevê-los AQUI é que o
+# alerta passa a ler este mesmo `rvol_da_sessao` em vez de recalcular a fração
+# do próprio lado -- a conta já esteve duplicada em tools.py e
+# get_technicals.py e quebrou nas duas ao mesmo tempo (o incidente do topo
+# deste arquivo). Uma fonte, e os números da tela e do alerta batem por
+# construção.
+
+
+def test_meio_dia_com_a_aritmetica_da_especificacao():
+    # 12h00 ET: 150 dos 390 minutos, fração 0,385.
+    # Volume 9M contra média de 20M -> 9 / (20 x 0,385) = 1,17x.
+    #
+    # 30 barras de 5min a partir de 9h30 terminam em 11h55 + 5min = 12h00.
+    rvol, fracao = rvol_da_sessao(_frame(9, 30, 30, 9_000_000), 20_000_000)
+    assert fracao == pytest.approx(150 / MINUTOS_DO_PREGAO, abs=1e-9)
+    assert fracao == pytest.approx(0.385, abs=0.001)
+    assert rvol == pytest.approx(1.17, abs=0.01)
+
+
+def test_as_9h40_o_rvol_sai_mas_nao_e_conclusivo():
+    # A especificação pede um PISO de 0,1 na fração "para evitar ruído na
+    # abertura". Esse piso existiu aqui (_RVOL_FRACAO_MINIMA) e foi substituído
+    # de propósito, porque ele não resolve: às 9h40 a fração real é 0,026 e o
+    # piso a levaria a 0,1, deixando o esperado em 2M -- um spike de abertura
+    # passa de 1,2x com folga e o alerta dispararia em ruído do mesmo jeito.
+    #
+    # O que segura o alerta é o SINAL: get_technicals marca
+    # rvolSignal="indefinido_abertura" abaixo de ~30min, e a condição de RVOL
+    # não é satisfeita enquanto isso (ver lib/alert-conditions.ts). A fração
+    # aqui continua sendo a real, sem piso -- número inventado no denominador
+    # seria pior que número honesto marcado como não conclusivo.
+    rvol, fracao = rvol_da_sessao(_frame(9, 30, 2, 2_000_000), 20_000_000)
+    assert fracao == pytest.approx(10 / MINUTOS_DO_PREGAO, abs=1e-9)
+    assert fracao < 6 / 78          # abaixo do corte de ~30min de get_technicals
+    assert rvol is not None          # o número sai; quem o barra é o sinal
