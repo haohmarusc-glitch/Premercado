@@ -176,6 +176,8 @@ def resultado_realizado(top: int = 7, incluir_simulado: bool = False,
             "ticker": ticker,
             "lucroRealizado": 0.0,
             "custoVendido": 0.0,
+            "recebido": 0.0,
+            "qtdVendida": 0.0,
             "lotesVendidos": 0,
             "lotesAbertos": 0,
             "lotesIncomputaveis": [],
@@ -202,10 +204,17 @@ def resultado_realizado(top: int = 7, incluir_simulado: bool = False,
                     "motivo": r_lote,
                 })
                 continue
-            custo, _proceeds, lucro = r_lote
+            custo, proceeds, lucro = r_lote
             t["lucroRealizado"] += lucro
             t["custoVendido"] += custo
             t["lotesVendidos"] += 1
+            # Para o preço médio de VENDA: recebido / quantidade vendida. É o
+            # único jeito de responder "vendi cedo?" -- ver a nota em
+            # precoAtualVsVendaPct.
+            t["recebido"] += proceeds
+            preco_compra = _num(lote.get("purchasePrice")) or 0
+            if preco_compra > 0:
+                t["qtdVendida"] += custo / preco_compra
             data = str(lote.get("saleDate"))
             if t["primeiraVenda"] is None or data < t["primeiraVenda"]:
                 t["primeiraVenda"] = data
@@ -225,6 +234,13 @@ def resultado_realizado(top: int = 7, incluir_simulado: bool = False,
             ),
             "menorPrecoPagoUsd": round(min(precos), 4) if precos else None,
             "maiorPrecoPagoUsd": round(max(precos), 4) if precos else None,
+            # Preço médio de VENDA, ponderado pela quantidade (recebido /
+            # quantidade vendida), não média simples dos preços de venda: lote
+            # de 10 ações e lote de 1 não pesam igual.
+            "precoVendaMedioUsd": (
+                round(t["recebido"] / t["qtdVendida"], 4)
+                if t["qtdVendida"] > 0 else None
+            ),
             "lotesComPreco": len(precos),
             "lotesVendidos": t["lotesVendidos"],
             "lotesAbertos": t["lotesAbertos"],
@@ -262,22 +278,50 @@ def resultado_realizado(top: int = 7, incluir_simulado: bool = False,
             linha["precoAtualFonte"] = fonte
             maior = linha.get("maiorPrecoPagoUsd")
             menor = linha.get("menorPrecoPagoUsd")
+            venda = linha.get("precoVendaMedioUsd")
             # Contra o MAIOR pago: é a compra que mais doeu, e é dela que sai a
             # pergunta útil ("o papel já passou do meu pior preço?").
             if maior:
                 linha["precoAtualVsMaiorPagoPct"] = round((preco / maior - 1) * 100, 2)
             if menor:
                 linha["precoAtualVsMenorPagoPct"] = round((preco / menor - 1) * 100, 2)
+            # Contra o preço de VENDA -- e este é o único que responde "vendi
+            # cedo?". Positivo = o papel subiu depois que você saiu; negativo =
+            # a venda pegou um preço melhor que o de hoje.
+            #
+            # Existe porque o relatório de 25/09/2026 concluiu "META e INTC
+            # continuam subindo após vendidas" a partir da coluna
+            # precoAtualVsMaiorPagoPct, que compara com o PREÇO PAGO. Pode ser
+            # que a conclusão estivesse certa; o número citado não a
+            # sustentava, e sem este campo não havia como sustentá-la.
+            if venda:
+                linha["precoAtualVsVendaPct"] = round((preco / venda - 1) * 100, 2)
 
     resultado: dict = {
         "tickers": ranking,
         "tickersComVenda": len(vendidos),
-        "totalLucroRealizadoUsd": round(sum(x["lucroRealizadoUsd"] for x in vendidos), 2),
-        "criterio": ("lucro realizado em USD dos lotes com venda registrada; "
-                     "menorPrecoPagoUsd/maiorPrecoPagoUsd cobrem TODOS os lotes "
-                     "do ticker, vendidos e abertos; precoAtualUsd vem com "
-                     "precoAtualFonte (mercado / último fechamento / "
-                     "pré-mercado) -- cite a fonte junto do preço"),
+        # DOIS totais, com o escopo no nome. Antes havia só
+        # `totalLucroRealizadoUsd`, que cobre TODOS os que venderam -- e o
+        # relatório de 25/09/2026 o publicou como "Total de lucro realizado
+        # (top 7)". Os sete exibidos somavam US$ 385,88; o campo trazia US$
+        # 401,52, dos onze. O modelo não tinha como saber a diferença, e somar
+        # sete linhas de cabeça para conferir é justamente o que ele não deve
+        # fazer.
+        "somaDoRankingUsd": round(sum(x["lucroRealizadoUsd"] for x in ranking), 2),
+        "totalLucroRealizadoTodosOsTickersUsd": round(
+            sum(x["lucroRealizadoUsd"] for x in vendidos), 2),
+        "criterio": (
+            "lucro realizado em USD dos lotes com venda registrada. "
+            "somaDoRankingUsd = só os tickers desta lista; "
+            "totalLucroRealizadoTodosOsTickersUsd = os "
+            f"{len(vendidos)} que venderam. Não troque um pelo outro. "
+            "menorPrecoPagoUsd/maiorPrecoPagoUsd cobrem TODOS os lotes do "
+            "ticker, vendidos e abertos. precoAtualUsd vem com "
+            "precoAtualFonte (mercado / último fechamento / pré-mercado) -- "
+            "cite a fonte junto do preço. Para dizer se o papel subiu ou caiu "
+            "DEPOIS da venda, use precoAtualVsVendaPct; "
+            "precoAtualVsMaiorPagoPct compara com o preço PAGO e não responde "
+            "essa pergunta"),
     }
     if not incluir_simulado and simuladas_fora:
         resultado["posicoesSimuladasExcluidas"] = simuladas_fora
