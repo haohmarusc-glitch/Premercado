@@ -503,3 +503,45 @@ class TestPrecoDeVenda:
         f = next(t for t in tools.TOOLS if t["name"] == "resultado_realizado")
         assert "precoAtualVsVendaPct" in f["description"]
         assert "somaDoRankingUsd" in f["description"]
+
+
+class TestNaoAfirmaTopoNemFundo:
+    """Dois pontos não são a série.
+
+    Relatório de 25/09/2026: "INTC saiu praticamente no topo (vendido em
+    $123,59, hoje $124,80), confirmando timing preciso". Os dois números estão
+    certos e a conclusão não se sustenta -- entre a venda e hoje o papel pode
+    ter ido a $150 e voltado, e o relatório não vê esse caminho. É a mesma
+    família do erro anterior: afirmação que passa do que o número mede.
+    """
+
+    def _prompt(self):
+        """O prompt com o espaço em branco normalizado.
+
+        O texto da regra é escrito quebrado em várias linhas para caber na
+        coluna, então procurar a frase inteira falharia pela quebra e não pelo
+        conteúdo -- um teste que reprova formatação em vez de significado.
+        """
+        from unittest import mock
+        import agent.llm_runtime as L
+        with mock.patch.object(L.memory, "rich_context_block", return_value="(x)"), \
+                mock.patch.object(L.memory, "recent_context", return_value="(y)"):
+            return " ".join(L.build_chat_prompt().split())
+
+    def test_a_regra_esta_no_prompt(self):
+        p = self._prompt()
+        assert "Você tem PONTOS, não a série" in p
+
+    def test_nomeia_as_frases_que_nao_pode_usar(self):
+        # Nomeadas porque foram as que apareceram: regra abstrata ("seja
+        # cuidadoso") não muda a frase que o modelo escreve.
+        p = self._prompt()
+        for frase in ("saiu no topo", "pegou o fundo", "timing preciso"):
+            assert frase in p, frase
+
+    def test_diz_o_que_FAZER_no_lugar(self):
+        # Proibição sem alternativa vira omissão: o modelo deixa de dizer o que
+        # sabe. A distância entre os dois pontos continua sendo afirmável.
+        p = self._prompt()
+        assert "Diga a distância entre os dois" in p
+        assert "máxima/mínima que venham no JSON" in p
