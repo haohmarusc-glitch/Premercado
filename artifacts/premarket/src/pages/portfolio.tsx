@@ -40,6 +40,8 @@ import { IndicatorToggles } from "@/components/indicator-toggles";
 import { attachIndicatorFields, INDICATOR_COLORS, type IndicatorKey } from "@/lib/indicators";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
+import { pesoNaCarteira, somaDosValoresAtuais } from "@/lib/peso-carteira";
+import { construirCiclos, rotuloDoCiclo, type Ciclo } from "@/lib/ciclos";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -991,12 +993,27 @@ function AllocationChart({ data }: { data: AllocEntry[] }) {
 
 // ── Purchases sub-table ───────────────────────────────────────────────────────
 
-function PurchasesRow({ positionId, ticker, currentPrice }: { positionId: number; ticker: string; currentPrice: number }) {
+function PurchasesRow({ positionId, ticker, currentPrice, somenteLotes }: {
+  positionId: number;
+  ticker: string;
+  currentPrice: number;
+  /**
+   * Ids dos lotes a exibir. Usado pela tabela de ciclos: expandir o ciclo #2
+   * da ARM tem que mostrar os lotes DELE, não todos os lotes que a posição
+   * acumulou desde o primeiro ciclo. Ausente = todos (tabela de posições
+   * abertas, onde a posição inteira é um ciclo em aberto).
+   */
+  somenteLotes?: Set<number>;
+}) {
   const { viewMode } = useViewMode();
   const isMobile = viewMode === "mobile";
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data: purchases = [], isLoading } = useListPortfolioPurchases(positionId);
+  const { data: todosOsLotes = [], isLoading } = useListPortfolioPurchases(positionId);
+  const purchases = useMemo(
+    () => (somenteLotes ? todosOsLotes.filter((p) => somenteLotes.has(p.id)) : todosOsLotes),
+    [todosOsLotes, somenteLotes],
+  );
   const deletePurchase = useDeletePortfolioPurchase();
   const createPurchase = useCreatePortfolioPurchase();
 
@@ -1979,6 +1996,14 @@ export default function PortfolioPage() {
   });
 
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  /**
+   * Expansão da tabela de ciclos, com chave `positionId#seq`.
+   *
+   * Separada de `expandedIds` (que é por id de posição) porque dois ciclos do
+   * mesmo ticker vivem na mesma posição: com a chave sendo o id, abrir o ciclo
+   * #1 da ARM abriria o #2 junto.
+   */
+  const [expandedCiclos, setExpandedCiclos] = useState<Set<string>>(new Set());
   // undefined = dialog closed, null = new position, PortfolioPosition = editing
   const [dialogTarget, setDialogTarget] = useState<PortfolioPosition | null | undefined>(undefined);
   const deletePos = useDeletePortfolioPosition();
@@ -2106,8 +2131,25 @@ export default function PortfolioPage() {
     // Valores por linha ficam na moeda da posição (R$ para B3);
     // os campos *Usd alimentam os agregados em dólar
     const toUsd = (v: number, brl: boolean) => (brl && fxRate ? v / fxRate : v);
-    const totalInvestedUsd = positions.reduce(
-      (s, p, i) => s + toUsd(derivedAll[i].invested, isB3(p.ticker)), 0,
+    // Denominador do Peso: soma dos VALORES ATUAIS das posições, o mesmo do
+    // gráfico "Alocação atual" (ver allocData).
+    //
+    // Era a soma do INVESTIDO, e por isso a coluna e o gráfico discordavam --
+    // relato de 25/09/2026: o gráfico mostrava NVDA 47,7% / BABA 2,8% / AVGO
+    // 3,1% e a coluna 46,1% / 3,4% / 3,4%. Os dois estavam "certos" para
+    // perguntas diferentes (quanto do custo x quanto da carteira de hoje), e
+    // nada na tela dizia qual era qual. Peso ao lado de um gráfico de
+    // alocação só pode significar uma coisa: fatia da carteira hoje.
+    //
+    // Posição sem cotação vale null nas duas pontas -- nem numerador nem
+    // denominador. É `somaDosValoresAtuais` quem decide isso, para a coluna e
+    // o gráfico não poderem divergir de novo.
+    const totalCurrentUsd = somaDosValoresAtuais(
+      positions.map((p, i) => {
+        const t = p.ticker;
+        if (!priceMap.has(t)) return null;
+        return toUsd(derivedAll[i].quantity * (priceMap.get(t) as number), isB3(t));
+      }),
     );
     return positions.map((p, i) => {
       const d = derivedAll[i];
@@ -2128,7 +2170,7 @@ export default function PortfolioPage() {
       const investedUsd = toUsd(invested, isBrl);
       const currentValueUsd = hasPrice ? toUsd(currentValue, isBrl) : 0;
       const dailyChangeUsd = dailyChange != null ? toUsd(dailyChange, isBrl) : null;
-      const weight = totalInvestedUsd > 0 ? (investedUsd / totalInvestedUsd) * 100 : 0;
+      const weight = pesoNaCarteira(hasPrice ? currentValueUsd : null, totalCurrentUsd);
       const downAlert = hasPrice ? getMaxDownAlert(pnlPct, p.downAlertPcts) : null;
       const upAlert = hasPrice ? getMaxUpAlert(pnlPct, p.upAlertPcts) : null;
       const is30d = daysSince(p.firstPurchaseDate) >= 30;
@@ -2138,7 +2180,31 @@ export default function PortfolioPage() {
   }, [positions, priceMap, changeMap, varMode, soldPositionIds, purchasesMap, fxRate]);
 
   const rows = useMemo(() => allRows.filter((r) => !r.isSoldOut), [allRows]);
-  const soldRows = useMemo(() => allRows.filter((r) => r.isSoldOut), [allRows]);
+
+  /**
+   * Os ciclos FECHADOS, que é o que a tabela "Ações Vendidas" lista.
+   *
+   * Vem dos LOTES de todas as posições, não das posições. A linha de posição
+   * sobrevive à venda total (`recomputePosition`), então quem decidia se um
+   * ticker aparecia em uma ou duas linhas era o histórico de apagar/recriar a
+   * posição, não o histórico de operações: em 25/09/2026 o INTC saía em duas
+   * linhas (certo) e a ARM numa só, misturando o ciclo de junho com o de
+   * julho→setembro e publicando a média dos dois como "preço de compra".
+   *
+   * `positionId` viaja no lote para os botões por lote (desfazer, adicionar
+   * compra, corrigir preços) continuarem sabendo a qual posição pertencem.
+   */
+  const ciclosFechados = useMemo(() => {
+    const lotes = positions.flatMap((p) =>
+      (purchasesMap.get(p.id) ?? []).map((l) => ({
+        ...l,
+        ticker: p.ticker,
+        positionId: p.id,
+        isBrl: isB3(p.ticker),
+      })),
+    );
+    return construirCiclos(lotes);
+  }, [positions, purchasesMap]);
 
   // Agregados sempre em USD (posições B3 convertidas pelo câmbio)
   const totals = useMemo(() => {
@@ -2200,6 +2266,13 @@ export default function PortfolioPage() {
     [rows],
   );
   const hasBrl = useMemo(() => allRows.some((r) => r.isBrl), [allRows]);
+
+  const toggleCiclo = (chave: string) =>
+    setExpandedCiclos((prev) => {
+      const next = new Set(prev);
+      next.has(chave) ? next.delete(chave) : next.add(chave);
+      return next;
+    });
 
   const toggleExpand = (id: number) =>
     setExpandedIds((prev) => {
@@ -2793,7 +2866,7 @@ export default function PortfolioPage() {
       </Card>
 
       {/* Ações Vendidas */}
-      {soldRows.length > 0 && (
+      {ciclosFechados.ciclos.length > 0 && (
         <Card className="border-border bg-card overflow-hidden">
           <CardContent className="p-0">
             <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
@@ -2801,7 +2874,7 @@ export default function PortfolioPage() {
                 Ações Vendidas
               </span>
               <Badge className="h-4 px-1.5 text-[9px] font-mono bg-muted text-muted-foreground border border-border">
-                {soldRows.length}
+                {ciclosFechados.ciclos.length}
               </Badge>
             </div>
             <div className="overflow-x-auto">
@@ -2817,43 +2890,37 @@ export default function PortfolioPage() {
                   <th className="text-right pr-3">Receita total</th>
                   <th className="text-right pr-3">Lucro/Perda</th>
                   <th className="text-right pr-3">Retorno %</th>
+                  <th className="text-right pr-3">Início</th>
+                  <th className="text-right pr-3" title="Duração do ciclo: da primeira compra até a posição voltar a zero">Dias</th>
                   <th className="text-right pr-3">Data encerr.</th>
                   <th className="pr-3" />
                 </tr>
               </thead>
               <tbody>
-                {soldRows.map(({ pos, isBrl }) => {
-                  const purchases = purchasesMap.get(pos.id) ?? [];
-                  const totalInvested = purchases.reduce((s, p) => s + p.amount, 0);
-                  // Quantidade e receita das compras efetivamente vendidas
-                  const soldLots = purchases.filter((p) => p.saleDate && p.salePrice && p.purchasePrice);
-                  const totalSoldQty = soldLots.reduce((s, p) => s + p.amount / (p.purchasePrice as number), 0);
-                  const soldInvested = soldLots.reduce((s, p) => s + p.amount, 0);
-                  const totalRevenue = soldLots.reduce((s, p) => s + (p.amount / (p.purchasePrice as number)) * (p.salePrice as number), 0);
-                  // Preço médio de compra e de venda (ponderados pela quantidade)
-                  const avgBuyPrice = totalSoldQty > 0 ? soldInvested / totalSoldQty : null;
-                  const avgSalePrice = totalSoldQty > 0 ? totalRevenue / totalSoldQty : null;
-                  const curPrice = priceMap.get(pos.ticker) ?? null;
+                {ciclosFechados.ciclos.map((c) => {
+                  const isBrl = isB3(c.ticker);
+                  const positionId = c.lotes[0].positionId;
+                  const avgBuyPrice = c.precoMedioCompra;
+                  const avgSalePrice = c.precoMedioVenda;
+                  const curPrice = priceMap.get(c.ticker) ?? null;
                   // Variação do preço atual vs. preço de venda (negativo = mais barata hoje)
                   const sinceSalePct = avgSalePrice && curPrice ? ((curPrice - avgSalePrice) / avgSalePrice) * 100 : null;
-                  const pnl = totalRevenue - totalInvested;
-                  const pnlPct = totalInvested > 0 ? (pnl / totalInvested) * 100 : 0;
-                  const lastSaleDate = purchases
-                    .map((p) => p.saleDate ?? "")
-                    .filter(Boolean)
-                    .sort()
-                    .pop() ?? "—";
-                  const expanded = expandedIds.has(pos.id);
+                  const pnl = c.lucro;
+                  const pnlPct = c.lucroPct;
+                  const chave = `${positionId}#${c.seq}`;
+                  const expanded = expandedCiclos.has(chave);
+                  const rotulo = rotuloDoCiclo(c, ciclosFechados.ciclos);
+                  const lotesDoCiclo = new Set(c.lotes.map((l) => l.id));
                   return (
-                    <Fragment key={pos.id}>
+                    <Fragment key={chave}>
                     <tr className={cn("border-b border-border/40 hover:bg-muted/10", expanded && "bg-muted/10")}>
                       <td className="py-2.5 pl-4 font-semibold text-sm text-foreground">
-                        <button onClick={() => toggleExpand(pos.id)} className="inline-flex items-center gap-1.5 hover:text-primary">
+                        <button onClick={() => toggleCiclo(chave)} className="inline-flex items-center gap-1.5 hover:text-primary">
                           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                          {pos.ticker}
+                          {rotulo}
                         </button>
                       </td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmtMoney(totalInvested, isBrl)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{fmtMoney(c.investido, isBrl)}</td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">
                         {avgBuyPrice != null ? fmtMoney(avgBuyPrice, isBrl) : <span className="text-muted-foreground">—</span>}
                       </td>
@@ -2871,7 +2938,7 @@ export default function PortfolioPage() {
                           ? `${sinceSalePct < 0 ? "▼ " : "▲ +"}${sinceSalePct.toFixed(2)}%`
                           : "—"}
                       </td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(totalRevenue, isBrl)}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums">{fmtMoney(c.receita, isBrl)}</td>
                       <td className={cn("py-2.5 pr-3 text-right tabular-nums font-semibold",
                         pnl >= 0 ? "text-green-400" : "text-red-400"
                       )}>
@@ -2882,18 +2949,29 @@ export default function PortfolioPage() {
                       )}>
                         {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
                       </td>
-                      <td className="py-2.5 pr-3 text-right text-muted-foreground">{lastSaleDate}</td>
+                      <td className="py-2.5 pr-3 text-right text-muted-foreground">{c.inicio}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">{c.dias}</td>
+                      <td className="py-2.5 pr-3 text-right text-muted-foreground">{c.fim}</td>
                       <td className="py-2.5 pr-3 text-right">
                         <Button size="sm" variant="ghost"
                           className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(pos.id, pos.ticker)}
+                          onClick={() => handleDelete(positionId, c.ticker)}
                           disabled={deletePos.isPending}
+                          title="Remover a POSIÇÃO inteira (todos os ciclos deste ticker)"
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </td>
                     </tr>
-                    {expanded && <PurchasesRow positionId={pos.id} ticker={pos.ticker} currentPrice={priceMap.get(pos.ticker) ?? 0} />}
+                    {/* Só os lotes DESTE ciclo -- ver `somenteLotes`. */}
+                    {expanded && (
+                      <PurchasesRow
+                        positionId={positionId}
+                        ticker={c.ticker}
+                        currentPrice={priceMap.get(c.ticker) ?? 0}
+                        somenteLotes={lotesDoCiclo}
+                      />
+                    )}
                     </Fragment>
                   );
                 })}
