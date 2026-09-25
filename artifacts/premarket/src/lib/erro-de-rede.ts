@@ -60,6 +60,49 @@ export function mensagemDeFalha(erro: unknown): string {
 }
 
 /**
+ * A mesma tradução, agora sabendo ler o STATUS da resposta.
+ *
+ * O que motivou (25/09/2026): em Configurações, falha ao salvar virava sempre
+ * "Erro ao salvar — Verifique os campos e tente novamente". Para um 403 essa
+ * frase é ativamente errada: `PATCH /settings` exige admin (a linha de
+ * settings é global -- tickers, orçamento de IA e e-mail de notificação valem
+ * para o deployment inteiro), então não há campo para verificar e tentar de
+ * novo nunca vai funcionar. O usuário fica convencido de que não consegue
+ * adicionar o ticker.
+ *
+ * Tipagem por PATO, não `instanceof ApiError`: este módulo é o tradutor de
+ * falhas da interface e não deve depender do pacote gerado do cliente para
+ * ser testável. Quem tem `status` numérico é resposta HTTP.
+ */
+export function mensagemDeFalhaHttp(erro: unknown): string {
+  const status = (erro as { status?: unknown } | null)?.status;
+  if (typeof status !== "number") return mensagemDeFalha(erro);
+
+  const doServidor = (erro as { data?: { error?: unknown } | null } | null)?.data?.error;
+  const detalhe = typeof doServidor === "string" && doServidor.trim() ? doServidor.trim() : null;
+
+  if (status === 403) {
+    return "Sua conta não tem permissão para salvar esta configuração — ela é global do "
+      + "sistema (vale para todos) e só o administrador pode alterá-la. Os campos estão "
+      + "certos; tentar de novo não resolve.";
+  }
+  if (status === 401) {
+    return "A sessão expirou. Entre de novo e repita a alteração — nada do que você "
+      + "digitou estava errado.";
+  }
+  if (status === 400 || status === 422) {
+    return detalhe
+      ? `O servidor recusou os dados: ${detalhe}`
+      : "O servidor recusou os dados enviados. Confira os campos.";
+  }
+  if (status >= 500) {
+    return `O servidor falhou ao salvar (${status}). Não é problema nos campos — a causa `
+      + "está no log do app.";
+  }
+  return detalhe ? `${detalhe} (${status})` : `A requisição falhou (${status}).`;
+}
+
+/**
  * Uma segunda tentativa, SÓ quando a primeira morreu na rede.
  *
  * O que motivou (21/09/2026, do log do Caddy): a Análise com IA da ARM saiu
