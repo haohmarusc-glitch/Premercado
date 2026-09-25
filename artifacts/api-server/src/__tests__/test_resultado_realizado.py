@@ -245,3 +245,92 @@ class TestFerramentaRegistrada:
     def test_esta_no_mapa_de_execucao(self):
         from agent import tools
         assert tools.DISPATCH["resultado_realizado"] is rr.resultado_realizado
+
+
+class TestChatTemTudo:
+    """O chat recebe TODAS as ferramentas, e o prompt as LISTA todas.
+
+    O defeito que isto fecha não é uma ferramenta específica: é a lista
+    mantida à mão. `_CHAT_TOOL_NAMES` precisava ser editada para cada
+    ferramenta nova, e doze ficaram de fora ao longo do tempo -- entre elas
+    get_earnings_reaction_history e get_earnings_calendar, justo as que
+    respondem as perguntas mais frequentes. O inventário escrito no prompt
+    tinha a mesma doença, por cima: ferramenta no schema e ausente da lista é
+    ferramenta que o modelo não sabe que tem.
+    """
+
+    def test_nenhuma_ferramenta_fica_fora_do_chat(self):
+        from agent import tools
+        from agent.llm_runtime import CHAT_TOOLS
+        no_chat = {t["name"] for t in CHAT_TOOLS}
+        faltando = sorted({t["name"] for t in tools.TOOLS} - no_chat)
+        assert faltando == [], f"ferramenta fora do chat: {faltando}"
+
+    def test_as_doze_que_estavam_de_fora(self):
+        # Nomeadas uma a uma: se alguém reintroduzir um filtro, o teste diz
+        # QUAL sumiu, não só que a contagem mudou.
+        from agent.llm_runtime import CHAT_TOOLS
+        no_chat = {t["name"] for t in CHAT_TOOLS}
+        for nome in [
+            "search_edgar_filings", "read_filing", "save_observation",
+            "update_exit_plan_item", "create_exit_plan_item",
+            "get_earnings_calendar", "get_earnings_reaction_history",
+            "get_global_market_snapshot", "get_europe_regime_signal",
+            "detect_sector_contagion", "check_market_alerts",
+            "get_backtest_summary",
+        ]:
+            assert nome in no_chat, nome
+
+    def test_as_so_do_chat_continuam_so_no_chat(self):
+        # get_gamma_exposure/get_earnings_transcript têm cota de tier grátis e
+        # não podem entrar em varredura automática.
+        from agent import tools
+        from agent.llm_runtime import CHAT_TOOLS
+        gerais = {t["name"] for t in tools.TOOLS}
+        no_chat = {t["name"] for t in CHAT_TOOLS}
+        for nome in ("get_gamma_exposure", "get_earnings_transcript"):
+            assert nome in no_chat
+            assert nome not in gerais, f"{nome} vazou para as rodadas automáticas"
+
+    def test_as_rodadas_automaticas_continuam_estreitas(self):
+        # O chat é uma pessoa pedindo uma coisa por vez; as rodadas varrem a
+        # carteira sozinhas, e lá o custo se multiplica por ticker.
+        from agent import tools
+        from agent.llm_runtime import (ALERTS_TOOLS, CHAT_TOOLS,
+                                       EXIT_PLAN_TOOLS, PREMARKET_TOOLS)
+        for subconjunto in (PREMARKET_TOOLS, ALERTS_TOOLS, EXIT_PLAN_TOOLS):
+            assert len(subconjunto) < len(tools.TOOLS)
+        assert len(CHAT_TOOLS) >= len(tools.TOOLS)
+
+    def test_o_prompt_lista_toda_ferramenta_que_o_chat_tem(self):
+        from unittest import mock
+        import agent.llm_runtime as L
+        with mock.patch.object(L.memory, "rich_context_block", return_value="(x)"), \
+                mock.patch.object(L.memory, "recent_context", return_value="(y)"):
+            prompt = L.build_chat_prompt()
+        ausentes = [t["name"] for t in L.CHAT_TOOLS if t["name"] not in prompt]
+        assert ausentes == [], f"no schema mas fora do inventário: {ausentes}"
+
+    def test_o_prompt_nao_proibe_mais_o_que_agora_esta_liberado(self):
+        from unittest import mock
+        import agent.llm_runtime as L
+        with mock.patch.object(L.memory, "rich_context_block", return_value="(x)"), \
+                mock.patch.object(L.memory, "recent_context", return_value="(y)"):
+            prompt = L.build_chat_prompt()
+        # A lista "NÃO use: save_observation, search_edgar_filings, ..." era o
+        # segundo bloqueio, independente do schema.
+        assert "NÃO use:" not in prompt
+
+    def test_escrita_continua_pedindo_pedido_do_usuario(self):
+        # Liberar as ferramentas de escrita não é liberar escrever por
+        # iniciativa própria: agora o chat pode mexer no plano de saída e na
+        # memória do agente.
+        from unittest import mock
+        import agent.llm_runtime as L
+        with mock.patch.object(L.memory, "rich_context_block", return_value="(x)"), \
+                mock.patch.object(L.memory, "recent_context", return_value="(y)"):
+            prompt = L.build_chat_prompt()
+        assert "ESCRITA só quando o usuário PEDIR" in prompt
+        for escrita in ("create_exit_plan_item", "update_exit_plan_item",
+                        "save_observation", "create_alert", "delete_alert"):
+            assert escrita in prompt
