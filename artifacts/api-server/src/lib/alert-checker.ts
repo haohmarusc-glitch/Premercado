@@ -18,8 +18,12 @@ import { runExclusiveFresh, filaPendentes } from "./python-queue";
 import { spawnPython } from "./python-spawn";
 import { ordemRotacionada, deveDispararCiclo, TAREFAS_POR_CICLO } from "./ciclo-rotativo";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
+import {
+  decidirDisparo, descreverCondicoes,
+  type CondicaoAvaliada, type RetratoDoTicker,
+} from "./alert-conditions";
 import { getOrCreateSettings } from "../routes/settings";
-import { todayBRTDateString } from "./timezone";
+import { dataDaBolsa, pregaoEncerrado, todayBRTDateString } from "./timezone";
 
 const CHECK_INTERVAL_MS = 5 * 60_000; // 5 min
 // Picos intraday são momentâneos (1 candle de 1min) mas a condição que os
@@ -154,6 +158,8 @@ async function fireAlert(
     currentPrice: number | null;
     currentChangePct: number | null;
     valueAtFiring: number | null;
+    /** Retrato das condições no disparo, num alerta composto. */
+    conditions?: CondicaoAvaliada[] | null;
   },
 ): Promise<void> {
   try {
@@ -168,11 +174,19 @@ async function fireAlert(
       valueAtFiring: opts.valueAtFiring,
       currentChangePct: opts.currentChangePct,
       currentPrice: opts.currentPrice,
+      conditions: opts.conditions ?? null,
+      confirmAtClose: alert.confirmAtClose,
+      note: alert.note,
     });
 
+    // `fireOnce` desativa em vez de marcar cooldown. `lastTriggeredAt` é gravado
+    // nos dois casos: é o que a tela mostra em "último disparo", e um alerta
+    // desativado sem data de disparo pareceria nunca ter disparado.
     await db
       .update(alertsTable)
-      .set({ lastTriggeredAt: now })
+      .set(alert.fireOnce
+        ? { lastTriggeredAt: now, enabled: false }
+        : { lastTriggeredAt: now })
       .where(eq(alertsTable.id, alert.id));
 
     await db.insert(alertFiringsTable).values({
@@ -186,11 +200,18 @@ async function fireAlert(
       valueAtFiring: opts.valueAtFiring,
       changePctAtFiring: opts.currentChangePct,
       priceAtFiring: opts.currentPrice,
+      conditions: opts.conditions ?? [],
       firedAt: now,
     });
 
     logger.info(
-      { symbol: alert.symbol, indicator: alert.indicator, condition: alert.condition },
+      {
+        symbol: alert.symbol,
+        indicator: alert.indicator,
+        condition: alert.condition,
+        condicoes: opts.conditions ? descreverCondicoes(opts.conditions) : undefined,
+        desativado: alert.fireOnce || undefined,
+      },
       "Alert triggered",
     );
   } catch (err) {
@@ -218,8 +239,13 @@ export async function checkAlerts(): Promise<void> {
 
   if (!alerts.length) return;
 
-  const priceAlerts = alerts.filter((a) => a.indicator === "price");
-  const technicalAlerts = alerts.filter((a) => a.indicator !== "price");
+  // Alerta com lista de condições sai da rota dos dois caminhos antigos: ele
+  // precisa de cotação E de indicadores no MESMO retrato, e nenhum dos dois
+  // caminhos junta as duas fontes.
+  const compostos = alerts.filter((a) => (a.conditions?.length ?? 0) > 0);
+  const simples = alerts.filter((a) => (a.conditions?.length ?? 0) === 0);
+  const priceAlerts = simples.filter((a) => a.indicator === "price");
+  const technicalAlerts = simples.filter((a) => a.indicator !== "price");
   const now = new Date();
 
   const withinCooldown = (alert: Alert): boolean => {
@@ -287,6 +313,78 @@ export async function checkAlerts(): Promise<void> {
       const valueAtFiring = evalTechnical(alert, t);
       if (valueAtFiring == null || withinCooldown(alert)) continue;
       await fireAlert(alert, now, { currentPrice: t.price ?? null, currentChangePct: null, valueAtFiring });
+    }
+  }
+
+  // ── Alertas compostos (condições em E) ───────────────────────────────────
+  if (compostos.length) {
+    const symbols = [...new Set(compostos.map((a) => a.symbol))];
+
+    // As DUAS fontes, e o preço vem da cotação.
+    //
+    // `get_technicals` também devolve `price`, mas da série DIÁRIA (que passa
+    // por cache em disco) -- o mesmo preço que o alerta de preço simples usa vem
+    // de `get_quotes`, ao vivo. Um alerta composto cuja condição de preço
+    // disparasse por um número diferente do alerta de preço simples, no mesmo
+    // instante e no mesmo ticker, seria impossível de explicar ao usuário.
+    // Então: preço e variação da cotação, indicadores e RVOL dos técnicos.
+    let quotes: Quote[] | null = [];
+    let technicals: Technicals[] | null = [];
+    try {
+      quotes = await fetchQuotes(symbols);
+    } catch (err) {
+      logger.warn({ err }, "Alert checker: failed to fetch quotes (compostos)");
+    }
+    try {
+      technicals = await fetchTechnicals(symbols);
+    } catch (err) {
+      logger.warn({ err }, "Alert checker: failed to fetch technicals (compostos)");
+    }
+    const quoteMap = new Map((quotes ?? []).map((q) => [q.symbol, q]));
+    const techMap = new Map((technicals ?? []).map((t) => [t.ticker, t]));
+
+    const dataDeHojeNaBolsa = dataDaBolsa(now);
+    const fechado = pregaoEncerrado(now);
+
+    for (const alert of compostos) {
+      const q = quoteMap.get(alert.symbol);
+      const t = techMap.get(alert.symbol);
+      // Sem NENHUMA das duas fontes não há retrato: avaliar assim faria toda
+      // condição cair em "sem dado" e encher o log de recusa que não é decisão.
+      if (!q && (!t || t.error)) continue;
+
+      const retrato: RetratoDoTicker = {
+        ticker: alert.symbol,
+        price: q?.price ?? t?.price ?? null,
+        changePct: q?.changePct ?? t?.changePct ?? null,
+        rsi: t?.rsi ?? null,
+        macdHistogram: t?.macdHistogram ?? null,
+        sma20: t?.sma20 ?? null,
+        sma50: t?.sma50 ?? null,
+        rvol: t?.rvol ?? null,
+        rvolSignal: t?.rvolSignal ?? null,
+        rvolData: t?.rvolData ?? null,
+        rvolAte: t?.rvolAte ?? null,
+      };
+
+      const decisao = decidirDisparo(alert, retrato, {
+        agora: now, dataDeHojeNaBolsa, pregaoEncerrado: fechado,
+      });
+      if (!decisao.disparar) {
+        logger.debug(
+          { alertId: alert.id, symbol: alert.symbol, motivo: decisao.motivo,
+            condicoes: descreverCondicoes(decisao.avaliacao.condicoes) },
+          "Alerta composto não disparou",
+        );
+        continue;
+      }
+
+      await fireAlert(alert, now, {
+        currentPrice: retrato.price ?? null,
+        currentChangePct: retrato.changePct ?? null,
+        valueAtFiring: decisao.avaliacao.valorPrincipal,
+        conditions: decisao.avaliacao.condicoes,
+      });
     }
   }
 }

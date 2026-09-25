@@ -2,7 +2,7 @@
 
 Projeto: **Premercado** — página `/alerts` (Alertas de Preço) e `/chat`.
 
-Estado desta especificação: **partes 1 a 3 entregues**, 4 e 5 pendentes (ver
+Estado desta especificação: **partes 1 a 4 entregues**, 5 pendente (ver
 "Onde isto está" no fim).
 
 ## Contexto
@@ -160,7 +160,11 @@ Corpo: condições atendidas com valores, nota/origem, link para
 - [x] Os quatro contratos que descrevem um alerta não divergem — openapi, zod de
       runtime, tipos e client React, mais o `ensure-schema` contra a migração.
       (`contrato-de-alerta.test.ts`)
-- [ ] Checker avaliando condições múltiplas e e-mail no formato acima.
+- [x] Checker avaliando condições múltiplas, com cooldown, "confirmar no
+      fechamento" e "disparar uma vez". (`decidir-disparo.test.ts`)
+- [x] E-mail no formato `[Premercado] AVGO — confirmação: preço 366,20 > 365 e
+      RVOL 1,35x > 1,2x`, com nota/origem e link para a Análise Rápida.
+      (`assuntoDoAlertaComposto`, em `decidir-disparo.test.ts`)
 - [ ] UI de `/alerts` com "+ Adicionar condição" e Nota/Origem.
 - [ ] Botão no chat pré-preenche AVGO / preço > 365 / RVOL > 1,2 a partir da
       resposta de 25/09/2026.
@@ -172,7 +176,7 @@ Corpo: condições atendidas com valores, nota/origem, link para
 | 1. avaliador de condições | `api-server/src/lib/alert-conditions.ts` | entregue |
 | 2. fonte do RVOL | `agent/volume_intradiario.py`, `get_technicals.py`, `tools.py`, `lib/timezone.ts`, `premarket/src/lib/indicators.ts` | entregue |
 | 3. schema + migração + contratos | `lib/db/src/schema/premarket.ts`, `lib/db/migrations/0039_*.sql`, `api-server/src/lib/ensure-schema.ts`, `lib/api-spec/openapi.yaml`, `lib/api-zod`, `lib/api-client-react`, `api-server/src/routes/alerts.ts` | entregue |
-| 4. checker + e-mail | `api-server/src/lib/alert-checker.ts`, `lib/mailer.ts` | pendente |
+| 4. checker + e-mail | `api-server/src/lib/alert-checker.ts`, `lib/mailer.ts`, `lib/timezone.ts` | entregue |
 | 5. UI + botão do chat | `premarket/src/pages/alerts.tsx`, `pages/chat.tsx` | pendente |
 
 ### Sobre a migração: não há backfill
@@ -190,9 +194,21 @@ acontece na leitura, em `condicoesDoAlerta`. Dois motivos:
 Lista vazia **não** dispara, então nenhuma linha antiga passa pelo estado
 "dispara sempre" — o pior erro possível nesta migração.
 
-Nada das partes 1 a 3 mudou o comportamento dos alertas que já existem: o
-avaliador novo ainda não é chamado pelo checker, e as colunas novas têm default
-inerte. O que mudou de fato é o RVOL — pregão curto, sinal de uma fonte só, e a
-apresentação na Análise Rápida — e a API passa a aceitar `conditions` na
-criação, sem que nada ainda as avalie. É por isso que a parte 4 é a próxima: até
-ela, um alerta composto é gravado e não dispara.
+### O preço do alerta composto vem da COTAÇÃO, não dos técnicos
+
+`get_technicals` também devolve `price`, mas da série diária, que passa por cache
+em disco. O alerta de preço simples usa `get_quotes`, ao vivo. Um alerta composto
+cuja condição de preço disparasse por um número diferente do alerta de preço
+simples, no mesmo instante e no mesmo ticker, seria impossível de explicar. Então
+o retrato é montado das duas fontes: preço e variação da cotação, indicadores e
+RVOL dos técnicos.
+
+### Estado em produção
+
+Alertas que já existem: **comportamento inalterado**. Eles têm `conditions`
+vazio, caem no mesmo caminho de antes, e os testes fixam isso (incluindo que o
+guarda de RVOL não os afeta).
+
+Alertas compostos: **funcionam de ponta a ponta** — são criados pela API,
+avaliados pelo checker a cada 5 minutos e mandam e-mail. O que falta é a tela:
+até a parte 5, criá-los exige um POST na API.

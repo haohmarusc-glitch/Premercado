@@ -248,20 +248,58 @@ export function avaliarCondicoes(
   };
 }
 
+export const NOME_DO_INDICADOR: Record<IndicadorDeCondicao, string> = {
+  price: "preço", changePct: "variação", rsi14: "RSI(14)",
+  macd: "MACD", sma20: "MM20", sma50: "MM50", rvol: "RVOL",
+};
+
 /** "preço 366,20 / 365 ✅ · RVOL 1,35 / 1,2 ✅" — para a tela e para o e-mail. */
 export function descreverCondicoes(avaliadas: CondicaoAvaliada[]): string {
-  const NOME: Record<IndicadorDeCondicao, string> = {
-    price: "preço", changePct: "variação", rsi14: "RSI(14)",
-    macd: "MACD", sma20: "MM20", sma50: "MM50", rvol: "RVOL",
-  };
   return avaliadas.map((a) => {
-    const nome = NOME[a.condicao.indicator];
+    const nome = NOME_DO_INDICADOR[a.condicao.indicator];
     const atual = a.atual == null ? "—" : a.atual.toFixed(2);
     const alvo = a.condicao.indicator === "macd"
       ? (a.condicao.op === "above" ? "bullish" : "bearish")
       : a.condicao.value == null ? "—" : String(a.condicao.value);
     return `${nome} ${atual} / ${alvo} ${a.satisfeita ? "✅" : "❌"}`;
   }).join(" · ");
+}
+
+/** Números no formato brasileiro, como o resto dos e-mails do app. */
+function ptbr(n: number | null, casas = 2): string {
+  return n == null ? "—" : n.toFixed(casas).replace(".", ",");
+}
+
+/**
+ * O assunto do e-mail de um alerta composto.
+ *
+ * `[Premercado] AVGO — confirmação: preço 366,20 > 365 e RVOL 1,35x > 1,2x`
+ *
+ * Os valores vão no assunto, não só no corpo: no celular a notificação mostra o
+ * assunto e nada mais, e um alerta que diz apenas "AVGO disparou" obriga a abrir
+ * o e-mail para saber se vale interromper o que se está fazendo.
+ */
+export function assuntoDoAlertaComposto(
+  symbol: string, avaliadas: CondicaoAvaliada[], confirmAtClose = false,
+): string {
+  const UNIDADE: Partial<Record<IndicadorDeCondicao, string>> = { rvol: "x", changePct: "%" };
+  const partes = avaliadas.map((a) => {
+    const nome = NOME_DO_INDICADOR[a.condicao.indicator];
+    const un = UNIDADE[a.condicao.indicator] ?? "";
+    if (a.condicao.indicator === "macd") {
+      return `MACD ${a.condicao.op === "above" ? "bullish" : "bearish"}`;
+    }
+    if (a.condicao.indicator === "sma20" || a.condicao.indicator === "sma50") {
+      return `preço ${a.condicao.op === "above" ? ">" : "<"} ${nome}`;
+    }
+    const sinal = a.condicao.op === "above" ? ">" : "<";
+    const alvo = a.condicao.value == null ? "—" : String(a.condicao.value).replace(".", ",");
+    return `${nome} ${ptbr(a.atual)}${un} ${sinal} ${alvo}${un}`;
+  });
+  // "confirmação" só quando o alerta é de fechamento: num alerta intradiário a
+  // palavra prometeria uma confirmação que o dado não dá.
+  const rotulo = confirmAtClose ? "confirmação" : "disparou";
+  return `[Premercado] ${symbol} — ${rotulo}: ${partes.join(" e ")}`;
 }
 
 /**
@@ -321,6 +359,68 @@ export function condicoesDoAlerta(a: {
     return a.conditions as Condicao[];
   }
   return condicoesDoAlertaAntigo(a);
+}
+
+/** O cooldown padrão entre dois disparos do mesmo alerta. */
+export const COOLDOWN_MS = 4 * 60 * 60_000;
+
+export interface AlertaParaDecisao {
+  conditions?: unknown;
+  indicator: string;
+  condition: string;
+  thresholdPct?: number | null;
+  thresholdPrice?: number | null;
+  thresholdValue?: number | null;
+  confirmAtClose?: boolean | null;
+  lastTriggeredAt?: Date | string | null;
+}
+
+export interface DecisaoDeDisparo {
+  disparar: boolean;
+  /** Por que NÃO disparou. null quando disparou. */
+  motivo: string | null;
+  avaliacao: ResultadoDaAvaliacao;
+}
+
+/**
+ * Disparar este alerta agora?
+ *
+ * Função pura, separada do checker de propósito: o checker precisa de banco e de
+ * dois subprocessos Python para existir, e a decisão de disparar ou não é a
+ * única parte dele que dá para provar por teste. A ordem das recusas é a ordem
+ * em que elas importam no log.
+ */
+export function decidirDisparo(
+  alerta: AlertaParaDecisao,
+  retrato: RetratoDoTicker,
+  ctx: { agora: Date; dataDeHojeNaBolsa: string; pregaoEncerrado: boolean },
+): DecisaoDeDisparo {
+  const condicoes = condicoesDoAlerta(alerta);
+  const avaliacao = avaliarCondicoes(condicoes, retrato, ctx.dataDeHojeNaBolsa);
+
+  const recusa = (motivo: string): DecisaoDeDisparo =>
+    ({ disparar: false, motivo, avaliacao });
+
+  // Antes de qualquer conta: o cooldown. Avaliar um alerta em cooldown e só
+  // depois descartá-lo gasta a mesma cota de e-mail no log de "quase disparou".
+  if (alerta.lastTriggeredAt) {
+    const desde = ctx.agora.getTime() - new Date(alerta.lastTriggeredAt).getTime();
+    if (desde < COOLDOWN_MS) return recusa("em cooldown");
+  }
+
+  // "Confirmar no fechamento" avalia SÓ depois das 16:00 ET. O ponto da opção é
+  // não disparar em rompimento falso intradiário, e o RVOL segue instável até
+  // ~10h30 ET mesmo depois dos 30 minutos que o guarda de abertura cobre.
+  if (alerta.confirmAtClose && !ctx.pregaoEncerrado) {
+    return recusa("aguardando o fechamento (16:00 ET)");
+  }
+
+  if (!condicoes.length) return recusa("alerta sem condição");
+  if (!avaliacao.disparou) {
+    const naoSatisfeita = avaliacao.condicoes.find((c) => !c.satisfeita);
+    return recusa(naoSatisfeita?.motivo ?? "condição não satisfeita");
+  }
+  return { disparar: true, motivo: null, avaliacao };
 }
 
 /**
