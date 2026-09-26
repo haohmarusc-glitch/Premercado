@@ -10,7 +10,7 @@ import { CamadaAusente, type AusenciaDeColeta } from "@/components/camada-ausent
 import { MarkdownContent } from "@/components/markdown";
 import { benchmarkSugerido, temSugestaoConhecida } from "@/lib/benchmark-setor";
 import { comRetentativaDeRede, mensagemDeFalha } from "@/lib/erro-de-rede";
-import { rotuloRvol } from "@/lib/indicators";
+import { exibicaoDeRvol } from "@/lib/indicators";
 
 // Tela "Análise Rápida": os três comandos que antes só rodavam por SSH na VPS,
 // agora como três botões sobre um ticker avulso. Cada botão bate numa rota que
@@ -428,7 +428,9 @@ export default function AnaliseRapidaPage() {
         ["MM20 / MM50", `${fmtUsd(tech.sma20)} / ${fmtUsd(tech.sma50)}`],
         ["Distância da MM50", fmtPct(tech.pctAboveSma50)],
         ["VWAP", `${fmtUsd(tech.vwap)} (${tech.vwapSignal ?? "—"})`],
-        ["RVOL", tech.rvol != null ? `${tech.rvol.toFixed(2)} (${rotuloRvol(tech.rvolSignal)})` : "—"],
+        // Mesma decisão da tela: RVOL não conclusivo não vira número no
+        // relatório, senão o .md fica mais afirmativo que a fonte.
+        ["RVOL", `${exibicaoDeRvol(tech.rvol, tech.rvolSignal).valor} (${exibicaoDeRvol(tech.rvol, tech.rvolSignal).nota})`],
       ]));
     }
 
@@ -715,11 +717,15 @@ export default function AnaliseRapidaPage() {
               <Metric label="Preço" value={fmtUsd(tech.price)} sub={`${fmtPct(tech.changePct)} no dia`} tone={(tech.changePct ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="RSI" value={tech.rsi != null ? tech.rsi.toFixed(1) : "—"} sub={tech.rsiSignal} />
               <Metric label="MACD" value={tech.macdTrend ?? "—"} sub={tech.macdHistogram != null ? `hist ${tech.macdHistogram.toFixed(3)}` : undefined} tone={tech.macdTrend === "bullish" ? "pos" : tech.macdTrend === "bearish" ? "neg" : undefined} />
-              <Metric label="RVOL" value={tech.rvol != null ? tech.rvol.toFixed(2) : "—"} sub={rotuloRvol(tech.rvolSignal)} />
+              <Metric label="RVOL" value={exibicaoDeRvol(tech.rvol, tech.rvolSignal).valor} sub={exibicaoDeRvol(tech.rvol, tech.rvolSignal).nota} />
               <Metric label="MM20" value={fmtUsd(tech.sma20)} />
               <Metric label="MM50" value={fmtUsd(tech.sma50)} sub={tech.pctAboveSma50 != null ? `${fmtPct(tech.pctAboveSma50)} de distância` : undefined} tone={(tech.pctAboveSma50 ?? 0) >= 0 ? "pos" : "neg"} />
               <Metric label="VWAP" value={fmtUsd(tech.vwap)} sub={tech.vwapSignal} />
-              <Metric label="Volume vs média" value={tech.volumeRatio != null ? `${tech.volumeRatio.toFixed(2)}x` : "—"} />
+              {/* "Volume vs média" era ambíguo ao lado do RVOL: os dois pareciam
+                  medir a mesma coisa e discordar (AVGO: RVOL 0,84 e 0,81x).
+                  Só o RVOL é ajustado ao horário do pregão; este é média de 5
+                  pregões FECHADOS sobre a mediana de 20, e não inclui hoje. */}
+              <Metric label="Vol 5d / mediana 20d" value={tech.volumeRatio != null ? `${tech.volumeRatio.toFixed(2)}x` : "—"} sub="pregões fechados, sem ajuste de horário" />
             </div>
           )}
         </Painel>

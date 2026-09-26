@@ -11,7 +11,11 @@ import {
   useDeleteChatSession,
 } from "@workspace/api-client-react";
 import type { ChatSession } from "@workspace/api-client-react";
-import { Send, Trash2, MessageSquare, Plus, Clock, X } from "lucide-react";
+import { Send, Trash2, MessageSquare, Plus, Clock, X, BellPlus } from "lucide-react";
+import { Link } from "wouter";
+import {
+  extrairMonitoresDoChat, semBlocoDeMonitor, urlDeAlertaPreenchido,
+} from "@/lib/monitorar-do-chat";
 
 interface LocalMsg {
   localId: number;
@@ -23,6 +27,48 @@ interface LocalMsg {
   cacheReadTokens?: number | null;
   cacheWriteTokens?: number | null;
   llmModel?: string | null;
+}
+
+
+/**
+ * "Criar alerta" sob uma resposta que recomenda monitorar algo.
+ *
+ * O agente escreve "Ação: Monitorar confirmação acima de $365-370 com volume
+ * >1.2x" e isso morria no texto: quem quisesse o alerta tinha de reler a frase,
+ * traduzir a faixa num número e digitar tudo de novo.
+ *
+ * O botão NÃO cria o alerta -- leva para `/alerts` com o formulário preenchido,
+ * para o usuário revisar e confirmar. A extração é palpite sobre linguagem
+ * natural (ver lib/monitorar-do-chat.ts), e um palpite que virasse alerta
+ * automático mandaria e-mail sobre um nível que o agente nunca recomendou.
+ */
+function BotoesDeMonitorar({ texto }: { texto: string }) {
+  const monitores = extrairMonitoresDoChat(texto);
+  if (!monitores.length) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border/50" data-testid="botoes-monitorar">
+      {monitores.map((m) => (
+        <Link key={m.ticker} href={urlDeAlertaPreenchido(m)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="font-mono text-xs"
+            data-testid={`btn-monitorar-${m.ticker}`}
+            title={m.origem === "texto"
+              ? "Níveis lidos do texto da resposta -- revise antes de confirmar"
+              : "Níveis indicados pelo próprio agente"}
+          >
+            <BellPlus className="h-3.5 w-3.5 mr-1.5" />
+            Criar alerta: {m.ticker}
+            <span className="ml-1.5 text-muted-foreground">
+              {m.conditions.map((c) => `${c.indicator === "rvol" ? "RVOL" : c.indicator === "price" ? "$" : c.indicator} ${c.op === "above" ? ">" : "<"} ${c.value}`).join(" e ")}
+            </span>
+          </Button>
+        </Link>
+      ))}
+    </div>
+  );
 }
 
 let _lid = 0;
@@ -415,7 +461,8 @@ export default function Chat() {
                       )}
                     </div>
                     <div className="px-4 py-3">
-                      <MarkdownContent content={msg.content} />
+                      <MarkdownContent content={semBlocoDeMonitor(msg.content)} />
+                      <BotoesDeMonitorar texto={msg.content} />
                     </div>
                   </div>
                 )}

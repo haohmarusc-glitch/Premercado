@@ -2,6 +2,9 @@ import nodemailer from "nodemailer";
 import { db, settingsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { markdownParaHtml } from "./markdown-email";
+import {
+  assuntoDoAlertaComposto, descreverCondicoes, type CondicaoAvaliada,
+} from "@workspace/alertas";
 
 function createTransport() {
   return nodemailer.createTransport({
@@ -31,6 +34,28 @@ async function resolveNotifyEmail(): Promise<string | null> {
   return process.env.NOTIFY_EMAIL?.trim() || null;
 }
 
+/**
+ * Base dos links dos e-mails, do `DOMINIO` que o compose já exige no `.env`.
+ *
+ * Vazio quando a variável não existe, e aí o link é OMITIDO em vez de sair
+ * relativo: URL relativa em e-mail não resolve em cliente nenhum, e um link
+ * quebrado num alerta é pior que nenhum -- quem clica e não chega a lugar nenhum
+ * passa a ignorar o e-mail inteiro.
+ */
+const LINK_BASE = process.env.DOMINIO?.trim()
+  ? `https://${process.env.DOMINIO.trim().replace(/^https?:\/\//, "")}`
+  : "";
+
+/** `& < > " '` — a nota do alerta é texto livre do usuário. */
+function escaparHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Colunas numeric do Postgres chegam como STRING via drizzle (apesar do
 // $type<number>) — coage na borda antes de formatar, senão .toFixed lança
 // TypeError e o e-mail nunca sai (visto em produção nos alertas 89/97).
@@ -51,6 +76,14 @@ export async function sendAlertEmail(opts: {
   valueAtFiring?: number | string | null; // valor do indicador tecnico no disparo
   currentChangePct: number | string | null;
   currentPrice: number | string | null;
+  // Alerta com mais de uma condicao (E). Quando vem, o assunto e a frase de
+  // condicao saem DAQUI em vez dos ramos por indicador abaixo -- aqueles sabem
+  // descrever uma condicao so' e nao tem onde por o RVOL.
+  conditions?: CondicaoAvaliada[] | null;
+  confirmAtClose?: boolean | null;
+  // Nota/origem do alerta ("Chat 25/09 -- confirmacao de reversao"). Tres meses
+  // depois, "por que criei este alerta?" nao tem resposta sem isto.
+  note?: string | null;
 }): Promise<void> {
   const to = opts.to?.trim();
   if (!to) { logger.warn({ symbol: opts.symbol }, "No notify email on record — skipping alert"); return; }
@@ -73,7 +106,11 @@ export async function sendAlertEmail(opts: {
 
   let subject: string;
   let conditionSentence: string; // frase completa pra "Condição: <isso>" no corpo do email
-  if (indicator === "rsi") {
+  const compostas = opts.conditions?.length ? opts.conditions : null;
+  if (compostas) {
+    subject = assuntoDoAlertaComposto(opts.symbol, compostas, opts.confirmAtClose ?? false);
+    conditionSentence = descreverCondicoes(compostas);
+  } else if (indicator === "rsi") {
     const dir = opts.condition === "above" ? "acima de" : "abaixo de";
     const thresholdStr = thresholdValue != null ? thresholdValue.toFixed(0) : "—";
     const currentStr = valueAtFiring != null ? valueAtFiring.toFixed(1) : "—";
@@ -119,8 +156,12 @@ export async function sendAlertEmail(opts: {
   <p style="margin:4px 0;color:#666;font-size:12px">
     Condição: ${conditionSentence}
   </p>
+  ${opts.note ? `<p style="margin:12px 0 0;color:#888;font-size:12px;border-left:2px solid #444;padding-left:8px">${escaparHtml(opts.note)}</p>` : ""}
+  ${LINK_BASE ? `<p style="margin:12px 0 0;font-size:12px">
+    <a href="${LINK_BASE}/analise-rapida?t=${encodeURIComponent(opts.symbol)}" style="color:#ff8c00">Abrir Análise Rápida de ${opts.symbol}</a>
+  </p>` : ""}
 </div>
-<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. Cooldown: 4h.</div>
+<div class="footer">Gerado automaticamente pelo Pré-Mercado Agente. ${opts.confirmAtClose ? "Avaliado após o fechamento (16:00 ET)." : "Cooldown: 4h."}</div>
 </body></html>`;
 
   try {

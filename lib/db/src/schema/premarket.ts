@@ -170,6 +170,33 @@ export const alertsTable = pgTable("alerts", {
   thresholdPct: money("threshold_pct"),
   thresholdPrice: money("threshold_price"),
   thresholdValue: money("threshold_value"), // generico: nivel de RSI etc.
+  // Alerta com MAIS DE UMA condicao (E): dispara so quando todas passam na
+  // mesma verificacao. Ex.: preco > 365 E rvol > 1.2.
+  //
+  // `[]` NAO significa "dispara sempre": as linhas antigas ficam vazias de
+  // proposito -- a migracao adiciona a coluna e nao reescreve nada, e a
+  // conversao do formato antigo acontece na LEITURA
+  // (alert-conditions.ts::condicoesDoAlerta). A precedencia de threshold_price
+  // sobre threshold_pct nao e' expressavel em SQL sem virar terceira copia de
+  // uma regra que ja quebrou com duas, e uma migracao que escreva a condicao
+  // errada num alerta que manda e-mail sobre dinheiro real e' dificil de
+  // desfazer.
+  conditions: jsonb("conditions").$type<Array<{
+    indicator: string;
+    op: "above" | "below";
+    value?: number | null;
+  }>>().notNull().default([]),
+  // Avaliar so' depois de 16:00 ET, com preco de fechamento e RVOL do dia
+  // inteiro. E' a opcao mais confiavel para alerta de CONFIRMACAO: o RVOL fica
+  // instavel ate' ~10h30 ET mesmo depois dos 30 minutos que o guarda de
+  // abertura cobre.
+  confirmAtClose: boolean("confirm_at_close").notNull().default(false),
+  // Disparar uma vez e desativar, em vez de respeitar o cooldown de 4h.
+  fireOnce: boolean("fire_once").notNull().default(false),
+  // Nota/origem em texto livre (ex.: "Chat 25/09 -- confirmacao de reversao").
+  // Vai no corpo do e-mail: tres meses depois, "por que criei este alerta?" nao
+  // tem resposta em lugar nenhum sem isto.
+  note: text("note"),
   enabled: boolean("enabled").notNull().default(true),
   lastTriggeredAt: timestamp("last_triggered_at"),
   // Dono do alerta -- nullable pra permitir o ALTER TABLE em cima de linhas
@@ -204,6 +231,16 @@ export const alertFiringsTable = pgTable("alert_firings", {
   valueAtFiring: money("value_at_firing"), // valor do indicador tecnico no momento do disparo (ex: RSI)
   changePctAtFiring: money("change_pct_at_firing"),
   priceAtFiring: money("price_at_firing"),
+  // Retrato das condicoes NO MOMENTO do disparo, com o valor lido de cada uma.
+  // As colunas threshold_* acima guardam so' uma condicao e nao tem onde por o
+  // RVOL: sem isto o historico de um alerta composto nao diz com que numeros ele
+  // disparou, que e' a unica pergunta que se faz a um historico de alerta.
+  conditions: jsonb("conditions").$type<Array<{
+    condicao: { indicator: string; op: "above" | "below"; value?: number | null };
+    atual: number | null;
+    satisfeita: boolean;
+    motivo?: string;
+  }>>().notNull().default([]),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_alert_firings_alert_id").on(t.alertId),

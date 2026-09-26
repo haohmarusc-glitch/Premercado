@@ -39,22 +39,9 @@ logging.disable(logging.CRITICAL)
 import yfinance as yf
 import pandas as pd
 from agent.security import sanitize_ticker, friendly_error
-from agent.volume_intradiario import barras_da_sessao, rvol_da_sessao
+from agent.volume_intradiario import barras_da_sessao, medida_do_rvol
 from agent import json_seguro
 from agent import market_data_provider
-
-# Cópia de tools.py::_rvol_signal -- ver o comentário longo lá para o porquê
-# (volume intradiário é em U, a fração linear superestima o rvol na abertura;
-# NBIS 17/08/2026 saiu com rvol 5,81 "alto" aos sete minutos de pregão).
-# Duplicado porque este arquivo roda por spawn e não importa do pacote;
-# test_rvol_abertura.py garante que as duas cópias não divirjam.
-_RVOL_FRACAO_MINIMA = 6 / 78  # ~30min do pregão nominal de 6.5h
-
-
-def _rvol_signal(rvol: float, fraction_elapsed: float) -> str:
-    if fraction_elapsed < _RVOL_FRACAO_MINIMA:
-        return "indefinido_abertura"
-    return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
 
 
 def technicals(ticker: str, period: str = "6mo") -> dict:
@@ -160,6 +147,7 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
         # Falha (mercado fechado, sem rede) não derruba os indicadores diários
         # acima, só deixa rvol/vwap como None.
         rvol = rvol_signal = vwap = price_vs_vwap_pct = vwap_signal = None
+        rvol_ate = rvol_fracao = rvol_data = None
         try:
             intraday = yf.Ticker(ticker).history(period="1d", interval="5m")
             if not intraday.empty:
@@ -173,9 +161,18 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
                 # A VWAP vinha do mesmo frame, entao herdava a contaminacao:
                 # uma VWAP ponderada por pos-mercado nao e' a VWAP do pregao.
                 sessao = barras_da_sessao(intraday)
-                rvol, fraction_elapsed = rvol_da_sessao(intraday, vol_base20)
-                if rvol is not None:
-                    rvol_signal = _rvol_signal(rvol, fraction_elapsed)
+                medida = medida_do_rvol(intraday, vol_base20)
+                rvol = medida.rvol
+                # O sinal vem da medida, não de uma cópia local de `_rvol_signal`
+                # -- havia duas, e a conta que elas envolviam quebrou nas duas ao
+                # mesmo tempo. `rvolSignal` só vai a null quando não há medida.
+                rvol_signal = medida.situacao if rvol is not None else None
+                rvol_fracao = round(medida.fracao, 4) if rvol is not None else None
+                # Até que horário de bolsa este rvol mede. Quem avalia alerta em
+                # Node precisa disto para recusar valor velho: "existe" e "é de
+                # agora" são perguntas diferentes.
+                rvol_ate = medida.fim.strftime("%H:%M") if medida.fim else None
+                rvol_data = str(medida.data) if medida.data else None
 
                 if sessao is not None and len(sessao) > 0:
                     intraday_volume = sessao["Volume"]
@@ -209,6 +206,16 @@ def technicals(ticker: str, period: str = "6mo") -> dict:
             "volAvg20": round(vol_base20) if vol_base20 > 0 else None,
             "rvol": rvol,
             "rvolSignal": rvol_signal,
+            # Data e horário de bolsa (ET) da última barra fechada que entrou no
+            # rvol, e quanto do pregão ela representa. Ver MedidaDeRvol.
+            #
+            # `rvolData` é o que permite a quem avalia alerta recusar um rvol de
+            # OUTRO pregão: num feriado ou numa resposta velha do provedor o
+            # frame "1d" volta com o último dia negociado, e o número chega
+            # plausível, completo e errado quanto ao dia.
+            "rvolData": rvol_data,
+            "rvolAte": rvol_ate,
+            "rvolFracaoDoPregao": rvol_fracao,
             "vwap": vwap,
             "priceVsVwapPct": price_vs_vwap_pct,
             "vwapSignal": vwap_signal,

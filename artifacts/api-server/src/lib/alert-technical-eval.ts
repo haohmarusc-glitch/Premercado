@@ -7,10 +7,18 @@ export interface TechnicalAlertInput {
 export interface Technicals {
   ticker: string;
   price?: number | null;
+  changePct?: number | null;
   rsi?: number | null;
   macdHistogram?: number | null;
   sma20?: number | null;
   sma50?: number | null;
+  // RVOL e o contexto que diz se ele vale. Vinham no payload de
+  // get_technicals.py desde sempre e eram descartados por não estarem
+  // declarados aqui -- ver o cabeçalho de alert-conditions.ts.
+  rvol?: number | null;
+  rvolSignal?: string | null;
+  rvolData?: string | null;
+  rvolAte?: string | null;
   error?: string;
 }
 

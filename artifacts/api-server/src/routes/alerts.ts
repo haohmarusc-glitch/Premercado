@@ -13,6 +13,7 @@ import {
 import { logger } from "../lib/logger";
 import { startOfTodayBRT } from "../lib/timezone";
 import { isAlertIndicator } from "../lib/alert-indicators";
+import { validarCondicoes } from "@workspace/alertas";
 
 const router: IRouter = Router();
 
@@ -74,6 +75,31 @@ router.post("/alerts", async (req, res): Promise<void> => {
     return;
   }
 
+  const comuns = {
+    confirmAtClose: parsed.data.confirmAtClose ?? false,
+    fireOnce: parsed.data.fireOnce ?? false,
+    note: parsed.data.note?.trim() || null,
+  };
+
+  // Alerta com lista de condições (E). Quando ela vem, substitui
+  // indicator/threshold_* -- que continuam gravados porque o schema os exige e
+  // porque um alerta composto de uma condição só tem de permanecer legível para
+  // quem ler a tabela pelas colunas antigas.
+  const conditions = parsed.data.conditions;
+  if (conditions !== undefined) {
+    const erro = validarCondicoes(conditions);
+    if (erro) { res.status(400).json({ error: erro }); return; }
+    const [row] = await db.insert(alertsTable)
+      .values({
+        symbol: symbol.toUpperCase(), indicator, condition,
+        thresholdPct, thresholdPrice, thresholdValue,
+        conditions, ...comuns, notifyEmail, userId: req.userId!,
+      })
+      .returning();
+    res.status(201).json(ListAlertsResponseItem.parse(serializeAlert(row)));
+    return;
+  }
+
   if (indicator === "price") {
     if (thresholdPct == null && thresholdPrice == null) {
       res.status(400).json({ error: "thresholdPct or thresholdPrice is required for indicator 'price'" });
@@ -89,7 +115,7 @@ router.post("/alerts", async (req, res): Promise<void> => {
   // (macd: histograma bullish/bearish; sma: preco acima/abaixo da media).
 
   const [row] = await db.insert(alertsTable)
-    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue, notifyEmail, userId: req.userId! })
+    .values({ symbol: symbol.toUpperCase(), indicator, condition, thresholdPct, thresholdPrice, thresholdValue, ...comuns, notifyEmail, userId: req.userId! })
     .returning();
   res.status(201).json(ListAlertsResponseItem.parse(serializeAlert(row)));
 });

@@ -25,7 +25,7 @@ from .http_retry import SESSION
 from .portfolio_snapshot import get_portfolio_snapshot
 from .resultado_realizado import resultado_realizado
 from .security import mask_sensitive_data, sanitize_for_llm, sanitize_ticker, sanitize_url
-from .volume_intradiario import barras_da_sessao, rvol_da_sessao
+from .volume_intradiario import barras_da_sessao, medida_do_rvol
 
 _PERIOD_RE = re.compile(r"^\s*(\d+)\s*(d|mo|y)\s*$", re.IGNORECASE)
 
@@ -1001,33 +1001,10 @@ def get_options_data(ticker: str, expiry: str | None = None) -> dict:
 # ── Indicadores técnicos ──────────────────────────────────────────────────────
 
 
-# Volume intradiário NÃO é uniforme: a distribuição é em U, com o leilão de
-# abertura concentrando muito mais volume por minuto que o miolo do pregão. O
-# rvol divide o volume de hoje por `base20 * fração_do_pregão_decorrida`, uma
-# aproximação que assume uniformidade -- e nos primeiros minutos ela
-# superestima grosseiramente.
-#
-# Visto em produção (NBIS, 17/08/2026 10:37 BRT, sete minutos de pregão): rvol
-# 5,81 rotulado "alto", e a análise com IA leu como "volume muito acima do
-# normal, típico de realização de lucro". Com ~2,6% da sessão decorrida e
-# tipicamente 8-12% do volume diário já negociado, o número sai inflado em 3-4x
-# só pela forma da curva -- a conclusão foi construída sobre um artefato.
-#
-# O número cru continua saindo (quem souber o que ele é pode usar); o que não
-# pode é virar "alto"/"baixo", rótulo que o prompt e a tela tratam como
-# convicção de mercado. Corrigir de verdade exigiria uma curva de volume
-# intradiário calibrada, que este repo não tem -- e inventar uma sem dado
-# seria trocar um viés conhecido por um desconhecido.
-#
-# Duplicado em get_technicals.py (que roda por spawn e não importa do pacote);
-# test_rvol_abertura.py amarra as duas cópias.
-_RVOL_FRACAO_MINIMA = 6 / 78  # ~30min do pregão nominal de 6.5h
-
-
-def _rvol_signal(rvol: float, fraction_elapsed: float) -> str:
-    if fraction_elapsed < _RVOL_FRACAO_MINIMA:
-        return "indefinido_abertura"
-    return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"
+# O sinal do rvol ("alto"/"normal"/"baixo"/"indefinido_abertura") mora em
+# volume_intradiario.situacao_do_rvol, junto da conta que o produz. Era uma
+# CÓPIA aqui e outra em get_technicals.py, e o guarda de abertura vinha em
+# fração (`6/78`), que num pregão de 210 minutos vale 16 minutos em vez de 30.
 
 
 @cached("technicals:{0}:{1}", ttl=300)
@@ -1267,9 +1244,9 @@ def get_technical_indicators(ticker: str, period: str = "6mo") -> dict:
                 # A VWAP vinha do mesmo frame, entao herdava a contaminacao:
                 # uma VWAP ponderada por pos-mercado nao e' a VWAP do pregao.
                 sessao = barras_da_sessao(intraday)
-                rvol, fraction_elapsed = rvol_da_sessao(intraday, vol_base20)
-                if rvol is not None:
-                    rvol_signal = _rvol_signal(rvol, fraction_elapsed)
+                medida = medida_do_rvol(intraday, vol_base20)
+                rvol = medida.rvol
+                rvol_signal = medida.situacao if rvol is not None else None
 
                 if sessao is not None and len(sessao) > 0:
                     intraday_volume = sessao["Volume"]

@@ -716,6 +716,14 @@ Regras:
   entre os dois pontos, e você não vê esse caminho. Diga a distância entre os
   dois ("hoje está 0,98% acima do preço de venda") e pare aí. Topo e fundo só
   com máxima/mínima que venham no JSON.
+- Quando você escrever "Ação: Monitorar" com nível de preço e/ou volume,
+  acrescente NO FIM da resposta um bloco JSON com os níveis, um por ticker:
+      {{"monitor": {{"ticker":"AVGO","conditions":[{{"indicator":"price","op":"above","value":365}},{{"indicator":"rvol","op":"above","value":1.2}}],"note":"por que monitorar"}}}}
+  A tela usa isso para oferecer um botão "Criar alerta" com o formulário
+  preenchido -- o bloco não aparece para o usuário, e NADA é criado sem ele
+  confirmar. Indicadores aceitos: price, changePct, rsi14, rvol. Em faixa
+  ("$365-370"), use o limite de ENTRADA: 365 para "acima", 370 para "abaixo".
+  Sem bloco, a tela tenta ler os níveis do seu texto, e aí acerta menos.
 - Formate em Markdown. Seja factual; cite números.
 
 === ESTADO ATUAL (carteira / alertas / cenário) ===

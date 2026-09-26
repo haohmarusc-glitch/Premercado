@@ -490,9 +490,12 @@ _BETA_VOLATIL_DIRETO = r"\bbeta\b[^.;]{0,80}?(?:mais|menos)\s+vol[áa]til"
 #
 # Os dois numeros nao se contradizem: medem coisas diferentes.
 #
-#     rvol         volume contra o esperado PARA ESTE PONTO da sessao,
-#                  ajustado pela curva em U (ver volume_intradiario.py)
-#     volumeRatio  volume de hoje contra a media de 20 dias INTEIROS
+#     rvol         volume da sessao de HOJE contra o esperado PARA ESTE PONTO
+#                  da sessao (ver volume_intradiario.py). E' o unico dos dois
+#                  ajustado ao horario do pregao.
+#     volumeRatio  media dos volumes dos 5 ultimos pregoes FECHADOS sobre a
+#                  mediana de 20 -- nao e' o volume de hoje, e nao tem ajuste
+#                  de horario nenhum
 #
 # Com o pregao em curso o segundo e' naturalmente menor, e 1,22 vez um dia
 # inteiro em 42 minutos e' justamente o que PRODUZ rvol 8,4. Um confirma o

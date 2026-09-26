@@ -22,6 +22,30 @@ describe("indicatorBadgeLabel", () => {
     expect(indicatorBadgeLabel({ indicator: "macd", condition: "below" })).toBe("MACD bearish");
   });
 
+  it("alerta composto mostra a contagem, não um threshold inventado", () => {
+    // Composto grava indicator="price" sem threshold (o schema exige as colunas
+    // antigas). Sem este ramo a etiqueta diria "↑ acima de +0%" -- um número que
+    // ninguém escolheu, ao lado da linha que mostra as condições de verdade.
+    expect(indicatorBadgeLabel({
+      indicator: "price", condition: "above",
+      conditions: [
+        { indicator: "price", op: "above", value: 365 },
+        { indicator: "rvol", op: "above", value: 1.2 },
+      ],
+    })).toBe("2 condições (E)");
+    expect(indicatorBadgeLabel({
+      indicator: "price", condition: "above",
+      conditions: [{ indicator: "rvol", op: "above", value: 1.2 }],
+    })).toBe("1 condição");
+  });
+
+  it("lista de condições vazia cai no comportamento antigo", () => {
+    // É o estado de TODA linha existente no banco depois da migração.
+    expect(indicatorBadgeLabel({
+      condition: "above", thresholdPrice: 865, thresholdPct: null, conditions: [],
+    })).toBe("↑ acima de $865.00");
+  });
+
   it("formats sma20/sma50 alerts", () => {
     expect(indicatorBadgeLabel({ indicator: "sma20", condition: "above" })).toBe("preço cruzou acima da SMA20");
     expect(indicatorBadgeLabel({ indicator: "sma50", condition: "below" })).toBe("preço cruzou abaixo da SMA50");

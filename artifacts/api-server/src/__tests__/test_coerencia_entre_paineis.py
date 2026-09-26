@@ -29,9 +29,10 @@ _AGENT_DIR = pathlib.Path(__file__).resolve().parent.parent / "agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-from agent import tools  # noqa: E402
+from agent import tools  # noqa: E402,F401  (usado pelos testes de preço canônico)
 from agent.analise_rapida_ia import (  # noqa: E402
     _compactar, _defasagem_entre_paineis, _preco_canonico)
+from agent.volume_intradiario import situacao_do_rvol  # noqa: E402
 
 
 # ── 1. Preço canônico ───────────────────────────────────────────────────────
@@ -143,36 +144,43 @@ def test_cache_do_dia_anterior_morre_na_abertura_de_hoje():
 # ── 3. RVOL na abertura ─────────────────────────────────────────────────────
 
 def test_rvol_nos_primeiros_30min_nao_vira_alto():
-    """7min de pregão = ~2 barras de 5min. Era aqui que saía "alto" com 5,81."""
-    assert tools._rvol_signal(5.81, fraction_elapsed=2 / 78) == "indefinido_abertura"
-    assert tools._rvol_signal(0.2, fraction_elapsed=2 / 78) == "indefinido_abertura"
+    """7min de pregão. Era aqui que saía "alto" com 5,81 (NBIS, 17/08/2026)."""
+    assert situacao_do_rvol(5.81, minutos=7) == "indefinido_abertura"
+    assert situacao_do_rvol(0.2, minutos=7) == "indefinido_abertura"
 
 
 def test_rvol_volta_a_classificar_depois_da_primeira_meia_hora():
-    depois = 10 / 78
-    assert tools._rvol_signal(5.81, depois) == "alto"
-    assert tools._rvol_signal(1.0, depois) == "normal"
-    assert tools._rvol_signal(0.5, depois) == "baixo"
+    depois = 50
+    assert situacao_do_rvol(5.81, depois) == "alto"
+    assert situacao_do_rvol(1.0, depois) == "normal"
+    assert situacao_do_rvol(0.5, depois) == "baixo"
 
 
 def test_limiares_originais_preservados_no_pregao_cheio():
-    cheio = 1.0
-    assert tools._rvol_signal(1.5, cheio) == "alto"
-    assert tools._rvol_signal(1.49, cheio) == "normal"
-    assert tools._rvol_signal(0.7, cheio) == "normal"
-    assert tools._rvol_signal(0.69, cheio) == "baixo"
+    cheio = 390
+    assert situacao_do_rvol(1.5, cheio) == "alto"
+    assert situacao_do_rvol(1.49, cheio) == "normal"
+    assert situacao_do_rvol(0.7, cheio) == "normal"
+    assert situacao_do_rvol(0.69, cheio) == "baixo"
 
 
-def test_as_duas_copias_de_rvol_signal_concordam():
-    """get_technicals.py não pode ser importado (sequestra o stdout no
-    import, ver a docstring do módulo), então a cópia é comparada no texto --
-    mesma convenção de test_get_technicals_fallback.py."""
-    fonte = (_AGENT_DIR / "get_technicals.py").read_text(encoding="utf-8")
-    assert "_RVOL_FRACAO_MINIMA = 6 / 78" in fonte
-    assert 'return "indefinido_abertura"' in fonte
-    assert 'return "alto" if rvol >= 1.5 else "baixo" if rvol < 0.7 else "normal"' in fonte
-    # E que ela é de fato usada, não só definida.
-    assert "rvol_signal = _rvol_signal(rvol, fraction_elapsed)" in fonte
+def test_o_sinal_do_rvol_tem_uma_fonte_so():
+    """Antes este teste comparava DUAS cópias de `_rvol_signal` -- uma em
+    tools.py, outra em get_technicals.py. Comparar cópias ainda permite editar
+    as duas juntas e errar nas duas juntas, que é exatamente o que aconteceu com
+    a conta do rvol. As cópias foram apagadas; o que se guarda agora é que os
+    dois painéis leem a mesma função.
+
+    get_technicals.py não pode ser importado (sequestra o stdout no import, ver
+    a docstring do módulo), então é lido no texto -- mesma convenção de
+    test_get_technicals_fallback.py.
+    """
+    for arquivo in ("tools.py", "get_technicals.py"):
+        fonte = (_AGENT_DIR / arquivo).read_text(encoding="utf-8")
+        assert "def _rvol_signal" not in fonte, f"{arquivo} recriou a cópia"
+        assert "medida_do_rvol" in fonte, f"{arquivo} não usa a fonte compartilhada"
+        assert "rvol_signal = medida.situacao" in fonte, (
+            f"{arquivo} calcula o sinal por fora de situacao_do_rvol")
 
 
 # ═══ 29/08/2026 — MRVL: painéis do mesmo retrato, sessões diferentes ═══════

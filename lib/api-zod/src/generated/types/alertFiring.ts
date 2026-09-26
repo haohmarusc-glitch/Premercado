@@ -5,6 +5,7 @@
  * Pre-market agent API for MU and SMCI monitoring
  * OpenAPI spec version: 0.1.0
  */
+import type { EvaluatedAlertCondition } from './evaluatedAlertCondition';
 
 export interface AlertFiring {
   id: number;
@@ -24,5 +25,7 @@ export interface AlertFiring {
   changePctAtFiring?: number | null;
   /** @nullable */
   priceAtFiring?: number | null;
+  /** Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo. */
+  conditions?: EvaluatedAlertCondition[];
   firedAt: string;
 }

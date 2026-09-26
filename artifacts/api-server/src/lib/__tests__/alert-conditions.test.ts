@@ -7,9 +7,10 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  avaliarCondicoes, condicoesDoAlertaAntigo, descreverCondicoes,
+  avaliarCondicoes, condicoesDoAlerta, condicoesDoAlertaAntigo, descreverCondicoes,
+  motivoParaIgnorarRvol, rotuloDeRvolIndisponivel, rvolEhDeHoje, validarCondicoes,
   type Condicao, type RetratoDoTicker,
-} from "../alert-conditions";
+} from "@workspace/alertas";
 
 /** O caso do chat: "confirmação acima de $365-370 com volume >1.2x". */
 const AVGO: Condicao[] = [
@@ -65,7 +66,14 @@ describe("avaliarCondicoes — o E é de verdade", () => {
   it("condição sem dado não dispara, e diz por quê", () => {
     const r = avaliarCondicoes(AVGO, retrato({ price: 366, rvol: null }));
     expect(r.disparou).toBe(false);
-    expect(r.condicoes[1].motivo).toBe("sem dado");
+    expect(r.condicoes[1].motivo).toBe("sem RVOL do pregão de hoje");
+  });
+
+  it("indicador sem RVOL usa o motivo genérico", () => {
+    const r = avaliarCondicoes(
+      [{ indicator: "rsi14", op: "above", value: 70 }], retrato({ rsi: null }),
+    );
+    expect(r.condicoes[0].motivo).toBe("sem dado");
   });
 
   it("condição sem valor de corte não dispara", () => {
@@ -116,6 +124,105 @@ describe("RVOL na abertura", () => {
       retrato({ price: 366, rvolSignal: "indefinido_abertura" }),
     );
     expect(r.disparou).toBe(true);
+  });
+});
+
+describe("RVOL indefinido derruba o alerta INTEIRO", () => {
+  // O modo de falha a evitar: o alerta "desiste" da condição de volume e passa
+  // a disparar só pelo preço. Um alerta de confirmação sem a confirmação é um
+  // alerta de preço com nome errado, e dispara justamente no rompimento falso
+  // que ele foi criado para filtrar.
+
+  it("preço acima do alvo + RVOL indefinido = não dispara", () => {
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 400, rvol: 9.9, rvolSignal: "indefinido_abertura",
+    }));
+    expect(r.disparou).toBe(false);
+    expect(r.condicoes[0].satisfeita).toBe(true);   // o preço passou...
+    expect(r.condicoes[1].satisfeita).toBe(false);  // ...e não bastou
+  });
+
+  it("RVOL indisponível (pré-mercado, feriado) = não dispara", () => {
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 400, rvol: null, rvolSignal: "indisponivel",
+    }));
+    expect(r.disparou).toBe(false);
+    expect(r.condicoes[1].motivo).toBe("sem RVOL do pregão de hoje");
+  });
+
+  it("alerta que olha SÓ o preço não muda", () => {
+    // A contrapartida: apertar o RVOL não pode apertar o que não usa RVOL.
+    const soPreco: Condicao[] = [{ indicator: "price", op: "above", value: 365 }];
+    const r = avaliarCondicoes(soPreco, retrato({
+      price: 366, rvol: null, rvolSignal: "indisponivel",
+    }), "2026-09-25");
+    expect(r.disparou).toBe(true);
+  });
+});
+
+describe("RVOL de outro pregão", () => {
+  // O frame "1d" do provedor volta com o ÚLTIMO dia negociado. Num feriado o
+  // rvol chega completo, plausível e referente a ontem -- nada no número
+  // denuncia isso.
+
+  it("data diferente de hoje não satisfaz, e diz qual data veio", () => {
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 366, rvol: 1.35, rvolSignal: "alto", rvolData: "2026-09-24",
+    }), "2026-09-25");
+    expect(r.disparou).toBe(false);
+    expect(r.condicoes[1].motivo).toBe("RVOL é do pregão de 2026-09-24, não de hoje");
+  });
+
+  it("mesma data dispara", () => {
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 366, rvol: 1.35, rvolSignal: "alto", rvolData: "2026-09-25",
+    }), "2026-09-25");
+    expect(r.disparou).toBe(true);
+  });
+
+  it("sem rvolData a resposta é NÃO, não 'provavelmente hoje'", () => {
+    // Payload de antes deste campo existir. Tratá-lo como válido faria o alerta
+    // composto disparar com rvol de data desconhecida exatamente nos deploys em
+    // que o Python e o Node estão fora de passo.
+    expect(rvolEhDeHoje({ ticker: "AVGO", rvol: 1.35 }, "2026-09-25")).toBe(false);
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 366, rvol: 1.35, rvolSignal: "alto",
+    }), "2026-09-25");
+    expect(r.disparou).toBe(false);
+  });
+
+  it("o fechamento do dia continua valendo — é o que a confirmação usa", () => {
+    // Depois das 16h ET o rvol do dia está COMPLETO e é o número mais
+    // confiável que existe; recusá-lo por ser "antigo" inviabilizaria a opção
+    // "confirmar no fechamento". O guarda é de DATA, não de idade em minutos.
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 366, rvol: 1.35, rvolSignal: "alto",
+      rvolData: "2026-09-25", rvolAte: "16:00",
+    }), "2026-09-25");
+    expect(r.disparou).toBe(true);
+  });
+});
+
+describe("motivoParaIgnorarRvol / rotuloDeRvolIndisponivel", () => {
+  it("a ordem dos motivos é fixa: abertura antes de ausência", () => {
+    // Nos primeiros 30 minutos o rvol EXISTE. Se "sem dado" viesse primeiro, a
+    // tela diria "sem RVOL" num momento em que o número está na própria linha.
+    expect(motivoParaIgnorarRvol({
+      ticker: "AVGO", rvol: 5.81, rvolSignal: "indefinido_abertura",
+    })).toContain("menos de 30 minutos");
+  });
+
+  it("sem a data de hoje, o guarda de pregão não opina", () => {
+    expect(motivoParaIgnorarRvol({
+      ticker: "AVGO", rvol: 1.35, rvolSignal: "alto", rvolData: "2026-09-24",
+    })).toBeNull();
+  });
+
+  it("o rótulo da tela distingue abertura de ausência", () => {
+    expect(rotuloDeRvolIndisponivel({ ticker: "A", rvolSignal: "indefinido_abertura" }))
+      .toBe("RVOL indisponível (abertura)");
+    expect(rotuloDeRvolIndisponivel({ ticker: "A", rvolSignal: "indisponivel" }))
+      .toBe("RVOL indisponível");
   });
 });
 
@@ -189,6 +296,96 @@ describe("condicoesDoAlertaAntigo — alertas existentes não mudam de comportam
     // preço sem valor dispararia com qualquer cotação.
     expect(condicoesDoAlertaAntigo({ indicator: "price", condition: "above" })).toEqual([]);
     expect(avaliarCondicoes([], retrato({ price: 999 })).disparou).toBe(false);
+  });
+});
+
+describe("condicoesDoAlerta — sem backfill, a conversão é na leitura", () => {
+  it("alerta novo usa as próprias conditions", () => {
+    expect(condicoesDoAlerta({
+      conditions: AVGO, indicator: "price", condition: "above", thresholdPrice: 999,
+    })).toEqual(AVGO);
+  });
+
+  it("alerta antigo (conditions vazio) cai na conversão", () => {
+    // É o estado de TODA linha existente no banco: a migração adiciona a coluna
+    // com default [] e não reescreve nada.
+    expect(condicoesDoAlerta({
+      conditions: [], indicator: "price", condition: "above", thresholdPrice: 365,
+    })).toEqual([{ indicator: "price", op: "above", value: 365 }]);
+  });
+
+  it("coluna ausente (payload de antes da migração) também cai na conversão", () => {
+    expect(condicoesDoAlerta({
+      indicator: "rsi", condition: "above", thresholdValue: 70,
+    })).toEqual([{ indicator: "rsi14", op: "above", value: 70 }]);
+  });
+
+  it("conditions que não é array não derruba nada", () => {
+    // jsonb aceita qualquer JSON: uma linha com `{}` ou `null` ali é possível.
+    for (const lixo of [null, {}, "[]", 7]) {
+      expect(condicoesDoAlerta({
+        conditions: lixo, indicator: "price", condition: "below", thresholdPct: -5,
+      })).toEqual([{ indicator: "changePct", op: "below", value: -5 }]);
+    }
+  });
+
+  it("alerta antigo de preço sem limiar continua inerte, não dispara-sempre", () => {
+    const c = condicoesDoAlerta({ conditions: [], indicator: "price", condition: "above" });
+    expect(c).toEqual([]);
+    expect(avaliarCondicoes(c, retrato({ price: 99999 })).disparou).toBe(false);
+  });
+});
+
+describe("validarCondicoes", () => {
+  it("aceita o alerta da AVGO", () => {
+    expect(validarCondicoes(AVGO)).toBeNull();
+  });
+
+  it("recusa lista vazia", () => {
+    // Alerta sem condição é inerte e SILENCIOSO: o usuário espera um e-mail que
+    // nunca vem. Melhor recusar na criação.
+    expect(validarCondicoes([])).toBe("informe ao menos uma condição");
+    expect(validarCondicoes(null)).toBe("informe ao menos uma condição");
+  });
+
+  it("recusa indicador desconhecido e operador desconhecido", () => {
+    expect(validarCondicoes([{ indicator: "vwap", op: "above", value: 1 }]))
+      .toContain("indicator deve ser um de");
+    expect(validarCondicoes([{ indicator: "price", op: "crosses", value: 1 }]))
+      .toContain("op deve ser");
+  });
+
+  it("exige nível de quem usa nível, e não exige de quem não usa", () => {
+    expect(validarCondicoes([{ indicator: "rvol", op: "above" }]))
+      .toContain("exige um valor numérico");
+    expect(validarCondicoes([{ indicator: "price", op: "above", value: "365" }]))
+      .toContain("exige um valor numérico");
+    expect(validarCondicoes([{ indicator: "price", op: "above", value: NaN }]))
+      .toContain("exige um valor numérico");
+    // MACD e as médias descrevem a condição inteira com above/below.
+    expect(validarCondicoes([{ indicator: "macd", op: "above" }])).toBeNull();
+    expect(validarCondicoes([{ indicator: "sma50", op: "below" }])).toBeNull();
+  });
+
+  it("recusa a mesma condição repetida, e explica como fazer faixa", () => {
+    expect(validarCondicoes([
+      { indicator: "price", op: "above", value: 365 },
+      { indicator: "price", op: "above", value: 350 },
+    ])).toContain("use above e below");
+  });
+
+  it("faixa (above + below no mesmo indicador) é válida", () => {
+    expect(validarCondicoes([
+      { indicator: "price", op: "above", value: 365 },
+      { indicator: "price", op: "below", value: 380 },
+    ])).toBeNull();
+  });
+
+  it("diz QUAL condição está errada", () => {
+    expect(validarCondicoes([
+      { indicator: "price", op: "above", value: 365 },
+      { indicator: "rvol", op: "above" },
+    ])).toContain("condição 2");
   });
 });
 

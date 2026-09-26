@@ -1448,9 +1448,31 @@ components:
           type: number
           description: "Segundos desde que o processo do servidor subiu (process.uptime())."
 
+    AlertCondition:
+      type: object
+      required: [indicator, op]
+      properties:
+        indicator:
+          type: string
+          enum: [price, changePct, rsi14, macd, sma20, sma50, rvol]
+        op: { type: string, enum: [above, below] }
+        value:
+          type: ["number", "null"]
+          description: "Nivel de corte. macd/sma20/sma50 nao usam (above/below ja descreve a condicao)."
+
+    EvaluatedAlertCondition:
+      type: object
+      required: [condicao, atual, satisfeita]
+      description: "Uma condicao como ela estava no momento do disparo."
+      properties:
+        condicao: { $ref: '#/components/schemas/AlertCondition' }
+        atual: { type: ["number", "null"] }
+        satisfeita: { type: boolean }
+        motivo: { type: string, description: "Por que nao foi possivel avaliar, quando for o caso." }
+
     PriceAlert:
       type: object
-      required: [id, symbol, indicator, condition, enabled, createdAt]
+      required: [id, symbol, indicator, condition, conditions, confirmAtClose, fireOnce, enabled, createdAt]
       properties:
         id: { type: integer }
         symbol: { type: string }
@@ -1459,6 +1481,13 @@ components:
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
         thresholdValue: { type: ["number", "null"], description: "Threshold generico (ex: nivel de RSI). Nao usado por macd/sma20/sma50." }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/AlertCondition' }
+          description: "Condicoes em E: dispara so quando todas passam. Lista vazia = alerta antigo, avaliado pelas colunas threshold_* acima."
+        confirmAtClose: { type: boolean, description: "Avaliar so' apos 16:00 ET, com fechamento e RVOL do dia inteiro." }
+        fireOnce: { type: boolean, description: "Disparar uma vez e desativar, em vez do cooldown de 4h." }
+        note: { type: ["string", "null"], description: "Nota/origem em texto livre (ex.: 'Chat 25/09 -- confirmacao de reversao')." }
         enabled: { type: boolean }
         lastTriggeredAt: { type: ["string", "null"] }
         notifyEmail: { type: ["string", "null"], description: "E-mail que recebe a notificacao deste alerta, definido na criacao." }
@@ -1474,6 +1503,13 @@ components:
         thresholdPct: { type: ["number", "null"] }
         thresholdPrice: { type: ["number", "null"] }
         thresholdValue: { type: ["number", "null"] }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/AlertCondition' }
+          description: "Condicoes em E. Quando presente, substitui indicator/threshold_*."
+        confirmAtClose: { type: boolean }
+        fireOnce: { type: boolean }
+        note: { type: string }
         notifyEmail: { type: string, format: email, description: "Default: e-mail de login do usuario." }
 
     AlertToggleInput:
@@ -1505,6 +1541,10 @@ components:
         valueAtFiring: { type: ["number", "null"] }
         changePctAtFiring: { type: ["number", "null"] }
         priceAtFiring: { type: ["number", "null"] }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/EvaluatedAlertCondition' }
+          description: "Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo."
         firedAt: { type: string }
 
     EntryExitStudyTarget:
