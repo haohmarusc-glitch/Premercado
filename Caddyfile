@@ -68,22 +68,19 @@ kuma.{$DOMINIO} {
     reverse_proxy uptime-kuma:3001
 }
 
-# ATENÇÃO: este bloco não tem autenticação nenhuma, e só faz sentido se o
-# fila-disney-api exigir o Bearer por conta própria.
+# REMOVIDO: api-filadisney.{$DOMINIO}
 #
-# O bloco `filadisney` abaixo protege a página com basic_auth E injeta o token
-# no servidor, de propósito, para o navegador nunca vê-lo. Este aqui expõe o
-# MESMO backend sem nenhum dos dois. Se a API confia no proxy para autenticar,
-# o token é contornável por quem souber este endereço.
+# Ele expunha o MESMO `fila-disney-api:8080` que o bloco `filadisney` abaixo
+# protege com basic_auth E com o token injetado no servidor -- só que sem
+# nenhum dos dois. Uma segunda porta, sem a fechadura da primeira.
 #
-# Não foi alterado porque não se sabe quem consome esta URL -- pôr basic_auth
-# aqui quebraria um cliente que talvez exista. Conferir com:
-#     curl -s -o /dev/null -w '%{http_code}\n' https://api-filadisney.{$DOMINIO}/
-# 401/403 = a API se defende sozinha, está tudo bem.
-# 200     = está aberto, e aí este bloco precisa de basic_auth ou de sumir.
-api-filadisney.{$DOMINIO} {
-    reverse_proxy fila-disney-api:8080
-}
+# Removido, e não protegido, porque não havia o que proteger: em 36 horas de
+# uptime o container só registrou `127.0.0.1 GET /health` (o próprio
+# healthcheck). O único tráfego externo foram os `GET /` de teste feitos ao
+# diagnosticar isto. Nenhum cliente consumia a URL.
+#
+# Se algum dia voltar a ser necessária, ela precisa de basic_auth ou do mesmo
+# `header_up Authorization` do bloco abaixo -- não de `reverse_proxy` cru.
 
 filadisney.{$DOMINIO} {
     encode zstd gzip
