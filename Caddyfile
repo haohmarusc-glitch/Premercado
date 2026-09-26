@@ -38,3 +38,86 @@ www.{$DOMINIO} {
         format console
     }
 }
+
+# ── Subdomínios ─────────────────────────────────────────────────────────────
+#
+# Estes quatro blocos existiam SÓ NA VPS, editados direto no servidor. O arquivo
+# é versionado, então o próximo `git pull` em /opt/premercado ia conflitar nele
+# -- e resolver pelo caminho fácil ("descarta o local") apagaria quatro
+# subdomínios de produção de uma vez, incluindo o da saúde.
+#
+# Segredo nenhum entra aqui. Os hashes de senha vêm do .env, como o DOMINIO já
+# vinha: um hash bcrypt não é texto puro, mas é material de credencial, e
+# credencial não mora em repositório que vive no GitHub. Ver deploy abaixo.
+
+# Uptime Kuma tem DUAS portas para o mesmo container: /status no domínio
+# principal (atrás do portão do monitor-gate) e este subdomínio, que existe
+# porque o Kuma não funciona bem sob subcaminho -- os assets dele são
+# absolutos a partir da raiz, e ele não tem o equivalente do DOZZLE_BASE.
+#
+# A porta de trás não pode ficar sem fechadura. O portão do monitor-gate NÃO
+# serve aqui: ele seta o cookie `monitor_ok=1` em {$DOMINIO}, e cookie sem
+# atributo Domain é host-only -- não acompanha o subdomínio. Então basic_auth,
+# o mesmo padrão dos outros dois subdomínios deste arquivo, que não depende do
+# gate (cujo código não está versionado em lugar nenhum).
+kuma.{$DOMINIO} {
+    encode zstd gzip
+    basic_auth {
+        {$KUMA_USER} {$KUMA_HASH}
+    }
+    reverse_proxy uptime-kuma:3001
+}
+
+# REMOVIDO: api-filadisney.{$DOMINIO}
+#
+# Ele expunha o MESMO `fila-disney-api:8080` que o bloco `filadisney` abaixo
+# protege com basic_auth E com o token injetado no servidor -- só que sem
+# nenhum dos dois. Uma segunda porta, sem a fechadura da primeira.
+#
+# Removido, e não protegido, porque não havia o que proteger: em 36 horas de
+# uptime o container só registrou `127.0.0.1 GET /health` (o próprio
+# healthcheck). O único tráfego externo foram os `GET /` de teste feitos ao
+# diagnosticar isto. Nenhum cliente consumia a URL.
+#
+# Se algum dia voltar a ser necessária, ela precisa de basic_auth ou do mesmo
+# `header_up Authorization` do bloco abaixo -- não de `reverse_proxy` cru.
+
+filadisney.{$DOMINIO} {
+    encode zstd gzip
+
+    # A senha protege a página inteira, inclusive o /api/*. É ela que substitui
+    # o token que ficava no JavaScript.
+    basic_auth {
+        {$FILADISNEY_USER} {$FILADISNEY_HASH}
+    }
+
+    handle /api/* {
+        uri strip_prefix /api
+        # Quem injeta o token é AQUI, no servidor. O navegador nunca o vê.
+        #
+        # `WEB_API_TOKEN` NÃO era passado ao container do caddy (a compose só
+        # mandava DOMINIO), então este header saía como "Bearer " vazio e a
+        # injeção não acontecia. A compose agora exige a variável.
+        reverse_proxy fila-disney-api:8080 {
+            header_up Authorization "Bearer {env.WEB_API_TOKEN}"
+        }
+    }
+
+    root * /srv/filadisney
+    file_server
+}
+
+saude.{$DOMINIO} {
+    encode zstd gzip
+    basic_auth {
+        {$SAUDE_USER} {$SAUDE_HASH}
+    }
+    @imagens {
+        path /ohif /ohif/* /dicom-web/*
+        method GET HEAD
+    }
+    handle @imagens {
+        reverse_proxy saude-orthanc:8042
+    }
+    reverse_proxy saude-app:8502
+}
