@@ -91,8 +91,26 @@ services:
       - "443:443"
       # 443/udp = HTTP/3. Opcional, mas é uma linha.
       - "443:443/udp"
+    # Os hashes de senha dos subdomínios vêm daqui, não do Caddyfile: bcrypt não
+    # é texto puro, mas é material de credencial, e credencial não mora em
+    # repositório que vive no GitHub.
+    #
+    # Todos com `:?` de propósito. Um hash vazio faria o Caddy recusar a config
+    # e não subir -- ruidoso, mas fecha; uma variável com default silencioso
+    # deixaria o subdomínio ABERTO e ninguém veria. O mesmo padrão dos
+    # POSTGRES_* acima.
     environment:
       DOMINIO: "${DOMINIO:?defina DOMINIO no .env, ex. premercado.seudominio.com}"
+      KUMA_USER: "${KUMA_USER:?defina KUMA_USER no .env}"
+      KUMA_HASH: "${KUMA_HASH:?defina KUMA_HASH no .env (gere com: docker run --rm caddy:2-alpine caddy hash-password --plaintext 'sua-senha')}"
+      FILADISNEY_USER: "${FILADISNEY_USER:?defina FILADISNEY_USER no .env}"
+      FILADISNEY_HASH: "${FILADISNEY_HASH:?defina FILADISNEY_HASH no .env}"
+      SAUDE_USER: "${SAUDE_USER:?defina SAUDE_USER no .env}"
+      SAUDE_HASH: "${SAUDE_HASH:?defina SAUDE_HASH no .env}"
+      # Usado por `{env.WEB_API_TOKEN}` no bloco filadisney do Caddyfile. Ele
+      # JÁ era referenciado lá e NÃO era passado para este container -- ou seja,
+      # o header saía como "Bearer " vazio. Ver a nota no Caddyfile.
+      WEB_API_TOKEN: "${WEB_API_TOKEN:?defina WEB_API_TOKEN no .env}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # caddy_data guarda os certificados. Perder esse volume significa pedir
