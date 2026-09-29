@@ -296,6 +296,41 @@ _CAMPOS_DA_VALUATION = (
 )
 
 
+# Fronteiras de ORAÇÃO dentro de uma frase.
+#
+# A negação governa a oração, não a frase. Incidente real (MU, 29/09/2026):
+#
+#     "o DCF da FMP não está disponível (erro de acesso à API); os múltiplos
+#      vêm de arquivamentos SEC: P/L de 23,9, P/VP de 11,96"
+#
+# Uma frase só, e correta: nega o DCF (que faltou de verdade) e AFIRMA os
+# múltiplos, com valores. A checagem lia a frase inteira, via "p/l" e "p/vp"
+# nomeados, concluía "nomeou métrica presente" e acusava ERRO -- num texto que
+# estava certo. Falso ERRO é pior que apontamento nenhum: os avisos vão no topo
+# do .md exportado, e um falso ensina o leitor a ignorar os verdadeiros.
+#
+# Só fronteiras FORTES. Vírgula fica de fora de propósito: "o DCF, o P/L e o
+# P/VP não vieram" é negação legítima de três métricas numa lista, e cortar na
+# vírgula a esconderia -- trocaria um falso positivo por um falso negativo.
+_FRONTEIRA_DE_ORACAO = r";|\s+—\s+|\s+--\s+|\s+mas\s+|\s+porém\s+|\s+embora\s+"
+
+
+def _oracao_da_negacao(frase: str, nega: str) -> str:
+    """A oração que carrega a negação, ou a frase inteira se não houver corte.
+
+    `nega` é o padrão que estabeleceu que a frase nega algo. A oração vai da
+    fronteira anterior à posterior ao ponto em que ele casou.
+    """
+    m = re.search(nega, frase)
+    if not m:
+        return frase
+    cortes = [0] + [c.end() for c in re.finditer(_FRONTEIRA_DE_ORACAO, frase)] + [len(frase)]
+    for inicio, fim in zip(cortes, cortes[1:]):
+        if inicio <= m.start() < fim:
+            return frase[inicio:fim]
+    return frase
+
+
 def _valuation_so_nega_metrica_ausente(frase: str, valuation: dict) -> bool:
     """A frase nomeia métrica de valuation, e TODAS as que nomeia faltaram?
 
@@ -493,9 +528,15 @@ _BETA_VOLATIL_DIRETO = r"\bbeta\b[^.;]{0,80}?(?:mais|menos)\s+vol[áa]til"
 #     rvol         volume da sessao de HOJE contra o esperado PARA ESTE PONTO
 #                  da sessao (ver volume_intradiario.py). E' o unico dos dois
 #                  ajustado ao horario do pregao.
-#     volumeRatio  media dos volumes dos 5 ultimos pregoes FECHADOS sobre a
-#                  mediana de 20 -- nao e' o volume de hoje, e nao tem ajuste
-#                  de horario nenhum
+#     volumeRatio  media dos volumes dos 5 ultimos pregoes sobre a mediana de
+#                  20, SEM ajuste de horario. A barra de HOJE entra na media:
+#                  get_technicals.py descarta so' as linhas com Close vazio
+#                  (o que acontece fora do pregao), e com a sessao aberta a
+#                  barra do dia tem Close. Por isso o numero cai no comeco do
+#                  dia -- com a barra de hoje quase vazia e as quatro
+#                  anteriores na mediana, a media sai 4/5 = 0,80 do normal.
+#                  Visto em producao (MU, 29/09/2026, 21 minutos de pregao):
+#                  volumeRatio 0,78, que e' essa fracao, nao volume fraco.
 #
 # Com o pregao em curso o segundo e' naturalmente menor, e 1,22 vez um dia
 # inteiro em 42 minutos e' justamente o que PRODUZ rvol 8,4. Um confirma o
@@ -662,9 +703,17 @@ def validar_analise(texto, dados=None) -> list:
             # A frase nega a camada em geral, ou nomeia um bloco que VEIO?
             # Frase que só nomeia bloco ausente ("a FMP não forneceu o DCF")
             # está certa e não pode virar ERRO por causa de outro bloco.
-            nega_generico = bool(re.search(_FUNDAMENTO_GENERICO, frase))
+            #
+            # O que se lê aqui é a ORAÇÃO da negação, não a frase: uma frase
+            # pode negar um bloco e afirmar outro no mesmo período (MU,
+            # 29/09/2026 -- ver _FRONTEIRA_DE_ORACAO). O sujeito
+            # (`_FALA_DO_FUNDAMENTO`) e o trecho citado seguem sendo a frase
+            # inteira: o primeiro estabelece que o assunto é a camada
+            # fundamental, o segundo é o que o leitor precisa ver no aviso.
+            oracao = _oracao_da_negacao(frase, _NEGA_DISPONIBILIDADE)
+            nega_generico = bool(re.search(_FUNDAMENTO_GENERICO, oracao))
             nomeados = [c for c, termos in _TERMOS_DO_BLOCO.items()
-                        if re.search(termos, frase)]
+                        if re.search(termos, oracao)]
             presentes_na_frase = [c for c in nomeados if c in chaves_presentes]
 
             # `valuation` é o único bloco com métricas de disponibilidade
@@ -673,7 +722,7 @@ def validar_analise(texto, dados=None) -> list:
             # frase está certa -- e o bloco sai de cena para ela.
             chaves_cobradas = list(chaves_presentes)
             if "valuation" in presentes_na_frase and _valuation_so_nega_metrica_ausente(
-                    frase, dic(fundamento.get("valuation"))):
+                    oracao, dic(fundamento.get("valuation"))):
                 presentes_na_frase.remove("valuation")
                 chaves_cobradas.remove("valuation")
 

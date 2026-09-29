@@ -723,9 +723,12 @@ export default function AnaliseRapidaPage() {
               <Metric label="VWAP" value={fmtUsd(tech.vwap)} sub={tech.vwapSignal} />
               {/* "Volume vs média" era ambíguo ao lado do RVOL: os dois pareciam
                   medir a mesma coisa e discordar (AVGO: RVOL 0,84 e 0,81x).
-                  Só o RVOL é ajustado ao horário do pregão; este é média de 5
-                  pregões FECHADOS sobre a mediana de 20, e não inclui hoje. */}
-              <Metric label="Vol 5d / mediana 20d" value={tech.volumeRatio != null ? `${tech.volumeRatio.toFixed(2)}x` : "—"} sub="pregões fechados, sem ajuste de horário" />
+                  Só o RVOL é ajustado ao horário do pregão.
+                  Este inclui a barra de HOJE na média de 5 (get_technicals.py
+                  descarta só linhas com Close vazio, e com a sessão aberta a
+                  barra do dia tem Close), então cai no começo do pregão: com a
+                  de hoje quase vazia, a média sai 4/5 = 0,80 do normal. */}
+              <Metric label="Vol 5d / mediana 20d" value={tech.volumeRatio != null ? `${tech.volumeRatio.toFixed(2)}x` : "—"} sub="sem ajuste de horário — cai no começo do pregão" />
             </div>
           )}
         </Painel>
