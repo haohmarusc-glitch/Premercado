@@ -104,6 +104,18 @@ describe("o que ele se recusa a adivinhar", () => {
     expect(extrairMonitoresDoChat("Em ET, Ação: Monitorar acima de $100.")).toEqual([]);
   });
 
+  it("prefixo de moeda não é ticker", () => {
+    // "US$ 152,50" produzia um alerta para o ticker "US" (auditoria de 30/09).
+    // A guarda é por REGRA (maiúsculas seguidas de `$`), não por mais uma
+    // entrada na lista de exceções -- lista mantida à mão envelhece em
+    // silêncio, e a regra cobre qualquer moeda futura.
+    expect(extrairMonitoresDoChat("Ação: Monitorar acima de US$ 152,50 com RVOL > 1,5.")).toEqual([]);
+    // E o ticker de verdade continua sendo achado com US$ na mesma frase.
+    const [m] = extrairMonitoresDoChat("**ARM** — Ação: Monitorar acima de US$ 152,50 com RVOL > 1,5.");
+    expect(m.ticker).toBe("ARM");
+    expect(m.conditions[0].value).toBe(152.5);
+  });
+
   it("texto sem 'Monitorar' não produz nada", () => {
     expect(extrairMonitoresDoChat("**AVGO** — Ação: Vender 50% acima de $365.")).toEqual([]);
   });

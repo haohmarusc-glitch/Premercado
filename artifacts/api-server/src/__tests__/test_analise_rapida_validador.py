@@ -1477,6 +1477,88 @@ def test_o_caso_mrvl_nao_e_erro():
         validar_analise(_texto_completo(_FRASE_MRVL), _VALUATION_PARCIAL))
 
 
+# ── o escopo da negação é a ORAÇÃO, não a frase ─────────────────────────────
+#
+# Incidente real (MU, 29/09/2026). A prosa dizia, e estava CERTA:
+#
+#     "O DCF da FMP não está disponível (erro de acesso à API); os múltiplos
+#      vêm de arquivamentos SEC: P/L de 23,9, P/VP de 11,96"
+#
+# Uma frase só. A primeira oração nega o DCF, que faltou de verdade; a segunda
+# AFIRMA os múltiplos, com valores. A checagem lia a frase inteira, via "p/l" e
+# "p/vp" nomeados, concluía "nomeou métrica presente" e acusava ERRO.
+#
+# Falso ERRO é pior que apontamento nenhum. Desde a #454 os avisos vão no TOPO
+# do .md exportado, então um falso ensina o leitor a ignorar os verdadeiros --
+# e o mesmo relatório do MU trazia um apontamento CORRETO logo abaixo
+# (ANALISE_DISTANCIA_DA_FAIXA, os 17,54% divididos pelo preço).
+
+_FRASE_MU = ("O DCF da FMP não está disponível (erro de acesso à API); os "
+             "múltiplos vêm de arquivamentos SEC: P/L de 23,9, P/VP de 11,96, "
+             "EV/EBITDA de 17,4, com dívida líquida negativa.")
+
+
+def test_o_caso_mu_nao_e_erro():
+    """Nega o DCF numa oração e afirma os múltiplos na outra. Não há dado
+    presente sendo negado -- há dado presente sendo ENTREGUE."""
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(_FRASE_MU), _VALUATION_PARCIAL))
+
+
+def test_negacao_legitima_na_primeira_oracao_nao_blinda_a_falsa_na_segunda():
+    """O falso negativo que a auditoria do mesmo dia achou.
+
+    A primeira versão do recorte devolvia só a oração da PRIMEIRA negação: a
+    legítima (o DCF faltou) exonerava, e a segunda -- que nega o P/L, presente
+    -- nunca era examinada. Corrigir o escopo sem olhar TODAS as orações
+    trocaria um falso positivo por um falso negativo, que é a troca que o
+    comentário da própria regra avisa para não fazer.
+    """
+    frase = "O DCF não está disponível; o P/L também não está disponível."
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_duas_oracoes_ambas_legitimas_continuam_sem_erro():
+    """O outro lado: duas negações verdadeiras não viram ERRO por serem duas.
+
+    `_VALUATION_PARCIAL` não tem DCF nem EV/EBITDA; negar os dois em orações
+    separadas é o texto fazendo o que o payload pede.
+    """
+    frase = ("O DCF não está disponível; o EV/EBITDA também não está "
+             "disponível.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_negar_na_segunda_oracao_tambem_e_visto():
+    """A oração da negação pode ser a segunda. Se o recorte só olhasse a
+    primeira, bastaria ao modelo inverter a ordem para escapar da regra."""
+    frase = ("Os múltiplos vêm de arquivamentos SEC; o P/L não está "
+             "disponível nesta rodada.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_lista_de_metricas_negadas_na_mesma_oracao_continua_erro():
+    """A vírgula NÃO é fronteira de oração, de propósito: "o DCF, o P/L e o
+    P/VP não vieram" é negação legítima de três métricas numa lista, e cortar
+    na vírgula esconderia o P/L presente -- trocaria o falso positivo por um
+    falso negativo."""
+    frase = "O DCF, o P/L e o P/VP não estavam disponíveis para este papel."
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_negar_o_bloco_em_uma_oracao_continua_erro():
+    """O recorte não pode servir de escapatória para a negação genérica: se a
+    oração nega o bloco inteiro, o ponto-e-vírgula seguinte não a salva."""
+    frase = ("Dados de valuation não estavam disponíveis; seguimos apenas "
+             "com o quadro técnico.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
 def test_negar_metrica_que_veio_continua_erro():
     """O outro lado, e o que impede a correção de virar buraco: no MESMO
     payload, negar o P/L (que veio, 71,96x) é exatamente o defeito de

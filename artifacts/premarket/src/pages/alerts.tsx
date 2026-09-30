@@ -32,6 +32,7 @@ import {
   INDICADORES_DE_CONDICAO, INDICADORES_SEM_NIVEL, NOME_DO_INDICADOR,
   type Condicao, type IndicadorDeCondicao, type RetratoDoTicker,
 } from "@workspace/alertas";
+import { dataDaBolsa } from "@workspace/alertas";
 import { lerCondicoesDaUrl } from "@/lib/monitorar-do-chat";
 
 const CONDITIONS = [
@@ -141,6 +142,7 @@ function FiringHistory({ alertId }: { alertId: number }) {
               <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Data/Hora</th>
               <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Variação</th>
               <th className="text-right px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Preço</th>
+              <th className="text-left px-3 py-1.5 text-muted-foreground font-normal uppercase tracking-wide">Condições</th>
             </tr>
           </thead>
           <tbody>
@@ -155,6 +157,15 @@ function FiringHistory({ alertId }: { alertId: number }) {
                 </td>
                 <td className="px-3 py-1.5 text-right text-foreground">
                   {f.priceAtFiring != null ? `$${f.priceAtFiring.toFixed(2)}` : "—"}
+                </td>
+                {/* COM QUE NÚMEROS ele disparou. A coluna `conditions` de
+                    alert_firings foi criada com a justificativa de que essa é
+                    "a única pergunta que se faz a um histórico de alerta" --
+                    e ficava gravada sem ninguém mostrar. Achado na auditoria
+                    de 30/09. Vazio nos disparos anteriores ao campo, e nos de
+                    alerta simples, que já se descrevem pelas outras colunas. */}
+                <td className="px-3 py-1.5 text-muted-foreground">
+                  {f.conditions?.length ? descreverCondicoes(f.conditions) : "—"}
                 </td>
               </tr>
             ))}
@@ -898,7 +909,18 @@ export default function Alerts() {
                     {(alert.conditions?.length ?? 0) > 0 && (
                       <div className="mt-1 font-mono text-[11px] text-muted-foreground" data-testid={`condicoes-${alert.id}`}>
                         {descreverCondicoes(
-                          avaliarCondicoes(condicoesDoAlerta(alert), retratoDe(alert.symbol)).condicoes,
+                          avaliarCondicoes(
+                            condicoesDoAlerta(alert),
+                            retratoDe(alert.symbol),
+                            // A DATA DA BOLSA não é opcional aqui, e omiti-la
+                            // foi o defeito: sem ela a tela mostrava ✅ numa
+                            // condição de RVOL cujo dado é de ontem, enquanto o
+                            // checker a recusava. Era exatamente a divergência
+                            // que o pacote compartilhado existe para impedir --
+                            // a função é a mesma, mas um argumento a menos
+                            // desliga o guarda. Achado na auditoria de 30/09.
+                            dataDaBolsa(),
+                          ).condicoes,
                         )}
                       </div>
                     )}

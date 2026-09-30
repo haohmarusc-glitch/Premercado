@@ -369,6 +369,12 @@ export async function checkAlerts(): Promise<void> {
 
       const decisao = decidirDisparo(alert, retrato, {
         agora: now, dataDeHojeNaBolsa, pregaoEncerrado: fechado,
+        // Sem isto, um alerta de "confirmar no fechamento" dispara duas vezes
+        // pelo mesmo fechamento: às 16:00 ET e de novo às 20:00, quando o
+        // cooldown de 4h expira e o dado ainda é o mesmo.
+        dataDaBolsaDoUltimoDisparo: alert.lastTriggeredAt
+          ? dataDaBolsa(new Date(alert.lastTriggeredAt))
+          : null,
       });
       if (!decisao.disparar) {
         logger.debug(

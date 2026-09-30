@@ -49,6 +49,58 @@
  * este lado precisa decidir, e a duração fica só em `volume_intradiario.py`.
  */
 
+// ── Horário da BOLSA ────────────────────────────────────────────────────────
+//
+// Vive AQUI, e não em api-server/lib/timezone.ts, porque a tela também precisa
+// dele: `avaliarCondicoes` compara a data das barras do RVOL com a data de
+// bolsa, e a tela chamava a função sem esse argumento -- mostrando ✅ numa
+// condição que o checker recusava. Argumento opcional cuja ausência desliga um
+// guarda é a mesma armadilha de uma segunda cópia da conta, com outra roupa.
+// `timezone.ts` reexporta estes três para os importadores antigos.
+
+/**
+ * Data (YYYY-MM-DD) do pregão americano agora, em horário da BOLSA.
+ *
+ * Por Intl e não por offset fixo: ao contrário de Brasília, Nova York observa
+ * horário de verão, então o offset varia entre -4 e -5 ao longo do ano. Um
+ * offset fixo erraria a data por uma hora em metade do calendário -- e o uso
+ * disto é justamente comparar com a data das barras que o Python devolveu, onde
+ * errar o dia significa avaliar um alerta contra o pregão de ontem.
+ *
+ * `en-CA` porque seu formato de data curta já é YYYY-MM-DD.
+ */
+export function dataDaBolsa(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+}
+
+/** Minutos desde a meia-noite em horário da bolsa (ET). */
+export function minutosDoDiaNaBolsa(now: Date = new Date()): number {
+  const [h, m] = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(now).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+/**
+ * Já passou das 16:00 ET?
+ *
+ * Usado pela opção "confirmar no fechamento". 16:00 é o fechamento do pregão
+ * INTEIRO, e é o corte mesmo nos dias que fecham às 13h: esperar as três horas
+ * extras num pregão curto só atrasa a avaliação dentro do MESMO dia, e o dado
+ * que ela vai ler já é o do dia completo. A alternativa seria replicar aqui o
+ * calendário de pregão curto que mora em `volume_intradiario.py` -- calendário
+ * em dois idiomas é a armadilha que a parte 2 acabou de fechar.
+ */
+export const FECHAMENTO_DO_PREGAO_MIN = 16 * 60;
+
+export function pregaoEncerrado(now: Date = new Date()): boolean {
+  return minutosDoDiaNaBolsa(now) >= FECHAMENTO_DO_PREGAO_MIN;
+}
+
 export type IndicadorDeCondicao =
   | "price" | "changePct" | "rsi14" | "macd" | "sma20" | "sma50" | "rvol";
 
@@ -393,7 +445,13 @@ export interface DecisaoDeDisparo {
 export function decidirDisparo(
   alerta: AlertaParaDecisao,
   retrato: RetratoDoTicker,
-  ctx: { agora: Date; dataDeHojeNaBolsa: string; pregaoEncerrado: boolean },
+  ctx: {
+    agora: Date;
+    dataDeHojeNaBolsa: string;
+    pregaoEncerrado: boolean;
+    /** Data de bolsa do último disparo. Exigida por `confirmAtClose`. */
+    dataDaBolsaDoUltimoDisparo?: string | null;
+  },
 ): DecisaoDeDisparo {
   const condicoes = condicoesDoAlerta(alerta);
   const avaliacao = avaliarCondicoes(condicoes, retrato, ctx.dataDeHojeNaBolsa);
@@ -413,6 +471,22 @@ export function decidirDisparo(
   // ~10h30 ET mesmo depois dos 30 minutos que o guarda de abertura cobre.
   if (alerta.confirmAtClose && !ctx.pregaoEncerrado) {
     return recusa("aguardando o fechamento (16:00 ET)");
+  }
+
+  // Um fechamento, um e-mail. O cooldown de 4h não serve para um alerta diário:
+  // a janela entre 16:00 ET e a meia-noite tem oito horas, então o alerta
+  // disparava às 16:00, esperava as 4h e disparava DE NOVO às 20:00 -- com o
+  // mesmo preço de fechamento e o mesmo RVOL do dia. Dois e-mails sobre o mesmo
+  // evento. Medido na auditoria de 30/09/2026.
+  //
+  // Dedupe por DIA DE BOLSA, como os alertas de repique e de squeeze já fazem
+  // (`alertKey` com a data, em alert-checker.ts). Sem
+  // `dataDaBolsaDoUltimoDisparo` a comparação não é possível, e aí a recusa é
+  // conservadora: repetir um e-mail é menos grave que calar um alerta, então
+  // segue para as condições.
+  if (alerta.confirmAtClose && ctx.dataDaBolsaDoUltimoDisparo
+      && ctx.dataDaBolsaDoUltimoDisparo === ctx.dataDeHojeNaBolsa) {
+    return recusa("já confirmado no fechamento de hoje");
   }
 
   if (!condicoes.length) return recusa("alerta sem condição");

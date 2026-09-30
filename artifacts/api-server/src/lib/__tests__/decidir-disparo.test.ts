@@ -142,6 +142,76 @@ describe("confirmar no fechamento", () => {
   });
 });
 
+describe("um fechamento, um e-mail", () => {
+  // O defeito medido na auditoria de 30/09: a janela entre 16:00 ET e a
+  // meia-noite tem OITO horas, e o cooldown de 4h cabe duas vezes nela. O
+  // alerta disparava às 16:00, esperava as 4h e disparava de novo às 20:00 --
+  // com o mesmo preço de fechamento e o mesmo RVOL do dia. Dois e-mails sobre
+  // o mesmo evento.
+  const FECHOU = new Date("2026-09-30T20:00:00Z");   // 16:00 ET (EDT)
+  const QUATRO_HORAS_DEPOIS = new Date("2026-10-01T00:00:00Z"); // 20:00 ET
+
+  const noFechamento = (over: Partial<AlertaParaDecisao> = {}) => alerta({
+    confirmAtClose: true, ...over,
+  });
+  // O retrato precisa ter a data DESTE cenário: o `retrato()` do arquivo usa
+  // 25/09, e com o guarda de data a condição de RVOL cairia por outro motivo.
+  const noDia = (dia = "2026-09-30") => retrato({ rvolData: dia });
+  const ctxFechado = (agora: Date, ultimo: string | null) => ({
+    agora, dataDeHojeNaBolsa: "2026-09-30", pregaoEncerrado: true,
+    dataDaBolsaDoUltimoDisparo: ultimo,
+  });
+
+  it("dispara no fechamento", () => {
+    expect(decidirDisparo(noFechamento(), noDia(), ctxFechado(FECHOU, null)).disparar)
+      .toBe(true);
+  });
+
+  it("NÃO dispara de novo quatro horas depois, no mesmo pregão", () => {
+    const d = decidirDisparo(
+      noFechamento({ lastTriggeredAt: FECHOU }),
+      noDia(),
+      ctxFechado(QUATRO_HORAS_DEPOIS, "2026-09-30"),
+    );
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toBe("já confirmado no fechamento de hoje");
+  });
+
+  it("dispara no fechamento do dia SEGUINTE", () => {
+    // O dedupe é por dia de bolsa, não um silêncio permanente.
+    const d = decidirDisparo(
+      noFechamento({ lastTriggeredAt: FECHOU }),
+      noDia("2026-10-01"),
+      { agora: new Date("2026-10-01T20:00:00Z"), dataDeHojeNaBolsa: "2026-10-01",
+        pregaoEncerrado: true, dataDaBolsaDoUltimoDisparo: "2026-09-30" },
+    );
+    expect(d.disparar).toBe(true);
+  });
+
+  it("o alerta intradiário continua no cooldown de 4h", () => {
+    // A contrapartida: o dedupe diário vale só para confirmAtClose. Aplicá-lo
+    // a todos limitaria todo alerta a um e-mail por dia, em silêncio.
+    const d = decidirDisparo(
+      alerta({ confirmAtClose: false, lastTriggeredAt: FECHOU }),
+      noDia(),
+      { agora: QUATRO_HORAS_DEPOIS, dataDeHojeNaBolsa: "2026-09-30",
+        pregaoEncerrado: true, dataDaBolsaDoUltimoDisparo: "2026-09-30" },
+    );
+    expect(d.disparar).toBe(true);
+  });
+
+  it("sem a data do último disparo, prefere repetir a calar", () => {
+    // Chamador antigo que não passa o campo: repetir um e-mail é menos grave
+    // que silenciar um alerta.
+    const d = decidirDisparo(
+      noFechamento({ lastTriggeredAt: FECHOU }),
+      noDia(),
+      { agora: QUATRO_HORAS_DEPOIS, dataDeHojeNaBolsa: "2026-09-30", pregaoEncerrado: true },
+    );
+    expect(d.disparar).toBe(true);
+  });
+});
+
 describe("alerta antigo passa pelo mesmo caminho", () => {
   it("sem conditions, decide pelas colunas antigas", () => {
     const d = decidirDisparo(

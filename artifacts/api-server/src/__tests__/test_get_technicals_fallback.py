@@ -70,6 +70,50 @@ def test_base_de_volume_e_mediana():
     assert "volume.rolling(20).mean()" not in _FONTE
 
 
+def test_o_volumeratio_inclui_a_barra_de_hoje():
+    """O que ninguém tinha escrito, e por isso foi descrito errado duas vezes.
+
+    O único filtro da série é `hist["Close"].notna()`, e ele só derruba a barra
+    do dia FORA do pregão (o yfinance devolve Close vazio aí). Com a sessão
+    aberta a barra de hoje tem Close, fica na série, e entra na média de 5 --
+    então `volumeRatio` CAI ao longo da manhã e sobe conforme o dia enche.
+
+    Isso foi descrito errado no comentário do validador ("volume de hoje contra
+    a média de 20 dias INTEIROS") e depois errado de outra forma na correção
+    dele ("5 pregões FECHADOS"). Comentário não tem teste; este tem.
+
+    Visto em produção (MU, 29/09/2026, 21 minutos de pregão): volumeRatio 0,78,
+    que é a assinatura aritmética de um dia quase vazio dentro de cinco -- e a
+    análise com IA leu isso corretamente, contra o que o comentário dizia.
+    """
+    assert 'hist[hist["Close"].notna()]' in _FONTE
+    assert "volume.iloc[-5:].mean()" in _FONTE
+    # Nenhum corte que tire a barra de hoje da série de volume. Se alguém
+    # quiser volumeRatio só de pregões fechados, é mudança de COMPORTAMENTO e
+    # tem de vir com o rótulo da tela junto -- não pode entrar em silêncio.
+    for corte in ("volume.iloc[:-1]", "volume[:-1]", "hist.iloc[:-1]"):
+        assert corte not in _FONTE, f"{corte} muda o significado de volumeRatio"
+
+
+def test_a_aritmetica_do_volumeratio_no_comeco_do_pregao():
+    """Quatro dias cheios e um quase vazio dão 4/5 = 0,80, não 1,00.
+
+    Fixa o número que o comentário cita, para a explicação e a conta não
+    poderem divergir.
+    """
+    import statistics
+
+    mediana20 = 20_000_000
+    cheios = [mediana20] * 4
+    hoje_parcial = mediana20 * 0.02          # ~21 minutos de pregão
+    media5 = statistics.fmean(cheios + [hoje_parcial])
+    assert round(media5 / mediana20, 2) == 0.80
+
+    # E no fim do dia converge para 1,0, que é o que se espera do indicador.
+    media5_fim = statistics.fmean(cheios + [mediana20])
+    assert round(media5_fim / mediana20, 2) == 1.00
+
+
 def test_nao_baixa_mais_o_historico_diario_direto_do_yfinance():
     """Se voltar um download direto da série DIÁRIA, a cadeia foi contornada e
     o módulo perde o cache vencido numa queda do Yahoo."""
