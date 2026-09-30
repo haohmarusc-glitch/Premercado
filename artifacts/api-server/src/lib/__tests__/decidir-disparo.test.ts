@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decidirDisparo, assuntoDoAlertaComposto, avaliarCondicoes, COOLDOWN_MS,
+  esteveParaDisparar,
   type AlertaParaDecisao, type Condicao, type RetratoDoTicker,
 } from "@workspace/alertas";
 
@@ -250,6 +251,53 @@ describe("alerta antigo passa pelo mesmo caminho", () => {
       ctx(),
     );
     expect(d.disparar).toBe(true);
+  });
+});
+
+describe("o log da recusa tem de ser LEGÍVEL", () => {
+  // A linha "Alerta composto não disparou" era emitida em `logger.debug`, e
+  // `LOG_LEVEL` é `info`: a explicação existia, estava correta, e nunca
+  // aparecia em produção. Eu cheguei a passar ao usuário um comando de grep
+  // que não podia achar nada.
+  //
+  // `esteveParaDisparar` é o corte, e por isso tem nome: quem pergunta "por que
+  // não disparou?" pergunta de um alerta que QUASE disparou.
+
+  it("alguma condição satisfeita = perto, vai para info", () => {
+    // O caso da AVGO: preço passou, RVOL não. É exatamente o que o usuário quer
+    // ler quando o alerta não chega.
+    const r = avaliarCondicoes(AVGO, retrato({ price: 366, rvol: 0.89 }));
+    expect(r.disparou).toBe(false);
+    expect(esteveParaDisparar(r)).toBe(true);
+  });
+
+  it("em cooldown com tudo satisfeito também é perto", () => {
+    // As condições são avaliadas ANTES da recusa por cooldown, então o cooldown
+    // cai naturalmente no nível visível -- sem precisar de caso especial.
+    const d = decidirDisparo(
+      alerta({ lastTriggeredAt: AGORA }), retrato(), ctx(),
+    );
+    expect(d.motivo).toBe("em cooldown");
+    expect(esteveParaDisparar(d.avaliacao)).toBe(true);
+  });
+
+  it("nenhuma condição satisfeita = longe, fica em debug", () => {
+    // 288 linhas por dia por alerta que ninguém leria.
+    const r = avaliarCondicoes(AVGO, retrato({ price: 300, rvol: 0.5 }));
+    expect(esteveParaDisparar(r)).toBe(false);
+  });
+
+  it("RVOL indefinido com o preço passando é perto", () => {
+    // O caso da abertura: o usuário vê o preço no alvo e não recebe e-mail.
+    // Se esta linha ficasse em debug, a pergunta dele não teria resposta.
+    const r = avaliarCondicoes(AVGO, retrato({
+      price: 366, rvol: 5.81, rvolSignal: "indefinido_abertura",
+    }));
+    expect(esteveParaDisparar(r)).toBe(true);
+  });
+
+  it("lista vazia não é perto", () => {
+    expect(esteveParaDisparar(avaliarCondicoes([], retrato()))).toBe(false);
   });
 });
 

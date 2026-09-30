@@ -160,3 +160,27 @@ describe("alerts: a migração e o ensure-schema dizem o mesmo", () => {
     expect(MIGRACAO).not.toMatch(/UPDATE\s+alerts/i);
   });
 });
+
+describe("a explicação da recusa é emitida em nível visível", () => {
+  // `LOG_LEVEL` padrão é `info` (lib/logger.ts). A linha que explica por que um
+  // alerta composto não disparou estava em `logger.debug` -- correta, completa
+  // e invisível em produção. Guarda de CALL SITE, porque o defeito não era a
+  // lógica: era o nível.
+  const CHECKER = ler("artifacts/api-server/src/lib/alert-checker.ts");
+
+  it("não usa logger.debug incondicional para a recusa", () => {
+    const trecho = CHECKER.slice(
+      Math.max(0, CHECKER.indexOf("Alerta composto não disparou") - 900),
+      CHECKER.indexOf("Alerta composto não disparou"),
+    );
+    expect(trecho).toContain("esteveParaDisparar");
+    expect(trecho).toContain("logger.info");
+  });
+
+  it("o padrão do LOG_LEVEL continua sendo info", () => {
+    // Se o padrão virasse `debug`, o corte por utilidade perderia o sentido e
+    // este guarda passaria a proteger nada -- então ele também é fixado aqui.
+    expect(ler("artifacts/api-server/src/lib/logger.ts"))
+      .toContain('process.env.LOG_LEVEL ?? "info"');
+  });
+});

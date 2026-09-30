@@ -498,6 +498,23 @@ export function decidirDisparo(
 }
 
 /**
+ * Este alerta esteve PERTO de disparar?
+ *
+ * Decide o nível do log da recusa, e por isso existe como função com nome em
+ * vez de um `.some()` solto: a linha que explica por que um alerta não disparou
+ * era emitida em `logger.debug` com `LOG_LEVEL=info`, ou seja, nunca. A
+ * explicação existia, estava correta, e ninguém podia lê-la -- o defeito mais
+ * barato da sessão e o mais difícil de notar.
+ *
+ * O corte é por utilidade: "por que não disparou?" só se pergunta de um alerta
+ * que quase disparou. Com nenhuma condição satisfeita ele está longe, e uma
+ * linha a cada cinco minutos por alerta seriam 288 por dia sem leitor.
+ */
+export function esteveParaDisparar(avaliacao: ResultadoDaAvaliacao): boolean {
+  return avaliacao.condicoes.some((c) => c.satisfeita);
+}
+
+/**
  * Por que esta lista de condições é inválida, ou null se serve.
  *
  * Roda na CRIAÇÃO. `avaliarCondicoes` já se recusa a disparar com condição mal
