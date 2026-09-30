@@ -19,7 +19,7 @@ import { spawnPython } from "./python-spawn";
 import { ordemRotacionada, deveDispararCiclo, TAREFAS_POR_CICLO } from "./ciclo-rotativo";
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import {
-  decidirDisparo, descreverCondicoes,
+  decidirDisparo, descreverCondicoes, esteveParaDisparar,
   type CondicaoAvaliada, type RetratoDoTicker,
 } from "@workspace/alertas";
 import { getOrCreateSettings } from "../routes/settings";
@@ -377,7 +377,23 @@ export async function checkAlerts(): Promise<void> {
           : null,
       });
       if (!decisao.disparar) {
-        logger.debug(
+        // `info` quando ALGUMA condição passou, `debug` quando nenhuma passou.
+        //
+        // Isto era `debug` sempre, e `LOG_LEVEL` é `info` -- ou seja, a linha
+        // que explica por que um alerta não disparou nunca era emitida em
+        // produção. Foi o defeito mais barato de todos e o mais difícil de
+        // notar: a explicação existia, estava correta, e ninguém podia lê-la.
+        //
+        // O corte é por utilidade, não por gosto. A pergunta "por que não
+        // disparou?" só é feita quando o alerta esteve PERTO de disparar; com
+        // nenhuma condição satisfeita ele está longe, e uma linha por alerta a
+        // cada cinco minutos seria 288 por dia por alerta sem ninguém ler.
+        // Cooldown e "já confirmado hoje" caem naturalmente em `info`, porque
+        // as condições são avaliadas antes da recusa.
+        const registrar = esteveParaDisparar(decisao.avaliacao)
+          ? logger.info.bind(logger)
+          : logger.debug.bind(logger);
+        registrar(
           { alertId: alert.id, symbol: alert.symbol, motivo: decisao.motivo,
             condicoes: descreverCondicoes(decisao.avaliacao.condicoes) },
           "Alerta composto não disparou",
