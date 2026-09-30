@@ -315,20 +315,29 @@ _CAMPOS_DA_VALUATION = (
 _FRONTEIRA_DE_ORACAO = r";|\s+—\s+|\s+--\s+|\s+mas\s+|\s+porém\s+|\s+embora\s+"
 
 
-def _oracao_da_negacao(frase: str, nega: str) -> str:
-    """A oração que carrega a negação, ou a frase inteira se não houver corte.
+def _oracoes_que_negam(frase: str, nega: str) -> list:
+    """TODAS as orações da frase que carregam uma negação.
 
-    `nega` é o padrão que estabeleceu que a frase nega algo. A oração vai da
-    fronteira anterior à posterior ao ponto em que ele casou.
+    Plural, e isso não é detalhe. A primeira versão desta função devolvia só a
+    oração da PRIMEIRA negação, e abria um falso negativo achado na auditoria
+    do mesmo dia:
+
+        "O DCF não está disponível; o P/L também não está disponível."
+
+    A primeira oração é legítima (o DCF faltou), exonera, e a segunda -- que
+    nega o P/L, presente -- nunca era olhada. Corrigir o escopo para a oração
+    sem olhar TODAS as orações trocou um falso positivo por um falso negativo,
+    que é a troca que o comentário da própria regra avisa para não fazer.
+
+    Sem fronteira nenhuma, devolve a frase inteira (uma oração só).
     """
-    m = re.search(nega, frase)
-    if not m:
-        return frase
     cortes = [0] + [c.end() for c in re.finditer(_FRONTEIRA_DE_ORACAO, frase)] + [len(frase)]
-    for inicio, fim in zip(cortes, cortes[1:]):
-        if inicio <= m.start() < fim:
-            return frase[inicio:fim]
-    return frase
+    oracoes = [frase[i:f] for i, f in zip(cortes, cortes[1:]) if frase[i:f].strip()]
+    negam = [o for o in oracoes if re.search(nega, o)]
+    # A negação pode casar ATRAVÉS de uma fronteira (o padrão é multi-token);
+    # nesse caso nenhuma oração isolada casa, e a frase inteira é o recorte
+    # honesto -- melhor examinar demais que examinar nada.
+    return negam or [frase]
 
 
 def _valuation_so_nega_metrica_ausente(frase: str, valuation: dict) -> bool:
@@ -704,41 +713,50 @@ def validar_analise(texto, dados=None) -> list:
             # Frase que só nomeia bloco ausente ("a FMP não forneceu o DCF")
             # está certa e não pode virar ERRO por causa de outro bloco.
             #
-            # O que se lê aqui é a ORAÇÃO da negação, não a frase: uma frase
-            # pode negar um bloco e afirmar outro no mesmo período (MU,
-            # 29/09/2026 -- ver _FRONTEIRA_DE_ORACAO). O sujeito
+            # O que se lê aqui é cada ORAÇÃO que nega, não a frase inteira:
+            # uma frase pode negar um bloco e afirmar outro no mesmo período
+            # (MU, 29/09/2026 -- ver _FRONTEIRA_DE_ORACAO). O sujeito
             # (`_FALA_DO_FUNDAMENTO`) e o trecho citado seguem sendo a frase
             # inteira: o primeiro estabelece que o assunto é a camada
             # fundamental, o segundo é o que o leitor precisa ver no aviso.
-            oracao = _oracao_da_negacao(frase, _NEGA_DISPONIBILIDADE)
-            nega_generico = bool(re.search(_FUNDAMENTO_GENERICO, oracao))
-            nomeados = [c for c, termos in _TERMOS_DO_BLOCO.items()
-                        if re.search(termos, oracao)]
-            presentes_na_frase = [c for c in nomeados if c in chaves_presentes]
+            #
+            # TODAS as orações que negam, e basta uma condenar. Olhar só a
+            # primeira deixava passar "o DCF não veio; o P/L também não veio",
+            # onde a oração legítima exonera e a falsa nunca era examinada.
+            condenou = None
+            for oracao in _oracoes_que_negam(frase, _NEGA_DISPONIBILIDADE):
+                nega_generico = bool(re.search(_FUNDAMENTO_GENERICO, oracao))
+                nomeados = [c for c, termos in _TERMOS_DO_BLOCO.items()
+                            if re.search(termos, oracao)]
+                presentes_na_frase = [c for c in nomeados if c in chaves_presentes]
 
-            # `valuation` é o único bloco com métricas de disponibilidade
-            # própria (SEC x FMP), e a frase pode negar CAMPO em vez do
-            # bloco. Quando toda métrica que ela nomeia faltou de verdade, a
-            # frase está certa -- e o bloco sai de cena para ela.
-            chaves_cobradas = list(chaves_presentes)
-            if "valuation" in presentes_na_frase and _valuation_so_nega_metrica_ausente(
-                    oracao, dic(fundamento.get("valuation"))):
-                presentes_na_frase.remove("valuation")
-                chaves_cobradas.remove("valuation")
+                # `valuation` é o único bloco com métricas de disponibilidade
+                # própria (SEC x FMP), e a oração pode negar CAMPO em vez do
+                # bloco. Quando toda métrica que ela nomeia faltou de verdade,
+                # a oração está certa -- e o bloco sai de cena para ela.
+                chaves_cobradas = list(chaves_presentes)
+                if "valuation" in presentes_na_frase and _valuation_so_nega_metrica_ausente(
+                        oracao, dic(fundamento.get("valuation"))):
+                    presentes_na_frase.remove("valuation")
+                    chaves_cobradas.remove("valuation")
 
-            # `nega_generico` sozinho já não basta: negar a camada em geral só
-            # é erro se sobrou bloco presente que a frase NÃO exonerou. Sem
-            # isto, "os múltiplos de avaliação não puderam ser calculados"
-            # dispararia pela palavra "avaliação" mesmo nomeando só métrica
-            # ausente.
-            if not (nega_generico and chaves_cobradas) and not presentes_na_frase:
+                # `nega_generico` sozinho já não basta: negar a camada em geral
+                # só é erro se sobrou bloco presente que a oração NÃO exonerou.
+                # Sem isto, "os múltiplos de avaliação não puderam ser
+                # calculados" dispararia pela palavra "avaliação" mesmo
+                # nomeando só métrica ausente.
+                if not (nega_generico and chaves_cobradas) and not presentes_na_frase:
+                    continue
+                condenou = ([r for c, r in _BLOCOS_FUNDAMENTAIS if c in presentes_na_frase]
+                            or [r for c, r in _BLOCOS_FUNDAMENTAIS if c in chaves_cobradas]
+                            or presentes)
+                break
+
+            if condenou is None:
                 continue
-            citados = ([r for c, r in _BLOCOS_FUNDAMENTAIS if c in presentes_na_frase]
-                       or [r for c, r in _BLOCOS_FUNDAMENTAIS if c in chaves_cobradas]
-                       or presentes)
             add("ERRO", "ANALISE_NEGA_DADO_PRESENTE",
                 f"diz que a camada fundamental não veio, mas o payload traz "
-                f"{', '.join(citados)} — quem lê isso para de procurar um "
+                f"{', '.join(condenou)} — quem lê isso para de procurar um "
                 f"dado que está na mão. "
                 f"Trecho: “{frase.strip()[:120]}”.")
             break

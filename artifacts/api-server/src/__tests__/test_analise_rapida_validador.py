@@ -1505,6 +1505,32 @@ def test_o_caso_mu_nao_e_erro():
         validar_analise(_texto_completo(_FRASE_MU), _VALUATION_PARCIAL))
 
 
+def test_negacao_legitima_na_primeira_oracao_nao_blinda_a_falsa_na_segunda():
+    """O falso negativo que a auditoria do mesmo dia achou.
+
+    A primeira versão do recorte devolvia só a oração da PRIMEIRA negação: a
+    legítima (o DCF faltou) exonerava, e a segunda -- que nega o P/L, presente
+    -- nunca era examinada. Corrigir o escopo sem olhar TODAS as orações
+    trocaria um falso positivo por um falso negativo, que é a troca que o
+    comentário da própria regra avisa para não fazer.
+    """
+    frase = "O DCF não está disponível; o P/L também não está disponível."
+    assert "ANALISE_NEGA_DADO_PRESENTE" in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
+def test_duas_oracoes_ambas_legitimas_continuam_sem_erro():
+    """O outro lado: duas negações verdadeiras não viram ERRO por serem duas.
+
+    `_VALUATION_PARCIAL` não tem DCF nem EV/EBITDA; negar os dois em orações
+    separadas é o texto fazendo o que o payload pede.
+    """
+    frase = ("O DCF não está disponível; o EV/EBITDA também não está "
+             "disponível.")
+    assert "ANALISE_NEGA_DADO_PRESENTE" not in _codigos(
+        validar_analise(_texto_completo(frase), _VALUATION_PARCIAL))
+
+
 def test_negar_na_segunda_oracao_tambem_e_visto():
     """A oração da negação pode ser a segunda. Se o recorte só olhasse a
     primeira, bastaria ao modelo inverter a ordem para escapar da regra."""

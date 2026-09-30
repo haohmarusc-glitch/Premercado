@@ -115,7 +115,14 @@ function nivelDaFaixa(texto: string, op: OperadorDeCondicao): number | null {
 
 function tickerDoTrecho(trecho: string): string | null {
   for (const m of trecho.matchAll(TICKER)) {
-    if (!NAO_E_TICKER.has(m[1])) return m[1];
+    if (NAO_E_TICKER.has(m[1])) continue;
+    // Prefixo de MOEDA não é ticker. Regra em vez de mais uma entrada na
+    // lista: "US$ 152,50" produzia um alerta para o ticker "US" (auditoria de
+    // 30/09), e a mesma forma cobre qualquer moeda futura sem manutenção --
+    // lista mantida à mão ao lado do código envelhece em silêncio.
+    const depois = trecho.slice((m.index ?? 0) + m[1].length);
+    if (/^\s*\$/.test(depois)) continue;
+    return m[1];
   }
   return null;
 }
