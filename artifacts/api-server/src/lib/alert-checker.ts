@@ -20,6 +20,7 @@ import { ordemRotacionada, deveDispararCiclo, TAREFAS_POR_CICLO } from "./ciclo-
 import { evalTechnical, type Technicals } from "./alert-technical-eval";
 import {
   decidirDisparo, descreverCondicoes, esteveParaDisparar,
+  notaDeConfirmacaoAtrasada, pregaoSeguinteJaAbriu,
   type CondicaoAvaliada, type RetratoDoTicker,
 } from "@workspace/alertas";
 import { getOrCreateSettings } from "../routes/settings";
@@ -160,6 +161,10 @@ async function fireAlert(
     valueAtFiring: number | null;
     /** Retrato das condições no disparo, num alerta composto. */
     conditions?: CondicaoAvaliada[] | null;
+    /** A sessão que este disparo confirma (alerta de fechamento). */
+    sessionDate?: string | null;
+    /** "Fechamento de sexta confirmado no processamento de segunda". */
+    notaDeAtraso?: string | null;
   },
 ): Promise<void> {
   try {
@@ -177,6 +182,7 @@ async function fireAlert(
       conditions: opts.conditions ?? null,
       confirmAtClose: alert.confirmAtClose,
       note: alert.note,
+      notaDeAtraso: opts.notaDeAtraso ?? null,
     });
 
     // `fireOnce` desativa em vez de marcar cooldown. `lastTriggeredAt` é gravado
@@ -201,6 +207,7 @@ async function fireAlert(
       changePctAtFiring: opts.currentChangePct,
       priceAtFiring: opts.currentPrice,
       conditions: opts.conditions ?? [],
+      sessionDate: opts.sessionDate ?? null,
       firedAt: now,
     });
 
@@ -210,6 +217,8 @@ async function fireAlert(
         indicator: alert.indicator,
         condition: alert.condition,
         condicoes: opts.conditions ? descreverCondicoes(opts.conditions) : undefined,
+        sessao: opts.sessionDate ?? undefined,
+        confirmacaoAtrasada: opts.notaDeAtraso ?? undefined,
         desativado: alert.fireOnce || undefined,
       },
       "Alert triggered",
@@ -345,6 +354,7 @@ export async function checkAlerts(): Promise<void> {
 
     const dataDeHojeNaBolsa = dataDaBolsa(now);
     const fechado = pregaoEncerrado(now);
+    const jaAbriu = pregaoSeguinteJaAbriu(now);
 
     for (const alert of compostos) {
       const q = quoteMap.get(alert.symbol);
@@ -353,10 +363,24 @@ export async function checkAlerts(): Promise<void> {
       // condição cair em "sem dado" e encher o log de recusa que não é decisão.
       if (!q && (!t || t.error)) continue;
 
+      // O PREÇO de um alerta de fechamento vem da SÉRIE DIÁRIA, não da cotação.
+      //
+      // Duas razões, e as duas são da mesma proteção: preço e volume do mesmo
+      // pregão. (1) `get_quotes` é ao vivo -- às 16h05 pode devolver um print
+      // de after-hours, e "confirmação no fechamento" com preço de leilão
+      // posterior não é o fechamento. (2) Numa confirmação ATRASADA a cotação é
+      // de outro dia: casar o volume de sexta com um pré-mercado de segunda
+      // seria dois pregões num mesmo veredito.
+      //
+      // `dadosAte` é a sessão que a série diária alcança, e `sessaoConfirmavel`
+      // exige que `rvolData` seja a mesma.
+      const daSerieDiaria = !!alert.confirmAtClose;
       const retrato: RetratoDoTicker = {
         ticker: alert.symbol,
-        price: q?.price ?? t?.price ?? null,
-        changePct: q?.changePct ?? t?.changePct ?? null,
+        price: daSerieDiaria ? (t?.price ?? null) : (q?.price ?? t?.price ?? null),
+        changePct: daSerieDiaria
+          ? (t?.changePct ?? null)
+          : (q?.changePct ?? t?.changePct ?? null),
         rsi: t?.rsi ?? null,
         macdHistogram: t?.macdHistogram ?? null,
         sma20: t?.sma20 ?? null,
@@ -365,16 +389,28 @@ export async function checkAlerts(): Promise<void> {
         rvolSignal: t?.rvolSignal ?? null,
         rvolData: t?.rvolData ?? null,
         rvolAte: t?.rvolAte ?? null,
+        dadosAte: t?.dadosAte ?? null,
       };
+
+      // "Este alerta já confirmou ESTA sessão?" -- a pergunta que impede o
+      // disparo duplicado, feita pela sessão e não pela hora do e-mail.
+      let jaConfirmouEstaSessao = false;
+      if (alert.confirmAtClose && retrato.dadosAte) {
+        const ja = await db
+          .select({ id: alertFiringsTable.id })
+          .from(alertFiringsTable)
+          .where(and(
+            eq(alertFiringsTable.alertId, alert.id),
+            eq(alertFiringsTable.sessionDate, retrato.dadosAte),
+          ))
+          .limit(1);
+        jaConfirmouEstaSessao = ja.length > 0;
+      }
 
       const decisao = decidirDisparo(alert, retrato, {
         agora: now, dataDeHojeNaBolsa, pregaoEncerrado: fechado,
-        // Sem isto, um alerta de "confirmar no fechamento" dispara duas vezes
-        // pelo mesmo fechamento: às 16:00 ET e de novo às 20:00, quando o
-        // cooldown de 4h expira e o dado ainda é o mesmo.
-        dataDaBolsaDoUltimoDisparo: alert.lastTriggeredAt
-          ? dataDaBolsa(new Date(alert.lastTriggeredAt))
-          : null,
+        pregaoSeguinteJaAbriu: jaAbriu,
+        jaConfirmouEstaSessao,
       });
       if (!decisao.disparar) {
         // `info` quando ALGUMA condição passou, `debug` quando nenhuma passou.
@@ -388,8 +424,8 @@ export async function checkAlerts(): Promise<void> {
         // disparou?" só é feita quando o alerta esteve PERTO de disparar; com
         // nenhuma condição satisfeita ele está longe, e uma linha por alerta a
         // cada cinco minutos seria 288 por dia por alerta sem ninguém ler.
-        // Cooldown e "já confirmado hoje" caem naturalmente em `info`, porque
-        // as condições são avaliadas antes da recusa.
+        // Cooldown e "já confirmado" caem naturalmente em `info`, porque as
+        // condições são avaliadas antes da recusa.
         const registrar = esteveParaDisparar(decisao.avaliacao)
           ? logger.info.bind(logger)
           : logger.debug.bind(logger);
@@ -406,6 +442,10 @@ export async function checkAlerts(): Promise<void> {
         currentChangePct: retrato.changePct ?? null,
         valueAtFiring: decisao.avaliacao.valorPrincipal,
         conditions: decisao.avaliacao.condicoes,
+        sessionDate: decisao.sessaoConfirmada ?? null,
+        notaDeAtraso: decisao.processadoDepois && decisao.sessaoConfirmada
+          ? notaDeConfirmacaoAtrasada(decisao.sessaoConfirmada, dataDeHojeNaBolsa)
+          : null,
       });
     }
   }

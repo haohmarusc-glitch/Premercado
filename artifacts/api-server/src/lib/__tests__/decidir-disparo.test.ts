@@ -108,15 +108,21 @@ describe("cooldown", () => {
 });
 
 describe("confirmar no fechamento", () => {
+  // `dadosAte` é obrigatório aqui: sem a identidade da sessão não há como
+  // exigir "mesma sessão em tudo" nem deduplicar pela sessão, então o alerta de
+  // fechamento FALHA FECHADO. Em produção ela sempre vem de get_technicals; se
+  // só a cotação estiver disponível, a confirmação espera o próximo ciclo.
+  const naSessao = () => retrato({ dadosAte: HOJE, rvolData: HOJE });
+
   it("com o pregão em curso, não avalia", () => {
-    const d = decidirDisparo(alerta({ confirmAtClose: true }), retrato(), ctx());
+    const d = decidirDisparo(alerta({ confirmAtClose: true }), naSessao(), ctx());
     expect(d.disparar).toBe(false);
     expect(d.motivo).toContain("16:00 ET");
   });
 
   it("depois do fechamento, avalia", () => {
     const d = decidirDisparo(
-      alerta({ confirmAtClose: true }), retrato(),
+      alerta({ confirmAtClose: true }), naSessao(),
       ctx({ pregaoEncerrado: true }),
     );
     expect(d.disparar).toBe(true);
@@ -133,83 +139,184 @@ describe("confirmar no fechamento", () => {
 
   it("no fechamento, o RVOL do dia inteiro vale", () => {
     // É o cenário que a opção existe para servir: 16:00 ET, fração 1,0, RVOL
-    // final. O guarda de data não pode barrá-lo por "antigo".
+    // final. O guarda de sessão não pode barrá-lo por "antigo".
     const d = decidirDisparo(
       alerta({ confirmAtClose: true }),
-      retrato({ rvolAte: "16:00", rvol: 1.35 }),
+      retrato({ dadosAte: HOJE, rvolData: HOJE, rvolAte: "16:00", rvol: 1.35 }),
       ctx({ pregaoEncerrado: true }),
     );
     expect(d.disparar).toBe(true);
+    expect(d.sessaoConfirmada).toBe(HOJE);
+    expect(d.processadoDepois).toBe(false);
   });
 });
 
-describe("um fechamento, um e-mail", () => {
+describe("um fechamento, um e-mail — dedupe por SESSÃO", () => {
   // O defeito medido na auditoria de 30/09: a janela entre 16:00 ET e a
   // meia-noite tem OITO horas, e o cooldown de 4h cabe duas vezes nela. O
-  // alerta disparava às 16:00, esperava as 4h e disparava de novo às 20:00 --
-  // com o mesmo preço de fechamento e o mesmo RVOL do dia. Dois e-mails sobre
-  // o mesmo evento.
-  const FECHOU = new Date("2026-09-30T20:00:00Z");   // 16:00 ET (EDT)
-  const QUATRO_HORAS_DEPOIS = new Date("2026-10-01T00:00:00Z"); // 20:00 ET
-
-  const noFechamento = (over: Partial<AlertaParaDecisao> = {}) => alerta({
-    confirmAtClose: true, ...over,
-  });
-  // O retrato precisa ter a data DESTE cenário: o `retrato()` do arquivo usa
-  // 25/09, e com o guarda de data a condição de RVOL cairia por outro motivo.
-  const noDia = (dia = "2026-09-30") => retrato({ rvolData: dia });
-  const ctxFechado = (agora: Date, ultimo: string | null) => ({
-    agora, dataDeHojeNaBolsa: "2026-09-30", pregaoEncerrado: true,
-    dataDaBolsaDoUltimoDisparo: ultimo,
-  });
-
-  it("dispara no fechamento", () => {
-    expect(decidirDisparo(noFechamento(), noDia(), ctxFechado(FECHOU, null)).disparar)
-      .toBe(true);
+  // alerta disparava às 16:00 e de novo às 20:00, com o mesmo fechamento.
+  //
+  // O dedupe por dia de bolsa que consertou isso foi substituído pelo dedupe
+  // por SESSÃO, que é exato: ele errava os dois lados da confirmação atrasada
+  // (deixava a sexta confirmada na segunda bloquear o fechamento da própria
+  // segunda, e não bloqueava nada se o relógio virasse entre dois disparos).
+  const FECHOU = new Date("2026-09-30T20:00:00Z");   // 16:00 ET (EDT), quarta
+  const SESSAO = "2026-09-30";
+  const noFechamento = (over: Partial<AlertaParaDecisao> = {}) =>
+    alerta({ confirmAtClose: true, ...over });
+  const noDia = (dia = SESSAO) => retrato({ rvolData: dia, dadosAte: dia });
+  const ctxFechado = (agora: Date, ja = false) => ({
+    agora, dataDeHojeNaBolsa: SESSAO, pregaoEncerrado: true,
+    pregaoSeguinteJaAbriu: false, jaConfirmouEstaSessao: ja,
   });
 
-  it("NÃO dispara de novo quatro horas depois, no mesmo pregão", () => {
+  it("dispara no fechamento, e diz qual sessão confirmou", () => {
+    const d = decidirDisparo(noFechamento(), noDia(), ctxFechado(FECHOU));
+    expect(d.disparar).toBe(true);
+    expect(d.sessaoConfirmada).toBe(SESSAO);
+    expect(d.processadoDepois).toBe(false);
+  });
+
+  it("NÃO dispara de novo pela mesma sessão", () => {
     const d = decidirDisparo(
-      noFechamento({ lastTriggeredAt: FECHOU }),
-      noDia(),
-      ctxFechado(QUATRO_HORAS_DEPOIS, "2026-09-30"),
+      noFechamento({ lastTriggeredAt: FECHOU }), noDia(),
+      ctxFechado(new Date("2026-10-01T00:00:00Z"), true),
     );
     expect(d.disparar).toBe(false);
-    expect(d.motivo).toBe("já confirmado no fechamento de hoje");
+    expect(d.motivo).toBe(`fechamento de ${SESSAO} já confirmado`);
   });
 
-  it("dispara no fechamento do dia SEGUINTE", () => {
-    // O dedupe é por dia de bolsa, não um silêncio permanente.
+  it("o cooldown de 4h NÃO se aplica a alerta de fechamento", () => {
+    // Quem deduplica é a sessão. O cooldown atrapalharia: uma sexta confirmada
+    // na segunda está a dias do último disparo, mas uma sessão NOVA logo depois
+    // de um disparo precisa passar.
     const d = decidirDisparo(
       noFechamento({ lastTriggeredAt: FECHOU }),
-      noDia("2026-10-01"),
-      { agora: new Date("2026-10-01T20:00:00Z"), dataDeHojeNaBolsa: "2026-10-01",
-        pregaoEncerrado: true, dataDaBolsaDoUltimoDisparo: "2026-09-30" },
+      retrato({ rvolData: "2026-10-01", dadosAte: "2026-10-01" }),
+      { agora: new Date("2026-10-01T20:30:00Z"), dataDeHojeNaBolsa: "2026-10-01",
+        pregaoEncerrado: true, pregaoSeguinteJaAbriu: false,
+        jaConfirmouEstaSessao: false },
     );
     expect(d.disparar).toBe(true);
+    expect(d.sessaoConfirmada).toBe("2026-10-01");
   });
 
   it("o alerta intradiário continua no cooldown de 4h", () => {
-    // A contrapartida: o dedupe diário vale só para confirmAtClose. Aplicá-lo
-    // a todos limitaria todo alerta a um e-mail por dia, em silêncio.
+    // A contrapartida: trocar o cooldown pelo dedupe diário em TODOS limitaria
+    // cada alerta a um e-mail por dia, em silêncio.
     const d = decidirDisparo(
       alerta({ confirmAtClose: false, lastTriggeredAt: FECHOU }),
       noDia(),
-      { agora: QUATRO_HORAS_DEPOIS, dataDeHojeNaBolsa: "2026-09-30",
-        pregaoEncerrado: true, dataDaBolsaDoUltimoDisparo: "2026-09-30" },
+      { agora: new Date("2026-09-30T21:00:00Z"), dataDeHojeNaBolsa: SESSAO,
+        pregaoEncerrado: true },
     );
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toBe("em cooldown");
+  });
+});
+
+describe("confirmação ATRASADA do fechamento", () => {
+  // O limite que o teste em produção expôs: o guarda exigia `rvolData === hoje`,
+  // então o fechamento de uma sexta só era confirmável entre 16:00 e 23:59 ET
+  // daquela sexta. Oito horas de indisponibilidade perdiam a confirmação para
+  // sempre -- janela frágil para o caminho que existe para ser o CONFIÁVEL.
+  const SEXTA = "2026-10-02";
+  const daSexta = () => retrato({ rvolData: SEXTA, dadosAte: SEXTA, rvolSignal: "alto" });
+  const noFechamento = (over: Partial<AlertaParaDecisao> = {}) =>
+    alerta({ confirmAtClose: true, ...over });
+
+  it("sábado de manhã ainda confirma a sexta, e marca o atraso", () => {
+    const d = decidirDisparo(noFechamento(), daSexta(), {
+      agora: new Date("2026-10-03T14:00:00Z"),      // sábado 10:00 ET
+      dataDeHojeNaBolsa: "2026-10-03",
+      pregaoEncerrado: false,                        // sábado não "fechou" nada
+      pregaoSeguinteJaAbriu: false,
+      jaConfirmouEstaSessao: false,
+    });
     expect(d.disparar).toBe(true);
+    expect(d.sessaoConfirmada).toBe(SEXTA);
+    expect(d.processadoDepois).toBe(true);
   });
 
-  it("sem a data do último disparo, prefere repetir a calar", () => {
-    // Chamador antigo que não passa o campo: repetir um e-mail é menos grave
-    // que silenciar um alerta.
+  it("segunda ANTES da abertura ainda confirma a sexta", () => {
+    const d = decidirDisparo(noFechamento(), daSexta(), {
+      agora: new Date("2026-10-05T12:00:00Z"),      // segunda 08:00 ET
+      dataDeHojeNaBolsa: "2026-10-05",
+      pregaoEncerrado: false, pregaoSeguinteJaAbriu: false,
+      jaConfirmouEstaSessao: false,
+    });
+    expect(d.disparar).toBe(true);
+    expect(d.processadoDepois).toBe(true);
+  });
+
+  it("segunda DEPOIS da abertura não confirma mais", () => {
+    // O fim da validade. Sem isto, um fechamento de sexta poderia disparar na
+    // quarta com dado de sexta.
+    const d = decidirDisparo(noFechamento(), daSexta(), {
+      agora: new Date("2026-10-05T14:00:00Z"),      // segunda 10:00 ET
+      dataDeHojeNaBolsa: "2026-10-05",
+      pregaoEncerrado: false, pregaoSeguinteJaAbriu: true,
+      jaConfirmouEstaSessao: false,
+    });
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toContain("o pregão seguinte já abriu");
+  });
+
+  it("preço e RVOL de sessões DIFERENTES não confirmam nada", () => {
+    // A integridade que a janela não pode custar: casar o volume de sexta com
+    // um preço de pré-mercado de segunda seria dois pregões num veredito.
     const d = decidirDisparo(
-      noFechamento({ lastTriggeredAt: FECHOU }),
-      noDia(),
-      { agora: QUATRO_HORAS_DEPOIS, dataDeHojeNaBolsa: "2026-09-30", pregaoEncerrado: true },
+      noFechamento(),
+      retrato({ dadosAte: "2026-10-05", rvolData: SEXTA, rvolSignal: "alto" }),
+      { agora: new Date("2026-10-05T12:00:00Z"), dataDeHojeNaBolsa: "2026-10-05",
+        pregaoEncerrado: false, pregaoSeguinteJaAbriu: false,
+        jaConfirmouEstaSessao: false },
+    );
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toContain("sessões diferentes");
+  });
+
+  it("sem condição de RVOL, só o preço, a mesma sessão basta", () => {
+    const d = decidirDisparo(
+      noFechamento({ conditions: [{ indicator: "price", op: "above", value: 365 }] }),
+      retrato({ dadosAte: SEXTA, rvolData: null, rvol: null }),
+      { agora: new Date("2026-10-03T14:00:00Z"), dataDeHojeNaBolsa: "2026-10-03",
+        pregaoEncerrado: false, pregaoSeguinteJaAbriu: false,
+        jaConfirmouEstaSessao: false },
     );
     expect(d.disparar).toBe(true);
+    expect(d.processadoDepois).toBe(true);
+  });
+
+  it("sem dadosAte não confirma -- não há identidade de sessão", () => {
+    const d = decidirDisparo(noFechamento(), retrato({ dadosAte: null }), {
+      agora: new Date("2026-10-03T14:00:00Z"), dataDeHojeNaBolsa: "2026-10-03",
+      pregaoEncerrado: false, pregaoSeguinteJaAbriu: false,
+    });
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toContain("sem data da sessão");
+  });
+
+  it("dado À FRENTE do relógio é inconsistência, não atraso", () => {
+    const d = decidirDisparo(noFechamento(), daSexta(), {
+      agora: new Date("2026-10-01T20:00:00Z"), dataDeHojeNaBolsa: "2026-10-01",
+      pregaoEncerrado: true, pregaoSeguinteJaAbriu: false,
+    });
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toContain("à frente de hoje");
+  });
+
+  it("o alerta INTRADIÁRIO não ganha a exceção", () => {
+    // A proteção que separa os dois caminhos: dado de outra sessão continua
+    // barrado para quem avalia ao longo do dia.
+    const d = decidirDisparo(
+      alerta({ confirmAtClose: false }),
+      daSexta(),
+      { agora: new Date("2026-10-05T12:00:00Z"), dataDeHojeNaBolsa: "2026-10-05",
+        pregaoEncerrado: false, pregaoSeguinteJaAbriu: false },
+    );
+    expect(d.disparar).toBe(false);
+    expect(d.motivo).toContain(`RVOL é do pregão de ${SEXTA}`);
   });
 });
 

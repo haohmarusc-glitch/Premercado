@@ -241,6 +241,12 @@ export const alertFiringsTable = pgTable("alert_firings", {
     satisfeita: boolean;
     motivo?: string;
   }>>().notNull().default([]),
+  // A SESSAO que este disparo confirma, num alerta de "avaliar no fechamento".
+  // Nao e' redundante com fired_at: numa confirmacao ATRASADA os dois divergem
+  // (fechamento de sexta confirmado na manha de segunda). E' por esta coluna
+  // que o disparo duplicado e' impedido -- deduplicar por fired_at erra os dois
+  // lados. NULL em alerta intradiario, que nao confirma sessao nenhuma.
+  sessionDate: text("session_date"),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
 }, (t) => [
   index("idx_alert_firings_alert_id").on(t.alertId),

@@ -299,6 +299,7 @@ export const ListAlertFiringsResponseItem = zod.object({
   "changePctAtFiring": zod.coerce.number().nullish(),
   "priceAtFiring": zod.coerce.number().nullish(),
   "conditions": zod.array(EvaluatedAlertConditionSchema).optional().describe('Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo.'),
+  "sessionDate": zod.string().nullish().describe('A SESSAO que este disparo confirma (alerta de fechamento).'),
   "firedAt": zod.string()
 })
 export const ListAlertFiringsResponse = zod.array(ListAlertFiringsResponseItem)

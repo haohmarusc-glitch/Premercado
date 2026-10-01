@@ -239,6 +239,11 @@ export interface AlertFiring {
   priceAtFiring?: number | null;
   /** Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo. */
   conditions?: EvaluatedAlertCondition[];
+  /**
+     * A SESSAO que este disparo confirma (alerta de fechamento). Difere de firedAt numa confirmacao atrasada.
+     * @nullable
+     */
+  sessionDate?: string | null;
   firedAt: string;
 }
 

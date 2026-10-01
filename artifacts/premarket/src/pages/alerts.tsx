@@ -151,7 +151,19 @@ function FiringHistory({ alertId }: { alertId: number }) {
                 key={f.id}
                 className={`border-b border-border/30 last:border-0 ${i % 2 === 0 ? "" : "bg-secondary/10"}`}
               >
-                <td className="px-3 py-1.5 text-muted-foreground">{fmtDateTime(f.firedAt)}</td>
+                <td className="px-3 py-1.5 text-muted-foreground">
+                  {fmtDateTime(f.firedAt)}
+                  {/* Confirmação ATRASADA: a sessão confirmada não é o dia em
+                      que o e-mail saiu. Sem esta marca, um disparo de segunda
+                      sobre o fechamento de sexta parece uma leitura de segunda
+                      -- e a decisão seria sobre o pregão errado. Mesmo motivo
+                      de a nota ir no assunto do e-mail. */}
+                  {f.sessionDate && !f.firedAt.startsWith(f.sessionDate) && (
+                    <span className="block text-[10px] text-primary">
+                      sessão de {f.sessionDate}
+                    </span>
+                  )}
+                </td>
                 <td className={`px-3 py-1.5 text-right font-bold ${(f.changePctAtFiring ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {f.changePctAtFiring != null ? fmtPct(f.changePctAtFiring) : "—"}
                 </td>

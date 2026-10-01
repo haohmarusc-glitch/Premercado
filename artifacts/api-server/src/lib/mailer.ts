@@ -84,6 +84,10 @@ export async function sendAlertEmail(opts: {
   // Nota/origem do alerta ("Chat 25/09 -- confirmacao de reversao"). Tres meses
   // depois, "por que criei este alerta?" nao tem resposta sem isto.
   note?: string | null;
+  // "Fechamento de sexta confirmado no processamento de segunda". Quando a
+  // confirmacao sai DEPOIS do dia da sessao, isto vai no ASSUNTO -- sem ele o
+  // e-mail parece uma leitura de hoje, e a decisao seria sobre o pregao errado.
+  notaDeAtraso?: string | null;
 }): Promise<void> {
   const to = opts.to?.trim();
   if (!to) { logger.warn({ symbol: opts.symbol }, "No notify email on record — skipping alert"); return; }
@@ -109,6 +113,10 @@ export async function sendAlertEmail(opts: {
   const compostas = opts.conditions?.length ? opts.conditions : null;
   if (compostas) {
     subject = assuntoDoAlertaComposto(opts.symbol, compostas, opts.confirmAtClose ?? false);
+    // O atraso entra no ASSUNTO, nao so' no corpo: no celular a notificacao
+    // mostra o assunto e nada mais, e "AVGO confirmacao" lido na segunda sobre
+    // o fechamento de sexta e' a diferenca entre uma decisao certa e uma errada.
+    if (opts.notaDeAtraso) subject = `${subject} [${opts.notaDeAtraso}]`;
     conditionSentence = descreverCondicoes(compostas);
   } else if (indicator === "rsi") {
     const dir = opts.condition === "above" ? "acima de" : "abaixo de";
@@ -156,6 +164,7 @@ export async function sendAlertEmail(opts: {
   <p style="margin:4px 0;color:#666;font-size:12px">
     Condição: ${conditionSentence}
   </p>
+  ${opts.notaDeAtraso ? `<p style="margin:12px 0 0;color:#ff8c00;font-size:12px;font-weight:bold">${escaparHtml(opts.notaDeAtraso)}</p>` : ""}
   ${opts.note ? `<p style="margin:12px 0 0;color:#888;font-size:12px;border-left:2px solid #444;padding-left:8px">${escaparHtml(opts.note)}</p>` : ""}
   ${LINK_BASE ? `<p style="margin:12px 0 0;font-size:12px">
     <a href="${LINK_BASE}/analise-rapida?t=${encodeURIComponent(opts.symbol)}" style="color:#ff8c00">Abrir Análise Rápida de ${opts.symbol}</a>

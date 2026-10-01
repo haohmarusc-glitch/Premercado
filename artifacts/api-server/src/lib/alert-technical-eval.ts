@@ -19,6 +19,10 @@ export interface Technicals {
   rvolSignal?: string | null;
   rvolData?: string | null;
   rvolAte?: string | null;
+  // Data da última barra DIÁRIA -- a sessão que `price` e as médias alcançam.
+  // É a identidade da sessão num alerta de fechamento. Vinha no payload e era
+  // descartada por não estar declarada, igual ao rvolData antes dela.
+  dadosAte?: string | null;
   error?: string;
 }
 

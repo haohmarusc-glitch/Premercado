@@ -9,6 +9,9 @@
  */
 import { describe, it, expect } from "vitest";
 import { dataDaBolsa, minutosDoDiaNaBolsa, pregaoEncerrado } from "../timezone";
+import {
+  diaDaSemanaNaBolsa, notaDeConfirmacaoAtrasada, pregaoSeguinteJaAbriu,
+} from "@workspace/alertas";
 
 describe("dataDaBolsa", () => {
   it("no horário de verão (EDT, UTC-4) a virada é 04:00Z", () => {
@@ -75,5 +78,62 @@ describe("minutosDoDiaNaBolsa", () => {
     // meia-noite; se isso vazasse, `pregaoEncerrado` diria true às 00:00 ET.
     expect(minutosDoDiaNaBolsa(new Date("2026-09-25T04:00:00Z"))).toBe(0);
     expect(pregaoEncerrado(new Date("2026-09-25T04:00:00Z"))).toBe(false);
+  });
+});
+
+describe("pregaoSeguinteJaAbriu — o fim da confirmação atrasada", () => {
+  it("fim de semana não abre, então a janela da sexta atravessa", () => {
+    // O caso que motivou a feature: sábado e domingo inteiros ainda confirmam
+    // o fechamento de sexta.
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-03T14:00:00Z"))).toBe(false); // sáb 10:00 ET
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-03T23:00:00Z"))).toBe(false); // sáb 19:00 ET
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-04T18:00:00Z"))).toBe(false); // dom 14:00 ET
+  });
+
+  it("segunda antes de 09:30 ET ainda não abriu", () => {
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-05T12:00:00Z"))).toBe(false); // 08:00 ET
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-05T13:29:00Z"))).toBe(false); // 09:29 ET
+  });
+
+  it("às 09:30 ET de um dia de semana, abriu", () => {
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-05T13:30:00Z"))).toBe(true);  // 09:30 ET
+    expect(pregaoSeguinteJaAbriu(new Date("2026-10-05T20:00:00Z"))).toBe(true);  // 16:00 ET
+  });
+
+  it("no horário padrão o corte acompanha o fuso", () => {
+    // Em EST (UTC-5), 09:30 ET = 14:30Z. Offset fixo de -4 abriria a janela uma
+    // hora cedo e encerraria a confirmação atrasada antes do tempo.
+    expect(pregaoSeguinteJaAbriu(new Date("2026-01-05T14:29:00Z"))).toBe(false);
+    expect(pregaoSeguinteJaAbriu(new Date("2026-01-05T14:30:00Z"))).toBe(true);
+  });
+});
+
+describe("diaDaSemanaNaBolsa", () => {
+  it("é o dia em NOVA YORK, não em UTC", () => {
+    // Sábado 02:00Z é sexta 22:00 em Nova York. Em UTC o dia já virou; na
+    // bolsa, não -- e quem decide a janela é a bolsa.
+    expect(diaDaSemanaNaBolsa(new Date("2026-10-03T02:00:00Z"))).toBe(5); // sexta
+    expect(diaDaSemanaNaBolsa(new Date("2026-10-03T14:00:00Z"))).toBe(6); // sábado
+  });
+});
+
+describe("notaDeConfirmacaoAtrasada", () => {
+  it("é a frase que o e-mail mostra", () => {
+    expect(notaDeConfirmacaoAtrasada("2026-10-02", "2026-10-05"))
+      .toBe("Fechamento de sexta (2026-10-02) confirmado no processamento de segunda");
+  });
+
+  it("mesma sessão não ganha nota", () => {
+    // Confirmação no próprio dia não é atrasada, e a nota só poluiria.
+    expect(notaDeConfirmacaoAtrasada("2026-10-02", "2026-10-02")).toBeNull();
+  });
+
+  it("a data é lida como dia de bolsa, sem escorregar de fuso", () => {
+    // `new Date("2026-10-05")` é meia-noite UTC, que em Nova York ainda é o dia
+    // 4 (domingo). Daí o T12:00:00Z na implementação: 05/10/2026 é SEGUNDA.
+    expect(notaDeConfirmacaoAtrasada("2026-10-03", "2026-10-05"))
+      .toContain("Fechamento de sábado");
+    expect(notaDeConfirmacaoAtrasada("2026-10-03", "2026-10-05"))
+      .toContain("processamento de segunda");
   });
 });
