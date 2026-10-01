@@ -1545,6 +1545,9 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EvaluatedAlertCondition' }
           description: "Com que numeros o alerta disparou. Vazio nos disparos anteriores a este campo."
+        sessionDate:
+          type: ["string", "null"]
+          description: "A SESSAO que este disparo confirma (alerta de fechamento). Difere de firedAt numa confirmacao atrasada: fechamento de sexta confirmado na segunda. null em alerta intradiario."
         firedAt: { type: string }
 
     EntryExitStudyTarget:

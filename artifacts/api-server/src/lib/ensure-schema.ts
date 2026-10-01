@@ -74,7 +74,10 @@ export async function ensureSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS fire_once boolean NOT NULL DEFAULT false`);
     await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS note text`);
     await db.execute(sql`ALTER TABLE alert_firings ADD COLUMN IF NOT EXISTS conditions jsonb NOT NULL DEFAULT '[]'::jsonb`);
-    logger.info("Schema check ok (alerts conditions/confirm_at_close/fire_once/note)");
+    // migration 0040 -- a sessão que um disparo de fechamento confirma.
+    await db.execute(sql`ALTER TABLE alert_firings ADD COLUMN IF NOT EXISTS session_date text`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_alert_firings_sessao ON alert_firings(alert_id, session_date)`);
+    logger.info("Schema check ok (alerts conditions/confirm_at_close/fire_once/note + session_date)");
   } catch (err) {
     logger.error({ err }, "Failed to ensure schema (alerts multi-condition columns)");
   }

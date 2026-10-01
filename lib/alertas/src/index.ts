@@ -101,6 +101,41 @@ export function pregaoEncerrado(now: Date = new Date()): boolean {
   return minutosDoDiaNaBolsa(now) >= FECHAMENTO_DO_PREGAO_MIN;
 }
 
+/** 09:30 ET. Fim da validade de uma confirmação de fechamento atrasada. */
+export const ABERTURA_DO_PREGAO_MIN = 9 * 60 + 30;
+
+/** Dia da semana em horário de BOLSA (0 = domingo). */
+export function diaDaSemanaNaBolsa(now: Date = new Date()): number {
+  const nome = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", weekday: "short",
+  }).format(now);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(nome);
+}
+
+/**
+ * O pregão seguinte JÁ ABRIU?
+ *
+ * É o fim da janela da confirmação atrasada: depois que a sessão seguinte
+ * começa, o fechamento anterior deixa de ser confirmável -- senão um alerta de
+ * sexta poderia disparar na quarta com dado de sexta.
+ *
+ * Sábado e domingo não abrem, então a janela de uma sexta atravessa o fim de
+ * semana inteiro, que é o caso que motivou tudo isto.
+ *
+ * LIMITE CONHECIDO: feriado. Num feriado de segunda, isto diz "já abriu" às
+ * 09h30 mesmo sem sessão, e a confirmação de sexta vence algumas horas antes do
+ * necessário. É um erro CONSERVADOR -- fecha a janela cedo, nunca aceita dado
+ * de sessão errada -- e evitar precisaria do calendário de feriados, que mora
+ * em `volume_intradiario.py`. Calendário em dois idiomas é a armadilha que esta
+ * mesma feature acabou de fechar; perder algumas horas num feriado é mais
+ * barato que uma segunda cópia dele.
+ */
+export function pregaoSeguinteJaAbriu(now: Date = new Date()): boolean {
+  const dia = diaDaSemanaNaBolsa(now);
+  if (dia === 0 || dia === 6) return false;   // fim de semana não abre
+  return minutosDoDiaNaBolsa(now) >= ABERTURA_DO_PREGAO_MIN;
+}
+
 export type IndicadorDeCondicao =
   | "price" | "changePct" | "rsi14" | "macd" | "sma20" | "sma50" | "rvol";
 
@@ -145,6 +180,17 @@ export interface RetratoDoTicker {
   rvolData?: string | null;
   /** Hora de bolsa (HH:MM) da última barra fechada que entrou no rvol. */
   rvolAte?: string | null;
+  /**
+   * Data (YYYY-MM-DD) da última barra DIÁRIA -- a sessão que `price`,
+   * `changePct` e as médias alcançam.
+   *
+   * É a IDENTIDADE DA SESSÃO para um alerta de fechamento: sem ela não há como
+   * exigir que preço e volume venham do mesmo pregão, e a confirmação atrasada
+   * poderia casar o fechamento de sexta com um preço de pré-mercado de segunda.
+   * Vinha no payload de get_technicals.py e era descartada por não estar
+   * declarada aqui -- mesma classe do `rvolData`.
+   */
+  dadosAte?: string | null;
 }
 
 export interface CondicaoAvaliada {
@@ -432,6 +478,14 @@ export interface DecisaoDeDisparo {
   /** Por que NÃO disparou. null quando disparou. */
   motivo: string | null;
   avaliacao: ResultadoDaAvaliacao;
+  /**
+   * A sessão (YYYY-MM-DD) que este disparo confirma. Só em alerta de
+   * fechamento -- é o que vai para `alert_firings.session_date` e o que impede
+   * o disparo duplicado.
+   */
+  sessaoConfirmada?: string | null;
+  /** A confirmação saiu DEPOIS do dia da sessão (fechamento atrasado). */
+  processadoDepois?: boolean;
 }
 
 /**
@@ -442,6 +496,97 @@ export interface DecisaoDeDisparo {
  * única parte dele que dá para provar por teste. A ordem das recusas é a ordem
  * em que elas importam no log.
  */
+/**
+ * A sessão que um alerta de fechamento pode confirmar agora, ou o motivo de não
+ * poder.
+ *
+ * A regra nasceu de um limite real: o guarda de data exigia `rvolData === hoje`,
+ * então o fechamento de uma sexta só era confirmável entre 16:00 e 23:59 ET
+ * daquela sexta. Uma indisponibilidade de oito horas perdia a confirmação para
+ * sempre -- janela operacional frágil para um alerta que existe justamente para
+ * ser o caminho CONFIÁVEL.
+ *
+ * A exceção aceita a última sessão negociada até a abertura do pregão seguinte,
+ * com as integridades preservadas:
+ *
+ * - **A mesma sessão em tudo.** `dadosAte` é a sessão do preço e das médias;
+ *   quando há condição de RVOL, `rvolData` tem de ser a MESMA. Sem isto a
+ *   confirmação de sexta casaria o volume de sexta com um preço de pré-mercado
+ *   de segunda -- dois pregões num mesmo veredito.
+ * - **Validade até a abertura seguinte.** Ver `pregaoSeguinteJaAbriu`.
+ * - **Só fechamento.** Alerta intradiário continua exigindo a data de hoje; é o
+ *   chamador que decide, passando `confirmAtClose`.
+ */
+export type SessaoParaConfirmar =
+  | { sessao: string; processadoDepois: boolean }
+  | { sessao: null; motivo: string };
+
+export function sessaoConfirmavel(
+  retrato: RetratoDoTicker,
+  condicoes: Condicao[],
+  ctx: { dataDeHojeNaBolsa: string; pregaoSeguinteJaAbriu: boolean },
+): SessaoParaConfirmar {
+  const sessao = retrato.dadosAte ?? null;
+  if (!sessao) {
+    return { sessao: null, motivo: "sem data da sessão no dado (dadosAte)" };
+  }
+
+  // Preço e volume do MESMO pregão. Só exigido quando há condição de RVOL --
+  // um alerta de fechamento só de preço não depende das barras intradiárias.
+  const usaRvol = condicoes.some((c) => c.indicator === "rvol");
+  if (usaRvol && retrato.rvolData !== sessao) {
+    return {
+      sessao: null,
+      motivo: `preço é do pregão de ${sessao} e o RVOL de `
+        + `${retrato.rvolData ?? "sessão desconhecida"} — sessões diferentes`,
+    };
+  }
+
+  if (sessao === ctx.dataDeHojeNaBolsa) {
+    return { sessao, processadoDepois: false };
+  }
+  if (sessao > ctx.dataDeHojeNaBolsa) {
+    // Dado à frente do relógio não é atraso, é inconsistência.
+    return { sessao: null, motivo: `dado do pregão de ${sessao}, à frente de hoje` };
+  }
+  if (ctx.pregaoSeguinteJaAbriu) {
+    return {
+      sessao: null,
+      motivo: `fechamento de ${sessao} venceu — o pregão seguinte já abriu`,
+    };
+  }
+  return { sessao, processadoDepois: true };
+}
+
+/**
+ * "Fechamento de sexta confirmado no processamento de segunda".
+ *
+ * Vai no assunto e no corpo do e-mail. Sem isto, uma confirmação que sai na
+ * segunda parece uma leitura da segunda -- e a decisão que o usuário tomaria em
+ * cima dela seria sobre o pregão errado. É a mesma disciplina da regra "você
+ * tem PONTOS, não a série": o dado é de sexta, e o texto não pode sugerir
+ * outra coisa.
+ *
+ * As datas são lidas como dia de BOLSA. `new Date("2026-10-02")` é meia-noite
+ * UTC, que em Nova York ainda é o dia 1 -- por isso o `T12:00:00Z`, que cai no
+ * meio do dia em qualquer fuso e não escorrega.
+ */
+const DIA_DA_SEMANA = [
+  "domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado",
+];
+
+export function notaDeConfirmacaoAtrasada(
+  sessao: string, hoje: string,
+): string | null {
+  if (sessao === hoje) return null;
+  const nome = (iso: string) => {
+    const d = new Date(`${iso}T12:00:00Z`);
+    return Number.isNaN(d.getTime()) ? iso : DIA_DA_SEMANA[d.getUTCDay()];
+  };
+  return `Fechamento de ${nome(sessao)} (${sessao}) confirmado no `
+    + `processamento de ${nome(hoje)}`;
+}
+
 export function decidirDisparo(
   alerta: AlertaParaDecisao,
   retrato: RetratoDoTicker,
@@ -449,44 +594,73 @@ export function decidirDisparo(
     agora: Date;
     dataDeHojeNaBolsa: string;
     pregaoEncerrado: boolean;
-    /** Data de bolsa do último disparo. Exigida por `confirmAtClose`. */
-    dataDaBolsaDoUltimoDisparo?: string | null;
+    /** `pregaoSeguinteJaAbriu(agora)`. Fecha a janela da confirmação atrasada. */
+    pregaoSeguinteJaAbriu?: boolean;
+    /**
+     * Este alerta já disparou para a sessão que o dado atual representa?
+     * O chamador consulta `alert_firings.session_date`. É o que impede o
+     * disparo duplicado, e é exato: dedupe pela SESSÃO confirmada, não pela
+     * hora do e-mail.
+     */
+    jaConfirmouEstaSessao?: boolean;
   },
 ): DecisaoDeDisparo {
   const condicoes = condicoesDoAlerta(alerta);
-  const avaliacao = avaliarCondicoes(condicoes, retrato, ctx.dataDeHojeNaBolsa);
+  // Alerta de fechamento avalia a SESSÃO, não "hoje": é o que permite a
+  // confirmação atrasada sem afrouxar o guarda de data dos intradiários.
+  const dataDeReferencia = alerta.confirmAtClose
+    ? (retrato.dadosAte ?? ctx.dataDeHojeNaBolsa)
+    : ctx.dataDeHojeNaBolsa;
+  const avaliacao = avaliarCondicoes(condicoes, retrato, dataDeReferencia);
 
   const recusa = (motivo: string): DecisaoDeDisparo =>
     ({ disparar: false, motivo, avaliacao });
 
   // Antes de qualquer conta: o cooldown. Avaliar um alerta em cooldown e só
   // depois descartá-lo gasta a mesma cota de e-mail no log de "quase disparou".
-  if (alerta.lastTriggeredAt) {
+  //
+  // Alerta de fechamento NÃO passa por aqui: o dedupe dele é por sessão, e o
+  // cooldown de 4h atrapalharia a confirmação atrasada (uma sexta confirmada na
+  // segunda está a dias do último disparo, mas uma sexta confirmada às 20:00
+  // depois de um disparo às 16:00 seria barrada pela sessão, não pelo relógio).
+  if (!alerta.confirmAtClose && alerta.lastTriggeredAt) {
     const desde = ctx.agora.getTime() - new Date(alerta.lastTriggeredAt).getTime();
     if (desde < COOLDOWN_MS) return recusa("em cooldown");
   }
 
+  if (!alerta.confirmAtClose) {
+    if (!condicoes.length) return recusa("alerta sem condição");
+    if (!avaliacao.disparou) {
+      const naoSatisfeita = avaliacao.condicoes.find((c) => !c.satisfeita);
+      return recusa(naoSatisfeita?.motivo ?? "condição não satisfeita");
+    }
+    return { disparar: true, motivo: null, avaliacao };
+  }
+
+  // ── Daqui para baixo: só alerta de fechamento ───────────────────────────
+  //
   // "Confirmar no fechamento" avalia SÓ depois das 16:00 ET. O ponto da opção é
   // não disparar em rompimento falso intradiário, e o RVOL segue instável até
   // ~10h30 ET mesmo depois dos 30 minutos que o guarda de abertura cobre.
-  if (alerta.confirmAtClose && !ctx.pregaoEncerrado) {
+  //
+  // A exceção: numa confirmação ATRASADA o pregão daquela sessão fechou há
+  // horas ou dias, e exigir `pregaoEncerrado` de HOJE barraria justamente o
+  // caso que a janela existe para salvar (sábado de manhã, por exemplo).
+  const janela = sessaoConfirmavel(retrato, condicoes, {
+    dataDeHojeNaBolsa: ctx.dataDeHojeNaBolsa,
+    pregaoSeguinteJaAbriu: ctx.pregaoSeguinteJaAbriu ?? false,
+  });
+  if (janela.sessao === null) return recusa(janela.motivo);
+  if (!janela.processadoDepois && !ctx.pregaoEncerrado) {
     return recusa("aguardando o fechamento (16:00 ET)");
   }
 
-  // Um fechamento, um e-mail. O cooldown de 4h não serve para um alerta diário:
-  // a janela entre 16:00 ET e a meia-noite tem oito horas, então o alerta
-  // disparava às 16:00, esperava as 4h e disparava DE NOVO às 20:00 -- com o
-  // mesmo preço de fechamento e o mesmo RVOL do dia. Dois e-mails sobre o mesmo
-  // evento. Medido na auditoria de 30/09/2026.
-  //
-  // Dedupe por DIA DE BOLSA, como os alertas de repique e de squeeze já fazem
-  // (`alertKey` com a data, em alert-checker.ts). Sem
-  // `dataDaBolsaDoUltimoDisparo` a comparação não é possível, e aí a recusa é
-  // conservadora: repetir um e-mail é menos grave que calar um alerta, então
-  // segue para as condições.
-  if (alerta.confirmAtClose && ctx.dataDaBolsaDoUltimoDisparo
-      && ctx.dataDaBolsaDoUltimoDisparo === ctx.dataDeHojeNaBolsa) {
-    return recusa("já confirmado no fechamento de hoje");
+  // Um fechamento, um e-mail -- agora por SESSÃO, que é exato. O dedupe por dia
+  // de bolsa que isto substitui errava os dois lados da confirmação atrasada:
+  // deixava a sexta confirmada na segunda bloquear o fechamento da própria
+  // segunda, e não bloqueava nada se o relógio virasse entre os dois disparos.
+  if (ctx.jaConfirmouEstaSessao) {
+    return recusa(`fechamento de ${janela.sessao} já confirmado`);
   }
 
   if (!condicoes.length) return recusa("alerta sem condição");
@@ -494,7 +668,11 @@ export function decidirDisparo(
     const naoSatisfeita = avaliacao.condicoes.find((c) => !c.satisfeita);
     return recusa(naoSatisfeita?.motivo ?? "condição não satisfeita");
   }
-  return { disparar: true, motivo: null, avaliacao };
+  return {
+    disparar: true, motivo: null, avaliacao,
+    sessaoConfirmada: janela.sessao,
+    processadoDepois: janela.processadoDepois,
+  };
 }
 
 /**

@@ -46,3 +46,14 @@ describe("o histórico mostra com que números o alerta disparou", () => {
     expect(FONTE).toContain(">Condições</th>");
   });
 });
+
+describe("a confirmação atrasada é identificável na tela", () => {
+  it("o histórico mostra a sessão quando ela difere do dia do disparo", () => {
+    // Um disparo de segunda sobre o fechamento de sexta parece uma leitura de
+    // segunda sem esta marca, e a decisão seria sobre o pregão errado. É o
+    // mesmo motivo de a nota ir no assunto do e-mail, e a mesma armadilha de
+    // guardar `conditions` sem mostrar.
+    expect(FONTE).toContain("f.sessionDate && !f.firedAt.startsWith(f.sessionDate)");
+    expect(FONTE).toContain("sessão de ");
+  });
+});
