@@ -40,7 +40,8 @@ import { IndicatorToggles } from "@/components/indicator-toggles";
 import { attachIndicatorFields, INDICATOR_COLORS, type IndicatorKey } from "@/lib/indicators";
 import { TradingViewChart } from "@/components/tradingview-chart";
 import { useViewMode } from "@/lib/view-mode";
-import { pesoNaCarteira, somaDosValoresAtuais } from "@/lib/peso-carteira";
+import { pesoNaCarteira, totalDoPeso, fatiasDaAlocacao } from "@/lib/peso-carteira";
+import { loteEmAberto, totaisDosLotesAbertos } from "@workspace/carteira";
 import { construirCiclos, rotuloDoCiclo, type Ciclo } from "@/lib/ciclos";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -148,22 +149,28 @@ function posToForm(p: PortfolioPosition): PosForm {
 // Deriva quantidade/investido/custo médio das compras ABERTAS (não vendidas),
 // para a linha da posição refletir sempre as operações registradas. Só deriva
 // quando há compras e todas têm preço; senão usa os valores salvos na posição.
+//
+// `loteEmAberto` e `totaisDosLotesAbertos` vêm de @workspace/carteira: eram
+// uma quinta cópia do predicado e uma quarta cópia da conta, escritas aqui à
+// mão. A decisão de QUANDO cair para o campo armazenado continua sendo desta
+// tela (ela é mais conservadora que o servidor de propósito: com um lote sem
+// preço, prefere o valor salvo a uma quantidade que não bate com o investido).
 function derivePosition(
   pos: { quantity: number; investedAmount: number; avgCost: number },
   purchases: Array<{ amount: number; purchasePrice?: number | null; saleDate?: string | null; salePrice?: number | null }>,
 ): { quantity: number; invested: number; avgCost: number; derived: boolean } {
-  const open = purchases.filter((p) => !(p.saleDate && p.salePrice));
+  const open = purchases.filter(loteEmAberto);
   const allHavePrice = open.length > 0 && open.every((p) => p.purchasePrice != null && p.purchasePrice > 0);
   if (!allHavePrice) {
     return { quantity: pos.quantity, invested: pos.investedAmount, avgCost: pos.avgCost, derived: false };
   }
-  let quantity = 0;
-  let invested = 0;
-  for (const p of open) {
-    quantity += p.amount / (p.purchasePrice as number);
-    invested += p.amount;
-  }
-  return { quantity, invested, avgCost: quantity > 0 ? invested / quantity : pos.avgCost, derived: true };
+  const t = totaisDosLotesAbertos(open);
+  return {
+    quantity: t.quantity,
+    invested: t.investedAmount,
+    avgCost: t.quantity > 0 ? t.avgCost : pos.avgCost,
+    derived: true,
+  };
 }
 
 function parseAlertPcts(s: string): number[] {
@@ -2144,13 +2151,30 @@ export default function PortfolioPage() {
     // Posição sem cotação vale null nas duas pontas -- nem numerador nem
     // denominador. É `somaDosValoresAtuais` quem decide isso, para a coluna e
     // o gráfico não poderem divergir de novo.
-    const totalCurrentUsd = somaDosValoresAtuais(
-      positions.map((p, i) => {
-        const t = p.ticker;
-        if (!priceMap.has(t)) return null;
-        return toUsd(derivedAll[i].quantity * (priceMap.get(t) as number), isB3(t));
-      }),
-    );
+    // ...e sobre as MESMAS posições do gráfico: as vendidas ficam fora das
+    // duas pontas.
+    //
+    // A unificação de 25/09 acertou a MÉTRICA (valor atual nos dois) e deixou
+    // passar a POPULAÇÃO: este `map` era sobre `positions`, todas, enquanto
+    // `allocData` sai de `rows`, já sem as encerradas. Bastava uma posição
+    // vendida com `quantity` armazenado diferente de zero para a coluna e o
+    // gráfico discordarem de novo -- e a coluna deixar de fechar 100%.
+    //
+    // Com os dados de 02/07/2026 (MU e INTC vendidas, `quantity` ainda em
+    // 0,4609 e 3,3558), o denominador da coluna era 4.358,54 contra 3.462,67
+    // do gráfico: NVDA aparecia com 29,3% na coluna e 36,9% no gráfico, e a
+    // soma da coluna dava 79,4%.
+    const linhasCandidatas = positions.map((p, i) => {
+      const t = p.ticker;
+      return {
+        ticker: t,
+        vendida: soldPositionIds.has(p.id),
+        valorAtualUsd: priceMap.has(t)
+          ? toUsd(derivedAll[i].quantity * (priceMap.get(t) as number), isB3(t))
+          : null,
+      };
+    });
+    const totalCurrentUsd = totalDoPeso(linhasCandidatas);
     return positions.map((p, i) => {
       const d = derivedAll[i];
       const quantity = d.quantity;
@@ -2261,9 +2285,18 @@ export default function PortfolioPage() {
 
   const hasPrices = quotes.length > 0;
 
+  // Mesmas linhas candidatas e mesmo filtro do denominador da coluna Peso --
+  // `fatiasDaAlocacao` e `totalDoPeso` passam os dois por
+  // `linhasQueContamNoPeso`, então não têm como receber conjuntos diferentes.
   const allocData = useMemo(
-    () => rows.filter((r) => r.currentValueUsd > 0).map((r) => ({ name: r.pos.ticker, value: r.currentValueUsd })),
-    [rows],
+    () => fatiasDaAlocacao(
+      allRows.map((r) => ({
+        ticker: r.pos.ticker,
+        vendida: r.isSoldOut,
+        valorAtualUsd: r.currentValueUsd,
+      })),
+    ),
+    [allRows],
   );
   const hasBrl = useMemo(() => allRows.some((r) => r.isBrl), [allRows]);
 

@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  pesoNaCarteira, pesosDaCarteira, somaDosValoresAtuais,
+  somaDosValoresAtuais, pesoNaCarteira, pesosDaCarteira,
+  linhasQueContamNoPeso, totalDoPeso, fatiasDaAlocacao,
 } from "@/lib/peso-carteira";
 
 describe("somaDosValoresAtuais", () => {
@@ -88,5 +89,78 @@ describe("a coluna e o gráfico dão o mesmo número", () => {
     const porAtual = pesoNaCarteira(atual[0], somaDosValoresAtuais(atual));
     const porInvestido = (investido[0] / investido.reduce((s, x) => s + x, 0)) * 100;
     expect(Math.abs(porAtual - porInvestido)).toBeGreaterThan(1);
+  });
+});
+
+// ── a POPULAÇÃO, não só a métrica ──────────────────────────────────────────
+//
+// A correção de 25/09 unificou o que o peso MEDE (valor atual nas duas
+// pontas) e deixou passar SOBRE QUAIS posições. O denominador da coluna era
+// somado sobre todas as posições; o gráfico, sobre as não-vendidas. Os testes
+// acima passavam -- eles exercitam a função pura, e a função pura estava
+// certa. Era o chamador que entregava conjuntos diferentes.
+//
+// Os números deste bloco são a carteira de 02/07/2026, com MU e INTC já
+// totalmente vendidas e `quantity` armazenado ainda em 0,4609 e 3,3558
+// (o estado em que `PUT /portfolio/:id` deixa a posição).
+
+describe("posição vendida não entra no peso — nem na coluna, nem no gráfico", () => {
+  const carteira = [
+    { ticker: "NVDA", valorAtualUsd: 1276.60, vendida: false },
+    { ticker: "GOOGL", valorAtualUsd: 628.77, vendida: false },
+    { ticker: "SMCI", valorAtualUsd: 591.94, vendida: false },
+    { ticker: "SGOV", valorAtualUsd: 500.21, vendida: false },
+    { ticker: "ARM", valorAtualUsd: 267.21, vendida: false },
+    { ticker: "TSLA", valorAtualUsd: 197.94, vendida: false },
+    { ticker: "MU", valorAtualUsd: 495.42, vendida: true },   // vendida 18/06
+    { ticker: "INTC", valorAtualUsd: 400.45, vendida: true },  // vendida 24/06
+  ];
+
+  it("o denominador é só das posições vivas", () => {
+    expect(totalDoPeso(carteira)).toBeCloseTo(3462.67, 2);
+    // O que era antes: 4.358,54, inflado em 895,86 pelas duas fantasmas.
+    expect(somaDosValoresAtuais(carteira.map((l) => l.valorAtualUsd))).toBeCloseTo(4358.54, 2);
+  });
+
+  it("os pesos somam 100, não 79,4", () => {
+    const total = totalDoPeso(carteira);
+    const soma = linhasQueContamNoPeso(carteira)
+      .reduce((s, l) => s + pesoNaCarteira(l.valorAtualUsd, total), 0);
+    expect(soma).toBeCloseTo(100, 6);
+  });
+
+  it("NVDA pesa 36,9% e não 29,3%", () => {
+    expect(pesoNaCarteira(1276.60, totalDoPeso(carteira))).toBeCloseTo(36.9, 1);
+    expect(pesoNaCarteira(1276.60, 4358.54)).toBeCloseTo(29.3, 1);
+  });
+
+  it("a coluna e o gráfico dão o mesmo número, posição por posição", () => {
+    const total = totalDoPeso(carteira);
+    const fatias = fatiasDaAlocacao(carteira);
+    const totalDoGrafico = fatias.reduce((s, f) => s + f.value, 0);
+    for (const f of fatias) {
+      const naColuna = pesoNaCarteira(f.value, total);
+      const noGrafico = (f.value / totalDoGrafico) * 100;
+      expect(naColuna).toBeCloseTo(noGrafico, 10);
+    }
+  });
+
+  it("a vendida não aparece no gráfico", () => {
+    expect(fatiasDaAlocacao(carteira).map((f) => f.name)).toEqual(
+      ["NVDA", "GOOGL", "SMCI", "SGOV", "ARM", "TSLA"],
+    );
+  });
+
+  it("posição sem cotação também fica fora das duas pontas", () => {
+    const comLacuna = [...carteira, { ticker: "WOLF", valorAtualUsd: null, vendida: false }];
+    expect(totalDoPeso(comLacuna)).toBeCloseTo(3462.67, 2);
+    expect(fatiasDaAlocacao(comLacuna).map((f) => f.name)).not.toContain("WOLF");
+  });
+
+  it("carteira toda vendida: denominador zero e nenhuma fatia, sem NaN", () => {
+    const tudoVendido = carteira.map((l) => ({ ...l, vendida: true }));
+    expect(totalDoPeso(tudoVendido)).toBe(0);
+    expect(fatiasDaAlocacao(tudoVendido)).toEqual([]);
+    expect(pesoNaCarteira(495.42, 0)).toBe(0);
   });
 });
