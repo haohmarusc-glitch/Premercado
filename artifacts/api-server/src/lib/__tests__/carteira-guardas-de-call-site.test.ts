@@ -158,6 +158,25 @@ describe("migração 0041 e ensure-schema em sincronia", () => {
   });
 });
 
+describe("o dry-run é executável onde importa", () => {
+  const codigo = semComentarios(readFileSync(resolve(src, "__tests__/portfolio-alerts.dryrun.test.ts"), "utf8"));
+
+  it("resolve o interpretador por getPythonBin, não por 'python3' cru", () => {
+    // Hardcodado como "python3", o dry-run nunca foi executável no contêiner
+    // de produção -- o único ambiente onde ele serve para algo. A imagem
+    // instala yfinance e pandas em /app/.venv, então o interpretador do
+    // sistema morre com ImportError antes de buscar uma cotação.
+    expect(codigo).toMatch(/spawn\(getPythonBin\(\)/);
+    expect(codigo).not.toMatch(/spawn\("python3"/);
+  });
+
+  it("roda o script como MÓDULO do pacote, não por caminho", () => {
+    // Incidente #418 (runner.ts): `python3 src/agent/x.py` e
+    // `python3 -m agent.x` exigem formas OPOSTAS de import.
+    expect(codigo).toMatch(/"-m", "agent\.get_quotes"/);
+  });
+});
+
 describe("nenhum consumidor reescreve o predicado à mão", () => {
   const consumidores = [
     "lib/portfolio-alerts.ts",

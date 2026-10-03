@@ -30,13 +30,27 @@ describe.runIf(RUN)("portfolio alert checker — dry run (read-only)", () => {
       // Dynamic imports so DATABASE_URL is only required when the test actually runs
       const { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } =
         await import("@workspace/db");
-      const { agentDir } = await import("../lib/runner");
+      const { agentDir, getPythonBin } = await import("../lib/runner");
       const { loteEmAberto, vendaRegistrada, totaisDosLotesAbertos, variacaoContraCusto } =
         await import("../lib/portfolio-math");
 
       function fetchPrices(tickers: string[]): Promise<Quote[]> {
         return new Promise((resolve, reject) => {
-          const py = spawn("python3", ["-m", "agent.get_quotes", ...tickers], {
+          // `getPythonBin()`, não "python3" cru. O resolvedor do repo prefere
+          // .venv/bin/python e só cai no interpretador do sistema se não achar
+          // o venv -- e é no venv que moram yfinance e pandas.
+          //
+          // Hardcodado como "python3", este dry-run nunca foi executável no
+          // contêiner de produção, que é o único ambiente onde ele serve para
+          // algo: a imagem instala as dependências Python em /app/.venv (ver
+          // Dockerfile), então `python3 -m agent.get_quotes` morre com
+          // ImportError antes de buscar uma cotação. Descoberto em 03/10/2026,
+          // tentando rodar a ferramenta contra produção depois do deploy.
+          //
+          // É a mesma armadilha do incidente #418 anotada em runner.ts: duas
+          // formas de rodar o mesmo script, e a que o repo usa não é a que
+          // estava escrita aqui.
+          const py = spawn(getPythonBin(), ["-m", "agent.get_quotes", ...tickers], {
             cwd: agentDir,
             env: { ...process.env, PYTHONPATH: agentDir },
           });
