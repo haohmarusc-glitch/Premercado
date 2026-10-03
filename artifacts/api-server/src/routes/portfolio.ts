@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, asc, eq } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, usersTable } from "@workspace/db";
 import { spawnAgente } from "../lib/runner";
-import { computeOpenLotTotals } from "../lib/portfolio-math";
+import { loteEmAberto, totaisDosLotesAbertos, erroNoEstadoDeVenda } from "../lib/portfolio-math";
 import {
   ListPortfolioPositionsResponse,
   UpdatePortfolioPositionResponse as PortfolioPositionSchema,
@@ -78,7 +78,18 @@ async function recomputePosition(executor: DbOrTx, positionId: number): Promise<
     .from(portfolioPurchasesTable)
     .where(eq(portfolioPurchasesTable.positionId, positionId));
 
-  const open = purchases.filter((p) => p.saleDate == null);
+  // `loteEmAberto`, não `p.saleDate == null`. Eram duas definições de "lote em
+  // aberto" no repo: esta olhava só a data, e os outros quatro leitores
+  // (performance, scenarios, derivePosition na tela, portfolio-alerts) olhavam
+  // data E preço. Um lote com data de venda e preço nulo saía da quantidade
+  // aqui e continuava contando como aberto lá -- a posição desaparecia da
+  // Carteira e seguia viva no Painel de Cenários. Ver @workspace/carteira.
+  //
+  // Mudar o critério não reinterpreta nenhuma linha existente: em produção,
+  // 03/10/2026, os 34 lotes tinham os dois campos preenchidos ou os dois
+  // nulos. E o PATCH abaixo passou a recusar o estado pela metade, então não
+  // nasce mais nenhum.
+  const open = purchases.filter(loteEmAberto);
 
   if (open.length === 0) {
     // Nenhum lote em aberto -- posicao totalmente vendida. NAO deletamos a
@@ -94,7 +105,7 @@ async function recomputePosition(executor: DbOrTx, positionId: number): Promise<
     return;
   }
 
-  const totals = computeOpenLotTotals(
+  const totals = totaisDosLotesAbertos(
     open.map((p) => ({ amount: Number(p.amount), purchasePrice: p.purchasePrice != null ? Number(p.purchasePrice) : null })),
   );
 
@@ -226,6 +237,16 @@ router.post("/portfolio/:id/purchases", async (req, res): Promise<void> => {
   const pos = await getOwnedPosition(params.data.id, req.userId!);
   if (!pos) { res.status(404).json({ error: "Position not found" }); return; }
 
+  // O corpo de criação também aceita saleDate/salePrice (lote já vendido
+  // importado de uma vez), então o lote meio-vendido também nasce por aqui --
+  // não só pelo PATCH. Mesma validação, mesma função.
+  const erroDeVenda = erroNoEstadoDeVenda(body.data.saleDate, body.data.salePrice);
+  if (erroDeVenda) { res.status(400).json({ error: erroDeVenda }); return; }
+  if (body.data.purchasePrice != null && !(Number(body.data.purchasePrice) > 0)) {
+    res.status(400).json({ error: "purchasePrice deve ser um número finito maior que zero" });
+    return;
+  }
+
   // Se o cliente nao mandou preco, tenta buscar o fechamento real da data
   // (yfinance) aqui tambem -- o frontend ja tenta isso antes de chamar essa
   // rota, mas essa e' a defesa de verdade: sem isso o lote fica com
@@ -266,8 +287,14 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
   const body = UpdatePortfolioPurchaseBody.safeParse(req.body);
   if (!p.success || !body.success) { res.status(400).json({ error: "invalid input" }); return; }
 
+  // saleDate/salePrice vêm junto porque a validação é do estado RESULTANTE,
+  // não do corpo isolado -- ver o bloco de `erroNoEstadoDeVenda` abaixo.
   const [existing] = await db
-    .select({ positionId: portfolioPurchasesTable.positionId })
+    .select({
+      positionId: portfolioPurchasesTable.positionId,
+      saleDate: portfolioPurchasesTable.saleDate,
+      salePrice: portfolioPurchasesTable.salePrice,
+    })
     .from(portfolioPurchasesTable)
     .where(eq(portfolioPurchasesTable.id, p.data.purchaseId));
   if (!existing || !(await getOwnedPosition(existing.positionId, req.userId!))) {
@@ -291,6 +318,37 @@ router.patch("/portfolio/purchases/:purchaseId", async (req, res): Promise<void>
 
   if (Object.keys(update).length === 0) {
     res.status(400).json({ error: "no fields to update" });
+    return;
+  }
+
+  // Um preço de compra zerado ou negativo não é corrigível depois: o lote
+  // some da quantidade (totaisDosLotesAbertos só conta lote com preço > 0) e
+  // continua somando no investido, então `quantity * avgCost` deixa de bater
+  // com `investedAmount` sem nada na tela dizendo por quê. O schema zod já
+  // recusa não-finito (`z.number()` do zod 4 é finito por padrão), mas aceita
+  // 0 e negativo -- `purchasePrice: zod.number().nullish()`, sem `.gt(0)`.
+  if (update.purchasePrice != null) {
+    const preco = Number(update.purchasePrice);
+    if (!Number.isFinite(preco) || preco <= 0) {
+      res.status(400).json({ error: "purchasePrice deve ser um número finito maior que zero" });
+      return;
+    }
+  }
+
+  // O estado de venda RESULTANTE precisa ser coerente: data e preço juntos,
+  // ou nenhum dos dois (o "desfazer venda" da tela manda os dois nulos).
+  //
+  // Valida o resultado, não o corpo: editar só a data de um lote que já tem
+  // preço de venda é legítimo, e um validador que olhasse apenas o corpo
+  // recusaria isso. Era por aqui que nascia o lote meio-vendido -- os dois
+  // campos eram testados independentemente, e o resultado era um lote que
+  // `recomputePosition` tirava da quantidade e os outros quatro leitores
+  // contavam como aberto.
+  const saleDateFinal = ("saleDate" in update ? update.saleDate : existing.saleDate) as string | null;
+  const salePriceFinal = ("salePrice" in update ? update.salePrice : existing.salePrice) as number | string | null;
+  const erroDeVenda = erroNoEstadoDeVenda(saleDateFinal, salePriceFinal);
+  if (erroDeVenda) {
+    res.status(400).json({ error: erroDeVenda });
     return;
   }
 
