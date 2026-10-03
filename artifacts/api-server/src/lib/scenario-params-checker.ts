@@ -16,10 +16,10 @@
  * "aplicar sugestão" e nunca era usado pelo checker em background,
  * ver scenario-alert-checker.ts).
  */
-import { eq, notInArray } from "drizzle-orm";
-import { db, portfolioPositionsTable, scenarioParamsTable, scenarioAlertSettingsTable, sectorMomentumTable } from "@workspace/db";
+import { eq, inArray, notInArray } from "drizzle-orm";
+import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable, scenarioAlertSettingsTable, sectorMomentumTable } from "@workspace/db";
 import { diasAteAlvo } from "@workspace/scenario-math";
-import { isActivePosition } from "./portfolio-math";
+import { posicaoAtivaPelosLotes } from "./portfolio-math";
 import { runScript } from "../routes/scenarios";
 import { state as agentState } from "./runner";
 import { logger } from "./logger";
@@ -58,9 +58,44 @@ export async function refreshScenarioParams(): Promise<void> {
   }
 
   const rows = await db
-    .select({ ticker: portfolioPositionsTable.ticker, isEtf: portfolioPositionsTable.isEtf, quantity: portfolioPositionsTable.quantity })
+    .select({
+      id: portfolioPositionsTable.id,
+      ticker: portfolioPositionsTable.ticker,
+      isEtf: portfolioPositionsTable.isEtf,
+      quantity: portfolioPositionsTable.quantity,
+    })
     .from(portfolioPositionsTable);
-  const tickers = [...new Set(rows.filter((r) => !r.isEtf && isActivePosition(r.quantity)).map((r) => r.ticker))];
+
+  // Ativo/vendido pelos LOTES, não pelo `quantity` armazenado -- este era o
+  // quinto consumidor de portfolio_positions a decidir pelo campo editável
+  // (§1 do playbook). Com `quantity` desatualizado numa posição já vendida, o
+  // ticker continuava entrando na lista de refresh E escapando da limpeza de
+  // órfãos logo abaixo, porque as duas usam esta mesma lista: a linha de
+  // scenario_params de um papel vendido ficava viva para sempre. Que é
+  // exatamente o incidente do AVGO em 17/08/2026, documentado em
+  // scenario-params-orfaos.test.ts.
+  const lotes = rows.length
+    ? await db
+        .select({
+          positionId: portfolioPurchasesTable.positionId,
+          saleDate: portfolioPurchasesTable.saleDate,
+          salePrice: portfolioPurchasesTable.salePrice,
+        })
+        .from(portfolioPurchasesTable)
+        .where(inArray(portfolioPurchasesTable.positionId, rows.map((r) => r.id)))
+    : [];
+  const lotesPorPosicao = new Map<number, typeof lotes>();
+  for (const l of lotes) {
+    const lista = lotesPorPosicao.get(l.positionId) ?? [];
+    lista.push(l);
+    lotesPorPosicao.set(l.positionId, lista);
+  }
+
+  const tickers = [...new Set(
+    rows
+      .filter((r) => !r.isEtf && posicaoAtivaPelosLotes(r.quantity, lotesPorPosicao.get(r.id) ?? []))
+      .map((r) => r.ticker),
+  )];
   // Sem nenhuma posição ativa, sai antes -- e de propósito NÃO limpa os
   // órfãos aqui. `notInArray(ticker, [])` apagaria a tabela inteira, e
   // "carteira vazia" é mais provável de ser anomalia momentânea (migração,

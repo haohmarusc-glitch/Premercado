@@ -349,6 +349,25 @@ export const portfolioAlertFiringsTable = pgTable("portfolio_alert_firings", {
   id: serial("id").primaryKey(),
   alertKey: text("alert_key").notNull().unique(),
   firedAt: timestamp("fired_at").defaultNow().notNull(),
+  // Disparo que SABEMOS ter sido indevido, marcado em vez de apagado.
+  //
+  // A varredura de 03/10/2026 achou 98 disparos falsos em 204: 69 alertas de
+  // ganho por divisão por zero (avg_cost zerado numa posição encerrada, ver o
+  // cabeçalho de portfolio-alerts.ts) e 29 marcos de holding sobre lote já
+  // vendido. As linhas ficam: elas são a evidência de que o defeito existiu e
+  // por quanto tempo. Estas duas colunas permitem excluí-las de qualquer
+  // contagem futura sem destruir o histórico.
+  //
+  // Não têm efeito nenhum sobre o disparo. A dedupe passou a usar chaves `v2`,
+  // que não colidem com as antigas -- marcar ou não marcar uma linha v1 não
+  // libera nem bloqueia nada.
+  invalidatedAt: timestamp("invalidated_at"),
+  // Por que o disparo era inválido. Vocabulário fechado:
+  //   'custo_medio_zerado' -- avg_cost = 0 numa posição encerrada: a conta
+  //                           ((price - 0) / 0) * 100 dava Infinity, que passa
+  //                           em todos os limiares de uma vez
+  //   'lote_vendido'       -- marco de tempo de posse sobre lote já vendido
+  invalidationReason: text("invalidation_reason"),
 }, (t) => [
   index("idx_portfolio_alert_firings_key").on(t.alertKey),
 ]);

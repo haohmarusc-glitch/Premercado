@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, portfolioPositionsTable, portfolioPurchasesTable } from "@workspace/db";
 import { spawnAgente } from "../lib/runner";
 import { asc, eq, inArray } from "drizzle-orm";
-import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
+import { loteEmAberto, totaisDosLotesAbertos, posicaoAtivaPelosLotes } from "../lib/portfolio-math";
 
 const router: IRouter = Router();
 
@@ -43,16 +43,16 @@ router.get("/performance", async (req, res): Promise<void> => {
   const positions = rows
     .map((p) => {
       const positionLots = lotsByPosition.get(p.id) ?? [];
-      const open = positionLots.filter((l) => !(l.saleDate && l.salePrice));
+      const open = positionLots.filter(loteEmAberto);
       const derived = positionLots.length > 0
-        ? computeOpenLotTotals(open.map((l) => ({
+        ? totaisDosLotesAbertos(open.map((l) => ({
             amount: Number(l.amount),
             purchasePrice: l.purchasePrice != null ? Number(l.purchasePrice) : null,
           })))
         : { quantity: Number(p.quantity), avgCost: Number(p.avgCost), investedAmount: Number(p.investedAmount) };
       return { p, derived };
     })
-    .filter(({ p, derived }) => isPositionActiveFromLots(derived.quantity, lotsByPosition.get(p.id) ?? []));
+    .filter(({ p, derived }) => posicaoAtivaPelosLotes(derived.quantity, lotsByPosition.get(p.id) ?? []));
 
   const tickers = [...new Set(positions.map(({ p }) => p.ticker)), "SPY"];
 

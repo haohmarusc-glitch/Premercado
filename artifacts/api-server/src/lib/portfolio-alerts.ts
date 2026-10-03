@@ -7,6 +7,38 @@
  * NOTE: o job roda sobre as posições de TODOS os usuários numa varredura só,
  * mas cada e-mail vai pro notify_email salvo NA PRÓPRIA posição (definido na
  * criação), não mais pra um endereço único compartilhado.
+ *
+ * ## A varredura de 03/10/2026: 98 dos 204 disparos eram falsos
+ *
+ * Este arquivo era o quarto consumidor de `portfolio_positions` e o único que
+ * nunca recebeu o filtro pelos lotes reais (§1 do playbook). Lia `quantity` e
+ * `avg_cost` armazenados e percorria TODAS as posições, inclusive as já
+ * encerradas. Três defeitos saíram disso:
+ *
+ * 1. **Divisão por zero -- 69 e-mails falsos.** `recomputePosition` zera
+ *    `avg_cost` ao vender tudo, e `((price - 0) / 0) * 100` é `Infinity`, que
+ *    passa em TODOS os limiares de ganho de uma vez. O e-mail saía dizendo
+ *    "Infinity%". Confirmado seis vezes, sempre no ciclo de 15 min seguinte ao
+ *    zeramento: 10/08 14:20 (25 disparos), 25/08, 31/08, 09/09, 21/09 e 02/10
+ *    14:05 (21 disparos). O caso que fecha o argumento é `gain:BABA:50` em
+ *    02/10 -- BABA comprada a 125,97 e vendida a 105,88, PREJUÍZO de 15,95%.
+ *
+ * 2. **Marcos de holding em lote vendido -- 29 e-mails falsos.** O laço não
+ *    filtrava `sale_date`. `holding:META:2026-03-20:180` disparou em 16/09
+ *    sobre um lote vendido em 07/05, 132 dias depois da venda. META foi
+ *    importada já vendida e disparou os três primeiros marcos de uma vez.
+ *
+ * 3. **Chave por ticker, não por posição.** Com ticker repetido (ARM em #12 e
+ *    #22, AVGO em #15 e #23, INTC em #3 e #17), a posição morta consumia as
+ *    chaves da viva. Em 03/10 as duas únicas posições em ação da carteira
+ *    estavam surdas: ARM #22 com `gain:ARM:10..50` consumidos pela ARM #12 em
+ *    21/09 e `loss:ARM:10..30` consumidos em junho/julho -- nenhum alerta
+ *    podia disparar nunca mais, nem com queda de 30%.
+ *
+ * As chaves ganharam o prefixo `v2` e o id da posição (ou da compra) em vez de
+ * serem apagadas: os 204 disparos antigos são a evidência do defeito e ficam
+ * no banco. Uma chave v1 não colide com uma v2, então a ARM #22 volta a
+ * disparar sem que nada seja destruído.
  */
 import { db, portfolioPositionsTable, portfolioPurchasesTable, portfolioAlertFiringsTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -15,6 +47,13 @@ import { sendAlertEmail, sendPortfolioHoldingEmail, sendRecompraEmail } from "./
 import { logger } from "./logger";
 import { runExclusive } from "./python-queue";
 import { spawnPython } from "./python-spawn";
+import {
+  loteEmAberto,
+  vendaRegistrada,
+  totaisDosLotesAbertos,
+  custoMedioUtilizavel,
+  variacaoContraCusto,
+} from "./portfolio-math";
 
 const CHECK_INTERVAL_MS = 15 * 60_000; // 15 min
 
@@ -102,7 +141,20 @@ export async function checkPortfolioAlerts(): Promise<void> {
   const positions = await db.select().from(portfolioPositionsTable);
   if (!positions.length) return;
 
-  const tickers = positions.map((p) => p.ticker);
+  // Os lotes vêm ANTES do laço de preço, não depois. Eram buscados só na
+  // seção de holding, lá embaixo -- tarde demais para o bloco de ganho/perda,
+  // que por isso decidia tudo pelo `quantity`/`avg_cost` armazenados.
+  const purchases = await db.select().from(portfolioPurchasesTable);
+  const lotsByPosition = new Map<number, typeof purchases>();
+  for (const pu of purchases) {
+    const list = lotsByPosition.get(pu.positionId) ?? [];
+    list.push(pu);
+    lotsByPosition.set(pu.positionId, list);
+  }
+
+  // Deduplicado: com ticker repetido entre uma posição encerrada e uma nova
+  // (ARM, AVGO e INTC em 03/10), get_quotes recebia o mesmo símbolo duas vezes.
+  const tickers = [...new Set(positions.map((p) => p.ticker))];
 
   let quotes: PriceQuote[];
   try {
@@ -124,10 +176,37 @@ export async function checkPortfolioAlerts(): Promise<void> {
     const price = priceMap.get(pos.ticker);
     if (price == null) continue;
 
-    const pct = ((price - pos.avgCost) / pos.avgCost) * 100.0;
+    // Só posição com lote efetivamente em aberto. Uma posição encerrada não
+    // tem ganho nem perda a avisar -- o que ela pode gerar é alerta de
+    // recompra, no bloco próprio lá embaixo.
+    const lots = lotsByPosition.get(pos.id) ?? [];
+    const abertos = lots.filter(loteEmAberto);
+    if (lots.length > 0 && abertos.length === 0) continue;
+
+    // Custo médio dos LOTES, não o campo armazenado. `PUT /portfolio/:id`
+    // edita `avg_cost` direto, e `recomputePosition` o zera ao vender tudo.
+    // Sem lote nenhum (posição importada por script, SGOV em 03/10) o campo
+    // armazenado é a única fonte que existe.
+    const avgCost = lots.length > 0
+      ? totaisDosLotesAbertos(abertos).avgCost
+      : Number(pos.avgCost);
+
+    // A guarda não depende do filtro acima estar certo, de propósito: divisão
+    // por zero não pode ser responsabilidade de um `continue` dois passos
+    // atrás. `variacaoContraCusto` devolve null em vez de Infinity/NaN.
+    const pct = variacaoContraCusto(price, avgCost);
+    if (pct == null) {
+      if (custoMedioUtilizavel(avgCost) == null) {
+        logger.debug(
+          { ticker: pos.ticker, positionId: pos.id, avgCost },
+          "Portfolio alert checker: custo médio inutilizável, pulando alerta de preço",
+        );
+      }
+      continue;
+    }
 
     for (const thr of pos.upAlertPcts) {
-      const key = `gain:${pos.ticker}:${thr}`;
+      const key = `gain:v2:${pos.id}:${pos.ticker}:${thr}`;
       if (pct >= thr && !firedKeys.has(key)) {
         try {
           await sendAlertEmail({
@@ -149,7 +228,7 @@ export async function checkPortfolioAlerts(): Promise<void> {
     }
 
     for (const thr of pos.downAlertPcts) {
-      const key = `loss:${pos.ticker}:${thr}`;
+      const key = `loss:v2:${pos.id}:${pos.ticker}:${thr}`;
       if (pct <= -thr && !firedKeys.has(key)) {
         try {
           await sendAlertEmail({
@@ -172,7 +251,6 @@ export async function checkPortfolioAlerts(): Promise<void> {
   }
 
   // ── Holding milestone alerts ────────────────────────────────────────────────
-  const purchases = await db.select().from(portfolioPurchasesTable);
   const posMap = new Map(positions.map((p) => [p.id, p]));
   const today = new Date();
 
@@ -180,11 +258,20 @@ export async function checkPortfolioAlerts(): Promise<void> {
     const pos = posMap.get(purchase.positionId);
     if (!pos) continue;
 
+    // Lote vendido não acumula tempo de posse. Sem isto, 29 dos 67 marcos
+    // registrados eram falsos -- "META: 180 dias de holding" em 16/09 sobre um
+    // lote vendido em 07/05.
+    if (vendaRegistrada(purchase)) continue;
+
     const ageDays = Math.floor((today.getTime() - new Date(purchase.purchaseDate).getTime()) / 86_400_000);
 
     for (const milestone of HOLDING_MILESTONES) {
       if (ageDays >= milestone) {
-        const key = `holding:${pos.ticker}:${purchase.purchaseDate}:${milestone}`;
+        // Chaveado pelo id da COMPRA, não por ticker+data: dois lotes do mesmo
+        // ticker na mesma data existem de verdade (SMCI 14/05 e 22/07, SKHY
+        // 15/07 -- lotes divididos para venda parcial), e com a chave antiga o
+        // segundo nunca disparava porque o primeiro já tinha gravado a chave.
+        const key = `holding:v2:${purchase.id}:${pos.ticker}:${milestone}`;
         if (!firedKeys.has(key)) {
           try {
             await sendPortfolioHoldingEmail({
@@ -211,26 +298,26 @@ export async function checkPortfolioAlerts(): Promise<void> {
   // ── Recompra: ações totalmente vendidas que caíram abaixo do preço de venda ──
   // Usa os mesmos limiares de baixa (downAlertPcts) da posição. Dispara quando
   // o preço atual está thr% abaixo do preço médio de venda.
-  const lotsByPos = new Map<number, typeof purchases>();
-  for (const pu of purchases) {
-    const arr = lotsByPos.get(pu.positionId) ?? [];
-    arr.push(pu);
-    lotsByPos.set(pu.positionId, arr);
-  }
-
+  //
+  // Este é o único bloco que QUER posição encerrada, então ele não usa o
+  // filtro de "lote em aberto" do bloco de ganho/perda -- usa o oposto. Está
+  // dito aqui porque "filtrar pelos lotes abertos" aplicado cegamente aos
+  // três blocos desligaria o alerta de recompra inteiro.
   for (const pos of positions) {
-    const lots = lotsByPos.get(pos.id) ?? [];
+    const lots = lotsByPosition.get(pos.id) ?? [];
     if (lots.length === 0) continue;
-    const soldLots = lots.filter((p) => p.saleDate && p.salePrice != null && p.purchasePrice != null);
-    const openLots = lots.filter((p) => !(p.saleDate && p.salePrice != null));
+    // purchasePrice é exigido além da venda: sem ele não há como contar shares.
+    const soldLots = lots.filter((p) => vendaRegistrada(p) && p.purchasePrice != null);
+    const openLots = lots.filter(loteEmAberto);
     // Só considera posições totalmente encerradas (você não detém mais)
     if (soldLots.length === 0 || openLots.length > 0) continue;
 
-    const soldQty = soldLots.reduce((s, p) => s + p.amount / (p.purchasePrice as number), 0);
-    const revenue = soldLots.reduce((s, p) => s + (p.amount / (p.purchasePrice as number)) * (p.salePrice as number), 0);
+    const shares = (p: typeof lots[number]) => Number(p.amount) / Number(p.purchasePrice);
+    const soldQty = soldLots.reduce((s, p) => s + shares(p), 0);
+    const revenue = soldLots.reduce((s, p) => s + shares(p) * Number(p.salePrice), 0);
     const avgSalePrice = soldQty > 0 ? revenue / soldQty : null;
     const price = priceMap.get(pos.ticker);
-    if (avgSalePrice == null || price == null || avgSalePrice <= 0) continue;
+    if (avgSalePrice == null || !Number.isFinite(avgSalePrice) || price == null || avgSalePrice <= 0) continue;
 
     const dropPct = ((avgSalePrice - price) / avgSalePrice) * 100;
     if (dropPct <= 0) continue;
@@ -239,7 +326,11 @@ export async function checkPortfolioAlerts(): Promise<void> {
     const crossed = pos.downAlertPcts.filter((thr) => dropPct >= thr);
     if (crossed.length === 0) continue;
     const thr = Math.max(...crossed);
-    const key = `recompra:${pos.ticker}:${thr}`;
+    // v2 + id da posição pelo mesmo motivo dos outros dois: `recompra:ARM:30`
+    // foi gravado em 14/07 pelo primeiro encerramento da ARM #12, e o segundo
+    // encerramento (21/09, a um preço médio de venda diferente) não tinha como
+    // avisar nada.
+    const key = `recompra:v2:${pos.id}:${pos.ticker}:${thr}`;
     if (firedKeys.has(key)) continue;
 
     try {

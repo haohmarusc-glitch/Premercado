@@ -30,6 +30,49 @@
 export type ValorAtual = number | null;
 
 /**
+ * Uma posição candidata a entrar no peso.
+ *
+ * `vendida` existe porque a unificação de 25/09 acertou a MÉTRICA e deixou
+ * passar a POPULAÇÃO. O denominador da coluna era somado sobre TODAS as
+ * posições; o gráfico saía da lista já sem as encerradas. Bastava uma posição
+ * vendida com `quantity` armazenado diferente de zero (que é o estado em que
+ * `PUT /portfolio/:id` deixa a posição) para os dois discordarem de novo.
+ *
+ * Com os dados de 02/07/2026 -- MU e INTC totalmente vendidas, `quantity`
+ * ainda em 0,4609 e 3,3558 -- o denominador da coluna era 4.358,54 contra
+ * 3.462,67 do gráfico. NVDA aparecia com 29,3% na coluna e 36,9% no gráfico,
+ * e a soma da coluna dava 79,4%.
+ */
+export interface LinhaCandidata {
+  ticker: string;
+  valorAtualUsd: ValorAtual;
+  vendida: boolean;
+}
+
+/**
+ * As linhas que contam no peso -- UMA decisão, servindo a coluna e o gráfico.
+ *
+ * Existe como função, e não como dois `filter` parecidos, pelo mesmo motivo
+ * que `somaDosValoresAtuais` existe: o defeito era dois cálculos convivendo.
+ * Agora a coluna e o gráfico não podem nem receber conjuntos diferentes.
+ */
+export function linhasQueContamNoPeso<T extends LinhaCandidata>(linhas: readonly T[]): T[] {
+  return linhas.filter(
+    (l) => !l.vendida && l.valorAtualUsd != null && Number.isFinite(l.valorAtualUsd) && l.valorAtualUsd > 0,
+  );
+}
+
+/** O denominador, a partir das linhas candidatas. */
+export function totalDoPeso(linhas: readonly LinhaCandidata[]): number {
+  return somaDosValoresAtuais(linhasQueContamNoPeso(linhas).map((l) => l.valorAtualUsd));
+}
+
+/** As fatias do gráfico de alocação -- mesmas linhas, mesmo denominador. */
+export function fatiasDaAlocacao(linhas: readonly LinhaCandidata[]): { name: string; value: number }[] {
+  return linhasQueContamNoPeso(linhas).map((l) => ({ name: l.ticker, value: l.valorAtualUsd as number }));
+}
+
+/**
  * O denominador: soma dos valores atuais conhecidos.
  *
  * Existe como função, e não como um `reduce` solto em cada lugar, porque o

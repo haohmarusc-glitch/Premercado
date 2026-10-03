@@ -149,7 +149,7 @@ router.post("/chat/message", async (req, res): Promise<void> => {
 
   // Mesma fonte usada pelo modo "portfolio" do agente diário (runner.ts) --
   // posições REALMENTE abertas (decidido pelos lotes, não pelo campo
-  // `quantity` armazenado, ver isPositionActiveFromLots). Sem isso, o chat
+  // `quantity` armazenado, ver posicaoAtivaPelosLotes). Sem isso, o chat
   // não tinha nenhuma lista de "carteira" própria e respondia perguntas
   // sobre "a carteira" misturando os tickers ativos com toda a cesta de
   // cobertura (config.TICKERS) e com o que sobrava na memória de dias

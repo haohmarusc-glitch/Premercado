@@ -170,6 +170,20 @@ export async function ensureSchema(): Promise<void> {
   }
 
   try {
+    // migration 0041 -- marca disparo indevido em vez de apagar.
+    //
+    // Só as COLUNAS entram aqui; a marcação das linhas antigas é da migração,
+    // não do boot. Um UPDATE em massa a cada reinício do contêiner é tudo o
+    // que o ensure-schema não deve fazer -- ele garante estrutura, e rodar de
+    // novo tem que ser inofensivo.
+    await db.execute(sql`ALTER TABLE portfolio_alert_firings ADD COLUMN IF NOT EXISTS invalidated_at timestamp`);
+    await db.execute(sql`ALTER TABLE portfolio_alert_firings ADD COLUMN IF NOT EXISTS invalidation_reason text`);
+    logger.info("Schema check ok (portfolio_alert_firings invalidated_at/invalidation_reason)");
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema (portfolio_alert_firings invalidation columns)");
+  }
+
+  try {
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_provider text`);
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS daily_budget_usd numeric(10,2)`);
     await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS cheap_provider text NOT NULL DEFAULT 'gemini'`);
