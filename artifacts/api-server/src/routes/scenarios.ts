@@ -3,7 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db, portfolioPositionsTable, portfolioPurchasesTable, scenarioParamsTable, sectorMomentumTable } from "@workspace/db";
 import type { ScenarioPosition } from "@workspace/scenario-math";
 import { spawnAgente } from "../lib/runner";
-import { computeOpenLotTotals, isPositionActiveFromLots } from "../lib/portfolio-math";
+import { loteEmAberto, totaisDosLotesAbertos, posicaoAtivaPelosLotes } from "../lib/portfolio-math";
 import { logger } from "../lib/logger";
 import { runExclusive } from "../lib/python-queue";
 
@@ -111,7 +111,7 @@ async function posicoesAtivas(userId: number) {
   if (!nonEtf.length) return [];
 
   // Ativo/vendido é decidido pelos lotes reais (portfolio_purchases), não
-  // pelo campo `quantity` armazenado -- ver isPositionActiveFromLots. Sem
+  // pelo campo `quantity` armazenado -- ver posicaoAtivaPelosLotes. Sem
   // isso, uma posição com todos os lotes vendidos mas `quantity`
   // desatualizado (PUT /portfolio/:id edita esse campo direto, sem
   // recalcular a partir dos lotes) ficava presa no Painel de Cenários pra
@@ -138,20 +138,20 @@ async function posicoesAtivas(userId: number) {
   // `derived` traz quantity/investedAmount recalculados dos lotes ABERTOS
   // (mesma lógica de recomputePosition em routes/portfolio.ts) -- só cai de
   // volta pro campo armazenado quando a posição não tem NENHUM lote
-  // registrado ainda (ver isPositionActiveFromLots).
+  // registrado ainda (ver posicaoAtivaPelosLotes).
   const active = nonEtf
     .map((p) => {
       const positionLots = lotsByPosition.get(p.id) ?? [];
-      const open = positionLots.filter((l) => !(l.saleDate && l.salePrice));
+      const open = positionLots.filter(loteEmAberto);
       const derived = positionLots.length > 0
-        ? computeOpenLotTotals(open.map((l) => ({
+        ? totaisDosLotesAbertos(open.map((l) => ({
             amount: Number(l.amount),
             purchasePrice: l.purchasePrice != null ? Number(l.purchasePrice) : null,
           })))
         : { quantity: Number(p.quantity), avgCost: 0, investedAmount: Number(p.investedAmount) };
       return { p, derived };
     })
-    .filter(({ p, derived }) => isPositionActiveFromLots(derived.quantity, lotsByPosition.get(p.id) ?? []));
+    .filter(({ p, derived }) => posicaoAtivaPelosLotes(derived.quantity, lotsByPosition.get(p.id) ?? []));
   return active;
 }
 

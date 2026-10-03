@@ -16,7 +16,7 @@ import { sendReportEmail } from "./mailer";
 import { bannerDeAvisos, bannerProvedoresCaidos, preflightRelatorio } from "./report-preflight";
 import { startOfTodayBRT, todayBRTDateString } from "./timezone";
 import { decideProvider } from "./agent-budget";
-import { isPositionActiveFromLots, carteiraParaOAgente } from "./portfolio-math";
+import { posicaoAtivaPelosLotes, carteiraParaOAgente } from "./portfolio-math";
 
 const DEFAULT_TICKERS = [
   "NVDA", "SMCI", "MU", "INTC", "GOOGL", "ARM", "TSLA",
@@ -122,7 +122,7 @@ export async function getPortfolioTickers(userId?: number): Promise<string[]> {
     if (!nonEtf.length) return [];
 
     // Ativo/vendido é decidido pelos lotes reais (portfolio_purchases), não
-    // pelo campo `quantity` armazenado -- ver isPositionActiveFromLots.
+    // pelo campo `quantity` armazenado -- ver posicaoAtivaPelosLotes.
     // Sem isso, uma posição com todos os lotes vendidos mas `quantity`
     // desatualizado (PUT /portfolio/:id edita esse campo direto) entrava na
     // análise de carteira do agente pra sempre (visto em produção com MU).
@@ -137,7 +137,7 @@ export async function getPortfolioTickers(userId?: number): Promise<string[]> {
       lotsByPosition.set(lot.positionId, list);
     }
 
-    const stocks = nonEtf.filter((r) => isPositionActiveFromLots(r.quantity, lotsByPosition.get(r.id) ?? []));
+    const stocks = nonEtf.filter((r) => posicaoAtivaPelosLotes(r.quantity, lotsByPosition.get(r.id) ?? []));
     // Set: sem userId, dois usuários com a mesma posição repetiriam o ticker.
     return [...new Set(stocks.map((r) => r.ticker))];
   } catch (err) {

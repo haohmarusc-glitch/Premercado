@@ -25,6 +25,9 @@
     },
     {
       "path": "../../lib/alertas"
+    },
+    {
+      "path": "../../lib/carteira"
     }
   ]
 }

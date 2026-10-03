@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { computeOpenLotTotals, isActivePosition, isPositionActiveFromLots, carteiraParaOAgente } from "../portfolio-math";
+import {
+  totaisDosLotesAbertos, quantidadeAtiva, posicaoAtivaPelosLotes, carteiraParaOAgente,
+} from "../portfolio-math";
 
-describe("computeOpenLotTotals", () => {
+describe("totaisDosLotesAbertos", () => {
   it("returns zeroed totals for no open lots", () => {
-    expect(computeOpenLotTotals([])).toEqual({ quantity: 0, avgCost: 0, investedAmount: 0 });
+    expect(totaisDosLotesAbertos([])).toEqual({ quantity: 0, avgCost: 0, investedAmount: 0 });
   });
 
   it("computes quantity/avgCost/investedAmount when every lot has a price", () => {
-    const totals = computeOpenLotTotals([
+    const totals = totaisDosLotesAbertos([
       { amount: 300, purchasePrice: 100 }, // 3 shares
       { amount: 200, purchasePrice: 50 },  // 4 shares
     ]);
@@ -20,7 +22,7 @@ describe("computeOpenLotTotals", () => {
     // Regression test for the bug where an unpriced lot's amount inflated
     // avgCost for the whole position because it was included in the
     // avgCost numerator (totalInvested) but not in the denominator (shares).
-    const totals = computeOpenLotTotals([
+    const totals = totaisDosLotesAbertos([
       { amount: 300, purchasePrice: 100 }, // 3 shares, priced
       { amount: 200, purchasePrice: null }, // unpriced: money invested, shares unknown
     ]);
@@ -31,7 +33,7 @@ describe("computeOpenLotTotals", () => {
   });
 
   it("treats a zero purchasePrice the same as an unpriced lot (avoids division by zero)", () => {
-    const totals = computeOpenLotTotals([
+    const totals = totaisDosLotesAbertos([
       { amount: 300, purchasePrice: 100 },
       { amount: 50, purchasePrice: 0 },
     ]);
@@ -41,7 +43,7 @@ describe("computeOpenLotTotals", () => {
   });
 
   it("returns zero avgCost/quantity when no lot has a usable price, but keeps investedAmount", () => {
-    const totals = computeOpenLotTotals([
+    const totals = totaisDosLotesAbertos([
       { amount: 300, purchasePrice: null },
       { amount: 200, purchasePrice: null },
     ]);
@@ -51,28 +53,28 @@ describe("computeOpenLotTotals", () => {
   });
 });
 
-describe("isActivePosition", () => {
+describe("quantidadeAtiva", () => {
   it("treats zero quantity as not active (fully sold)", () => {
-    expect(isActivePosition(0)).toBe(false);
+    expect(quantidadeAtiva(0)).toBe(false);
   });
 
   it("treats a real held quantity as active", () => {
-    expect(isActivePosition(1.5)).toBe(true);
+    expect(quantidadeAtiva(1.5)).toBe(true);
   });
 
   it("treats a tiny floating-point residual near zero as not active", () => {
     // O driver pg devolve `numeric` como string -- e recomputePosition pode
     // deixar um resíduo de ponto flutuante em vez de exatamente 0 quando
     // todos os lotes são vendidos (ver comentário da função).
-    expect(isActivePosition("0.0000001")).toBe(false);
+    expect(quantidadeAtiva("0.0000001")).toBe(false);
   });
 
   it("accepts string quantities from the pg numeric column", () => {
-    expect(isActivePosition("2.5")).toBe(true);
+    expect(quantidadeAtiva("2.5")).toBe(true);
   });
 });
 
-describe("isPositionActiveFromLots", () => {
+describe("posicaoAtivaPelosLotes", () => {
   it("treats a position as inactive when every lot is sold, regardless of stale stored quantity", () => {
     // Regression test: MU apareceu no Painel de Cenários com os 2 lotes já
     // vendidos porque a posição tinha um `quantity` armazenado desatualizado
@@ -82,7 +84,7 @@ describe("isPositionActiveFromLots", () => {
       { saleDate: "2026-06-18", salePrice: 1133.99 },
       { saleDate: "2026-06-18", salePrice: 1133.99 },
     ];
-    expect(isPositionActiveFromLots(5, lots)).toBe(false);
+    expect(posicaoAtivaPelosLotes(5, lots)).toBe(false);
   });
 
   it("treats a position as active when at least one lot is still open", () => {
@@ -90,22 +92,30 @@ describe("isPositionActiveFromLots", () => {
       { saleDate: "2026-06-18", salePrice: 1133.99 }, // vendido
       { saleDate: null, salePrice: null },            // ainda em aberto
     ];
-    expect(isPositionActiveFromLots(0, lots)).toBe(true);
+    expect(posicaoAtivaPelosLotes(0, lots)).toBe(true);
   });
 
   it("treats a lot with only saleDate or only salePrice set as still open", () => {
-    // recomputePosition/routes/portfolio.ts só considera um lote fechado
-    // quando os dois campos estão preenchidos -- mesma regra aqui.
-    const lots = [{ saleDate: "2026-06-18", salePrice: null }];
-    expect(isPositionActiveFromLots(0, lots)).toBe(true);
+    // Este teste existia ANTES do conserto e já estava certo -- era
+    // `recomputePosition` que discordava, usando `saleDate == null`. A regra
+    // agora é uma só, em @workspace/carteira::loteEmAberto.
+    expect(posicaoAtivaPelosLotes(0, [{ saleDate: "2026-06-18", salePrice: null }])).toBe(true);
+    expect(posicaoAtivaPelosLotes(0, [{ saleDate: null, salePrice: 1133.99 }])).toBe(true);
+  });
+
+  it("preço de venda zero não fecha o lote", () => {
+    // `!(saleDate && salePrice)` tratava salePrice 0 como lote aberto por
+    // acidente de falsy. Agora é por regra: venda só conta com preço > 0,
+    // senão a receita (`shares * salePrice`) seria zero sem reclamar.
+    expect(posicaoAtivaPelosLotes(0, [{ saleDate: "2026-06-18", salePrice: 0 }])).toBe(true);
   });
 
   it("falls back to the stored quantity when the position has no purchase lots at all", () => {
     // Caso raro: falha ao criar o primeiro lote junto com a posição (ver
     // PositionDialog no frontend) -- sem nenhum lote pra consultar, a única
     // fonte de verdade disponível é o campo armazenado.
-    expect(isPositionActiveFromLots(3, [])).toBe(true);
-    expect(isPositionActiveFromLots(0, [])).toBe(false);
+    expect(posicaoAtivaPelosLotes(3, [])).toBe(true);
+    expect(posicaoAtivaPelosLotes(0, [])).toBe(false);
   });
 });
 
